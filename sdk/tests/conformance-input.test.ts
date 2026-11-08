@@ -36,7 +36,8 @@ describe("missing conformance inputs", () => {
   );
 
   it("shows a gap's own fix ahead of the generic copy, raw or saved", () => {
-    const own = "Your arguments don't match. Fix them in setup, then run again.";
+    const own =
+      "Your arguments don't match. Fix them in setup, then run again.";
     expect(
       missingInputMessage({
         ...skipped,

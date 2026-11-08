@@ -1070,9 +1070,10 @@ describe("MCPTasksConformanceTest", () => {
   });
 
   it("shows a call that fails on args its schema rejects as a setup gap", async () => {
-    const invalid = Object.assign(new Error("Invalid params: city is required"), {
-      code: -32602,
-    });
+    const invalid = Object.assign(
+      new Error("Invalid params: city is required"),
+      { code: -32602 }
+    );
     const manager = extensionManager({
       listTools: async () => ({
         tools: [
@@ -1152,7 +1153,9 @@ describe("MCPTasksConformanceTest", () => {
     const unlisted = result.checks.filter(isMissingInputCheck);
     expect(unlisted.length).toBeGreaterThan(0);
     expect(unlisted[0]!.error?.message).toContain('"nope"');
-    expect(unlisted[0]!.error?.message).toContain("is not listed by this server");
+    expect(unlisted[0]!.error?.message).toContain(
+      "is not listed by this server"
+    );
     expect(missingInputMessage(unlisted[0]!)).toBe(
       'This server doesn\'t list the tool "nope", so there was no task to check. Select a listed tool in setup, then run again.'
     );

@@ -30,9 +30,9 @@ export interface ConformanceCredentialSource {
 }
 
 /** Credentials as a server config carries them (`requestInit.headers`). */
-export function credentialsFromServerConfig(config: unknown):
-  | ConformanceCredentialSource
-  | undefined {
+export function credentialsFromServerConfig(
+  config: unknown
+): ConformanceCredentialSource | undefined {
   if (!config || typeof config !== "object") return undefined;
   const value = config as {
     accessToken?: unknown;
@@ -52,7 +52,7 @@ export function credentialsFromServerConfig(config: unknown):
 
 /** True when the run sent a token, an Authorization header, or a way to get one. */
 export function sentCredentials(
-  source: ConformanceCredentialSource | undefined,
+  source: ConformanceCredentialSource | undefined
 ): boolean {
   if (!source) return false;
   return hasConnectionCredentials({
@@ -67,13 +67,13 @@ export function sentCredentials(
 /** `details` for a check a 401 stopped: gray "Not run", with the right fix. */
 export function loginRequiredDetails(
   error: unknown,
-  source: ConformanceCredentialSource | undefined,
+  source: ConformanceCredentialSource | undefined
 ): Record<string, unknown> {
   return {
     ...authorizationRequiredDetails(error),
     ...needsSetupDetails(
       "login",
-      sentCredentials(source) ? LOGIN_REJECTED_MESSAGE : LOGIN_NEEDED_MESSAGE,
+      sentCredentials(source) ? LOGIN_REJECTED_MESSAGE : LOGIN_NEEDED_MESSAGE
     ),
   };
 }

@@ -37,6 +37,15 @@ describe("answers that cannot satisfy what the task asked for", () => {
     ).toMatch(/^the answer to "confirm" doesn't match what it asked for/);
   });
 
+  it("reads only own keys, so an inherited name never counts as an answer", () => {
+    const hostile = JSON.parse(
+      '{"__proto__": {"method": "roots/list"}, "toString": {"method": "roots/list"}}'
+    );
+    expect(describeAnswersGap(hostile, {})).toBe(
+      'no answer for "__proto__", "toString"'
+    );
+  });
+
   it("finds nothing wrong with answers that fit, or a decline", () => {
     expect(
       describeAnswersGap(asked, {

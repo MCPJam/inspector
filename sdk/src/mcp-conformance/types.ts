@@ -475,10 +475,7 @@ export interface MCPServerSurfaceSnapshot {
 
 /** The four listings the client phase reads into the surface. */
 export type SurfaceListing =
-  | "tools"
-  | "prompts"
-  | "resources"
-  | "resourceTemplates";
+  "tools" | "prompts" | "resources" | "resourceTemplates";
 
 /** Readiness advice ids (Phase 7 §15.4). Never part of the pass/fail verdict. */
 export const MCP_READINESS_IDS = [

@@ -253,7 +253,10 @@ export class TaskOperations {
       // ZodError for a frame that is not a valid JSON-RPC message, and the
       // extension guard throws for a result that is not an object.
       if (!isMalformedResponseError(error)) {
-        const answersProblem = describeAnswersGap(task.inputRequests, responses);
+        const answersProblem = describeAnswersGap(
+          task.inputRequests,
+          responses
+        );
         return {
           outcome: "update-rejected",
           requested,
@@ -417,7 +420,7 @@ export class TaskOperations {
           warnings: [],
           detail: { taskId, cancelCode: code },
           unavailable:
-            "The task finished before we sent cancel, so there was nothing to cancel.",
+            "The task was no longer available when cancellation was sent, so its acknowledgment could not be checked.",
           taskGone: true,
         };
       }
@@ -535,11 +538,15 @@ export function describeAnswersGap(
   responses: Record<string, unknown>
 ): string | undefined {
   if (!isRecord(inputRequests)) return undefined;
-  const missing = Object.keys(inputRequests).filter((key) => !(key in responses));
+  const missing = Object.keys(inputRequests).filter(
+    (key) => !Object.hasOwn(responses, key)
+  );
   if (missing.length > 0) {
     return `no answer for ${missing.map((key) => JSON.stringify(key)).join(", ")}`;
   }
-  const extra = Object.keys(responses).filter((key) => !(key in inputRequests));
+  const extra = Object.keys(responses).filter(
+    (key) => !Object.hasOwn(inputRequests, key)
+  );
   if (extra.length > 0) {
     return `answers for requests the task did not make: ${extra
       .map((key) => JSON.stringify(key))
@@ -551,7 +558,10 @@ export function describeAnswersGap(
     const response = responses[key];
     if (!params?.requestedSchema || !isRecord(response)) continue;
     if (response.action !== "accept") continue;
-    const verdict = checkToolArgs(params.requestedSchema, response.content ?? {});
+    const verdict = checkToolArgs(
+      params.requestedSchema,
+      response.content ?? {}
+    );
     if (verdict.verdict === "invalid") {
       return `the answer to ${JSON.stringify(key)} doesn't match what it asked for (${verdict.message})`;
     }

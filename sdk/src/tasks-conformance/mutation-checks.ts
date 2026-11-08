@@ -14,19 +14,18 @@ import {
 } from "./metadata.js";
 import {
   INVALID_PARAMS,
+  TERMINAL_STATUSES,
   UndeclaredProbe,
   describeUndeclaredProbe,
 } from "./evidence.js";
 import type { TaskCheckContext } from "./check-context.js";
-import {
-  blockedByDetails,
-  blockedByMessage,
-} from "../conformance-blocked.js";
+import { blockedByDetails, blockedByMessage } from "../conformance-blocked.js";
 export async function runMutationChecks(context: TaskCheckContext) {
   const {
     operations,
     wire,
     createdTaskId,
+    finalTask,
     noTask,
     selected,
     checks,
@@ -388,30 +387,33 @@ export async function runMutationChecks(context: TaskCheckContext) {
         received
       );
       checks.push(
-        cancel.taskGone
+        // Only a task known to have finished is "nothing to cancel": a
+        // -32602 for a task still running is the server's to explain.
+        cancel.taskGone &&
+          finalTask !== undefined &&
+          TERMINAL_STATUSES.has(String(finalTask.status))
           ? notApplicable(
               "tasks-cancel-ack-shape",
-              cancel.unavailable ??
-                "The task finished before we sent cancel, so there was nothing to cancel.",
+              "The task finished before we sent cancel, so there was nothing to cancel.",
               cancel.detail
             )
           : cancel.unavailable !== undefined
-          ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
-          : cancel.problems.length === 0
-            ? passed(
-                "tasks-cancel-ack-shape",
-                Date.now() - stepStartedAt,
-                cancel.detail,
-                cancel.warnings
-              )
-            : failed(
-                "tasks-cancel-ack-shape",
-                Date.now() - stepStartedAt,
-                `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
-                  "; "
-                )}`,
-                cancel.detail
-              )
+            ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
+            : cancel.problems.length === 0
+              ? passed(
+                  "tasks-cancel-ack-shape",
+                  Date.now() - stepStartedAt,
+                  cancel.detail,
+                  cancel.warnings
+                )
+              : failed(
+                  "tasks-cancel-ack-shape",
+                  Date.now() - stepStartedAt,
+                  `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
+                    "; "
+                  )}`,
+                  cancel.detail
+                )
       );
     }
   }

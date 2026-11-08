@@ -23,7 +23,7 @@ export type ToolArgsVerdict =
 
 export function checkToolArgs(
   inputSchema: unknown,
-  args: unknown,
+  args: unknown
 ): ToolArgsVerdict {
   if (
     !inputSchema ||
@@ -40,14 +40,15 @@ export function checkToolArgs(
       },
     });
     const validate = validator.getValidator(
-      inputSchema as Parameters<typeof validator.getValidator>[0],
+      inputSchema as Parameters<typeof validator.getValidator>[0]
     );
     if (unknownDialect) return { verdict: "unknown" };
     const result = validate(args ?? {});
     if (result.valid) return { verdict: "valid" };
     return {
       verdict: "invalid",
-      message: result.errorMessage?.trim() || "they don't match its input schema",
+      message:
+        result.errorMessage?.trim() || "they don't match its input schema",
     };
   } catch {
     return { verdict: "unknown" };

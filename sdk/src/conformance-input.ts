@@ -4,11 +4,7 @@
  * is not to blame. The check shows as gray "Not run" with a plain fix.
  */
 export type ConformanceInputKey =
-  | "tasksProbe"
-  | "logProbe"
-  | "inputRequiredProbe"
-  | "toolCallProbe"
-  | "login";
+  "tasksProbe" | "logProbe" | "inputRequiredProbe" | "toolCallProbe" | "login";
 
 /** `details` key holding the setup gap's own plain-English fix, when it has one. */
 export const MISSING_INPUT_MESSAGE_DETAIL = "missingInputMessage";
@@ -20,7 +16,7 @@ export const MISSING_INPUT_MESSAGE_DETAIL = "missingInputMessage";
  */
 export function needsSetupDetails(
   input: ConformanceInputKey,
-  message?: string,
+  message?: string
 ): Record<string, unknown> {
   return {
     missingInput: input,
@@ -127,7 +123,7 @@ export function missingInputMessage(check: InputCheck): string | undefined {
     ownMessage(
       details && typeof details === "object" && "details" in details
         ? details.details
-        : undefined,
+        : undefined
     ) ??
     INPUT_MESSAGES[input]
   );

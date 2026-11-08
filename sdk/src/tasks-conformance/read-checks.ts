@@ -180,12 +180,19 @@ export async function runReadChecks(context: TaskCheckContext) {
       // setup to fix; a rejection of answers that fit is the server's.
       checks.push(
         inputLeg.answersProblem
-          ? couldNotRun("tasks-update-ack-shape", TASK_ANSWERS_REJECTED_MESSAGE, {
-              requested: inputLeg.requested,
-              answered: inputLeg.answered,
-              answersProblem: inputLeg.answersProblem,
-              ...needsSetupDetails("tasksProbe", TASK_ANSWERS_REJECTED_MESSAGE),
-            })
+          ? couldNotRun(
+              "tasks-update-ack-shape",
+              TASK_ANSWERS_REJECTED_MESSAGE,
+              {
+                requested: inputLeg.requested,
+                answered: inputLeg.answered,
+                answersProblem: inputLeg.answersProblem,
+                ...needsSetupDetails(
+                  "tasksProbe",
+                  TASK_ANSWERS_REJECTED_MESSAGE
+                ),
+              }
+            )
           : couldNotRun(
               "tasks-update-ack-shape",
               `tasks/update was rejected (${inputLeg.code ?? "no code"}: ${

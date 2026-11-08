@@ -161,9 +161,11 @@ export class TaskGroupRunner extends TaskOperations {
             id: MCPTasksCheckId,
             message?: string
           ): MCPTasksCheckResult | undefined => {
-            if (!probeTool || argsVerdict?.verdict !== "invalid") return undefined;
+            if (!probeTool || argsVerdict?.verdict !== "invalid")
+              return undefined;
             const text =
-              message ?? badToolArgsMessage(probeTool.name, argsVerdict.message);
+              message ??
+              badToolArgsMessage(probeTool.name, argsVerdict.message);
             return couldNotRun(id, text, {
               tool: probeTool.name,
               argsProblem: argsVerdict.message,
