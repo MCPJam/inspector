@@ -207,12 +207,6 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
     playgroundCredentialRefusal: vi.fn(
       async (): Promise<string | null> => null,
     ),
-    resolvePlaygroundCredentialEnvironment: vi.fn(
-      async (): Promise<
-        | { ok: true; environmentId: string }
-        | { ok: false; status: 409 | 502; message: string }
-      > => ({ ok: true, environmentId: "env_hidden" }),
-    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -259,7 +253,6 @@ import {
   acquirePlaygroundHarnessBox,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  resolvePlaygroundCredentialEnvironment,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
@@ -2156,11 +2149,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
       vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
-        "The Cursor harness requires a CURSOR_API_KEY project secret."
+        "Ask an org admin to add a Cursor key in Organization → AI providers."
       );
       const response = await post({}, cursor);
       expect(response.status).toBe(409);
-      expect(await response.text()).toMatch(/CURSOR_API_KEY/);
+      expect(await response.text()).toMatch(/Organization → AI providers/);
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
         expect.objectContaining({
           harnessId: "cursor",
@@ -2174,42 +2167,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     it("a compare column on Claude Code needs no credential check", async () => {
       await post({ comparePane: true }, claudeCode);
       expect(playgroundCredentialRefusal).not.toHaveBeenCalled();
-      expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
     });
 
-    it("a Cursor turn on a client (no environment chosen) runs under a hidden environment carrying the member's key", async () => {
+    it("a Cursor turn on a client (no environment chosen) needs no key of the member's: the org key's readiness decides", async () => {
       const response = await post({}, cursor);
       expect(response.status).toBe(200);
-      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "project-1",
-          hostId: "host-1",
-          harnessId: "cursor",
-        })
-      );
-      // The org key's readiness, which no environment decides.
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
         expect.objectContaining({ harnessId: "cursor", projectId: "project-1" })
       );
       expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
-        expect.objectContaining({ projectEnvironmentId: "env_hidden" })
+        expect.objectContaining({ harness: "cursor" })
       );
-    });
-
-    it("no usable key: refused with where to add it, before any box", async () => {
-      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        message:
-          "Add your Cursor API key (CURSOR_API_KEY) before using Cursor. Add or fix it under Project Settings → Secrets, then send again.",
-      });
-      const response = await post({}, cursor);
-      expect(response.status).toBe(409);
-      const text = await response.text();
-      expect(text).toMatch(/Project Settings → Secrets/);
-      expect(text).not.toMatch(/environment/i);
-      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
   });
 });
