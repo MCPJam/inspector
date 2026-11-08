@@ -922,6 +922,7 @@ export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,
+  RunConformanceOAuthConfig,
 } from "./conformance-run.js";
 export {
   detectCiMetadata,
