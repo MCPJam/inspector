@@ -213,6 +213,7 @@ interface ViewerChoiceWait {
 }
 
 export interface ThreadAppWorkspaceOptions {
+  canInvoke?: () => boolean;
   runOnboarding?: RunPluginOnboarding;
   sendMessage?: AppMessageSender;
   /** Shared discovery; when absent the workspace reads its own. */
@@ -275,8 +276,10 @@ export function useThreadAppWorkspace(
   const serverKey = JSON.stringify(
     servers.map(({ serverId, name }) => [serverId, name]),
   );
+  const invokeGate = useRef(options.canInvoke);
+  invokeGate.current = options.canInvoke;
   const api = useMemo(
-    () => (scope ? createThreadAppApi(scope) : null),
+    () => (scope ? createThreadAppApi(scope, "", () => invokeGate.current?.() ?? true) : null),
     [scope],
   );
   const lifetime = useMemo(
