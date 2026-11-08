@@ -289,14 +289,15 @@ function decodeAttachmentData(
 }
 
 /**
- * Decode each attachment once, applying the same count and byte caps save
- * uses. `saveHarnessAttachments` and `prepareHarnessPromptImages` then share
- * these bytes instead of decoding again.
+ * Decode each attachment once so save and native-image prepare share the
+ * bytes. Per-file and count caps apply here; the 30 MB total is a write
+ * budget in `saveHarnessAttachments`. Charging it at decode would skip a
+ * later file after an earlier one decoded even when that write never
+ * landed, and native-image prepare runs before save.
  */
 export function decodeHarnessAttachments(
   attachments: HarnessPromptAttachment[],
 ): void {
-  let remaining = HARNESS_ATTACHMENTS_MAX_TOTAL_BYTES;
   for (const [index, attachment] of attachments.entries()) {
     if (index >= HARNESS_ATTACHMENTS_MAX_FILES) {
       attachment.decoded = {
@@ -304,9 +305,10 @@ export function decodeHarnessAttachments(
       };
       continue;
     }
-    const decoded = decodeAttachmentData(attachment.data, remaining);
-    attachment.decoded = decoded;
-    if ("bytes" in decoded) remaining -= decoded.bytes.byteLength;
+    attachment.decoded = decodeAttachmentData(
+      attachment.data,
+      HARNESS_ATTACHMENTS_MAX_TOTAL_BYTES,
+    );
   }
 }
 
@@ -359,6 +361,11 @@ export async function saveHarnessAttachments(args: {
       continue;
     }
     const { bytes } = decoded;
+    const limit = overLimit(bytes.byteLength, remaining);
+    if (limit) {
+      outcomes.push({ name, error: limit });
+      continue;
+    }
     try {
       if (args.reserveBytes && !(await args.reserveBytes(bytes.byteLength))) {
         outcomes.push({ name, error: "over this computer's storage quota" });
