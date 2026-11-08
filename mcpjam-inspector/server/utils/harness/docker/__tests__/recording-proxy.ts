@@ -10,6 +10,22 @@ type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
   typeof value === "object" && value !== null;
 
+/**
+ * Forward path and query onto `target`'s origin. An absolute or
+ * protocol-relative request URL would otherwise ignore the mock upstream.
+ */
+export function harnessProxyForwardUrl(
+  target: string,
+  requestUrl: string | undefined,
+): URL {
+  const dest = new URL(target);
+  const incoming = new URL(requestUrl ?? "/", dest);
+  dest.pathname = incoming.origin === dest.origin ? incoming.pathname : "/";
+  dest.search = incoming.origin === dest.origin ? incoming.search : "";
+  dest.hash = "";
+  return dest;
+}
+
 export async function startRecordingProxy(target: string) {
   const bodies: unknown[] = [];
   const server = createServer((req, res) => {
@@ -27,7 +43,7 @@ export async function startRecordingProxy(target: string) {
       delete headers.connection;
       delete headers["transfer-encoding"];
       const forwarded = request(
-        new URL(req.url ?? "/", target),
+        harnessProxyForwardUrl(target, req.url),
         { method: req.method, headers },
         (upstream) => {
           res.writeHead(upstream.statusCode ?? 502, upstream.headers);
