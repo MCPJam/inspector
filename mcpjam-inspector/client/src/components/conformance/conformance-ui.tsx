@@ -326,9 +326,13 @@ export function OverallScoreCard({
     ? Math.max(0, score.passed + score.failed + score.couldNotRun - score.applicable)
     : 0;
   const signInBlocked = Math.min(blockedBySignIn, score?.couldNotRun ?? 0);
+  // A check a 401 stopped is a setup gap too, and the sign-in sentence already
+  // counts it; the setup sentence counts only the rest.
+  const setupGaps =
+    signInBlocked > 0 ? Math.max(0, missingInputs - signInBlocked) : missingInputs;
   const inputSentence =
-    missingInputs > 0
-      ? `${plural(missingInputs, "check")} need${missingInputs === 1 ? "s" : ""} input. Select tools in setup and run again.`
+    setupGaps > 0
+      ? `${plural(setupGaps, "check")} need${setupGaps === 1 ? "s" : ""} a setup change. Each one says what to change, then run again.`
       : null;
 
   const verdict = (() => {
@@ -410,8 +414,8 @@ export function OverallScoreCard({
           score.couldNotRun > missingInputs && !verdictCountsUnrun
             ? `${plural(score.couldNotRun - missingInputs, "check")} could not run`
             : null,
-          missingInputs && !verdictCountsInputs
-            ? `${plural(missingInputs, "check")} not run (missing input)`
+          setupGaps && !verdictCountsInputs
+            ? `${plural(setupGaps, "check")} not run (needs setup)`
             : null,
           score.pending ? `${plural(score.pending, "check")} unscored` : null,
           score.notApplicable

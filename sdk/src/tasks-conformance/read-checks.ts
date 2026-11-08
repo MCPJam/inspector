@@ -22,6 +22,10 @@ import {
   sentRequestIds,
 } from "./evidence.js";
 import type { TaskCheckContext } from "./check-context.js";
+import { needsSetupDetails } from "../conformance-input.js";
+
+const TASK_ANSWERS_REJECTED_MESSAGE =
+  "The server rejected your input answers, so there was nothing to check. Fix the answers in setup, then run again.";
 export async function runReadChecks(context: TaskCheckContext) {
   const {
     operations,
@@ -172,14 +176,23 @@ export async function runReadChecks(context: TaskCheckContext) {
       // The MUST is conditioned on success, and the answers are
       // operator-supplied, so a rejection leaves no acknowledgement to
       // grade rather than proving a defect.
+      // Answers that cannot satisfy what the task asked for are the caller's
+      // setup to fix; a rejection of answers that fit is the server's.
       checks.push(
-        couldNotRun(
-          "tasks-update-ack-shape",
-          `tasks/update was rejected (${inputLeg.code ?? "no code"}: ${
-            inputLeg.message ?? "no message"
-          }), so there was no acknowledgement to grade; check the configured inputResponses`,
-          { requested: inputLeg.requested, answered: inputLeg.answered }
-        )
+        inputLeg.answersProblem
+          ? couldNotRun("tasks-update-ack-shape", TASK_ANSWERS_REJECTED_MESSAGE, {
+              requested: inputLeg.requested,
+              answered: inputLeg.answered,
+              answersProblem: inputLeg.answersProblem,
+              ...needsSetupDetails("tasksProbe", TASK_ANSWERS_REJECTED_MESSAGE),
+            })
+          : couldNotRun(
+              "tasks-update-ack-shape",
+              `tasks/update was rejected (${inputLeg.code ?? "no code"}: ${
+                inputLeg.message ?? "no message"
+              }), so there was no acknowledgement to grade; check the configured inputResponses`,
+              { requested: inputLeg.requested, answered: inputLeg.answered }
+            )
       );
     } else {
       const violations = inputLeg.ackVerdict?.violations ?? [];

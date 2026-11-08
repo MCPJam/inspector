@@ -18,6 +18,7 @@ import * as operations from "../../src/operations.js";
 import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
 import {
   isMissingInputCheck,
+  missingInputMessage,
   noTaskCreatedMessage,
 } from "../../src/conformance-input.js";
 import { scoreFromTasksResult } from "../../src/conformance-score.js";
@@ -1068,16 +1069,94 @@ describe("MCPTasksConformanceTest", () => {
     expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "passed", failed: 0 });
   });
 
-  it("reports INCOMPLETE when the requested probe tool is not listed", async () => {
+  it("shows a call that fails on args its schema rejects as a setup gap", async () => {
+    const invalid = Object.assign(new Error("Invalid params: city is required"), {
+      code: -32602,
+    });
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw invalid;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(isMissingInputCheck(check), id).toBe(true);
+      expect(missingInputMessage(check), id).toMatch(
+        /^Your arguments for "long_job" don't match its input schema/
+      );
+    }
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
+  });
+
+  it("keeps a failing call on args that fit as the server's to answer for", async () => {
+    const broken = Object.assign(new Error("Internal error"), { code: -32603 });
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw broken;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    expect(statusMap(result)["tasks-result-type-discipline"]).toBe("failed");
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain('calling "long_job" failed');
+  });
+
+  it("keeps a tool error on args that fit as the server's to answer for", async () => {
+    const manager = extensionManager({
+      executeTool: async () => ({
+        resultType: "complete",
+        isError: true,
+        content: [{ type: "text", text: "upstream down" }],
+      }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain("returned a tool error");
+  });
+
+  it("shows an unlisted probe tool as a setup gap, at no cost", async () => {
     const result = await runAgainst(extensionManager(), {
       config: { toolName: "nope", pollTimeoutMs: 500 },
     });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(result.incompleteReason).toContain('"nope"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
-    expect(result.incompleteReason).toContain("long_job");
+    // Naming a tool the server does not list is the caller's setup to fix:
+    // every tool check is "Not run" and costs nothing.
+    const unlisted = result.checks.filter(isMissingInputCheck);
+    expect(unlisted.length).toBeGreaterThan(0);
+    expect(unlisted[0]!.error?.message).toContain('"nope"');
+    expect(unlisted[0]!.error?.message).toContain("is not listed by this server");
+    expect(missingInputMessage(unlisted[0]!)).toBe(
+      'This server doesn\'t list the tool "nope", so there was no task to check. Select a listed tool in setup, then run again.'
+    );
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
   it("reports INCOMPLETE when the probed tool never produced a task", async () => {
@@ -1092,20 +1171,23 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    // Result-type discipline DID run (a normal result is conformant); the
-    // lifecycle checks did not, and that is the run's verdict.
+    // Result-type discipline DID run (a normal result is conformant). The
+    // lifecycle checks did not, but the server may decline a task: picking a
+    // tool that makes one is setup, so they are "Not run" at no cost.
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
-    expect(result.outcome).toBe("incomplete");
-    expect(result.incompleteReason).toContain(
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(true);
+    expect(ttl.error?.message).toContain(
       '"long_job" returned a normal result instead of a task'
     );
-    expect(result.incompleteReason).toContain("--tool-name");
+    expect(ttl.error?.message).toContain("--tool-name");
     // The app swaps the CLI flags for setup copy.
-    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
-    expect(noTaskCreatedMessage(ttl)).toBe(
+    expect(missingInputMessage(ttl)).toBe(
       '"long_job" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.'
     );
+    expect(noTaskCreatedMessage(ttl)).toBe(missingInputMessage(ttl));
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
   it("names a failed tool call instead of calling it a normal result", async () => {

@@ -4,6 +4,7 @@ import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
 
 import {
+  CHECK_METADATA,
   isRecord,
   errorMessage,
   passed,
@@ -17,6 +18,10 @@ import {
   describeUndeclaredProbe,
 } from "./evidence.js";
 import type { TaskCheckContext } from "./check-context.js";
+import {
+  blockedByDetails,
+  blockedByMessage,
+} from "../conformance-blocked.js";
 export async function runMutationChecks(context: TaskCheckContext) {
   const {
     operations,
@@ -303,10 +308,24 @@ export async function runMutationChecks(context: TaskCheckContext) {
       ];
       checks.push(
         rejections.length === 0
-          ? couldNotRun(
-              "tasks-undeclared-capability-names-requirements",
-              "no request was rejected with -32021, so no error payload named a required capability"
+          ? // With no -32021 there is no payload to grade. When the sibling
+            // check already failed for that, name it: it is the reason.
+            checks.some(
+              (check) =>
+                check.id === "tasks-undeclared-capability-rejected" &&
+                check.status === "failed"
             )
+            ? couldNotRun(
+                "tasks-undeclared-capability-names-requirements",
+                blockedByMessage(
+                  CHECK_METADATA["tasks-undeclared-capability-rejected"].title
+                ),
+                blockedByDetails("tasks-undeclared-capability-rejected")
+              )
+            : couldNotRun(
+                "tasks-undeclared-capability-names-requirements",
+                "no request was rejected with -32021, so no error payload named a required capability"
+              )
           : problems.length === 0
             ? passed(
                 "tasks-undeclared-capability-names-requirements",
@@ -369,7 +388,14 @@ export async function runMutationChecks(context: TaskCheckContext) {
         received
       );
       checks.push(
-        cancel.unavailable !== undefined
+        cancel.taskGone
+          ? notApplicable(
+              "tasks-cancel-ack-shape",
+              cancel.unavailable ??
+                "The task finished before we sent cancel, so there was nothing to cancel.",
+              cancel.detail
+            )
+          : cancel.unavailable !== undefined
           ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
           : cancel.problems.length === 0
             ? passed(

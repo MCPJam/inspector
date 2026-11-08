@@ -143,6 +143,25 @@ describe("conformance run version snapshot", () => {
     expect(result.current.isRunning).toBe(false);
   });
 
+  it("still runs the suites when the server asks for a login", async () => {
+    check.mockResolvedValueOnce({
+      status: "auth-required",
+      message: "The server requires authorization (HTTP 401).",
+    });
+    const { result } = renderHook(() => useConformanceRun({ server }));
+    await act(async () => result.current.runAll());
+    // Each suite reaches the 401 itself and reports its checks as "Not run"
+    // with the sign-in prompt, instead of every suite failing outright.
+    for (const suite of [protocol, apps, tasks])
+      expect(suite).toHaveBeenCalled();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(result.current.oauth).toMatchObject({
+      status: "error",
+      error: "The server requires authorization (HTTP 401).",
+    });
+    expect(result.current.resolvedProtocolVersion).toBeUndefined();
+  });
+
   it("ignores an Auto reply after the target changes", async () => {
     let resolve: (result: ConformanceConnectionResult) => void = () => {
       throw new Error("Not initialized");

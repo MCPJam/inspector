@@ -36,6 +36,7 @@ import {
 } from "@/hooks/use-conformance-probes";
 import {
   conformanceTargetKey,
+  ConformanceLoginRequiredError,
   useConformanceRunVersion,
 } from "./use-conformance-run-version";
 import {
@@ -639,6 +640,7 @@ export function useConformanceRun({
         : createOAuthState(currentServer),
     );
     let resolved: McpProtocolVersion | undefined;
+    let loginRequired = false;
     try {
       resolved = await resolveVersion(currentServer, versionPin, runBudget());
     } catch (error) {
@@ -647,11 +649,17 @@ export function useConformanceRun({
         status: "error" as const,
         error: suiteErrorMessage(error),
       };
-      if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
-      if (isSelected(selected?.apps)) setApps(state);
-      if (isSelected(selected?.tasks)) setTasks(state);
+      // OAuth needs a resolved version, so it keeps the error either way.
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
-      return;
+      if (!(error instanceof ConformanceLoginRequiredError)) {
+        if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
+        if (isSelected(selected?.apps)) setApps(state);
+        if (isSelected(selected?.tasks)) setTasks(state);
+        return;
+      }
+      // A 401 is the caller's login to fix: the suites still run, and each
+      // check they could not reach reports "Not run" with the sign-in prompt.
+      loginRequired = true;
     }
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
@@ -697,7 +705,7 @@ export function useConformanceRun({
         promises.push(
           runOAuth(runToken, currentServer, resolved, picked?.oauthAdvice),
         );
-      } else {
+      } else if (!loginRequired) {
         setOAuth(NOT_SELECTED);
       }
     }

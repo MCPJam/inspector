@@ -179,16 +179,23 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
 
       const completionReference = selectCompletionReference(ctx);
       if (!completionReference) {
+        // Only a listing that was really read shows "nothing to complete". A
+        // failed listing could be hiding the very prompt or template, so that
+        // case stays untested rather than excused.
+        const unread = (ctx.unlisted ?? []).some(
+          (listing) => listing === "prompts" || listing === "resourceTemplates",
+        );
         return {
           ...this,
           status: "skipped" as const,
-          // Completions IS advertised, so the requirement applies here — we
-          // simply found no subject to exercise it against.
-          skipReason: "could-not-run" as const,
+          skipReason: unread
+            ? ("could-not-run" as const)
+            : ("not-applicable" as const),
           durationMs: 0,
           error: {
-            message:
-              "Server does not expose a prompt or resource template suitable for completion testing",
+            message: unread
+              ? "Could not list the server's prompts or resource templates, so there was nothing to complete"
+              : "The server has no prompts or resource templates, so there is nothing to complete.",
           },
         };
       }

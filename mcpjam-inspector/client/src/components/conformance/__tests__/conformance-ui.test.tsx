@@ -14,6 +14,31 @@ function passedScore(score: number): ScoreSummary {
 }
 
 describe("OverallScoreCard", () => {
+  it("counts checks a login stopped once, in the sign-in sentence", () => {
+    render(
+      <OverallScoreCard
+        score={{
+          ...passedScore(100),
+          score: null,
+          applicable: 0,
+          passed: 0,
+          outcome: "incomplete",
+          couldNotRun: 3,
+        }}
+        serverName="srv"
+        version="2025-11-25"
+        blockedBySignIn={3}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Incomplete. 3 checks could not run because sign-in failed. Reconnect the server and run again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
+    expect(screen.queryByText(/setup change/)).toBeNull();
+  });
+
   it("keeps a score of 100 visibly incomplete when some checks need input", () => {
     render(
       <OverallScoreCard
@@ -24,10 +49,10 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Incomplete. 2 checks need input. Select tools in setup and run again.",
+        "Incomplete. 2 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/missing input/)).toBeNull();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
     expect(screen.queryByText(/passed/)).toBeNull();
     expect(screen.getByText("10/10")).toBeInTheDocument();
     expect(screen.queryByText(/partial/)).toBeNull();
@@ -44,10 +69,10 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Conformant. 2 checks need input. Select tools in setup and run again.",
+        "Conformant. 2 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/missing input/)).toBeNull();
+    expect(screen.queryByText(/needs setup\)/)).toBeNull();
     expect(screen.getByText("10/10")).toBeInTheDocument();
     expect(screen.queryByText(/partial/)).toBeNull();
   });
@@ -62,7 +87,7 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Conformant, with guidance. 2 checks need input. Select tools in setup and run again.",
+        "Conformant, with guidance. 2 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
   });
@@ -71,17 +96,17 @@ describe("OverallScoreCard", () => {
     [
       3,
       0,
-      "Incomplete. 3 checks could not run. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 3 checks could not run. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
     [
       3,
       3,
-      "Incomplete. 3 checks could not run because the server did not answer in time. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 3 checks could not run because the server did not answer in time. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
     [
       3,
       2,
-      "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run. 2 checks need input. Select tools in setup and run again.",
+      "Incomplete. 2 checks could not run because the server did not answer in time. 1 more could not run. 2 checks need a setup change. Each one says what to change, then run again.",
     ],
   ])(
     "keeps other unrun causes alongside missing inputs (%i unrun, %i timed out)",
@@ -120,7 +145,7 @@ describe("OverallScoreCard", () => {
     );
     expect(
       screen.getByText(
-        "Incomplete. 7 checks need input. Select tools in setup and run again.",
+        "Incomplete. 7 checks need a setup change. Each one says what to change, then run again.",
       ),
     ).toBeInTheDocument();
     expect(
