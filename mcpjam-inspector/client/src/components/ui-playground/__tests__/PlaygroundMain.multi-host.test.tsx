@@ -544,7 +544,9 @@ const multiHostFixture = {
   panes: undefined as
     | {
         paneId: string;
-        target: { kind: "host"; hostId: string };
+        target:
+          | { kind: "host"; hostId: string }
+          | { kind: "environment"; environmentId: string };
         pickedSelection?: unknown;
         serverIds?: string[] | null;
       }[]
@@ -561,6 +563,8 @@ const previewedHostFixture = { resolve: false };
 const usePersistedHostProjectIds: (string | null)[] = [];
 const mockSetSelectedHostIds = vi.fn();
 const mockSetMultiHostEnabled = vi.fn();
+const mockRestorePanes = vi.fn();
+const mockSetPaneTarget = vi.fn();
 const mockEnsureProjectClient = vi.hoisted(() => vi.fn());
 const mockHostMutations = vi.hoisted(() => ({
   ensureProjectClient: mockEnsureProjectClient,
@@ -626,9 +630,10 @@ vi.mock("@/hooks/use-compare-panes", () => ({
         })),
       selectedHostIds: multiHostFixture.selectedHostIds,
       setSelectedHostIds: mockSetSelectedHostIds,
-      restorePanes: vi.fn(),
+      restorePanes: mockRestorePanes,
       setPaneOverrides: vi.fn(),
       setPanePick: vi.fn(),
+      setPaneTarget: mockSetPaneTarget,
       multiHostEnabled: multiHostFixture.multiHostEnabled,
       setMultiHostEnabled: mockSetMultiHostEnabled,
     };
@@ -2442,10 +2447,11 @@ describe("PlaygroundMain — multi-host render path", () => {
       inputProps.onMultiModelEnabledChange(true);
     });
 
-    // Multi-host was force-cleared AND the host lineup was collapsed
-    // — those are the two mutations that prevent the limbo state.
+    // Multi-host was force-cleared AND the lineup was collapsed to the lead
+    // alone, environment panes included: the two mutations that prevent the
+    // limbo state.
     expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
-    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([]);
+    expect(mockRestorePanes).toHaveBeenCalledWith([]);
   });
 
   it("falls back to single-pane when multi-host is persisted on but only one host resolves (length>1 gate)", () => {
@@ -2614,19 +2620,70 @@ describe("PlaygroundMain — environment mode", () => {
     expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
   });
 
-  it("exits multi-host comparison when an environment is selected", () => {
-    // An environment names exactly one host; comparison exists to run one turn
-    // against several. Both being true would misreport what ran.
+  function cardProps(compareId: string) {
+    return mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props.compareId === compareId)
+      .at(-1);
+  }
+
+  function compareEnvironmentBeside(clientId: string) {
     selectEnvironment();
-    multiHostFixture.multiHostEnabled = true;
+    localStorage.removeItem("mcp-previewed-environment-id");
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: clientId, name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { modelId: "openai/gpt-5-mini" }),
+      [clientId]: makeHost(clientId, "Host B", { modelId: "openai/gpt-5-mini" }),
+    };
+    multiHostFixture.selectedHostIds = [clientId];
+  }
+
+  it("keeps comparing while the page has an environment, which rests until single chat", () => {
+    selectEnvironment();
     multiHostFixture.hostList = [
       { hostId: "h-A", name: "Host A" },
       { hostId: "h-B", name: "Host B" },
     ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", {}),
+      "h-B": makeHost("h-B", "Host B", {}),
+    };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalledWith(false);
+    expect(screen.getByTestId("playground-multi-host-grid")).toBeTruthy();
+    // Neither the hidden single chat nor a client pane runs the environment.
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
+      undefined,
+    );
+    expect(cardProps("h-A")?.hostedContext.executionTarget).toBeUndefined();
+    expect(cardProps("h-B")?.hostedContext.hostId).toBe("h-B");
   });
+
+
+
+  it("blocks Send while an environment pane cannot run, and never falls back to its client", () => {
+    compareEnvironmentBeside("h-B");
+    environmentsFlag.value = false;
+    multiHostFixture.panes = [
+      { paneId: "env_1", target: { kind: "environment", environmentId: "env_1" } },
+      { paneId: "h-B", target: { kind: "host", hostId: "h-B" } },
+    ];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(cardProps("env_1")).toBeUndefined();
+    expect(
+      screen.getByText(
+        "Environments aren't available here. Choose a client in pane settings.",
+      ),
+    ).toBeTruthy();
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+  });
+
 });

@@ -111,6 +111,7 @@ it("ends confirmed missing, invalid, changed config and foreign-scope owners", (
       status: "invalid",
       compareId: "a",
       hostId: "a",
+      targetKey: "host:a",
       compareLabel: "A",
       reason: "Invalid model choice",
     },
@@ -156,6 +157,32 @@ it("never shows a pane's old client while the client it now runs loads", () => {
   view.rerender({ value: input({ ...host, hostId: "b" }, true, false, "b") });
   const after = view.result.current[0];
   expect(after.status).toBe("ready");
+  if (before.status === "ready" && after.status === "ready") {
+    expect(after.ownerKey).not.toBe(before.ownerKey);
+  }
+});
+
+it("never keeps a client's card when the pane switches to an environment on that client", () => {
+  const view = renderHook(({ value }) => useRetainedCompareClients(value), {
+    initialProps: { value: input() },
+  });
+  const before = view.result.current[0];
+  const environment = input();
+  const ready = environment.resolutions[0];
+  if (ready.status !== "ready") throw new Error("expected a ready column");
+  environment.resolutions = [
+    {
+      ...ready,
+      column: {
+        ...ready.column,
+        targetKey: "environment:env-1",
+        environmentId: "env-1",
+      },
+    },
+  ];
+  view.rerender({ value: environment });
+  const after = view.result.current[0];
+  expect(after).toMatchObject({ status: "ready", column: { hostId: "a" } });
   if (before.status === "ready" && after.status === "ready") {
     expect(after.ownerKey).not.toBe(before.ownerKey);
   }

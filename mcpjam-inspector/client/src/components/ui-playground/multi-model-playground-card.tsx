@@ -100,7 +100,10 @@ import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { fitWidgetModelContext } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   CompareCardEffort,
@@ -303,6 +306,11 @@ interface MultiModelPlaygroundCardProps {
   hostCapsResolver?: HostConfigDtoV2 | null;
   /** A host pane whose model was picked in it sends that choice. */
   modelPicked?: boolean;
+  /** An environment pane's own model, shown without being sent. */
+  inheritedEnvironmentModel?: {
+    modelId: string | null;
+    modelSelection?: RequestedModelSelection | null;
+  };
   /** A host pane's settings button and summary row, given this card's lane. */
   renderPaneHeader?: RenderComparePaneHeader;
   onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
@@ -367,6 +375,7 @@ export function MultiModelPlaygroundCard({
   hostSnapshot,
   hostCapsResolver,
   modelPicked = false,
+  inheritedEnvironmentModel,
   renderPaneHeader,
   onSendReadinessChange,
   pluginHarnessId,
@@ -548,6 +557,7 @@ export function MultiModelPlaygroundCard({
     selectedModel,
   } = useChatSession({
     pickedModelSelection: selection,
+    inheritedEnvironmentModel,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
     selectionIntent:
       compareKind === "host" && !modelPicked ? "inherit" : "picked",

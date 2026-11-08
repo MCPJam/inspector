@@ -13,6 +13,7 @@ import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { resolveCompareSelectionRow } from "@/lib/compare-cards";
+import { paneTargetKey } from "@/lib/compare-panes";
 import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
 import {
   effectiveHarnessId,
@@ -32,6 +33,18 @@ export interface PlaygroundClientColumn {
   compareId: string;
   /** The client the column runs. Two panes can run one client. */
   hostId: string;
+  /** What the pane runs, as a key: a change of target is a new card. */
+  targetKey: string;
+  /** Set when the pane runs a named environment on `hostId`. */
+  environmentId?: string;
+  /**
+   * The environment's own model, shown without sending it: an environment
+   * pane with no pick inherits it on the server.
+   */
+  inheritedEnvironmentModel?: {
+    modelId: string | null;
+    modelSelection?: RequestedModelSelection | null;
+  };
   compareLabel: string;
   compareKind: "host";
   compareSubLabel: string;
@@ -53,6 +66,8 @@ export type PlaygroundClientResolution =
       status: "loading" | "unavailable" | "invalid";
       compareId: string;
       hostId: string;
+      targetKey: string;
+      environmentId?: string;
       compareLabel: string;
       reason: string;
       /** The saved model, when it resolved but is disabled (e.g. sign-in locked). */
@@ -92,6 +107,7 @@ export function resolvePlaygroundClientColumn({
   const identity = {
     compareId: paneId,
     hostId,
+    targetKey: paneTargetKey({ kind: "host", hostId }),
     compareLabel: clientDisplayName(
       listed ?? host ?? { name: "Unavailable client" },
     ),

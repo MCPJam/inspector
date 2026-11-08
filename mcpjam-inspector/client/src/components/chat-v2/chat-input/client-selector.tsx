@@ -1,7 +1,7 @@
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Plus, X } from "lucide-react";
+import { Check, Layers, Plus, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -65,7 +65,21 @@ export interface ClientSelectorData {
   onPromoteLead: (hostId: string) => void;
   enableMultiHost?: boolean;
   maxSelectedHosts?: number;
+  /**
+   * Compare panes that run an environment, in lineup order. They are not
+   * client rows: they stay as clients are ticked, and each chip removes one.
+   */
+  environmentPanes?: readonly { paneId: string; label: string }[];
+  /** Pane 0 runs an environment, so no client chip leads. */
+  environmentLeads?: boolean;
+  onRemovePane?: (paneId: string) => void;
+  /** Leaves Compare for one client, environment panes included. */
+  onPickSingleClient?: (hostId: string) => void;
 }
+
+const NO_ENVIRONMENT_PANES: NonNullable<
+  ClientSelectorData["environmentPanes"]
+> = [];
 
 interface ClientSelectorProps extends ClientSelectorData {
   /** Alternate trigger for embedded surfaces such as eval tables. */
@@ -98,6 +112,10 @@ export function ClientSelector({
   onPromoteLead,
   enableMultiHost = false,
   maxSelectedHosts = 3,
+  environmentPanes = NO_ENVIRONMENT_PANES,
+  environmentLeads = false,
+  onRemovePane,
+  onPickSingleClient,
   disabled,
   isLoading,
   onOpenChange,
@@ -194,14 +212,21 @@ export function ClientSelector({
     [effectiveSelectedHostIds],
   );
 
-  const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
+  const leadHostId = environmentLeads
+    ? null
+    : (effectiveSelectedHostIds[0] ?? currentHostId ?? null);
   const leadHost = leadHostId ? (hostsById.get(leadHostId) ?? null) : null;
-  const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
+  const leadHostName = leadHost
+    ? clientDisplayName(leadHost)
+    : environmentLeads
+      ? (environmentPanes[0]?.label ?? "Select host")
+      : "Select host";
   const leadHostLogo = leadHost?.name
     ? resolveHostLogoByName(leadHost.name, themeMode)
     : null;
 
-  const isComparing = effectiveSelectedHostIds.length > 1;
+  const isComparing =
+    effectiveSelectedHostIds.length + environmentPanes.length > 1;
   const limitReached = effectiveSelectedHostIds.length >= maxSelectedHosts;
   const triggerLabel = isComparing
     ? effectiveSelectedHostIds
@@ -217,8 +242,9 @@ export function ClientSelector({
     // Collapsing the lineup is required, not cosmetic. `useComparePanes`
     // preserves the column COUNT when only the lead changes, so changing the
     // lead alone would swap a compare column rather than leave comparison.
-    if (effectiveSelectedHostIds.length > 1) {
-      onSelectedHostIdsChange([hostId]);
+    if (isComparing) {
+      if (onPickSingleClient) onPickSingleClient(hostId);
+      else onSelectedHostIdsChange([hostId]);
       onMultiHostEnabledChange(false);
     }
     if (hostId !== leadHostId) onHostChange(hostId);
@@ -231,13 +257,13 @@ export function ClientSelector({
     const next = isSelected
       ? effectiveSelectedHostIds.filter((id) => id !== hostId)
       : [...effectiveSelectedHostIds, hostId];
-    // Never collapse to empty — at least the lead has to stay.
-    if (next.length === 0) return;
+    // Never collapse to empty: the lead, or an environment pane, stays.
+    if (next.length === 0 && environmentPanes.length === 0) return;
     onSelectedHostIdsChange(next);
     // No toggle to flip anymore — keep the parent's persisted "comparing"
     // flag in lockstep with the selection count so its mutual-exclusion
     // logic (vs. multi-model) and compare-grid gate still work unchanged.
-    onMultiHostEnabledChange(next.length > 1);
+    onMultiHostEnabledChange(next.length + environmentPanes.length > 1);
   };
 
   const handlePromoteLeadFromChip = (hostId: string) => {
@@ -245,6 +271,51 @@ export function ClientSelector({
     requestPopoverStayOpen();
     onPromoteLead(hostId);
   };
+
+  // Environment panes in the trigger, beside the client chips.
+  const environmentChips = environmentPanes.map((pane, index) => (
+    <span
+      key={pane.paneId}
+      className={cn(
+        "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
+        environmentLeads && index === 0
+          ? "border-primary/25 text-foreground"
+          : "border-border/50 text-muted-foreground",
+      )}
+    >
+      <Layers className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">{pane.label}</span>
+    </span>
+  ));
+  // In the popover each one can be removed, like a client chip.
+  const environmentStripChips = environmentPanes.map((pane, index) => (
+    <span
+      key={pane.paneId}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]",
+        environmentLeads && index === 0
+          ? "border-primary/25 bg-primary/5 text-foreground"
+          : "border-border/50 bg-muted/30 text-muted-foreground",
+      )}
+    >
+      <Layers className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">{pane.label}</span>
+      {onRemovePane ? (
+        <button
+          type="button"
+          aria-label={`Remove ${pane.label}`}
+          className="inline-flex size-3.5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            requestPopoverStayOpen();
+            onRemovePane(pane.paneId);
+          }}
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
+      ) : null}
+    </span>
+  ));
 
   const openCreate = () => {
     setIsOpen(false);
@@ -275,6 +346,7 @@ export function ClientSelector({
                 >
                   {isComparing ? (
                     <span className="flex min-w-0 items-center gap-1 overflow-hidden @max-2xl/toolbar:hidden">
+                      {environmentLeads ? environmentChips : null}
                       {effectiveSelectedHostIds.map((hostId, index) => {
                         const host = hostsById.get(hostId);
                         const name = compactHostLabel(
@@ -289,7 +361,7 @@ export function ClientSelector({
                             key={hostId}
                             className={cn(
                               "inline-flex h-5 w-[82px] min-w-0 shrink-0 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium",
-                              index === 0
+                              index === 0 && !environmentLeads
                                 ? "border-primary/25 text-foreground"
                                 : "border-border/50 text-muted-foreground",
                             )}
@@ -303,6 +375,7 @@ export function ClientSelector({
                           </span>
                         );
                       })}
+                      {environmentLeads ? null : environmentChips}
                     </span>
                   ) : (
                     <>
@@ -354,9 +427,10 @@ export function ClientSelector({
                 className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
                 title="First chip is the lead client. Click a chip to promote it."
               >
+                {environmentLeads ? environmentStripChips : null}
                 {effectiveSelectedHostIds.map((hostId, index) => {
                   const host = hostsById.get(hostId);
-                  const isLead = index === 0;
+                  const isLead = index === 0 && !environmentLeads;
                   const name = host ? clientDisplayName(host) : hostId;
                   const logo = resolveHostLogoByName(
                     host?.name ?? name,
@@ -399,6 +473,7 @@ export function ClientSelector({
                     </span>
                   );
                 })}
+                {environmentLeads ? null : environmentStripChips}
                 {limitReached ? (
                   <span className="w-full text-[10px] text-muted-foreground">
                     Max {maxSelectedHosts}. Remove one to add another.
