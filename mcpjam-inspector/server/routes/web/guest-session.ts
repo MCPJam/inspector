@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import {
+  GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
+  sanitizeGuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
 import type { Context } from "hono";
 import {
   fetchGuestPromotionProof,
@@ -42,6 +46,8 @@ const MAX_LEGACY_TOKEN_LENGTH = 4096;
 export const GUEST_SESSION_REFUSED_MESSAGE =
   "Too many guest sessions from your network today. Sign in to continue.";
 const GUEST_SESSION_REFUSED_RETRY_AFTER_S = 600;
+export const GUEST_ACCESS_DISABLED_MESSAGE =
+  "Guest access is off on this deployment. Sign in to continue.";
 
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
@@ -165,6 +171,17 @@ guestSession.post("/", async (c) => {
 
   if (result.kind === "miss") {
     return c.body(null, 204);
+  }
+
+  if (result.status === 403 && result.guestAccessDisabled) {
+    c.header(GUEST_SESSION_REFUSAL_HEADER, GUEST_ACCESS_DISABLED_CODE);
+    return c.json(
+      {
+        code: ErrorCode.GUEST_ACCESS_DISABLED,
+        message: GUEST_ACCESS_DISABLED_MESSAGE,
+      },
+      403
+    );
   }
 
   if (result.status === 403) {

@@ -13,6 +13,7 @@ interface UseChatStopControlsOptions {
    */
   isCompareMode: boolean;
   isStreaming: boolean;
+  canStopApproval?: boolean;
   /**
    * Summary table keyed by `compareId` (modelId in multi-model;
    * hostId in multi-host). Used to detect whether ANY visible card is
@@ -71,6 +72,7 @@ export function getAppDraftInteractivity({
 export function useChatStopControls({
   isCompareMode,
   isStreaming,
+  canStopApproval = false,
   multiModelSummaries,
   setStopBroadcastRequestId,
   stop,
@@ -94,7 +96,7 @@ export function useChatStopControls({
   }, [isCompareMode, setStopBroadcastRequestId, stop]);
 
   useEscapeToStopChat({
-    enabled: isStreamingActive,
+    enabled: isStreamingActive || (!isCompareMode && canStopApproval),
     onStop: stopActiveChat,
   });
 

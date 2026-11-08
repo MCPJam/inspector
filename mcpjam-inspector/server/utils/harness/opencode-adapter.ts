@@ -35,6 +35,10 @@ function withDefaultWorkingDirectory<T extends object>(
   });
 }
 
+// Host-tool MCP requests stay open across a human approval. The runtime's
+// default timeout otherwise resumes its model loop after our lease is revoked.
+const HOST_TOOL_APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
+
 export function createOpenCodeHarness(
   args: Pick<
     HarnessCreateArgs,
@@ -48,16 +52,17 @@ export function createOpenCodeHarness(
     ...(args.startupTimeoutMs
       ? { startupTimeoutMs: args.startupTimeoutMs }
       : {}),
-    ...(nativeModel
-      ? {
-          openCodeConfig: {
+    openCodeConfig: {
+      experimental: { mcp_timeout: HOST_TOOL_APPROVAL_TIMEOUT_MS },
+      ...(nativeModel
+        ? {
             agent: {
               title: { model: nativeModel },
               compaction: { model: nativeModel },
             },
-          },
-        }
-      : {}),
+          }
+        : {}),
+    },
   }) as HarnessAgentAdapter;
   return new Proxy(inner, {
     get(target, key, receiver) {
