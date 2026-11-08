@@ -168,6 +168,9 @@ const browserFixture = vi.hoisted(() => ({
   granted: false,
   setting: null as boolean | null,
 }));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => !browserFixture.guest,
+}));
 const browserConsent = vi.hoisted(() => () => ({
   status: browserFixture.granted ? "granted" : "absent",
   granted: browserFixture.granted,
@@ -2470,6 +2473,7 @@ describe("PlaygroundMain — multi-host render path", () => {
 
 // ── Project Environments — Phase 2 (Playground integration) ────────────────
 describe("PlaygroundMain — environment mode", () => {
+  beforeEach(() => { browserFixture.guest = false; });
   const defaultProps = {
     activeProjectId: "default",
     serverName: "test-server",
@@ -2531,6 +2535,13 @@ describe("PlaygroundMain — environment mode", () => {
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
       undefined,
     );
+  });
+
+  it("keeps a stored named setup inactive for a guest with a valid Convex session", () => {
+    selectEnvironment();
+    browserFixture.guest = true;
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBeUndefined();
   });
 
   it("targets the environment and stops sending a legacy hostId", () => {

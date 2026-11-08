@@ -24,7 +24,7 @@ export function useProjectEnvironmentsEnabledState(): boolean | undefined {
 }
 
 /** Named Playground setups are visible to the same members as the sidebar tab. */
-export function useProjectEnvironmentsVisible(isAuthenticated: boolean): boolean {
+export function useProjectEnvironmentsVisible(isMember: boolean | undefined): boolean {
   const enabled = useProjectEnvironmentsEnabled();
-  return enabled && isAuthenticated;
+  return enabled && isMember === true;
 }

@@ -1,3 +1,4 @@
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -557,7 +558,7 @@ export function MCPSidebar({
   const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
-  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(isAuthenticated);
+  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(useIsMemberActor());
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
   // (`user` is null and `isAuthenticated` is false even for signed-in users).
