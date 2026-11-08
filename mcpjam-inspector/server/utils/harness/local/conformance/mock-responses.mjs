@@ -128,21 +128,7 @@ function userText(item) {
     .join("\n");
 }
 
-/** "<media type>:<base64 length>" for each input_image of the last user message that has one. */
-function userImages(input) {
-  for (const item of [...input].reverse()) {
-    if (item?.role !== "user" || !Array.isArray(item.content)) continue;
-    const images = item.content.filter((part) => part?.type === "input_image");
-    if (images.length === 0) continue;
-    return images.map((part) => {
-      const m = /^data:([^;,]+);base64,(.*)$/s.exec(String(part.image_url ?? ""));
-      return m ? `${m[1]}:${m[2].length}` : "not-a-data-url";
-    });
-  }
-  return [];
-}
-
-const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT|IMAGES)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -200,7 +186,6 @@ const server = http.createServer((req, res) => {
       if (kind === "MCPPROBE") return reply({ calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
       if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
       if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns}` });
-      if (kind === "IMAGES") { const images = userImages(input); return reply({ text: `IMAGES=${images.length} ${images.join(",")}` }); }
     }
     return reply({ text: `ECHO: ${latest.slice(0, 80)}` });
   });
