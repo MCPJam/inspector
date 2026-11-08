@@ -121,9 +121,21 @@ function shellSingleQuote(value: string): string {
  *  has to be present so the CLI makes the request. */
 const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 
+/**
+ * OpenCode 1.18.23's Anthropic client appends `/messages` to
+ * `ANTHROPIC_BASE_URL`. Claude Code and the official SDK append
+ * `/v1/messages` to the lease origin (`…/model-proxy/anthropic`). Give OpenCode
+ * the `/v1` suffix so both hit the backend allowlist.
+ */
+export function opencodeAnthropicBrokerBaseUrl(proxyBaseUrl: string): string {
+  const trimmed = proxyBaseUrl.replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
+
 /** Build the dummy broker auth pointed at the proxy base URL. Claude Code reads
  *  `ANTHROPIC_AUTH_TOKEN` (Bearer) + `ANTHROPIC_BASE_URL`; Codex reads
- *  `CODEX_API_KEY` + `OPENAI_BASE_URL`.
+ *  `CODEX_API_KEY` + `OPENAI_BASE_URL`. OpenCode reads the same Anthropic pair
+ *  as Claude Code, but its base URL must already include `/v1`.
  *
  *  `ANTHROPIC_API_KEY` is deliberately ABSENT rather than empty: the adapter
  *  keys its credential-forwarding transformations off which variables are
@@ -160,7 +172,7 @@ export function buildBrokerDummyAuth(
     case "opencode":
       return {
         ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
-        ANTHROPIC_BASE_URL: proxyBaseUrl,
+        ANTHROPIC_BASE_URL: opencodeAnthropicBrokerBaseUrl(proxyBaseUrl),
       };
     case "cursor":
       throw new Error(

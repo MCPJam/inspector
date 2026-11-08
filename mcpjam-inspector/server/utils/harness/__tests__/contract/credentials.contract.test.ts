@@ -15,7 +15,13 @@ describe.each(CASES)(
       expect(adapter.modelAccess).toBe(descriptor.modelAccess);
       if (descriptor.modelAccess === "broker") {
         const auth = buildBrokerDummyAuth(id, "https://broker.test");
-        expect(Object.values(auth)).toContain("https://broker.test");
+        expect(
+          Object.values(auth).some(
+            (value) =>
+              typeof value === "string" &&
+              value.startsWith("https://broker.test"),
+          ),
+        ).toBe(true);
         expect(descriptor.credential).toBeNull();
       } else {
         expect(() => buildBrokerDummyAuth(id, "https://broker.test")).toThrow(

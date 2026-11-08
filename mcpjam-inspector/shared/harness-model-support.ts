@@ -142,13 +142,13 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
 }
 
 /**
- * The organization upstream each BROKERED harness can run on: its own vendor's
- * native API, on the organization's key, and the runtime profile that talks to
- * it. Claude Code speaks Anthropic Messages and Codex speaks OpenAI Responses,
- * so a turn whose saved selection names an org Anthropic (resp. OpenAI)
- * connection runs on that key through MCPJam's model proxy. Cursor
- * authenticates with the customer's own Cursor account and runs on no org
- * connection.
+ * The organization upstream a harness can run on: its own vendor's native API,
+ * on the organization's key, and the runtime profile that talks to it. Claude
+ * Code speaks Anthropic Messages and Codex speaks OpenAI Responses, so a turn
+ * whose saved selection names an org Anthropic (resp. OpenAI) connection runs
+ * on that key through MCPJam's model proxy. Cursor authenticates with the
+ * customer's own Cursor account. OpenCode is platform-funded only until its
+ * org-key path is qualified, so it takes no org connection.
  *
  * This is the preflight's answer from non-secret metadata; the backend still
  * resolves the connection id authoritatively at lease start and refuses a

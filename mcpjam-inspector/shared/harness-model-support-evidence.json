@@ -151,10 +151,10 @@
     },
     {
       "harness": "opencode",
-      "versionRange": "*",
-      "familyPattern": "^anthropic/claude-haiku-\\d+(\\.\\d+)?$",
+      "versionRange": "1.18.x",
+      "familyPattern": "^anthropic/claude-haiku-4\\.5$",
       "status": "supported",
-      "evidence": "HARN-53 hosted Playground qualification: OpenCode 1.18.23 ran anthropic/claude-haiku-4.5 through the platform Anthropic broker with MCPJam host-executed tools.",
+      "evidence": "OpenCode 1.18.23 ran anthropic/claude-haiku-4.5 against a scripted Anthropic-compatible upstream. No hosted broker lease was exercised.",
       "observedAt": "2026-11-08"
     },
     {
@@ -162,7 +162,7 @@
       "versionRange": "*",
       "familyPattern": "^anthropic/",
       "status": "unknown",
-      "evidence": "Anthropic model outside the measured haiku family: no OpenCode native model id has been verified on 1.18.23.",
+      "evidence": "Anthropic model outside the measured OpenCode 1.18.23 and claude-haiku-4.5 pair.",
       "observedAt": "2026-11-08"
     },
     {

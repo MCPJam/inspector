@@ -316,11 +316,11 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "6fb458fd9fdf271c5ced0dc48c4c2df2be99d50b08ad6fdbb591306f9e0e2a35",
+      "db08060ac8fc2321ddbc86c83324be9e0031d8609c0140f6fb3a401f87c48892",
     );
   });
 
-  it("supports OpenCode haiku and refuses a foreign family", () => {
+  it("supports only the measured OpenCode 1.18.x haiku 4.5 pair", () => {
     expect(
       harnessModelSupport({
         harnessId: "opencode",
@@ -328,6 +328,27 @@ describe("evidence table", () => {
         runtimeVersion: "1.18.23",
       }).status,
     ).toBe("supported");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.18.23",
+      }).reason,
+    ).toMatch(/scripted Anthropic-compatible upstream/);
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.17.0",
+      }).status,
+    ).toBe("unknown");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-3.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unknown");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
@@ -359,6 +380,7 @@ describe("harnessOrgUpstream", () => {
 
   it("is null for a harness on the customer's own account, or an unknown id", () => {
     expect(harnessOrgUpstream("cursor")).toBeNull();
+    expect(harnessOrgUpstream("opencode")).toBeNull();
     expect(harnessOrgUpstream("toString")).toBeNull();
     expect(harnessOrgUpstream("not-a-harness")).toBeNull();
   });
@@ -368,6 +390,7 @@ describe("harnessOrgUpstream", () => {
     expect(harnessRunsOnOrgProvider("claude-code", "openai")).toBe(false);
     expect(harnessRunsOnOrgProvider("codex", "openai")).toBe(true);
     expect(harnessRunsOnOrgProvider("cursor", "anthropic")).toBe(false);
+    expect(harnessRunsOnOrgProvider("opencode", "anthropic")).toBe(false);
     expect(harnessRunsOnOrgProvider("codex", undefined)).toBe(false);
   });
 });

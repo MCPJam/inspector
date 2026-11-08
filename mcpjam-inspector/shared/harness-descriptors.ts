@@ -128,7 +128,7 @@ export const HARNESS_DESCRIPTORS = {
   opencode: {
     displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
     modelAccess: "broker", local: false, guest: false,
-    orgUpstream: { provider: "anthropic", profile: "anthropic-native" },
+    orgUpstream: null,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },

@@ -259,10 +259,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
-      "orgUpstream": {
-        "profile": "anthropic-native",
-        "provider": "anthropic"
-      },
+      "orgUpstream": null,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "1.18.23"

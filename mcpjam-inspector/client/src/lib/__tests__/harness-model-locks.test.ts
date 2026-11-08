@@ -225,6 +225,24 @@ describe("organization-key rows on a harness", () => {
     ]);
   });
 
+  it("OpenCode offers hosted Anthropic rows and refuses organization keys", () => {
+    expect(
+      harnessPickerModels(WITH_ORG, { harnessId: "opencode" }).map(modelRowKey),
+    ).toEqual([
+      "hosted:anthropic:anthropic/claude-haiku-4.5",
+      "hosted:anthropic:anthropic/claude-fable-5",
+    ]);
+    expect(
+      harnessRowRefusalReason(
+        ORG_ANTHROPIC,
+        { harnessId: "opencode" },
+        "chat",
+      ),
+    ).toBe(
+      "The OpenCode client does not support organization provider keys. Choose another client.",
+    );
+  });
+
   it("refuses another vendor's org connection and a local key", () => {
     for (const row of [ORG_OPENROUTER_CLAUDE, LOCAL_ANTHROPIC, ORG_OPENAI]) {
       expect(
@@ -410,6 +428,13 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         "eval",
       ),
     ).toMatch(/organization's Anthropic key/);
+    expect(
+      harnessChoiceRefusalReason(
+        org("anthropic/claude-haiku-4.5"),
+        { harnessId: "opencode" },
+        "eval",
+      ),
+    ).toMatch(/does not support organization provider keys/);
   });
 
   it("a local selection never runs on a brokered harness", () => {

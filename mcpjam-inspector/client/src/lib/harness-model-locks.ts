@@ -6,12 +6,13 @@
  * run time; one that hid it without saying why would look like a missing model.
  * So an incompatible row stays listed, disabled, with the server's own reason.
  *
- * Whose key pays is decided first, per ROW: a brokered harness (Claude Code,
- * Codex) runs an MCPJam-provided row on MCPJam's key, or a row from an
- * organization connection on its own vendor (Claude Code → Anthropic, Codex →
- * OpenAI) on the organization's key — read on the canonical id that row's
- * saved selection names. Any other row (a key on this machine, an org
- * connection to another vendor) is refused, exactly as the server refuses it.
+ * Whose key pays is decided first, per ROW: a harness with a qualified
+ * org-key path (Claude Code, Codex) runs an MCPJam-provided row on MCPJam's
+ * key, or a row from an organization connection on its own vendor (Claude
+ * Code → Anthropic, Codex → OpenAI) on the organization's key, read on the
+ * canonical id that row's saved selection names. OpenCode is platform-funded
+ * only. Any other row (a key on this machine, an org connection a harness
+ * cannot run on) is refused, exactly as the server refuses it.
  *
  * While the organization requires its own provider keys (`HarnessKeyPolicy`),
  * MCPJam-provided models are off: a brokered harness runs only on an
@@ -83,8 +84,8 @@ function harnessTakesOrgKeys(harnessId: string): boolean {
  * The id the evidence table reads for a picker ROW on `target`, or why the row
  * cannot run there at all. See the module comment for the rule.
  *
- * A harness that never takes an org key (Cursor, which runs on the customer's
- * own Cursor account) reads the table alone.
+ * A harness that never takes an org key (Cursor, on the customer's own
+ * Cursor account; OpenCode, platform-funded only) reads the table alone.
  */
 export function harnessRowModelId(
   model: ModelDefinition,
@@ -94,6 +95,14 @@ export function harnessRowModelId(
   | { modelId: string; rail: "hosted" | "org" | "evidence" }
   | { refusal: string } {
   if (!harnessTakesOrgKeys(target.harnessId)) {
+    if (model.orgProvider) {
+      return {
+        refusal: harnessOrgProviderUnsupportedReason(
+          target.harnessId,
+          policy,
+        ),
+      };
+    }
     return { modelId: String(model.id), rail: "evidence" };
   }
   if (isMCPJamProvidedModelMenuItem(model)) {
@@ -166,19 +175,17 @@ export function harnessChoiceRefusalReason(
   purpose: HarnessModelPurpose,
 ): string | undefined {
   if (!target) return undefined;
-  if (harnessTakesOrgKeys(target.harnessId)) {
-    const source = choice.selection?.source;
-    if (source === "local") {
+  const source = choice.selection?.source;
+  if (source === "org") {
+    const vendor = choice.modelId.includes("/")
+      ? hostedProviderFromCanonicalId(choice.modelId)
+      : undefined;
+    if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
       return harnessOrgProviderUnsupportedReason(target.harnessId);
     }
-    if (source === "org") {
-      const vendor = choice.modelId.includes("/")
-        ? hostedProviderFromCanonicalId(choice.modelId)
-        : undefined;
-      if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
-        return harnessOrgProviderUnsupportedReason(target.harnessId);
-      }
-    }
+  }
+  if (harnessTakesOrgKeys(target.harnessId) && source === "local") {
+    return harnessOrgProviderUnsupportedReason(target.harnessId);
   }
   return harnessModelRefusalReason(choice.modelId, target, purpose);
 }

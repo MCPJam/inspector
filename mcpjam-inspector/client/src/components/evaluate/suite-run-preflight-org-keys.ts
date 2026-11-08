@@ -182,11 +182,11 @@ function orgModelVendor(
 }
 
 /**
- * A harness with no organization-key path (Cursor, which runs on the
- * customer's own Cursor account) can't run while the organization requires
- * its own keys, whatever its model, Cursor Auto included: the backend refuses
- * every such runtime (`org_runtime_unsupported`). One sentence per harness,
- * however many of its cells the launch has.
+ * A harness with no organization-key path (Cursor, on the customer's own
+ * Cursor account; OpenCode, platform-funded only) can't run while the
+ * organization requires its own keys: the backend refuses every such runtime
+ * (`org_runtime_unsupported`). One sentence per harness, however many of its
+ * cells the launch has.
  */
 function orgKeyRuntimeProblem(model: PreflightModel): string | null {
   const harnessId = model.harness;

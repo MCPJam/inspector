@@ -20,6 +20,7 @@ describe("harness descriptors", () => {
       opencode: "1.18.23",
     });
     expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();
+    expect(HARNESS_ORG_UPSTREAM.opencode).toBeNull();
     expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex"]);
   });
   it("grants MCPJam extensions by client ownership", () => {

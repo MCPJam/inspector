@@ -1523,13 +1523,7 @@ describe("the organization's own key (native upstream profiles)", () => {
   };
   const mcpJson = { mcpServers: {} };
 
-  it("each brokered adapter has an org upstream; an external-account one has none", () => {
-    for (const id of registeredHarnessIds()) {
-      const adapter = getHarnessAdapter(id);
-      expect(harnessOrgUpstream(id) !== null).toBe(
-        adapter.modelAccess === "broker",
-      );
-    }
+  it("only Claude Code and Codex admit an organization key", () => {
     expect(harnessOrgUpstream("claude-code")).toEqual({
       provider: "anthropic",
       profile: "anthropic-native",
@@ -1538,6 +1532,8 @@ describe("the organization's own key (native upstream profiles)", () => {
       provider: "openai",
       profile: "openai-native",
     });
+    expect(harnessOrgUpstream("cursor")).toBeNull();
+    expect(harnessOrgUpstream("opencode")).toBeNull();
   });
 
   it("Claude Code runs the leased native id on the native profile, the alias on the Gateway", () => {

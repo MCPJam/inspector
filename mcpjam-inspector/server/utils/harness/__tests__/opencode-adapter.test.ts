@@ -2,11 +2,14 @@
  * Hosted OpenCode: MCPJam host-executed tools, brokered Anthropic, no guest
  * or local path, title/compaction pinned to the leased model.
  */
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenCode } from "@ai-sdk/harness-opencode";
 import {
   buildBrokerDummyAuth,
   getHarnessAdapter,
+  opencodeAnthropicBrokerBaseUrl,
   registeredHarnessIds,
 } from "../registry.js";
 import { createOpenCodeHarness } from "../opencode-adapter.js";
@@ -36,13 +39,48 @@ describe("the OpenCode adapter", () => {
 
   it("uses dummy Anthropic broker auth, never a warm-agent close header", () => {
     const auth = buildBrokerDummyAuth("opencode", "https://proxy.example");
-    expect(auth.ANTHROPIC_BASE_URL).toBe("https://proxy.example");
+    expect(auth.ANTHROPIC_BASE_URL).toBe("https://proxy.example/v1");
     expect(auth.ANTHROPIC_AUTH_TOKEN).toBeTruthy();
     expect(auth).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(auth).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
     expect(
       buildBrokerDummyAuth("opencode", "https://proxy.example", true),
     ).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(opencodeAnthropicBrokerBaseUrl("https://proxy.example/")).toBe(
+      "https://proxy.example/v1",
+    );
+    expect(opencodeAnthropicBrokerBaseUrl("https://proxy.example/v1")).toBe(
+      "https://proxy.example/v1",
+    );
+  });
+
+  it("observes OpenCode's /messages request on the broker /v1/messages path", async () => {
+    const seen: string[] = [];
+    const server: Server = createServer((request, response) => {
+      seen.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const { port } = server.address() as AddressInfo;
+    try {
+      const leaseBase = `http://127.0.0.1:${port}/web/harness/model-proxy/anthropic`;
+      const auth = buildBrokerDummyAuth("opencode", leaseBase);
+      // OpenCode 1.18.23 appends `/messages` to ANTHROPIC_BASE_URL.
+      const outgoing = `${String(auth.ANTHROPIC_BASE_URL).replace(/\/+$/, "")}/messages`;
+      const response = await fetch(outgoing, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(response.ok).toBe(true);
+      expect(seen).toEqual(["/web/harness/model-proxy/anthropic/v1/messages"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("admits an approval-gated host someone can answer", () => {
