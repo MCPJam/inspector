@@ -81,7 +81,12 @@ const checks = {
     ],
     // Mirrors the rg globs the shell version carried.
     skipDirectoryNames: ["dist"],
-    skipPathPrefixes: ["mcp/src/ui"],
+    skipPathPrefixes: [
+      "mcp/src/ui",
+      // Imports nothing from the MCP SDK: it resolves the package's directory
+      // to stage the node_modules the patched Claude Code bridge loads.
+      "mcpjam-inspector/server/utils/harness/__tests__/claude-code-background-followup.test.ts",
+    ],
     skipFileSuffixes: [".bundled.ts", ".generated.ts"],
     patterns: [
       {
