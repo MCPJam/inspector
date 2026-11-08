@@ -1,10 +1,11 @@
 /**
  * Open a workspace port in the hosted browser.
  *
- * The browser runs on the conversation's desktop box and the app runs in the
- * conversation's workspace, so a navigation to `http://localhost:<port>` needs
- * two things before it is sent: the workspace's tunnel sidecar running, and the
- * browser box's relay granted that one port. Both are idempotent, so every
+ * The browser runs on a desktop box and the app runs on the shell's box (a
+ * conversation's workspace, or an unattended run's pinned image), so a
+ * navigation to `http://localhost:<port>` needs two things before it is sent:
+ * the workspace's tunnel sidecar running, and the browser box's relay granted
+ * that one port. Both are idempotent, so every
  * localhost navigation calls this rather than tracking what an earlier turn or
  * another replica already set up.
  *
@@ -39,15 +40,15 @@ export type WorkspacePreviewErrorCode =
 /** Model-facing, because the agent is the one that asked for the page. */
 const MESSAGES: Record<WorkspacePreviewErrorCode, string> = {
   https_unsupported:
-    "preview_unavailable: Browser opens this conversation's apps over http only. Use http://localhost:<port>.",
+    "preview_unavailable: Browser opens the shell's apps over http only. Use http://localhost:<port>.",
   port_not_allowed:
     "preview_unavailable: that port is reserved. Browser opens apps on ports 1024 to 65535.",
   no_node_runtime:
-    "preview_unavailable: this conversation's computer has no Node.js, which Browser needs to reach its apps. Check the app from the terminal instead.",
+    "preview_unavailable: the shell's computer has no Node.js, which Browser needs to reach its apps. Check the app from the shell instead.",
   tunnel_start_failed:
-    "preview_unavailable: Browser could not connect to this conversation's computer. Try again.",
+    "preview_unavailable: Browser could not connect to the shell's computer. Try again.",
   browser_preview_unsupported:
-    "preview_unavailable: this browser was started before it could open the computer's apps. It updates when the browser is idle; try again later.",
+    "preview_unavailable: this browser was started before it could open the shell's apps. It updates when the browser is idle; try again later.",
   port_unavailable:
     "preview_unavailable: that port is in use on the browser's own computer. Run the app on another port.",
 };
@@ -252,9 +253,9 @@ export async function preparePreviewNavigation(args: {
   );
 }
 
-/** The workspace a watched conversation's browser can reach on localhost. */
+/** The workspace a hosted browser can reach on localhost. */
 export interface PreviewWorkspace {
-  /** The provider id of the box running the person's app. */
+  /** The provider id of the box the app runs on. */
   sandboxId: string;
 }
 

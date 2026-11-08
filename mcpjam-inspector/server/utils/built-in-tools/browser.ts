@@ -314,7 +314,7 @@ export interface BrowserToolsOptions {
    * produce one.
    */
   sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
-  /** The conversation's workspace, opened at `http://localhost:<port>`. */
+  /** The shell's workspace, opened at `http://localhost:<port>`. */
   previewWorkspace?: PreviewWorkspaceSource;
   ensureSession?: (args: {
     bearer: string;
@@ -1674,7 +1674,7 @@ export function buildBrowserTools(
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting." +
         (opts.previewWorkspace
-          ? " Apps running on this conversation's computer open at http://localhost:<port>."
+          ? " Apps running on the shell's computer open at http://localhost:<port>."
           : ""),
       inputSchema: z.object({
         url: z

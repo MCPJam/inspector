@@ -125,6 +125,28 @@ describe("hosted-browser verdict freshness", () => {
       },
     );
     expect(Object.keys(bookedRun ?? {})).toContain("browser_navigate");
+    // A desktop paired with a pinned shell box is booked just the same.
+    const pairedRun = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: {
+          kind: "unattended",
+          policy: { mode: "allow_all" },
+        },
+        runKey: "iteration-8",
+        sandboxBinding: {
+          sandboxId: "sbx_pinned_1",
+          sandboxRowId: "row_pinned_1",
+        },
+        browserSandboxBinding: {
+          sandboxId: "sbx_desktop_2",
+          sandboxRowId: "row_desktop_2",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    );
+    expect(Object.keys(pairedRun ?? {})).toContain("browser_navigate");
 
     const suppressed: Array<{ id: string; reason: string }> = [];
     const projectComputer = resolveHostTools(

@@ -37,9 +37,9 @@ describe("evalBoxFilesystemIsReachable", () => {
   });
 
   it("a DESKTOP box with no harness is NOT reachable", () => {
-    // An emulated browser iteration holds `browser_*` and nothing else:
-    // `browser` and `bash` are mutually exclusive on a host config, so there
-    // is no tool on this box that opens a file.
+    // An emulated browser iteration holds only `browser_*` on this box: the
+    // runner adds `bash` to a terminal box alone (the pinned half of a paired
+    // run included), so there is no tool here that opens a file.
     expect(
       evalBoxFilesystemIsReachable({ runtimeKind: "desktop-browser" }),
     ).toBe(false);
