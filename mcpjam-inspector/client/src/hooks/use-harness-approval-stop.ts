@@ -93,7 +93,7 @@ export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchB
     setStopping(true);
     setStopFailed(false);
     try {
-      const lastUser = messages.findLastIndex((message) => message.role === "user");
+      const lastUser = messages.map((message) => message.role).lastIndexOf("user");
       const approvalIds = messages.slice(lastUser + 1).flatMap((message) =>
         message.parts.flatMap((part) =>
           isToolUIPart(part) && part.state === "approval-responded" ? [part.approval.id] : [],
