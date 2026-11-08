@@ -167,15 +167,25 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
     model,
     showComparisonChrome = true,
     showTraceTabs,
+    identityActions,
+    identitySummary,
   }: {
     model: { name: string };
     showComparisonChrome?: boolean;
     showTraceTabs: boolean;
+    identityActions?: React.ReactNode;
+    identitySummary?: React.ReactNode;
   }) => {
     if (!showComparisonChrome && !showTraceTabs) {
       return null;
     }
-    return <div data-testid="compare-card-header">{model.name}</div>;
+    return (
+      <div data-testid="compare-card-header">
+        {model.name}
+        {identityActions}
+        {identitySummary}
+      </div>
+    );
   },
 }));
 
@@ -246,7 +256,11 @@ function Harness({
   claimBroadcastDelivery,
   hostCapsResolver,
   pluginComputerAttached,
+  renderPaneHeader,
 }: {
+  renderPaneHeader?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["renderPaneHeader"];
   hostCapsResolver?: Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"];
   pluginComputerAttached?: boolean;
   active?: boolean;
@@ -289,6 +303,8 @@ function Harness({
       </div>
       <MultiModelPlaygroundCard
         active={active}
+        renderPaneHeader={renderPaneHeader}
+        showIdentityHeader={!!renderPaneHeader}
         hostCapsResolver={hostCapsResolver}
         pluginComputerAttached={pluginComputerAttached}
         readinessNotice={readinessNotice}
@@ -462,6 +478,34 @@ describe("MultiModelPlaygroundCard", () => {
       serverId: "plugin_server",
       name: "Plugin",
     });
+  });
+
+  it("gives a pane's header the hidden environment its lane composed", () => {
+    composition.wanted = true;
+    const renderPaneHeader = vi.fn(() => ({
+      actions: <button type="button">Pane settings</button>,
+      summary: <p>Pane summary</p>,
+    }));
+    const { rerender } = render(
+      <Harness compareKind="host" renderPaneHeader={renderPaneHeader} />,
+    );
+    // The lane does not run the hidden environment for this model yet.
+    expect(renderPaneHeader).toHaveBeenLastCalledWith({
+      environmentId: null,
+      pending: false,
+    });
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    rerender(
+      <Harness compareKind="host" renderPaneHeader={renderPaneHeader} />,
+    );
+    expect(renderPaneHeader).toHaveBeenLastCalledWith({
+      environmentId: "env_column",
+      pending: false,
+    });
+    expect(
+      screen.getByRole("button", { name: "Pane settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pane summary")).toBeInTheDocument();
   });
 
   it("omits plugin Apps when this model does not run the hidden environment", () => {

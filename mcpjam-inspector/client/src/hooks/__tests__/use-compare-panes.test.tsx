@@ -401,4 +401,40 @@ describe("useComparePanes", () => {
       ),
     ).toEqual({ version: 2, panes: [] });
   });
+
+  it("saves a pane's picked model and forgets it when the pick is cleared", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    const pick = {
+      source: "hosted" as const,
+      modelId: "openai/gpt-5.5",
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    act(() => result.current.setPanePick("b", pick));
+    expect(result.current.panes[1]).toMatchObject({ pickedSelection: pick });
+    expect(loadComparePanes(PROJECT)[1]).toMatchObject({
+      pickedSelection: pick,
+    });
+    act(() => result.current.setPanePick("b", undefined));
+    expect(loadComparePanes(PROJECT)[1]).toEqual({
+      paneId: "b",
+      target: { kind: "host", hostId: "b" },
+    });
+  });
+
+  it("edits pane 0 after an outside lead change put a new client there", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    // The global client bar previews c: the lead sync shows it as pane 0.
+    act(() => savePreviewedHostId(PROJECT, "c"));
+    expect(result.current.selectedHostIds).toEqual(["c", "b"]);
+    act(() => result.current.setPaneOverrides("c", { serverIds: [] }));
+    expect(result.current.panes[0]).toMatchObject({
+      paneId: "c",
+      serverIds: [],
+    });
+    expect(result.current.panes[1]).toMatchObject({ paneId: "b" });
+  });
 });

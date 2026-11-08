@@ -415,6 +415,25 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("shows the environment's exact connection without sending a pick, then edits that same choice", () => {
+    const base = selectionOptions();
+    const { result, rerender } = renderHook(({ environmentId }) => useChatSession({
+      ...base, pickedModelSelection: undefined, executionConfig: undefined,
+      selectionIntent: "inherit", inheritedEnvironmentModel: {
+        modelId: savedOrgChoice.modelId, modelSelection: savedOrgChoice,
+      },
+      hostedContext: { ...base.hostedContext, executionTarget: { kind: "environment", environmentId } },
+    }), { initialProps: { environmentId: "env-a" } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body().modelSelection).toMatchObject({
+      source: "org", connectionRef: savedOrgChoice.connectionRef, settings: { temperature: 0.9 },
+    });
+    rerender({ environmentId: "env-b" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+  });
+
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
     const options = { ...selectionOptions(), selectionIntent: "inherit" as const };
     const { result, rerender, unmount } = renderHook(({ hostId }) => useChatSession({

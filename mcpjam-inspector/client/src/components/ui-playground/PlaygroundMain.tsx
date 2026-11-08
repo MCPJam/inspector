@@ -26,6 +26,7 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
+import { buildComparePaneTarget } from "@/lib/compare-pane-target";
 import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
@@ -256,7 +257,8 @@ import {
 } from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
 import { ConversationTargetNotice } from "@/components/playground/ConversationTargetNotice";
@@ -286,7 +288,12 @@ import { useComparePanes } from "@/hooks/use-compare-panes";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
-import { paneHostId, promoteLeadPane } from "@/lib/compare-panes";
+import {
+  chipClientLimit,
+  paneHostId,
+  promoteLeadPane,
+} from "@/lib/compare-panes";
+import { useComparePaneControls } from "./use-compare-pane-controls";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -1027,9 +1034,10 @@ export function PlaygroundMain({
   // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
   // outside environment mode every field below is inert and the Playground
   // behaves exactly as it does today.
-  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
+  const paneMember = useIsMemberActor();
+  const environmentsEnabled = useProjectEnvironmentsVisible(paneMember);
+  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId, environmentsEnabled);
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   // Whether this turn may use the tools of the page open in the WebMCP tab.
   // Derived from session liveness: a closed status leaves the last tool
   // snapshot in place, and advertising a dead browser's tools to a model is
@@ -1401,6 +1409,7 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
+    inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
     selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
@@ -1416,67 +1425,13 @@ export function PlaygroundMain({
         : {}),
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
-      // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
-      // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
-      ...(isEnvironmentMode
-        ? {
-            executionTarget: playgroundEnvironment.executionTarget,
-            // Only present when the user explicitly overrode the server set.
-            ...(playgroundEnvironment.environmentOverrides
-              ? {
-                  environmentOverrides:
-                    playgroundEnvironment.environmentOverrides,
-                }
-              : {}),
-            // The environment's servers resolve by Convex id server-side (and
-            // some are plugin-contributed, i.e. invisible to the browser's
-            // catalog), so the turn MUST use the managed setup, which
-            // resolves them.
-            requiresWebChatApi: true,
-            // Deliberately NO `ensureServerIds`: resolving environment servers
-            // by NAME would fail for plugin-contributed ones and bypass plugin
-            // lifecycle semantics for the rest.
-            //
-            // NOT a second execution pointer — a client-side cache key. The
-            // environment's host is already the previewed host (presentation
-            // only), and host-keyed client caches (the harness workdir the
-            // Shell opens a terminal in) are read by that id, so the write side
-            // has to know it. The server still resolves the host from the
-            // environment.
-            ...(previewedHostId ? { presentationHostId: previewedHostId } : {}),
-          }
-        : {
-            // Resolve/persist selected server names → Convex ids before a hosted
-            // harness send (ad-hoc/App servers included), so the proxy never
-            // sees a display name. Absent in isolated embeds → falls back to the
-            // pre-resolved selection above.
-            ...(playgroundServerActions?.ensureHostedServerIdsForNames
-              ? {
-                  ensureServerIds:
-                    playgroundServerActions.ensureHostedServerIdsForNames,
-                }
-              : {}),
-            // Forward the previewed host id so the server re-resolves its
-            // authoritative runtime config (harness/computer) for this direct
-            // session, and so switching hosts forks the chat session.
-            ...(previewedHostId ? { hostId: previewedHostId } : {}),
-            // The project has a runnable plugin and the environments UI is
-            // hidden: the chat hook sends this composition INSTEAD of
-            // `hostId` wherever a managed turn runs, keeping
-            // the server preflight above for the chat's own servers. Absent
-            // otherwise, so a chat without plugins sends exactly what it did.
-            ...(hiddenEnvironment.wanted || hiddenEnvironment.blockingError
-              ? {
-                  hiddenEnvironment: {
-                    environmentId: hiddenEnvironment.environmentId,
-                    blockingError: hiddenEnvironment.blockingError,
-                    pluginServerIds: hiddenEnvironment.pluginServerIds,
-                    venue: hiddenEnvironment.venue,
-                    recover: hiddenEnvironment.recover,
-                  },
-                }
-              : {}),
-          }),
+      ...buildComparePaneTarget({
+        target: isEnvironmentMode ? playgroundEnvironment.executionTarget : undefined,
+        hostId: previewedHostId,
+        overrides: playgroundEnvironment.environmentOverrides,
+        ensureServerIds: playgroundServerActions?.ensureHostedServerIdsForNames,
+        composition: hiddenEnvironment,
+      }),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
@@ -1559,7 +1514,7 @@ export function PlaygroundMain({
   const onSelectMultipleServers =
     playgroundServerSelectorProps?.onSelectMultipleServers;
   const previewedHostConfigId = previewedHost?.config.id;
-  const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
+  const lastSeededHostRef = useRef<{ hostId: string; configId: string; environment: boolean } | null>(
     null,
   );
   // Whether the last host switch seeded an effort (so a switch to a host
@@ -1607,12 +1562,13 @@ export function PlaygroundMain({
       lastSeededHostRef.current = {
         hostId: previewedHostId,
         configId: previewedHost.config.id,
+        environment: isEnvironmentMode,
       };
       return;
     }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
-    if (last && last.hostId === previewedHostId && last.configId === configId) {
+    if (last && last.hostId === previewedHostId && last.configId === configId && last.environment === isEnvironmentMode) {
       return;
     }
 
@@ -1636,7 +1592,7 @@ export function PlaygroundMain({
     // Only a host SWITCH (or an edit of the host's config) moves the host's
     // model into pane 1.
     const isFirstSeedThisMount = last === null;
-    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+    lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
     setSystemPrompt(cfg.systemPrompt);
     setTemperature(cfg.temperature);
@@ -1660,7 +1616,7 @@ export function PlaygroundMain({
     // path in applyHostConfigToPlayground covers cross-tab + cold-start;
     // this covers in-tab host switches without waiting for the storage
     // event round-trip.
-    const desiredModelId = cfg.modelId?.trim();
+    const desiredModelId = isEnvironmentMode ? undefined : cfg.modelId?.trim();
     if (desiredModelId) {
       // Selection-aware, as the host Agent tab resolves it: a saved canonical
       // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
@@ -1728,6 +1684,7 @@ export function PlaygroundMain({
     previewedHostId,
     previewedHostConfigId,
     previewedHost,
+    isEnvironmentMode,
     serversById,
     onSelectMultipleServers,
     setSystemPrompt,
@@ -2225,6 +2182,8 @@ export function PlaygroundMain({
   const {
     panes: comparePanes,
     restorePanes,
+    setPaneOverrides,
+    setPanePick,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
@@ -2407,6 +2366,7 @@ export function PlaygroundMain({
               // Unfiltered: each column applies its own harness.
               models: catalogModels,
               orgConfig: hostedOrgModelConfig,
+              pickedSelection: pane.pickedSelection,
             }),
           ),
     [
@@ -2460,6 +2420,17 @@ export function PlaygroundMain({
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
+  const paneControls = useComparePaneControls({
+    active: isMultiHostMode,
+    panes: comparePanes,
+    resolutions: clientResolutions,
+    sharedServers: selectedServers,
+    serverIdByName: serversByName,
+    orgConfig: hostedOrgModelConfig,
+    restorePanes,
+    setPaneOverrides,
+    setPanePick,
+  });
   const retainedClientsPaused = clientResolutions.some((client) => client.status === "ready" && !!client.pausedReason);
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
@@ -2623,14 +2594,7 @@ export function PlaygroundMain({
   // inline its own copy of that logic, which read neither the member's saved
   // Browser setting nor its loading state — see
   // `usePlaygroundBrowserToolSlots`.
-  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
-    multiHostColumns.map((column) => ({
-      hostId: column.hostId,
-      config: column.hostConfig,
-    })),
-    playgroundBrowserEngine.engine,
-    convexProjectId,
-  );
+  const columnBrowsers = usePlaygroundBrowserToolSlots(multiHostColumns, comparePanes, convexProjectId);
 
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
@@ -6114,6 +6078,7 @@ export function PlaygroundMain({
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
           onPromoteLead: handlePromoteLead,
           enableMultiHost: canEnableMultiHost,
+          maxSelectedHosts: chipClientLimit(comparePanes),
         },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
@@ -7080,7 +7045,12 @@ export function PlaygroundMain({
                       {clientResolutions.map((resolution, columnIndex) => {
                         if (resolution.status !== "ready") return (
                           <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
-                            <strong>{resolution.compareLabel}</strong>
+                            <div className="flex items-center justify-between gap-2">
+                              <strong>{resolution.compareLabel}</strong>
+                              {paneControls.blockedPaneActions(
+                                resolution.compareId,
+                              )}
+                            </div>
                             {/* The composer's sign-in notice already explains this case. */}
                             {resolution.status === "unavailable" &&
                             needsSignIn(resolution.model) ? null : (
@@ -7121,9 +7091,16 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
-                          selection={column.hostConfig.modelSelection}
+                          selection={column.selection}
+                          modelPicked={column.modelPicked}
+                          renderPaneHeader={paneControls.renderPaneHeader(
+                            column.compareId,
+                          )}
                           comparisonSummaries={Object.values(compareSummaries)}
-                          selectedServers={selectedServers}
+                          selectedServers={
+                            paneControls.paneServers(column.compareId)?.names ??
+                            selectedServers
+                          }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
                             broadcastRequest?.claim(
@@ -7143,17 +7120,17 @@ export function PlaygroundMain({
                             // sends, rather than substituting the raw host
                             // list and pre-empting the loading guard.
                             builtInToolIds:
-                              columnBuiltInToolIds[
-                                multiHostColumns.indexOf(column)
-                              ],
+                              columnBrowsers.get(column.compareId)?.builtInToolIds,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
-                            selectedServerIds: hostedSelectedServerIds,
+                            selectedServerIds:
+                              paneControls.paneServers(column.compareId)?.ids ??
+                              hostedSelectedServerIds,
                             hostId: column.hostId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
-                          personalBrowserEngine={personalBrowserEngineOption}
+                          personalBrowserEngine={columnBrowsers.get(column.compareId)?.personalBrowserEngine}
                           personalComputerEngine={personalComputerEngineOption}
                           localHarnessExecution={
                             localHarnessExecutionByColumn.get(

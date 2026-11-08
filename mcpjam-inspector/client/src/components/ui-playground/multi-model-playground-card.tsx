@@ -1,6 +1,7 @@
 import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { paneModelDriftReason } from "@/lib/compare-pane-model";
+import type { RenderComparePaneHeader } from "./compare-pane-settings";
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
@@ -300,6 +301,10 @@ interface MultiModelPlaygroundCardProps {
    * (no per-card shadow).
    */
   hostCapsResolver?: HostConfigDtoV2 | null;
+  /** A host pane whose model was picked in it sends that choice. */
+  modelPicked?: boolean;
+  /** A host pane's settings button and summary row, given this card's lane. */
+  renderPaneHeader?: RenderComparePaneHeader;
   onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
   pluginHarnessId?: string | null;
   pluginHostResolved?: boolean;
@@ -361,6 +366,8 @@ export function MultiModelPlaygroundCard({
   onTranscriptSync,
   hostSnapshot,
   hostCapsResolver,
+  modelPicked = false,
+  renderPaneHeader,
   onSendReadinessChange,
   pluginHarnessId,
   pluginHostResolved = true,
@@ -542,7 +549,8 @@ export function MultiModelPlaygroundCard({
   } = useChatSession({
     pickedModelSelection: selection,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
-    selectionIntent: compareKind === "host" ? "inherit" : "picked",
+    selectionIntent:
+      compareKind === "host" && !modelPicked ? "inherit" : "picked",
     // Bind extension ownership to this lane.
     pluginWorkspace: laneWorkspaceForSession,
     pluginContextReferences: currentLaneContext,
@@ -580,6 +588,16 @@ export function MultiModelPlaygroundCard({
     },
   });
 
+  const paneHeader = renderPaneHeader?.({
+    environmentId: hiddenEnvironmentActive
+      ? hiddenEnvironment.environmentId
+      : null,
+    pending:
+      hiddenEnvironmentActive &&
+      hiddenEnvironment.wanted &&
+      !hiddenEnvironment.environmentId &&
+      !hiddenEnvironment.failed,
+  });
   const modelDrift =
     compareKind === "host"
       ? paneModelDriftReason({ label: compareLabel, shown: model, resolved: selectedModel })
@@ -1204,6 +1222,8 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
         showIdentityHeader={showIdentityHeader}
         logoSrc={logoSrc}
+        identityActions={paneHeader?.actions}
+        identitySummary={paneHeader?.summary}
         titleAccessory={
           effort && showEffort ? (
             <CompareCardEffort model={model} {...effort} />

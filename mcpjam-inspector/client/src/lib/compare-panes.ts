@@ -143,6 +143,33 @@ export function panesForHostIds(
 }
 
 /**
+ * Moves a pane one place left (-1) or right (+1). Moving into or out of pane
+ * 0 changes the lead, so the caller restores the lineup with its new lead.
+ */
+export function movePane<Pane extends ComparePane>(
+  panes: readonly Pane[],
+  paneId: string,
+  offset: -1 | 1,
+): readonly Pane[] {
+  const from = panes.findIndex((pane) => pane.paneId === paneId);
+  const to = from + offset;
+  if (from < 0 || to < 0 || to >= panes.length) return panes;
+  const next = [...panes];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
+
+/**
+ * How many clients the client chips may check: three panes in all, less the
+ * panes the chips cannot show (environment panes, and a second pane on a
+ * client the chips already list).
+ */
+export function chipClientLimit(panes: readonly ComparePane[]): number {
+  const listed = new Set(paneHostIds(panes)).size;
+  return MAX_COMPARE_PANES - (panes.length - listed);
+}
+
+/**
  * Pane 0 on the lead, with the pane count unchanged: the lead's pane moves to
  * the front, or replaces pane 0 when no pane runs it. An empty lineup reads as
  * the lead alone. Returns `panes` itself when it already agrees.

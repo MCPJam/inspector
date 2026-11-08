@@ -1,3 +1,4 @@
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/session-token";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -50,6 +51,8 @@ export interface EnvironmentPreview {
     hostName: string | null;
     hostConfigId: string | null;
     modelId: string | null;
+    /** Absent on older Inspector servers. */
+    modelSelection?: RequestedModelSelection | null;
     hostStyle: string | null;
     harness: string | null;
   };

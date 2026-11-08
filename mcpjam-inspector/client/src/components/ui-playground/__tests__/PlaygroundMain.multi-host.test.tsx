@@ -168,6 +168,9 @@ const browserFixture = vi.hoisted(() => ({
   granted: false,
   setting: null as boolean | null,
 }));
+vi.mock("@/hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => !browserFixture.guest,
+}));
 const browserConsent = vi.hoisted(() => () => ({
   status: browserFixture.granted ? "granted" : "absent",
   granted: browserFixture.granted,
@@ -252,9 +255,12 @@ vi.mock("@/components/elicitation/OwnedPluginFormHost", () => ({
   OwnedPluginFormHost: ({ projectId, workspaceId }: { projectId: string; workspaceId: string }) => <output data-testid="global-owned-form-host">{JSON.stringify({ projectId, workspaceId })}</output>,
 }));
 
+const projectServersFixture = vi.hoisted(() => ({
+  byName: new Map<string, string>(),
+}));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
-    serversByName: new Map(),
+    serversByName: projectServersFixture.byName,
     serversById: new Map(),
   }),
 }));
@@ -536,7 +542,12 @@ const multiHostFixture = {
   loading: false,
   selectedHostIds: [] as string[],
   panes: undefined as
-    | { paneId: string; target: { kind: "host"; hostId: string } }[]
+    | {
+        paneId: string;
+        target: { kind: "host"; hostId: string };
+        pickedSelection?: unknown;
+        serverIds?: string[] | null;
+      }[]
     | undefined,
   hostList: [] as { hostId: string; name: string }[],
   hosts: {} as Record<string, HostDetail>,
@@ -615,6 +626,9 @@ vi.mock("@/hooks/use-compare-panes", () => ({
         })),
       selectedHostIds: multiHostFixture.selectedHostIds,
       setSelectedHostIds: mockSetSelectedHostIds,
+      restorePanes: vi.fn(),
+      setPaneOverrides: vi.fn(),
+      setPanePick: vi.fn(),
       multiHostEnabled: multiHostFixture.multiHostEnabled,
       setMultiHostEnabled: mockSetMultiHostEnabled,
     };
@@ -793,6 +807,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.loading = false;
     multiHostFixture.selectedHostIds = [];
     multiHostFixture.panes = undefined;
+    projectServersFixture.byName = new Map();
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
     localHarnessFixture.requestedTarget = "local-native";
@@ -2144,6 +2159,69 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(latestBroadcast.text).toBe("hello hosts");
   });
 
+  it("gives each pane its own servers and its picked model", () => {
+    projectServersFixture.byName = new Map([["test-server", "srv-test"]]);
+    const previousModels = mockUseChatSession.availableModels;
+    mockUseChatSession.availableModels = [
+      "openai/gpt-5-mini",
+      "openai/gpt-5.5",
+    ].map((id) => ({ id, name: id, provider: "openai", hosted: true }));
+    try {
+      const pick = {
+        source: "hosted",
+        modelId: "openai/gpt-5.5",
+        fallback: { provider: "none", model: "none" },
+      };
+      const config = {
+        hostStyle: "chatgpt" as const,
+        modelId: "openai/gpt-5-mini",
+      };
+      multiHostFixture.hostList = [
+        { hostId: "h-A", name: "Host A" },
+        { hostId: "h-B", name: "Host B" },
+      ];
+      multiHostFixture.hosts = {
+        "h-A": makeHost("h-A", "Host A", config),
+        "h-B": makeHost("h-B", "Host B", config),
+      };
+      multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+      multiHostFixture.panes = [
+        {
+          paneId: "h-A",
+          target: { kind: "host", hostId: "h-A" },
+          pickedSelection: pick,
+        },
+        {
+          paneId: "h-B",
+          target: { kind: "host", hostId: "h-B" },
+          serverIds: [],
+        },
+      ];
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      const latest = new Map<string, any>();
+      for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+        latest.set(props.compareId, props);
+      }
+      expect(latest.get("h-A")).toMatchObject({
+        model: { id: "openai/gpt-5.5" },
+        selection: pick,
+        modelPicked: true,
+        selectedServers: ["test-server"],
+        hostedContext: { selectedServerIds: ["srv-test"] },
+      });
+      expect(latest.get("h-B")).toMatchObject({
+        model: { id: "openai/gpt-5-mini" },
+        modelPicked: false,
+        selectedServers: [],
+        hostedContext: { selectedServerIds: [] },
+      });
+    } finally {
+      mockUseChatSession.availableModels = previousModels;
+    }
+  });
+
   it("runs two panes on one client as two cards, each claiming one turn per send", async () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
     multiHostFixture.hostList = [
@@ -2395,6 +2473,7 @@ describe("PlaygroundMain — multi-host render path", () => {
 
 // ── Project Environments — Phase 2 (Playground integration) ────────────────
 describe("PlaygroundMain — environment mode", () => {
+  beforeEach(() => { browserFixture.guest = false; });
   const defaultProps = {
     activeProjectId: "default",
     serverName: "test-server",
@@ -2456,6 +2535,13 @@ describe("PlaygroundMain — environment mode", () => {
     expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
       undefined,
     );
+  });
+
+  it("keeps a stored named setup inactive for a guest with a valid Convex session", () => {
+    selectEnvironment();
+    browserFixture.guest = true;
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBeUndefined();
   });
 
   it("targets the environment and stops sending a legacy hostId", () => {
