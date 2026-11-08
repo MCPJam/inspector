@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ComparePaneSkills } from "../compare-pane-skills";
 import type { RecoveryPane } from "@/lib/comparison-recovery-record";
@@ -104,6 +104,20 @@ describe("Compare pane Skills", () => {
     flag.value = false;
     ui.rerender(view(client));
     expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  it("can retry a failed preview in place without changing the selected pane", async () => {
+    fetchPreview
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        Response.json({ deliveredCount: 1, skills: [row] }),
+      );
+    render(view(paneA));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(row.name)).toBeVisible();
+    expect(fetchPreview.mock.calls[0][1]?.body).toBe(
+      fetchPreview.mock.calls[1][1]?.body,
+    );
   });
 
   it("does not request a project pool without a signed-in project", () => {

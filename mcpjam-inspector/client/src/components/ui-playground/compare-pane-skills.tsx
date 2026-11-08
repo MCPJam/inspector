@@ -87,8 +87,9 @@ function DeliveryList({ body }: { body: string }) {
         body,
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error("Couldn’t load skills.");
-      const data = paneSkillsPreview.parse(await response.json());
+      const data = response.ok
+        ? paneSkillsPreview.parse(await response.json())
+        : "failed";
       if (!controller.signal.aborted) setResult(data);
     }
     void read().catch(() => {
@@ -101,7 +102,7 @@ function DeliveryList({ body }: { body: string }) {
     return (
       <div className="flex items-center justify-between gap-2">
         <span role="status" className="text-xs text-muted-foreground">
-          Couldn’t load skills.
+          Skills didn’t load. Try again.
         </span>
         <Button
           type="button"
