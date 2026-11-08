@@ -1,3 +1,4 @@
+import { createInlineMrtrCollector } from "./inline-mrtr.js";
 import { appResourcesEnabled } from "@/shared/app-resource-capability";
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import type { ElicitResult } from "@modelcontextprotocol/client";
@@ -194,10 +195,13 @@ export async function assertPluginInstanceBindingCurrent(input: {
   signal: AbortSignal;
 }) {
   const { admission, bearer, instance, signal } = input;
+  const currentBearer = admission.getAuthorization
+    ? await admission.getAuthorization()
+    : bearer;
   const current = await readPluginExecutionContext({
     projectId: admission.projectId,
     expectedActorId: admission.actorId,
-    bearer,
+    bearer: currentBearer,
     serverIds: [instance.owner.serverId],
     hostId: instance.hostId,
     signal,
@@ -234,11 +238,13 @@ export function createPluginRequestRuntime(
     RetainedActivation,
   options: {
     ownedForms?: boolean;
+    inlineMrtr?: boolean;
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
   } = {},
 ) {
+  const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
   const governing =
     options.extension ?? (expected ? pluginInstanceExtension(expected) : undefined);
   type Lease = PooledPluginConnection<
@@ -261,8 +267,8 @@ export function createPluginRequestRuntime(
   // An unpinned client prepares both form services and answers with the one
   // its connection actually negotiated; a pin decides it before connect.
   let negotiatedWire: "legacy" | "mrtr" | undefined;
-  const ownedForms = () => (negotiatedWire === "mrtr" ? undefined : forms);
-  const ownedMrtr = () => (negotiatedWire === "legacy" ? undefined : mrtr);
+  const ownedForms = () => (negotiatedWire === "mrtr" && !options.inlineMrtr ? undefined : forms);
+  const ownedMrtr = () => (negotiatedWire === "legacy" || options.inlineMrtr ? undefined : mrtr);
   const formsEnabled = () => latest?.capabilities.forms !== false;
   // Logs entries this request owes the client (returned with its response).
   const notes: PluginDiagnostic[] = [];
@@ -270,9 +276,11 @@ export function createPluginRequestRuntime(
     const legacy = ownedForms();
     const modern = ownedMrtr();
     entry.hooks.legacy = legacy ? legacy.binding.handler : undefined;
-    entry.hooks.collector = modern
-      ? (modern.collector as NonNullable<typeof entry.hooks.collector>)
-      : undefined;
+    entry.hooks.collector = options.inlineMrtr && forms
+      ? createInlineMrtrCollector(binding.serverId, forms.answer)
+      : modern
+        ? (modern.collector as NonNullable<typeof entry.hooks.collector>)
+        : undefined;
   };
   const dropLease = async (reusable: boolean) => {
     const previous = lease;
@@ -314,11 +322,11 @@ export function createPluginRequestRuntime(
       serverBindings,
       serverNamesById,
     } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -386,7 +394,7 @@ export function createPluginRequestRuntime(
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
-        bearer,
+        bearer: await currentBearer(),
         serverIds: [binding.serverId],
         hostId: binding.hostId,
         signal,
@@ -455,9 +463,10 @@ export function createPluginRequestRuntime(
     if (!formServices && expected && formsMode !== "none") {
       formServices = true;
       forms =
-        legacyForms
+        (legacyForms || (modernForms && options.inlineMrtr))
           ? createOwnedPluginLegacyForms({
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               workspaceId: expected.owner.workspaceId,
               hostId: binding.hostId,
@@ -571,18 +580,21 @@ export function createPluginRequestRuntime(
             })
           : undefined;
       mrtr =
-        modernForms
+        modernForms && !options.inlineMrtr
           ? createOwnedPluginMrtr({
               c,
               bearer,
+              getAuthorization: currentBearer,
               projectId: admission.projectId,
               serverId: binding.serverId,
+              serverName: () => admittedServerName,
               manager: () => lease?.manager,
               assertCurrent,
               sourceBinding: { hostId: binding.hostId, hostRevision },
               localFiles,
               uploadTarget,
               fileResources: extensions.capabilities.fileResources,
+              fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
             })
           : undefined;
@@ -895,11 +907,11 @@ export function createPluginRequestRuntime(
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     const { hostConfig, serverBindings } = await read(() =>
-      timedPluginStep("backend-admission-read", () =>
+      timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
           expectedActorId: admission.actorId,
-          bearer,
+          bearer: await currentBearer(),
           serverIds: [binding.serverId],
           hostId: binding.hostId,
           signal,
@@ -1098,12 +1110,12 @@ export function createPluginRequestRuntime(
         throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
       return mrtr.execute(authorization, invocationId, params, signal, run);
     },
-    handleLegacyForm: (request: { params?: Record<string, unknown> }) => {
+    handleOwnedForm: (request: { params?: Record<string, unknown> }) => {
       const forms = ownedForms();
       if (!forms) throw new PluginInvocationError("INSTANCE_DENIED");
-      return forms.binding.handler(request);
+      return options.inlineMrtr ? forms.answer(request) : forms.binding.handler(request);
     },
-    runOwnedLegacy: async <T>(
+    runOwnedForm: async <T>(
       authorization: ResolvedInvocationContext,
       invocationId: string,
       signal: AbortSignal,
@@ -1147,7 +1159,7 @@ export function createPluginRequestRuntime(
         pluginFormFileGrants.closeOperation(authorization.owner, invocationId);
       return result;
     },
-    resumeMrtr: (
+    resumeMrtr: async (
       authorization: ResolvedInvocationContext,
       invocationId: string,
       params: PluginToolCallParams,
@@ -1160,7 +1172,7 @@ export function createPluginRequestRuntime(
         // no form service, and the pending form ends as cancelled.
         if (expected && mrtrWire && !formsEnabled())
           return endPluginMrtrFormsDisabled({
-            bearer,
+            bearer: await currentBearer(),
             owner: authorization.owner,
             invocationId,
             continuationId: submission.continuationId,

@@ -47,6 +47,8 @@ export interface ChatV2Request {
    * deliberately different.
    */
   environmentOverrides?: EnvironmentOverrides;
+  /** Optional automatic plugin additions; never grants permission to execute. */
+  autoContributedPluginServerIds?: string[];
   chatSessionId?: string;
   /** Bind browser discovery and execution to this chatSessionId. */
   browserScope?: "conversation";
@@ -209,6 +211,8 @@ export interface ChatV2Request {
  * registry).
  */
 export interface AppToolSnapshotEntry {
+  /** Exact bridge generation; older clients omit it and cannot use native app tools. */
+  bridgeId?: string;
   alias: string;
   appName: string;
   appVersion?: string;

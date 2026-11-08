@@ -1,5 +1,8 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import { ResourceChatHandoff } from "../resource-chat-handoff";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EXTENSION_AUTH_HOLD_MS,
@@ -8,6 +11,7 @@ import {
   useExtensionOwners,
   useExtensionRegistration,
   useExtensionStore,
+  useExtensionWorkspaceState,
   usePublishPluginIcons,
   type ExtensionRegistration,
 } from "../ExtensionWorkspaceProvider";
@@ -23,6 +27,7 @@ import { parsePluginDeepLink } from "@/shared/plugin-deep-link";
 
 const f = vi.hoisted(() => ({
   discover: vi.fn(),
+  discoverFile: vi.fn(),
   open: vi.fn(),
   invoke: vi.fn(),
   close: vi.fn(),
@@ -38,6 +43,7 @@ vi.mock("../thread-app-api", async (importOriginal) => ({
     f.scopes.push(scope);
     return {
       discover: (...args: unknown[]) => f.discover(scope, ...args),
+      discoverFile: (...args: unknown[]) => f.discoverFile(scope, ...args),
       discoverServer: async (...args: unknown[]) => ({
         entries: await f.discover(scope, ...args),
         mentions: { available: false },
@@ -98,6 +104,7 @@ function handleFor(scope: ThreadAppScope, toolName: string) {
 
 type Owners = ReturnType<typeof useExtensionOwners>;
 let owners: Owners = { global: null, chat: null };
+let includedTools: unknown = null;
 let releaseChat: (chatId: string) => void = () => {};
 function Center({ registration }: { registration: ExtensionRegistration | null }) {
   useExtensionRegistration(registration, {
@@ -105,6 +112,7 @@ function Center({ registration }: { registration: ExtensionRegistration | null }
     runOnboarding: async () => {},
   });
   owners = useExtensionOwners();
+  includedTools = useExtensionWorkspaceState((state) => state.includedPluginTools);
   releaseChat = useExtensionChatRelease();
   return null;
 }
@@ -165,6 +173,45 @@ describe("Playground extension owners", () => {
     cleanup();
     f.facts = {};
     await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+
+  it("waits for actual parent registration before opening a resource in the chat owner", async () => {
+    const uri = "fixture-file://parts/triangle.stl";
+    f.discoverFile.mockResolvedValue([{ kind: "file", toolName: "open-file", title: "Viewer", resourceUri: uri }]);
+    function HandoffCenter() {
+      useExtensionRegistration(registration("chat-file"), {
+        sendMessage: async () => true, runOnboarding: async () => {},
+      });
+      const current = useExtensionOwners();
+      return <ResourceChatHandoff identity={identity} ready fileActions={current.chat?.fileActions ?? null} />;
+    }
+    const router = createMemoryRouter([{ path: "/playground", element: <ExtensionWorkspaceProvider><HandoffCenter /></ExtensionWorkspaceProvider> }], {
+      initialEntries: [{ pathname: "/playground", state: { pluginResourceFile: {
+        ...identity, serverId: server.serverId, resourceUri: uri, nonce: crypto.randomUUID(), createdAt: Date.now(),
+      } } }],
+    });
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(f.discoverFile).toHaveBeenCalledOnce());
+    expect(f.discoverFile.mock.calls[0]).toEqual([
+      expect.objectContaining({ threadId: "chat-file" }), server.serverId, uri, expect.any(AbortSignal),
+    ]);
+    await waitFor(() => expect(f.open.mock.calls.some(call => call[0].threadId === "chat-file" && call[2] === "open-file")).toBe(true));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(router.state.location.state).toEqual({});
+  });
+
+  it("keeps included tool catalogs scoped to the current host and clears them on access loss", async () => {
+    const view = renderCenter(registration("chat-a", {
+      includedPluginTools: { environmentId: "env-a", serverIds: ["plugin-a"] },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "client"]), environmentId: "env-a", serverIds: ["plugin-a"] }));
+    view.update(registration("chat-b", {
+      identity: { ...identity, hostId: "other-client" },
+      includedPluginTools: { environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true },
+    }));
+    await waitFor(() => expect(includedTools).toEqual({ projectId: "project", ownerKey: JSON.stringify(["user", "project", "other-client"]), environmentId: "env-b", serverIds: ["plugin-b"], includeAppOnly: true }));
+    view.update(null);
+    await waitFor(() => expect(includedTools).toBeNull());
   });
 
   it("joins a plugin-owned server to its plugin's icons for every surface", async () => {
@@ -260,6 +307,38 @@ describe("Playground extension owners", () => {
     expect(workspaceOf(f.open.mock.calls.at(-1)!)).toBe(
       globalOwnerWorkspace(identity).workspaceId,
     );
+  });
+
+  it("keeps the requesting global App selected when file admission refuses", async () => {
+    renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => { await owners.global!.launch(server, global); });
+    const active = owners.global!.active;
+    f.open.mockRejectedValueOnce(new Error("File admission refused"));
+    const file = { toolName: "viewer", title: "CAD viewer", kind: "file" as const, resourceUri: "cad://part" };
+    await act(async () => { await expect(owners.global!.appPorts!.openFile!(server, file)).rejects.toThrow("File admission refused"); });
+    expect(owners.global!.active).toBe(active);
+    await act(async () => { await owners.global!.appPorts!.openFile!(server, file); });
+    expect(owners.global!.active).toBeNull();
+  });
+
+  it("resolves a menu file selection without a chat and rejects an admission-waiting request", async () => {
+    const file = { toolName: "viewer", title: "CAD viewer", kind: "file" as const, resourceUri: "cad://part" };
+    f.discover.mockResolvedValue([global, file]);
+    function Menus() {
+      const current = useExtensionOwners();
+      return current.global?.menus[server.name]?.(() => {});
+    }
+    render(<ExtensionWorkspaceProvider><Center registration={{ ...registration("chat-a"), chatId: null }} /><Menus /></ExtensionWorkspaceProvider>);
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    expect(owners.chat).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Saved server extensions" }));
+    await user.click(screen.getByRole("menuitem", { name: /CAD viewer/ }));
+    expect(f.open).not.toHaveBeenCalled();
+    await act(async () => {
+      await expect(owners.global!.appPorts!.openFile!(server, file)).rejects.toThrow("Open a chat");
+    });
   });
 
   it("an App opened in the chat takes the rail from a fullscreen model App", async () => {

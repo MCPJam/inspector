@@ -10,6 +10,9 @@
 import type {
   BrowserStoragePolicy,
   ToolResultPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
 } from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
@@ -710,6 +713,7 @@ export interface FetchWidgetContentRequest {
 }
 
 export interface FetchWidgetContentResponse {
+  sourceReceipt?: string;
   resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
   html: string;
   csp?: McpUiResourceCsp;
@@ -756,6 +760,8 @@ export type ListResourcesResult = {
  * HOSTED_MODE / web-managed guard before calling the raw api.
  */
 export interface WidgetHostServices {
+  prepareSandboxView?: (request: PrepareSandboxViewRequest, signal?: AbortSignal) => Promise<PreparedSandboxView>;
+  releaseSandboxView?: (request: ReleaseSandboxViewRequest) => Promise<void>;
   /** Host-admitted plugin navigation, never arbitrary external navigation. */
   openAppLink?: (url: string) => Promise<void>;
   sendMessage?: (params: unknown) => Promise<Record<string, unknown>>;

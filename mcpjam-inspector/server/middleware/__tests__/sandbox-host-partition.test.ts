@@ -112,6 +112,18 @@ describe("per-server view host", () => {
     expect(await status(app, "/assets/index.js", LABEL_HOST)).toBe(404);
   });
 
+  it("gives reserved admission origins only the proxy path and restrictive error headers", async () => {
+    const host = `v-0123456789abcdef.${SANDBOX_HOST}`;
+    expect(await status(app, PROXY_PATH, host)).toBe(200);
+    for (const path of ["/", "/health", "/api/web/projects", "/assets/index.js"]) {
+      const response = await app.request(`http://${host}${path}`, { headers: { Host: host } });
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+      expect(response.headers.get("Cache-Control")).toContain("no-store");
+      expect(response.headers.get("Origin-Agent-Cluster")).toBe("?1");
+    }
+  });
+
   it("only matches a label this service would actually mint", async () => {
     // Not hex, wrong length, nested, or under a host that is not ours — none
     // are names the deriver produces, so they are not partitioned at all and

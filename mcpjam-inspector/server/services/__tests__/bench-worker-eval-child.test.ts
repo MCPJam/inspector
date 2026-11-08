@@ -20,8 +20,12 @@ vi.mock("../../routes/web/auth.js", () => ({
   createAuthorizedManager: (...args: unknown[]) =>
     createAuthorizedManager(...args),
 }));
+vi.mock("../xaa-configured-issuer.js", () => ({
+  resolveConfiguredXaaIssuer: () => "https://issuer.test/api/web/xaa",
+}));
 
 import {
+  defaultCleanupArtifactsForTests,
   defaultRunEvalCellForTests,
   resolveEvalCellSpec,
   type BenchmarkRosterEntry,
@@ -292,5 +296,48 @@ describe("defaultRunEvalCell", () => {
 
     await expect(run()).rejects.toThrow("suite is gone");
     expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects with the deployment's XAA issuer and no host policy", async () => {
+    // No request to read the issuer from, so the claim loop supplies it. No
+    // cell host's policy either: cleanup connects under no cell's host and
+    // must reach what the cells created.
+    await run();
+
+    const options = createAuthorizedManager.mock.calls[0][7];
+    expect(options).toEqual({
+      serverNames: ["Target"],
+      xaaIssuer: "https://issuer.test/api/web/xaa",
+    });
+    expect(options).not.toHaveProperty("xaaPolicy");
+  });
+
+  it("opens cleanup's connection the way the cells opened theirs", async () => {
+    createAuthorizedManager.mockResolvedValue({
+      manager: {
+        disconnectAllServers,
+        executeTool: vi.fn().mockResolvedValue({ content: [] }),
+      },
+    });
+    await run();
+    const ledger = createBenchmarkArtifactLedger({
+      initial: [
+        {
+          tool: "create_page",
+          artifactName: "mcpjam-benchmark-page",
+          createdId: "page-1",
+          cleanupSteps: [{ tool: "delete_page", idArgPath: "page_id" }],
+        },
+      ],
+    });
+
+    await defaultCleanupArtifactsForTests()({ job: JOB, ledger });
+
+    const [cellCall, cleanupCall] = createAuthorizedManager.mock.calls;
+    expect(cleanupCall.slice(0, 4)).toEqual(cellCall.slice(0, 4));
+    expect(cleanupCall[7]).toEqual(cellCall[7]);
+    expect(cleanupCall[7]).toMatchObject({
+      xaaIssuer: "https://issuer.test/api/web/xaa",
+    });
   });
 });

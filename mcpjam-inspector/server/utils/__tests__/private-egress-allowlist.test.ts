@@ -39,6 +39,7 @@ describe("parsePrivateEgressAllowlist — what an entry is", () => {
     ["10.0.0.0/-1", /prefix length/],
     ["10.0.0.1/8", /bits set past its \/8 prefix/],
     ["fd00::1/8", /bits set past its \/8 prefix/],
+    ["::ffff:10.0.0.0/80", /bits set past its \/80 prefix/],
     ["010.0.0.0/8", /not a valid IPv4 or IPv6 address/],
     ["10.0.0/8", /not a valid IPv4 or IPv6 address/],
     ["256.0.0.0/8", /not a valid IPv4 or IPv6 address/],
@@ -63,7 +64,9 @@ describe("parsePrivateEgressAllowlist — what an entry is", () => {
     const parsed = parsePrivateEgressAllowlist(
       "10.0.0.0/8,svc.cluster.local,10.0.0.0/",
     );
-    expect(parsed.invalid.map(({ entry }) => entry)).toEqual(["10.0.0.0/"]);
+    expect(
+      parsed.invalid.map(({ entry, position }) => [entry, position]),
+    ).toEqual([["10.0.0.0/", 3]]);
     expect(parsed.allowlist.isEmpty).toBe(true);
     // Neither the valid range nor the valid suffix survives the bad entry.
     expect(parsed.allowlist.admits({ hostname: "10.1.2.3" })).toBe(false);
@@ -122,6 +125,33 @@ describe("parsePrivateEgressAllowlist — how entries match", () => {
     expect(allowlist("::/0").admits({ hostname: "[::ffff:10.1.2.3]" })).toBe(
       false,
     );
+  });
+
+  it("reads an IPv4-mapped entry as the IPv4 range it carries", () => {
+    const list = allowlist("::ffff:10.0.0.0/104, ::ffff:c0a8:107");
+    expect(list.admits({ hostname: "10.1.2.3" })).toBe(true);
+    expect(list.admits({ hostname: "[::ffff:10.1.2.3]" })).toBe(true);
+    expect(list.admits({ hostname: "n.example", address: "10.1.2.3" })).toBe(
+      true,
+    );
+    expect(list.admits({ hostname: "192.168.1.7" })).toBe(true);
+    expect(list.admits({ hostname: "11.0.0.1" })).toBe(false);
+    expect(list.admits({ hostname: "192.168.1.8" })).toBe(false);
+  });
+
+  it.each([
+    "10.0.0.1",
+    "10.0.0.0/8",
+    "fd00::1",
+    "fd00::/8",
+    "::1",
+    "::ffff:10.0.0.1",
+    "::ffff:a00:1",
+    "::ffff:10.0.0.0/104",
+  ])("admits the address %s is written with", (entry) => {
+    const [address] = entry.split("/");
+    const hostname = address.includes(":") ? `[${address}]` : address;
+    expect(allowlist(entry).admits({ hostname })).toBe(true);
   });
 
   it("matches IPv6 ranges bit by bit", () => {

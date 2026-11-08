@@ -57,6 +57,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "MCPJam gave this App access to its file again (the server restarted, or its hold on the file lapsed), so this save was refused. The App's unsaved changes are still in the viewer: read the file again (resources/read), then save against the ETag it returns.",
   RESOURCE_TOO_LARGE: "The file is larger than the host allows for Apps.",
   RESOURCE_UNSUPPORTED: "This file source doesn't support that operation.",
+  RESOURCE_WRITE_UNAVAILABLE:
+    "This Computer can't save the file safely. Copy your changes, then reconnect the Computer before trying again.",
   // Local files and file targets
   PLUGIN_FILE_TARGETS_NOT_DECLARED:
     'This client lists no files for this server. Add them under the client\'s mcpProfile.extensions["mcpjam/plugin-file-targets"] (a root folder and each file\'s relative path).',
@@ -249,6 +251,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
   MODEL_APP_UNAVAILABLE: "This App from the chat is no longer available.",
   CONTINUATION_EXPIRED:
     "This form expired before it was answered, so the tool call did not finish. Run it again.",
+  CONTINUATION_FAILED:
+    "This form is closed and cannot be submitted. Start the tool call again.",
   CONTINUATION_CANCELLED:
     "This form was cancelled, so the tool call did not finish.",
   CONTINUATION_CONNECTION_UNAVAILABLE:

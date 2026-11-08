@@ -201,6 +201,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
+  renewSessionBearer: vi.fn(async () => {}),
   buildServerRequest: mockState.buildServerRequest,
   buildResolvedServerBatchRequest: vi.fn(
     ({
@@ -2889,6 +2890,7 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
         selectedServerIds: ["server-id-1"],
         executionTarget: { kind: "environment", environmentId: "env_new" },
         environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        autoContributedPluginServerIds: ["srv_new"],
         includeProjectSkills: true,
         messages: [{ role: "user", content: "hi" }],
       });

@@ -1,7 +1,8 @@
+import { useLegacyFormOperation } from "./use-legacy-form-operation";
+import { useRetainedFormPortal } from "./use-retained-form-portal";
 import { PluginFormPreviewServices } from "./form-app-preview";
 import { formResourcePreviewPorts } from "./form-resource-preview";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { decodePrivatePluginFormSchema } from "@/shared/plugin-extensions/form-plan";
 import type { ReactNode } from "react";
 import {
@@ -123,8 +124,11 @@ export function OwnedPluginFormHost({
   workspaceId,
   active = true,
   presentServices,
+  retainWhileLoading = false,
 }: {
   projectId: string;
+  /** The matched global owner already bounds identity refresh retention. */
+  retainWhileLoading?: boolean;
   workspaceId: string;
   /**
    * False while another chat is shown: requests stay registered (and
@@ -142,14 +146,47 @@ export function OwnedPluginFormHost({
     "elicitations:listPendingElicitations" as any,
     owner ? { projectId, pluginWorkspaceId: workspaceId } : "skip",
   ) as Omit<HostedElicitationRequestEvent, "kind">[] | undefined;
+  const scopeKey = JSON.stringify([projectId, workspaceId]);
+  const retained = useRef<
+    | {
+        scopeKey: string;
+        owner: { _id: string };
+        rows: NonNullable<typeof rows>;
+      }
+    | undefined
+  >(undefined);
+  useLayoutEffect(() => {
+    if (
+      retained.current?.scopeKey !== scopeKey ||
+      !retainWhileLoading ||
+      owner === null ||
+      (owner && retained.current?.owner._id !== owner._id)
+    )
+      retained.current = undefined;
+    if (retainWhileLoading && owner && rows !== undefined)
+      retained.current = { scopeKey, owner, rows };
+  }, [scopeKey, retainWhileLoading, owner, rows]);
+  const previous =
+    retainWhileLoading && retained.current?.scopeKey === scopeKey
+      ? retained.current
+      : undefined;
+  const displayedOwner = owner === undefined ? previous?.owner : owner;
+  const displayedRows =
+    rows === undefined && displayedOwner?._id === previous?.owner._id
+      ? previous?.rows
+      : rows;
+  const focusOwner = useRef({ ownerId: displayedOwner?._id, scopeKey });
+  useLayoutEffect(() => {
+    focusOwner.current = { ownerId: displayedOwner?._id, scopeKey };
+  });
   const requests =
-    rows?.filter(
+    displayedRows?.filter(
       (row) =>
         row.formDialect === "openai" &&
         row.pluginWorkspaceId === workspaceId &&
         row.mode === "form",
     ) ?? [];
-  if (!owner || !requests.length) return null;
+  if (!displayedOwner || !requests.length) return null;
   // Every pending request registers with its chat's composer; only the first
   // in arrival order is shown, the rest wait their turn.
   return (
@@ -157,7 +194,7 @@ export function OwnedPluginFormHost({
       {requests.map((request) => (
         <OwnedRequest
           key={JSON.stringify([
-            owner._id,
+            displayedOwner._id,
             projectId,
             workspaceId,
             request.rendezvousId,
@@ -165,6 +202,10 @@ export function OwnedPluginFormHost({
           projectId={projectId}
           workspaceId={workspaceId}
           active={active}
+          canRestoreFocus={() =>
+            focusOwner.current.ownerId === displayedOwner._id &&
+            focusOwner.current.scopeKey === scopeKey
+          }
           presentServices={presentServices}
           request={{ ...request, kind: "request" }}
         />
@@ -178,8 +219,10 @@ function OwnedRequest({
   projectId,
   workspaceId,
   active,
+  canRestoreFocus,
   presentServices,
 }: {
+  canRestoreFocus: () => boolean;
   presentServices?: OwnedPluginFormPresenter;
   request: HostedElicitationRequestEvent;
   projectId: string;
@@ -192,6 +235,8 @@ function OwnedRequest({
   const [schemaFailed, setSchemaFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [cancelling, setCancelling] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const pendingAnswer = useRef<Promise<void>>(undefined);
   const convexRef = useRef(convex);
   convexRef.current = convex;
   useEffect(() => {
@@ -245,7 +290,7 @@ function OwnedRequest({
       if (answerRef.current === privateAnswer) answerRef.current = undefined;
     };
   }, [request.rendezvousId, request.expiresAt]);
-  const respond = async (answer: HostedElicitationAnswer) => {
+  const sendResponse = async (answer: HostedElicitationAnswer) => {
     const privateAnswer = answerRef.current;
     if (!privateAnswer) throw new Error("The form request is no longer active");
     let result: Awaited<ReturnType<typeof respondToChatElicitation>>;
@@ -299,8 +344,23 @@ function OwnedRequest({
       setResolved(true);
     }
   };
+  const respond = (answer: HostedElicitationAnswer) => {
+    if (pendingAnswer.current) return pendingAnswer.current;
+    setSubmitting(true);
+    const pending = sendResponse(answer);
+    pendingAnswer.current = pending;
+    const settled = () => {
+      if (pendingAnswer.current === pending) {
+        pendingAnswer.current = undefined;
+        setSubmitting(false);
+      }
+    };
+    void pending.then(settled, settled);
+    return pending;
+  };
   const serverName = request.serverName?.trim() || request.serverId;
   const icons = useServerIconSources(request.serverId);
+  const operation = useLegacyFormOperation(projectId, workspaceId, request);
   const queue = useComposerFormRegistration(
     resolved
       ? null
@@ -308,20 +368,24 @@ function OwnedRequest({
           id: request.rendezvousId,
           workspaceId,
           serverName,
+          operation,
           cancel: () => cancel(),
         },
   );
   const slot = useComposerSlot(workspaceId);
+  const portal = useRetainedFormPortal(
+    slot, queue.active && active, workspaceId, canRestoreFocus, resolved,
+  );
   if (resolved) return null;
   // Later requests for this chat wait until the earlier ones are answered.
-  if (!queue.active) return null;
-  // Another chat is shown: this request waits with its own chat.
-  if (!active) return null;
+  if ((!queue.active || !active) && !portal.ready) return null;
+  // Once presented, keep the card mounted in its detached portal while hidden.
+  // Pending submission state belongs to the request, not its current slot.
   // The composer card replaces the modal whenever this chat's composer is
   // mounted; the modal remains for layouts without a composer.
-  if (slot) {
+  if (portal.ready) {
     if (request.hasPrivateSchema && schema === undefined)
-      return createPortal(
+      return portal.render(
         <ComposerFormFrame
           requestId={request.rendezvousId}
           title={request.message}
@@ -352,7 +416,6 @@ function OwnedRequest({
               : "Loading the form…"}
           </p>
         </ComposerFormFrame>,
-        slot,
       );
   }
   // Never mount the editor with a missing private schema. A late read cannot
@@ -365,7 +428,7 @@ function OwnedRequest({
           if (!open && !cancelling) void cancel();
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={portal.onCloseAutoFocus}>
           <DialogHeader>
             <DialogTitle>
               {schemaFailed ? "Form unavailable" : "Loading form"}
@@ -409,11 +472,12 @@ function OwnedRequest({
     hasPrivateSchema: undefined,
   };
   const render = (services: OwnedPluginFormServices) =>
-    slot ? (
-      createPortal(
+    portal.ready ? (
+      portal.render(
         <OwnedComposerCard
           request={hydratedRequest}
           services={services}
+          loading={submitting}
           onRespond={(action, content) =>
             respond({
               rendezvousId: request.rendezvousId,
@@ -422,12 +486,14 @@ function OwnedRequest({
             })
           }
         />,
-        slot,
       )
     ) : (
       <ElicitationRequestDialog
         request={hydratedRequest}
+        focusWorkspaceId={workspaceId}
+        canRestoreFocus={canRestoreFocus}
         pluginForm={services}
+        loading={submitting}
         onRespond={respond}
       />
     );
@@ -492,10 +558,12 @@ function OwnedRequest({
 function OwnedComposerCard({
   request,
   services,
+  loading,
   onRespond,
 }: {
   request: HostedElicitationRequestEvent;
   services: OwnedPluginFormServices;
+  loading: boolean;
   onRespond: (
     action: ComposerFormAction,
     content?: Record<string, unknown>,
@@ -537,6 +605,7 @@ function OwnedComposerCard({
       unsupported={compiled.unsupported}
       ports={services.ports}
       presentation={services.presentation}
+      loading={loading}
       onRespond={onRespond}
     />
   );

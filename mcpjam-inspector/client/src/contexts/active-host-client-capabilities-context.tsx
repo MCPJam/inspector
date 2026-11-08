@@ -1,3 +1,4 @@
+import { HOSTED_MODE } from "@/lib/config";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
@@ -108,17 +109,18 @@ export function ActiveHostCapsResolverScope({
   // the current `hostStyle`. This keeps Codex etc. gating correctly even
   // without a Convex host record.
   const effectiveHost = useMemo<
-    Pick<HostConfigDtoV2, "clientCapabilities">
+    Pick<HostConfigDtoV2, "clientCapabilities"> & Partial<Pick<HostConfigDtoV2, "hostStyle" | "harness" | "mcpProfile">>
   >(() => {
     if (activeHost?.clientCapabilities) {
-      return { clientCapabilities: activeHost.clientCapabilities };
+      return activeHost;
     }
     const catalog = catalogState.catalog ?? bundledHostCompatCatalog();
     return {
+      hostStyle,
       clientCapabilities: getCatalogTemplate(catalog, hostStyle)
         ?.clientCapabilities ?? {},
     };
-  }, [activeHost?.clientCapabilities, catalogState.catalog, hostStyle]);
+  }, [activeHost, catalogState.catalog, hostStyle]);
 
   const resolver = useMemo<ActiveHostCapsResolver>(() => {
     // Per-render memo: repeated `resolveCaps(serverId)` calls for the
@@ -136,6 +138,7 @@ export function ActiveHostCapsResolverScope({
       const caps = resolveEffectiveClientCapabilities({
         host: effectiveHost,
         serverConfig,
+        localFormSupport: !HOSTED_MODE,
       }) as Record<string, unknown>;
       cache.set(serverId, caps);
       return caps;

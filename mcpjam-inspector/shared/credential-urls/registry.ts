@@ -181,6 +181,24 @@ export const CREDENTIAL_ROUTES = [
     note: "Legacy conformance share read behind /conformance/shared/<token>.",
   },
   {
+    id: "app-view-local",
+    pattern: "/api/apps/mcp-apps/sandbox-proxy",
+    secretParam: "view_token",
+    secretIn: "query",
+    scope: "api",
+    ttl: "session",
+    note: "Opaque local App document capability, valid only for its live admitted view.",
+  },
+  {
+    id: "app-view-hosted",
+    pattern: "/api/web/apps/mcp-apps/sandbox-proxy",
+    secretParam: "view_token",
+    secretIn: "query",
+    scope: "api",
+    ttl: "expiring",
+    note: "Opaque hosted App document capability, checked against its renewable lease.",
+  },
+  {
     id: "api-session-token-query",
     pattern: "/api/*",
     secretParam: "_token",
@@ -229,6 +247,7 @@ export const SECRET_PARAM_KEYS: ReadonlySet<string> = new Set([
   // Our own session and link tokens
   "token",
   "_token",
+  "view_token",
   "t",
   "k",
   // API keys and passwords

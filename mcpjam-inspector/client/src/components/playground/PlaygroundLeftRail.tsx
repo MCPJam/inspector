@@ -18,6 +18,7 @@ import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
 import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { PlaygroundAppsSection } from "./PlaygroundAppsSection";
+import { IncludedPluginToolsSection } from "./IncludedPluginToolsSection";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -90,10 +91,15 @@ export function PlaygroundLeftRail({
         {activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
-          <ToolsBody
-            previewedHostId={previewedHostId ?? null}
-            projectId={projectId ?? null}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1">
+              <ToolsBody
+                previewedHostId={previewedHostId ?? null}
+                projectId={projectId ?? null}
+              />
+            </div>
+            <IncludedPluginToolsSection />
+          </div>
         )}
       </div>
     </div>

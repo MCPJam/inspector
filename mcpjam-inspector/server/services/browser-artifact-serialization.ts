@@ -1,3 +1,4 @@
+import { parsePluginWorkspaceRecording } from "../../shared/plugin-workspace-recording.js";
 import type {
   BrowserInteractionStepPayload,
   RunnerBrowserInteractionStep,
@@ -41,6 +42,9 @@ export async function serializeRenderObservationsForBackend(
   if (!observations?.length) return [];
   const out: SerializedWidgetRenderObservation[] = [];
   for (const obs of observations) {
+    const pluginWorkspace = obs.pluginWorkspace === undefined
+      ? undefined
+      : parsePluginWorkspaceRecording(obs.pluginWorkspace);
     let screenshotBlobId: string | undefined;
     if (obs.screenshotBase64 && uploadTarget) {
       try {
@@ -59,6 +63,7 @@ export async function serializeRenderObservationsForBackend(
     const { screenshotBase64: _screenshotBase64, ...rest } = obs;
     const serialized: SerializedWidgetRenderObservation = {
       ...rest,
+      ...(pluginWorkspace ? { pluginWorkspace } : {}),
       ...(screenshotBlobId ? { screenshotBlobId } : {}),
     };
     // No $-key risk on observations (no v.any fields), but stay consistent with
@@ -75,6 +80,9 @@ export async function serializeBrowserStepsForBackend(
   if (!steps?.length) return [];
   const out: SerializedBrowserInteractionStep[] = [];
   for (const step of steps) {
+    const pluginWorkspace = step.pluginWorkspace === undefined
+      ? undefined
+      : parsePluginWorkspaceRecording(step.pluginWorkspace);
     let screenshotBlobId: string | undefined;
     if (step.screenshotBase64 && uploadTarget) {
       try {
@@ -94,6 +102,7 @@ export async function serializeBrowserStepsForBackend(
     const { screenshotBase64: _screenshotBase64, ...rest } = step;
     const serialized: SerializedBrowserInteractionStep = {
       ...rest,
+      ...(pluginWorkspace ? { pluginWorkspace } : {}),
       ...(screenshotBlobId ? { screenshotBlobId } : {}),
     };
     // $-keys can appear inside widgetToolCalls[].args (v.any() on the backend

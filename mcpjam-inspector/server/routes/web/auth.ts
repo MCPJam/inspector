@@ -82,6 +82,7 @@ import {
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   resolvePluginStdioHttpTarget,
   type PluginStdioHttpTarget,
@@ -508,6 +509,7 @@ export type ConvexAuthorizeResponse = {
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
     transportType: "stdio" | "http";
+    pluginComponent?: true;
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
     // once the backend persists + serves it. Absent on every ordinary row
@@ -844,6 +846,7 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    pluginComputerRuntime?: boolean;
     connectionId?: string;
     connectionIds?: Record<string, string>;
     includeConnections?: boolean;
@@ -893,6 +896,9 @@ export async function authorizeBatch(
         // the docstring on `normalizeAuthorizeResult` in
         // mcpjam-backend/convex/http.ts for the full rationale.
         ...(!HOSTED_MODE ? { localRuntime: true } : {}),
+        ...(options?.pluginComputerRuntime === true && canColocatePluginStdio()
+          ? { pluginComputerRuntime: true }
+          : {}),
       }),
     });
   } catch (error) {
@@ -1443,6 +1449,8 @@ export async function createAuthorizedManager(
   options?: {
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
+    /** Set only from the server-resolved host Computer setting. */
+    pluginComputerRuntime?: boolean;
     multiConnection?: boolean;
     /** Build transports only for the explicitly pinned accounts. */
     onlySelectedConnections?: boolean;
@@ -1528,10 +1536,12 @@ export async function createAuthorizedManager(
      */
     requestTimeoutByServerId?: Record<string, number>;
     /**
-     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
-     * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`. Required whenever the batch contains a `useXaa` server — the
-     * builder throws a 500 rather than connecting tokenless if it's missing.
+     * Pre-resolved MCPJam test-IdP issuer for Cross-App Access servers.
+     * Callers holding the request `Context` pass
+     * `resolveXaaIssuer(c, HOSTED_MODE)`; the claim loops, which have none,
+     * pass `resolveConfiguredXaaIssuer()`. Required whenever the batch
+     * contains a `useXaa` server — the builder throws a 500 rather than
+     * connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
     /**
@@ -1597,6 +1607,10 @@ export async function createAuthorizedManager(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    /** Claims and schema selection owned by the collector installed above. */
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
@@ -1668,6 +1682,7 @@ export async function createAuthorizedManager(
     projectId,
     uniqueServerIds,
     {
+      pluginComputerRuntime: options?.pluginComputerRuntime,
       includeConnections:
         options?.multiConnection || options?.onlySelectedConnections,
       connectionIds: options?.connectionIds,
@@ -1842,10 +1857,11 @@ export async function createAuthorizedManager(
 
       // Backend-resolved identity failure (legacy partial per-server override):
       // a distinct configuration error, surfaced before any mint AND before the
-      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-      // would mask this actionable 400 behind the caller-contract 500. Gated on
-      // the same XAA selection the mint pass uses. No silent fallback to the
-      // demo identity, no silent XAA→OAuth fallback.
+      // issuer guard, so a surface that has no issuer to pass (a claim loop on
+      // a deployment with no public URL) still gets this actionable 400 rather
+      // than the caller-contract 500. Gated on the same XAA selection the mint
+      // pass uses. No silent fallback to the demo identity, no silent XAA→OAuth
+      // fallback.
       //
       // Framed like every other connect-time XAA failure: the backend's sentence
       // is written for the server's auth form, and on its own ("Complete or
@@ -2237,7 +2253,12 @@ export async function createAuthorizedManager(
         // that will not verify, a session record that did not land) and leaves
         // the `toHttpConfig` refusal below exactly as it was.
         let pluginRuntime: PluginStdioHttpTarget | undefined;
-        if (auth.serverConfig.transportType !== "http") {
+        if (
+          options?.pluginComputerRuntime === true &&
+          canColocatePluginStdio() &&
+          auth.serverConfig.transportType !== "http" &&
+          auth.serverConfig.pluginComponent === true
+        ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
               bearerToken,
@@ -2257,15 +2278,6 @@ export async function createAuthorizedManager(
               // wake a second, unrelated machine purely because a plugin was
               // pinned.
               executionScope: options?.executionScope,
-              workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
-                caller.workosUserId &&
-                caller.mcpjamOrganizationId
-                  ? {
-                      workosUserId: caller.workosUserId,
-                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                    }
-                  : undefined,
             })) ?? undefined;
         }
 
@@ -2327,9 +2339,11 @@ export async function createAuthorizedManager(
           // sibling server can mint.)
           if (!options?.xaaIssuer) {
             // Caller-contract violation: a `useXaa` server reached a manager
-            // builder that didn't thread the issuer (only callers holding the
-            // request `Context` can resolve it). Fail loud here rather than
-            // connecting tokenless and surfacing a confusing downstream 401.
+            // builder that didn't thread the issuer. A claim loop lands here
+            // when the deployment configures no public URL
+            // (`MCPJAM_INSPECTOR_PUBLIC_URL`, see `resolveConfiguredXaaIssuer`).
+            // Fail loud here rather than connecting tokenless and surfacing a
+            // confusing downstream 401.
             //
             // Always MCPJam's own bug, so it is declared ours: the origin it
             // carries reaches `http.request.failed`, where the MCPJam-fault
@@ -2743,7 +2757,11 @@ export async function createAuthorizedManager(
         batch.organizationId,
       );
       if (collector) {
-        manager.setMrtrInputCollector(serverId, collector);
+        manager.setMrtrInputCollector(
+          serverId,
+          collector,
+          options.mrtrInputOptionsForServer?.(baseServerId),
+        );
       }
     }
   }
@@ -3021,6 +3039,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     tolerateServerRefusals?: boolean;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -3068,6 +3088,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     /** See `createAuthorizedManager`; no MCP initialization before authorization. */
     lazyConnect?: boolean;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
@@ -3269,6 +3291,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
+      pluginComputerRuntime:
+        options?.pluginComputerRuntime !== false && !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
       ...(typeof raw.connectionId === "string" &&
       typeof raw.serverId === "string"
@@ -3435,6 +3459,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: {
     beforeOperation?: (body: z.infer<S>) => Promise<void>;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
@@ -3498,6 +3524,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
       {
         timeoutMs: options?.timeoutMs,
+        pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
         rpcLogger: rpcCollector?.rpcLogger,
