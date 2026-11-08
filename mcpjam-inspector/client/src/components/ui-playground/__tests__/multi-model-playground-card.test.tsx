@@ -56,6 +56,7 @@ const { historyDetail } = vi.hoisted(() => ({ historyDetail: vi.fn() }));
 vi.mock("@/components/chat-v2/history/chat-history-prefetch", () => ({
   getCachedChatHistoryDetail: historyDetail,
 }));
+let sessionModel: { id: string; name: string; provider: string; hosted?: boolean } | undefined;
 const mockUseChatSession = {
   loadChatSession: vi.fn().mockResolvedValue(undefined),
   // Elicitation surface (hosted). These suites never elicit, but the shape
@@ -67,6 +68,16 @@ const mockUseChatSession = {
   dismissUrlElicitationRequired: vi.fn(),
   hiddenEnvironmentActive: false,
   isSessionBootstrapComplete: true,
+  // The hook resolves the card's own row; a lazy read because `model` is
+  // declared below this mock.
+  get selectedModel() {
+    return sessionModel ?? model;
+  },
+  // Tests restore the mock with `Object.assign`; writing the card's own row
+  // back clears the per-test override.
+  set selectedModel(value: typeof sessionModel) {
+    sessionModel = value === model ? undefined : value;
+  },
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -333,6 +344,36 @@ describe("MultiModelPlaygroundCard", () => {
     } satisfies NonNullable<Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"]>;
     render(<Harness compareKind="host" pluginComputerAttached hostCapsResolver={saved} />);
     expect(composition.inputs).toHaveBeenLastCalledWith(expect.objectContaining({ computerAttached: false }));
+  });
+
+  it("passes the host column's harness to its session and holds Send on a drifted row", () => {
+    const saved = {
+      id: "codex_client", schemaVersion: 2, hostStyle: "chatgpt", modelId: String(model.id),
+      systemPrompt: "", temperature: 0.7, requireToolApproval: false, harness: "codex",
+      serverIds: [], optionalServerIds: [], connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {}, hostContext: {},
+    } satisfies NonNullable<Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"]>;
+    const readiness = vi.fn();
+    const { rerender } = render(
+      <Harness compareKind="host" hostCapsResolver={saved} onSendReadinessChange={readiness} />,
+    );
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({
+      harnessModelTarget: { harnessId: "codex" },
+    });
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), true, undefined);
+    sessionModel = { ...model, id: "openai/gpt-5.5", name: "GPT-5.5" };
+    try {
+      rerender(<Harness compareKind="host" hostCapsResolver={{ ...saved }} onSendReadinessChange={readiness} />);
+      expect(readiness).toHaveBeenLastCalledWith(
+        expect.any(String),
+        false,
+        "GPT-5 Mini's model or connection changed. Send again to use the current one.",
+      );
+    } finally {
+      sessionModel = undefined;
+    }
+    rerender(<Harness compareKind="model" onSendReadinessChange={readiness} />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ harnessModelTarget: null });
   });
 
   it("passes a model card's selection while host cards explicitly inherit", () => {

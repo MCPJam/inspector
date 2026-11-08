@@ -1,4 +1,6 @@
 import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import { paneModelDriftReason } from "@/lib/compare-pane-model";
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
@@ -473,9 +475,11 @@ export function MultiModelPlaygroundCard({
         : [],
     [],
   );
+  const hostHarnessId =
+    compareKind === "host" ? effectiveHarnessId(hostCapsResolver) : null;
   const { hiddenEnvironment, columnHostedContext } = useCompareChatEnvironment({
     hostedContext,
-    harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
+    harnessId: pluginHarnessId ?? effectiveHarnessId(hostCapsResolver),
     hostResolved: pluginHostResolved,
     computerAttached: hostCapsResolver
       ? !!hostCapsResolver.computer
@@ -533,6 +537,7 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
     harnessStartupPhase,
     loadChatSession,
+    selectedModel,
   } = useChatSession({
     pickedModelSelection: selection,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
@@ -558,6 +563,8 @@ export function MultiModelPlaygroundCard({
     // The column's own row and effort: two cards of one model send their own
     // levels, and an OpenRouter card never resolves to the hosted row.
     pinnedModelProvider: String(model.provider),
+    // A client column offers only what its own harness runs, never the lead's list.
+    harnessModelTarget: hostHarnessId ? { harnessId: hostHarnessId } : null,
     reasoningEffortEnabled: true,
     reasoningEffortHarness,
     fixedReasoningEffort: reasoningEffort ?? null,
@@ -572,8 +579,12 @@ export function MultiModelPlaygroundCard({
     },
   });
 
+  const modelDrift =
+    compareKind === "host"
+      ? paneModelDriftReason({ label: compareLabel, shown: model, resolved: selectedModel })
+      : undefined;
   const readyToSend =
-    !readinessNotice && isSessionBootstrapComplete &&
+    !readinessNotice && isSessionBootstrapComplete && !modelDrift &&
     (!hiddenEnvironmentActive ||
       (!hiddenEnvironment.blockingError &&
         (!hiddenEnvironment.wanted || !!hiddenEnvironment.environmentId)));
@@ -581,7 +592,8 @@ export function MultiModelPlaygroundCard({
     onSendReadinessChange?.(
       `${compareKind}:${compareId}`,
       readyToSend,
-      hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined,
+      modelDrift ??
+        (hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined),
     );
     return () => onSendReadinessChange?.(`${compareKind}:${compareId}`, false);
   }, [
@@ -589,6 +601,7 @@ export function MultiModelPlaygroundCard({
     compareKind,
     compareId,
     readyToSend,
+    modelDrift,
     hiddenEnvironment.blockingError,
     hiddenEnvironmentActive,
   ]);
