@@ -38,6 +38,7 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import { TurnTiming } from "../../utils/turn-timing.js";
 import { startEarly } from "../../utils/early-start.js";
 import { assertConversationExecution } from "../../utils/harness/conversation-execution.js";
 
@@ -47,6 +48,7 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
+  const timing = new TurnTiming();
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -96,6 +98,7 @@ export async function handleManagedChatTurn(
       rpcCollector,
     });
     if (!setup.value) return setup.response;
+    timing.mark("setup");
     let {
       hostedBody,
       initializePins,
@@ -150,6 +153,7 @@ export async function handleManagedChatTurn(
       requestId: hostedBody.harnessStartupRequestId,
       harness: resolvedExecution.harness,
     }, resources);
+    timing.mark("turnAuthorization");
     const connections = await prepareManagedConnections({
       c,
       rawBody,
@@ -186,6 +190,7 @@ export async function handleManagedChatTurn(
       validatedPageTools,
       validatedWidgetModelContext,
     } = connections;
+    timing.mark("connections");
     // A conversation with an earlier reply is already bound to its runtime, so
     // the binding check is a read: it runs while tools are prepared and is
     // awaited where the stream is prepared. A new chat's first bind keeps its
@@ -234,6 +239,7 @@ export async function handleManagedChatTurn(
       builtInTools,
       effectiveSystemPrompt,
     } = tools;
+    timing.mark("tools");
     try {
       const sourceType = turnMode === "recorded" ? "scenario" : "direct";
       // Mirrors the sourceType branch — scenario surface stays "scenario", the
@@ -705,6 +711,7 @@ export async function handleManagedChatTurn(
         },
         runtime: {
           turnAuthorization,
+          turnTiming: timing,
           ...(executionBinding ? { executionBinding } : {}),
           authHeader: c.req.header("authorization"),
           clientIp: getSpendClientIp(c),
@@ -752,8 +759,11 @@ export async function handleManagedChatTurn(
           dispose: () => resources.dispose(),
         },
       });
+      timing.mark("streamPreparation");
       streamOwnsResources = true;
-      return resources.response(response, c.req.raw.signal);
+      return resources.response(response, c.req.raw.signal, {
+        "Server-Timing": timing.serverTiming(),
+      });
     } catch (error) {
       // The bridge can hold rows created before the throw (e.g. an elicitation
       // during a tool call that then failed); withdraw them so no answerable

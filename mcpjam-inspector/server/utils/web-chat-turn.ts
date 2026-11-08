@@ -1,4 +1,5 @@
 import type { TurnAuthorization } from "../services/turn-authorization.js";
+import type { TurnTiming } from "./turn-timing.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
@@ -575,6 +576,8 @@ export interface WebChatTurnPrepareInputs {
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
   turnAuthorization?: TurnAuthorization;
+  /** This turn's stage timing; the harness adds its stages and first text. */
+  turnTiming?: TurnTiming;
   /** The execution-binding check, when the route already started it. */
   executionBinding?: EarlyStart<void>;
   localScopeStepUp?: {
@@ -1986,6 +1989,7 @@ export async function streamChatTurn(
     harnessHostCapabilities: prepare.harnessHostCapabilities,
     harnessStartupRequestId: prepare.harnessStartupRequestId,
     turnAuthorization: runtime.turnAuthorization,
+    ...(runtime.turnTiming ? { turnTiming: runtime.turnTiming } : {}),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
