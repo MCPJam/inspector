@@ -316,8 +316,32 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "ad248ab92d1ffa9d570444cbe2102c4160fbc2066bcc72ad8f3b73b39ddbd388",
+      "6fb458fd9fdf271c5ced0dc48c4c2df2be99d50b08ad6fdbb591306f9e0e2a35",
     );
+  });
+
+  it("supports OpenCode haiku and refuses a foreign family", () => {
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("supported");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-sonnet-4.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unknown");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "openai/gpt-5.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unsupported");
   });
 });
 

@@ -312,6 +312,28 @@ function verifyVendor(recipe, dir) {
     log(`${recipe.dir}: vendor CLI ${version} verified (${platformKey})`);
     return;
   }
+  if (vendor.kind === "opencode-ai") {
+    const pkgDir = realpathSync(
+      join(dir, "node_modules", ...vendor.package.split("/")),
+    );
+    const pkg = JSON.parse(
+      readFileSync(join(pkgDir, "package.json"), "utf8"),
+    );
+    if (pkg.version !== recipe.runtimeVersion) {
+      fail(
+        `opencode-ai ${pkg.version} is installed; the inspector pins ${recipe.runtimeVersion}`,
+      );
+    }
+    const binary = join(dir, "node_modules", ".bin", "opencode");
+    const version = execFileSync(binary, ["--version"], {
+      encoding: "utf8",
+    }).trim();
+    if (!version.includes(recipe.runtimeVersion)) {
+      fail(`the OpenCode CLI reports "${version}", not ${recipe.runtimeVersion}`);
+    }
+    log(`${recipe.dir}: vendor CLI ${version} verified`);
+    return;
+  }
   fail(`unknown vendor verification "${vendor.kind}" for ${recipe.dir}`);
 }
 

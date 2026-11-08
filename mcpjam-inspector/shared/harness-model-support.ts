@@ -127,6 +127,7 @@ export const HARNESS_PINNED_VERSIONS = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].runtimeVersion,
   "codex": HARNESS_DESCRIPTORS["codex"].runtimeVersion,
   "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
+  "opencode": HARNESS_DESCRIPTORS["opencode"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -162,6 +163,7 @@ export const HARNESS_ORG_UPSTREAM = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].orgUpstream,
   "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
   "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
+  "opencode": HARNESS_DESCRIPTORS["opencode"].orgUpstream,
 } as const satisfies Record<Harness, HarnessOrgUpstream | null>;
 
 /** The org upstream `harnessId` runs on, or null when it takes no org key. */
@@ -248,6 +250,7 @@ const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   "claude-code": HARNESS_DESCRIPTORS["claude-code"].displayName,
   codex: HARNESS_DESCRIPTORS.codex.displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
+  opencode: HARNESS_DESCRIPTORS.opencode.displayName,
 };
 
 /** The runtime's human-facing name ("Claude Code"), or the id itself. */

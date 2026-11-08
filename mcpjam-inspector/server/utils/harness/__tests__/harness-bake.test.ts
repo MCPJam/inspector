@@ -107,7 +107,7 @@ const CURSOR_AUTH = { CURSOR_API_KEY: "x" };
 
 /** The hosted runtimes exactly as `run-harness-turn` builds them. */
 function hostedHarnesses(): Record<
-  "claude-code" | "codex" | "cursor",
+  "claude-code" | "codex" | "cursor" | "opencode",
   HarnessWithBootstrap
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -115,6 +115,8 @@ function hostedHarnesses(): Record<
   const codex = getHarnessAdapter("codex")
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
+    .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": claude({
@@ -124,6 +126,10 @@ function hostedHarnesses(): Record<
     }),
     codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
     cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
+    opencode: opencode({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: CLAUDE_AUTH,
+    }),
   };
 }
 
@@ -133,7 +139,7 @@ function hostedHarnesses(): Record<
  * them may reach the recipe, or one template could not cover every turn.
  */
 function hostedHarnessVariants(): Record<
-  "claude-code" | "codex" | "cursor",
+  "claude-code" | "codex" | "cursor" | "opencode",
   HarnessWithBootstrap[]
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -141,6 +147,8 @@ function hostedHarnessVariants(): Record<
   const codex = getHarnessAdapter("codex")
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
+    .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": [
@@ -173,6 +181,17 @@ function hostedHarnessVariants(): Record<
         },
       }),
     ],
+    opencode: [
+      opencode({
+        modelId: "anthropic/claude-haiku-4.5",
+        auth: CLAUDE_AUTH,
+        mcpJson: {
+          mcpServers: {
+            probe: { type: "http", url: "https://example.invalid/mcp" },
+          },
+        },
+      }),
+    ],
   };
 }
 
@@ -187,7 +206,7 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
-  it.each(["claude-code", "codex", "cursor"] as const)(
+  it.each(["claude-code", "codex", "cursor", "opencode"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
       const harness = hostedHarnesses()[id];
@@ -198,7 +217,7 @@ describe("harnessRecipeIdentity", () => {
     },
   );
 
-  it("bakes exactly the hosted Claude Code, Codex app-server and Cursor recipes", async () => {
+  it("bakes exactly the hosted Claude Code, Codex, Cursor and OpenCode recipes", async () => {
     const harnesses = hostedHarnesses();
     const dirs = await Promise.all(
       Object.values(harnesses).map(
@@ -208,7 +227,7 @@ describe("harnessRecipeIdentity", () => {
     expect([...dirs].sort()).toEqual([...HARNESS_BAKED_BOOTSTRAP_DIRS].sort());
   });
 
-  it.each(["claude-code", "codex", "cursor"] as const)(
+  it.each(["claude-code", "codex", "cursor", "opencode"] as const)(
     "does not depend on the turn's settings (%s)",
     async (id) => {
       const base = harnessRecipeIdentity(
@@ -502,6 +521,7 @@ describe("the generated bake context", () => {
       "claude-code": HARNESS_PINNED_VERSIONS["claude-code"],
       codex: HARNESS_PINNED_VERSIONS.codex,
       cursor: HARNESS_PINNED_VERSIONS.cursor,
+      opencode: HARNESS_PINNED_VERSIONS.opencode,
     });
     expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
     expect(manifest.runtimeUser).toBe("user");

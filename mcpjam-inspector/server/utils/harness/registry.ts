@@ -26,6 +26,8 @@ export {
   CURSOR_CLI_VERSION,
 } from "./cursor-bootstrap.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
+import { createOpenCode } from "@ai-sdk/harness-opencode";
+import { createOpenCodeHarness } from "./opencode-adapter.js";
 import type { CodexWorkspaceWriteSandboxPolicy } from "./codex-appserver/shared/sandbox-policy.js";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type {
@@ -48,6 +50,7 @@ import {
   toClaudeCodeModel,
   toClaudeCodeNativeModel,
   toCodexNativeModel,
+  toOpenCodeNativeModel,
   type HarnessNativeUpstream,
 } from "./runtime-model-ids.js";
 import {
@@ -71,6 +74,7 @@ import {
   CLAUDE_CODE_SKILLS_BASE,
   CODEX_SKILLS_BASE,
   CURSOR_SKILLS_BASE,
+  OPENCODE_SKILLS_BASE,
 } from "./skill-roots.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
@@ -152,6 +156,11 @@ export function buildBrokerDummyAuth(
         CODEX_API_KEY: BROKER_DUMMY_CREDENTIAL,
         OPENAI_BASE_URL: proxyBaseUrl,
         ...(closeModelConnections ? { MCPJAM_CLOSE_MODEL_CONNECTIONS: "1" } : {}),
+      };
+    case "opencode":
+      return {
+        ANTHROPIC_AUTH_TOKEN: BROKER_DUMMY_CREDENTIAL,
+        ANTHROPIC_BASE_URL: proxyBaseUrl,
       };
     case "cursor":
       throw new Error(
@@ -1292,10 +1301,50 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   },
 };
 
+const opencodeAdapter: HarnessRuntimeAdapter = {
+  id: "opencode",
+  displayName: HARNESS_DESCRIPTORS.opencode.displayName,
+  supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
+  requiresComputer: true,
+  modelAccess: HARNESS_DESCRIPTORS.opencode.modelAccess,
+  defaultPermissionMode: "allow-all",
+  liveApprovalRuntime: true,
+  supportsNativeToolApproval: true,
+  approvalPermissionMode: "allow-reads",
+  supportsMcpToolApproval: false,
+  supportsHostExecutedToolApproval: true,
+  mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
+  supportsSkills: false,
+  skillsBaseDir: OPENCODE_SKILLS_BASE,
+  skillsWriteOptions: { trailingNewline: false },
+  prepareSkills: prepareNoSkills,
+  supportsPluginBundles: false,
+  fileChangeToolName: undefined,
+  listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),
+  toNativeModel: toOpenCodeNativeModel,
+  pinnedRuntimeVersion: harnessPinnedVersion("opencode"),
+  modelSupport: modelSupportFor("opencode"),
+  supportsModel: supportsModelFor("opencode"),
+  parseToolName: parseHarnessToolName,
+  runtimeVersionCommand: (sessionWorkDir) =>
+    `'${shellSingleQuote(
+      sessionWorkDir,
+    )}/.harness-bootstrap/opencode/node_modules/.bin/opencode' --version`,
+  createHarness({ modelId, auth, upstream, startupTimeoutMs }) {
+    return createOpenCodeHarness({
+      modelId,
+      auth,
+      upstream,
+      startupTimeoutMs,
+    });
+  },
+};
+
 const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "claude-code": claudeCodeAdapter,
   codex: codexAdapter,
   cursor: cursorAdapter,
+  opencode: opencodeAdapter,
 };
 
 /** Membership test against the installed adapters (own-property, prototype-safe).

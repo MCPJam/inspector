@@ -49,6 +49,7 @@ const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
     "claude-code": ["forwarded-bridge", "host-tools"],
     codex: ["forwarded-bridge", "host-tools"],
     cursor: [],
+    opencode: [],
   };
 
 const REQUALIFY = [
@@ -175,6 +176,19 @@ function pinSites({
     ]);
   }
   if (id === "cursor") sites.push(["CURSOR_CLI_VERSION", CURSOR_CLI_VERSION]);
+  if (id === "opencode") {
+    const require = createRequire(import.meta.url);
+    const bridge = readJson(
+      join(
+        dirname(require.resolve("@ai-sdk/harness-opencode/package.json")),
+        "dist/bridge/package.json",
+      ),
+    ) as { dependencies: Record<string, string> };
+    sites.push([
+      "@ai-sdk/harness-opencode bridge",
+      bridge.dependencies["opencode-ai"],
+    ]);
+  }
   return sites;
 }
 

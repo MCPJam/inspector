@@ -72,11 +72,14 @@ describe("harnessControlState — loop-owned controls", () => {
     }
   });
 
-  it("enforces requireToolApproval on Claude Code and Codex", () => {
+  it("enforces requireToolApproval on Claude Code, Codex and OpenCode", () => {
     expect(harnessControlState("claude-code", "requireToolApproval")).toEqual({
       enforced: true,
     });
     expect(harnessControlState("codex", "requireToolApproval")).toEqual({
+      enforced: true,
+    });
+    expect(harnessControlState("opencode", "requireToolApproval")).toEqual({
       enforced: true,
     });
   });
@@ -87,7 +90,7 @@ describe("harnessControlState — reasoning effort", () => {
     expect(harnessControlState("codex", "reasoningEffort")).toEqual({
       enforced: true,
     });
-    for (const harness of ["claude-code", "cursor"] as const) {
+    for (const harness of ["claude-code", "cursor", "opencode"] as const) {
       const state = harnessControlState(harness, "reasoningEffort");
       expect(state.enforced, harness).toBe(false);
       expect(state.enforced === false && state.note).toMatch(
@@ -141,6 +144,9 @@ describe("harnessControlState — who chooses the MODEL", () => {
       enforced: true,
     });
     expect(harnessControlState("codex", "modelId")).toEqual({ enforced: true });
+    expect(harnessControlState("opencode", "modelId")).toEqual({
+      enforced: true,
+    });
 
     const cursor = harnessControlState("cursor", "modelId");
     expect(cursor.enforced).toBe(false);
@@ -185,6 +191,7 @@ describe("HARNESS_DISPLAY_NAME", () => {
     // different thing a user can also attach. A label that did not distinguish
     // them would make the two indistinguishable in every picker.
     expect(HARNESS_DISPLAY_NAME.cursor).toBe("Cursor CLI");
+    expect(HARNESS_DISPLAY_NAME.opencode).toBe("OpenCode");
   });
 
   it("names every harness that has a delivery declaration", () => {

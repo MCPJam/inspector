@@ -33,6 +33,7 @@ describe("the Codex adapter", () => {
       "claude-code",
       "codex",
       "cursor",
+      "opencode",
     ]);
     expect(isHarnessId("codex")).toBe(true);
     expect(harnessSupportsSkills("codex")).toBe(true);

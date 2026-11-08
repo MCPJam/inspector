@@ -506,7 +506,8 @@ describe("harnessModelEligibleForRuntime", () => {
         const preflightModelRefusal =
           !preflight.ok &&
           (preflight.kind === "model-not-hosted" ||
-            preflight.kind === "model-unsupported");
+            preflight.kind === "model-unsupported" ||
+            preflight.kind === "model-unverified");
         expect(eligible, `${id} / ${model.modelId}`).toBe(
           !preflightModelRefusal,
         );
@@ -1018,7 +1019,21 @@ describe("organization-key selections", () => {
     ],
     ["codex", "gpt-5", "openai", "openai/gpt-5", "ok"],
     [
+      "opencode",
+      "claude-haiku-4-5",
+      "anthropic",
+      "anthropic/claude-haiku-4.5",
+      "ok",
+    ],
+    [
       "claude-code",
+      "gpt-5",
+      "openai",
+      "openai/gpt-5",
+      "model-provider-unsupported",
+    ],
+    [
+      "opencode",
       "gpt-5",
       "openai",
       "openai/gpt-5",

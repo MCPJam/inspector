@@ -69,6 +69,8 @@ export const HARNESS_REASONING_EFFORTS: Readonly<
   // verified.
   codex: ["low", "medium", "high", "xhigh"],
   cursor: [],
+  // Empty until an OpenCode reasoning-variant mapping is verified live.
+  opencode: [],
 };
 
 /**
