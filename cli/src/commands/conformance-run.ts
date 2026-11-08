@@ -209,16 +209,26 @@ export function registerConformanceRunCommand(program: Command): void {
       oauth,
       ...suiteConfigs,
       engineVersion: packageJson.version,
+      // A suite that throws is left out of the report, so say why here or the
+      // run exits incomplete with nothing to go on.
+      onProgress: (event) => {
+        if (event.status !== "failed" || command.optsWithGlobals().quiet) {
+          return;
+        }
+        const reason = event.error ? ` ${event.error}` : "";
+        process.stderr.write(
+          `Run incomplete: the ${event.suiteKind} suite could not run.${reason}\n`,
+        );
+      },
     });
 
-    if (reporter === "json-summary" || format === "json") {
+    // An explicit reporter wins over the output format, as on every suite
+    // command: off a TTY the format defaults to json, and CI is never a TTY.
+    if (reporter === "junit-xml") {
+      const { renderConformanceRunJUnitXml } = await import("@mcpjam/sdk");
+      writeConformanceOutput(renderConformanceRunJUnitXml(report));
+    } else if (reporter === "json-summary" || format === "json") {
       writeConformanceOutput(JSON.stringify(report, null, 2));
-    } else if (reporter === "junit-xml") {
-      const { renderConformanceReportJUnitXml } = await import("@mcpjam/sdk");
-      const xml = Object.values(report.reports)
-        .map((suiteReport) => renderConformanceReportJUnitXml(suiteReport))
-        .join("\n");
-      writeConformanceOutput(xml);
     } else {
       for (const [kind, suiteReport] of Object.entries(report.reports)) {
         process.stderr.write(`\n== ${kind} ==\n`);

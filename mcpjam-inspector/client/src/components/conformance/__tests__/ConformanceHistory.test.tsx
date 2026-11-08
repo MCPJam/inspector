@@ -118,6 +118,25 @@ describe("ConformanceHistory", () => {
     );
   });
 
+  it("names a CLI run by the URL it ran against, not its storage key", () => {
+    useQueryMock.mockReturnValue({
+      page: [
+        makeRun({
+          targetKind: "external",
+          targetKey: "url:https://mcp.example.com/mcp",
+          serverId: null,
+          source: "cli",
+        }),
+      ],
+      isDone: true,
+      continueCursor: "",
+    });
+    render(<ConformanceHistory projectId="proj_1" />);
+
+    expect(screen.getByText("https://mcp.example.com/mcp")).toBeInTheDocument();
+    expect(screen.queryByText(/^url:/)).toBeNull();
+  });
+
   it("names a run that has not finished instead of drawing an empty ring", () => {
     const unfinished = { applicable: 0, passed: 0, failed: 0, couldNotRun: 0 };
     useQueryMock.mockReturnValue({
