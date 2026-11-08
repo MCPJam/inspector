@@ -268,36 +268,49 @@ export class WorkspacePreviewRelay {
         res.end("This preview only answers requests from its own pages.");
         return;
       }
-      const upstream = http.request(
-        {
-          agent: relay.agent,
-          method: req.method,
-          path: req.url,
-          headers: req.headers,
-          setHost: false,
-        },
-        (answer) => {
-          res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
-          answer.pipe(res);
-          // A pipe does not end the browser's response when the app drops
-          // mid-body, so the page would wait on bytes that never come.
-          answer.once("close", () => {
-            if (!answer.complete) res.destroy();
-          });
-        },
-      );
+      // A pooled tunnel can be closing as it is handed out: the app dropped
+      // its idle keep-alive connection, so the sidecar ended the tunnel. Node
+      // reports that as a reset on a reused socket, and a request with no body
+      // is safe to send once more on a fresh tunnel.
+      const replayable = req.method === "GET" || req.method === "HEAD";
+      let upstream: http.ClientRequest;
+      const forward = (retried: boolean) => {
+        const attempt = http.request(
+          {
+            agent: relay.agent,
+            method: req.method,
+            path: req.url,
+            headers: req.headers,
+            setHost: false,
+          },
+          (answer) => {
+            res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
+            answer.pipe(res);
+            // A pipe does not end the browser's response when the app drops
+            // mid-body, so the page would wait on bytes that never come.
+            answer.once("close", () => {
+              if (!answer.complete) res.destroy();
+            });
+          },
+        );
+        upstream = attempt;
+        attempt.on("error", (error: NodeJS.ErrnoException) => {
+          if (!retried && replayable && attempt.reusedSocket && error.code === "ECONNRESET" && !res.headersSent && !res.destroyed)
+            return forward(true);
+          if (res.headersSent || res.destroyed) return void res.destroy();
+          const idle = error.message === "app_not_listening";
+          res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+          res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
+        });
+        if (replayable) attempt.end();
+        else req.pipe(attempt);
+      };
+      forward(false);
       // A response the browser abandons, such as a hot-reload event stream,
       // never ends on its own and would hold one of the port's tunnels.
       res.once("close", () => {
         if (!res.writableFinished) upstream.destroy();
       });
-      upstream.on("error", (error) => {
-        if (res.headersSent || res.destroyed) return void res.destroy();
-        const idle = error.message === "app_not_listening";
-        res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
-        res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
-      });
-      req.pipe(upstream);
     });
     server.on("connection", (socket: net.Socket) => {
       this.sockets.add(socket);
