@@ -635,6 +635,7 @@ async function runTurn(start, turn) {
           if (typeof msg.total_cost_usd === "number") {
             totalCostUsd = msg.total_cost_usd;
           }
+          if (!queryInput.answersSentMessage(msg)) continue;
           queryInput.observeResult();
           if (!queryInput.hasActiveUserMessages()) {
             queryInput.close();
