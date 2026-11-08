@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  chipClientLimit,
   createPane,
   loadComparePanes,
+  movePane,
   normalizePanes,
   paneHostIds,
   panesForHostIds,
@@ -251,5 +253,29 @@ describe("subscribeComparePanes", () => {
     unsubscribe();
     promoteLeadPane(PROJECT, "b");
     expect(callback).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("pane order and the client chips", () => {
+  it("moves a pane one place and leaves the ends alone", () => {
+    const panes = [host("a"), host("b"), host("c")];
+    expect(movePane(panes, "b", -1)).toEqual([host("b"), host("a"), host("c")]);
+    expect(movePane(panes, "b", 1)).toEqual([host("a"), host("c"), host("b")]);
+    expect(movePane(panes, "a", -1)).toBe(panes);
+    expect(movePane(panes, "c", 1)).toBe(panes);
+    expect(movePane(panes, "missing", 1)).toBe(panes);
+  });
+
+  it("lets the chips check three clients, less panes they cannot show", () => {
+    expect(chipClientLimit([])).toBe(3);
+    expect(chipClientLimit([host("a"), host("b")])).toBe(3);
+    // A second pane on client a, and an environment pane, take a slot each.
+    expect(chipClientLimit([host("a"), host("a", "a~2")])).toBe(2);
+    expect(
+      chipClientLimit([
+        { paneId: "e", target: { kind: "environment", environmentId: "e" } },
+        host("a"),
+      ]),
+    ).toBe(2);
   });
 });

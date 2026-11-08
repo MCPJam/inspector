@@ -19,6 +19,8 @@ import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge
 import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { PlaygroundAppsSection } from "./PlaygroundAppsSection";
 import { IncludedPluginToolsSection } from "./IncludedPluginToolsSection";
+import { ComparePaneSelect } from "./ComparePaneSelect";
+import { useSelectedComparePane } from "@/stores/compare-pane-store";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -43,6 +45,8 @@ export function PlaygroundLeftRail({
   onClose?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
+  // While Compare runs clients, the tools are the selected pane's.
+  const comparePane = useSelectedComparePane();
 
   const handleTabClick = useCallback(
     (next: LeftRailTab) => {
@@ -92,9 +96,13 @@ export function PlaygroundLeftRail({
           <SessionsBody />
         ) : (
           <div className="flex h-full min-h-0 flex-col">
+            {comparePane ? <ComparePaneSelect selected={comparePane} /> : null}
             <div className="min-h-0 flex-1">
               <ToolsBody
-                previewedHostId={previewedHostId ?? null}
+                previewedHostId={
+                  comparePane ? comparePane.hostId : (previewedHostId ?? null)
+                }
+                serverNames={comparePane?.serverNames ?? null}
                 projectId={projectId ?? null}
               />
             </div>
@@ -168,12 +176,18 @@ function SessionsBody() {
 
 function ToolsBody({
   previewedHostId,
+  serverNames,
   projectId,
 }: {
   previewedHostId: string | null;
+  /** A Compare pane's own servers, or null for every active server. */
+  serverNames: string[] | null;
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
+  const activeServerNames = serverNames
+    ? state.activeServerNames.filter((name) => serverNames.includes(name))
+    : state.activeServerNames;
   // The agent browser the previewed host attaches, if any: the six `browser_*`
   // tools plus whatever the page it has open offers. Resolved HERE, beside the
   // harness built-ins, and fed into both panes below for the same reason they
@@ -221,11 +235,11 @@ function ToolsBody({
   // server pane (keyed on the stale `serverName` pointer), so the remaining
   // server's tools vanished. Only the zero-server case falls back to
   // PlaygroundLeft for its empty/onboarding state.
-  if (state.activeServerNames.length >= 1) {
+  if (activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner
         previewedHarnessId={previewedHarnessId}
-        activeServerNames={state.activeServerNames}
+        activeServerNames={activeServerNames}
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
         browserTools={browserTools}

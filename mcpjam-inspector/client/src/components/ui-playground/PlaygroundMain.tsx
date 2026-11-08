@@ -286,7 +286,12 @@ import { useComparePanes } from "@/hooks/use-compare-panes";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
-import { paneHostId, promoteLeadPane } from "@/lib/compare-panes";
+import {
+  chipClientLimit,
+  paneHostId,
+  promoteLeadPane,
+} from "@/lib/compare-panes";
+import { useComparePaneControls } from "./use-compare-pane-controls";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -2224,6 +2229,8 @@ export function PlaygroundMain({
   const {
     panes: comparePanes,
     restorePanes,
+    setPaneOverrides,
+    setPanePick,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
@@ -2406,6 +2413,7 @@ export function PlaygroundMain({
               // Unfiltered: each column applies its own harness.
               models: catalogModels,
               orgConfig: hostedOrgModelConfig,
+              pickedSelection: pane.pickedSelection,
             }),
           ),
     [
@@ -2459,6 +2467,17 @@ export function PlaygroundMain({
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
+  const paneControls = useComparePaneControls({
+    active: isMultiHostMode,
+    panes: comparePanes,
+    resolutions: clientResolutions,
+    sharedServers: selectedServers,
+    serverIdByName: serversByName,
+    orgConfig: hostedOrgModelConfig,
+    restorePanes,
+    setPaneOverrides,
+    setPanePick,
+  });
   const retainedClientsPaused = clientResolutions.some((client) => client.status === "ready" && !!client.pausedReason);
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
@@ -6111,6 +6130,7 @@ export function PlaygroundMain({
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
           onPromoteLead: handlePromoteLead,
           enableMultiHost: canEnableMultiHost,
+          maxSelectedHosts: chipClientLimit(comparePanes),
         },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
@@ -7077,7 +7097,12 @@ export function PlaygroundMain({
                       {clientResolutions.map((resolution, columnIndex) => {
                         if (resolution.status !== "ready") return (
                           <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
-                            <strong>{resolution.compareLabel}</strong>
+                            <div className="flex items-center justify-between gap-2">
+                              <strong>{resolution.compareLabel}</strong>
+                              {paneControls.blockedPaneActions(
+                                resolution.compareId,
+                              )}
+                            </div>
                             {/* The composer's sign-in notice already explains this case. */}
                             {resolution.status === "unavailable" &&
                             needsSignIn(resolution.model) ? null : (
@@ -7118,9 +7143,16 @@ export function PlaygroundMain({
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
-                          selection={column.hostConfig.modelSelection}
+                          selection={column.selection}
+                          modelPicked={column.modelPicked}
+                          renderPaneHeader={paneControls.renderPaneHeader(
+                            column.compareId,
+                          )}
                           comparisonSummaries={Object.values(compareSummaries)}
-                          selectedServers={selectedServers}
+                          selectedServers={
+                            paneControls.paneServers(column.compareId)?.names ??
+                            selectedServers
+                          }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
                             broadcastRequest?.claim(
@@ -7146,7 +7178,9 @@ export function PlaygroundMain({
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
-                            selectedServerIds: hostedSelectedServerIds,
+                            selectedServerIds:
+                              paneControls.paneServers(column.compareId)?.ids ??
+                              hostedSelectedServerIds,
                             hostId: column.hostId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}

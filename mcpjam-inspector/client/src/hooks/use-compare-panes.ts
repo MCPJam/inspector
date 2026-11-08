@@ -14,6 +14,7 @@ import {
   type PaneOverrides,
 } from "@/lib/compare-pane-overrides";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import type { ModelSelection } from "@mcpjam/sdk/browser";
 
 // Per project, like the lineup: opening another project must not inherit this
 // one's Compare state.
@@ -29,6 +30,11 @@ export interface UseComparePanesReturn {
   panes: readonly RecoveryPane[];
   restorePanes: (panes: readonly RecoveryPane[]) => void;
   setPaneOverrides: (paneId: string, overrides: PaneOverrides) => void;
+  /** Picks a model for one pane, or `undefined` to follow its client again. */
+  setPanePick: (
+    paneId: string,
+    pickedSelection: ModelSelection | undefined,
+  ) => void;
   /** Each client pane's client, in order: what the client chips show. */
   selectedHostIds: string[];
   /**
@@ -135,15 +141,26 @@ export function useComparePanes(
     [setPreviewedHostId],
   );
 
-  const setPaneOverrides = useCallback(
-    (paneId: string, overrides: PaneOverrides) => {
+  // A pane the lead sync added on read (pane 0 after an outside lead change)
+  // is not stored yet, so an edit to it starts from the panes on screen.
+  const updatePane = useCallback(
+    (paneId: string, patch: Partial<RecoveryPane>) => {
       setStoredPanes((current) =>
-        current.map((pane) =>
-          pane.paneId === paneId ? { ...pane, ...overrides } : pane,
+        (current.some((pane) => pane.paneId === paneId) ? current : panes).map(
+          (pane) => (pane.paneId === paneId ? { ...pane, ...patch } : pane),
         ),
       );
     },
-    [],
+    [panes],
+  );
+  const setPaneOverrides = useCallback(
+    (paneId: string, overrides: PaneOverrides) => updatePane(paneId, overrides),
+    [updatePane],
+  );
+  const setPanePick = useCallback(
+    (paneId: string, pickedSelection: ModelSelection | undefined) =>
+      updatePane(paneId, { pickedSelection }),
+    [updatePane],
   );
 
   const setMultiHostEnabled = useCallback((enabled: boolean) => {
@@ -154,6 +171,7 @@ export function useComparePanes(
     panes,
     restorePanes,
     setPaneOverrides,
+    setPanePick,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,

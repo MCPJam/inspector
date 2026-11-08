@@ -247,6 +247,78 @@ describe("each column reads the catalog through its own harness", () => {
     expect(resolve(refusedOnLoop, catalog).status).toBe("unavailable");
   });
 
+  it("runs a pane's picked model instead of the client's saved one", () => {
+    const codex = clientOn({ harness: "codex" }, "openai/gpt-5.5");
+    const pickedSelection = {
+      source: "hosted" as const,
+      modelId: "openai/gpt-5-mini",
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    const picked = resolvePlaygroundClientColumn({
+      paneId: "pane",
+      hostId: codex.hostId,
+      slot: { host: codex, isLoading: false },
+      hosts: [],
+      models: catalog,
+      pickedSelection,
+    });
+    expect(picked).toMatchObject({
+      status: "ready",
+      column: {
+        model: { id: "openai/gpt-5-mini" },
+        selection: pickedSelection,
+        modelPicked: true,
+      },
+    });
+    // A pick the pane's harness can't run blocks the pane, with its rows
+    // kept so pane settings can choose another.
+    const refused = resolvePlaygroundClientColumn({
+      paneId: "pane",
+      hostId: codex.hostId,
+      slot: { host: codex, isLoading: false },
+      hosts: [],
+      models: catalog,
+      pickedSelection: {
+        ...pickedSelection,
+        modelId: "anthropic/claude-haiku-4.5",
+      },
+    });
+    expect(refused).toMatchObject({
+      status: "unavailable",
+      reason:
+        "This pane's model is unavailable. Choose another in pane settings.",
+      hostConfig: codex.config,
+    });
+    expect(
+      refused.status !== "ready" && refused.modelRows?.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("ignores a pick on a client whose account chooses the model", () => {
+    const cursor = clientOn({ harness: "cursor" }, "cursor/auto");
+    expect(
+      resolvePlaygroundClientColumn({
+        paneId: "pane",
+        hostId: cursor.hostId,
+        slot: { host: cursor, isLoading: false },
+        hosts: [],
+        models: catalog,
+        pickedSelection: {
+          source: "hosted",
+          modelId: "openai/gpt-5.5",
+          fallback: { provider: "none", model: "none" },
+        },
+      }),
+    ).toMatchObject({
+      status: "ready",
+      column: {
+        model: { id: "cursor/auto" },
+        modelPicked: false,
+        modelRows: [],
+      },
+    });
+  });
+
   it("an emulated client resolves against the whole catalog", () => {
     for (const row of catalog) {
       expect(resolve(clientOn({}, String(row.id)), catalog)).toMatchObject({
