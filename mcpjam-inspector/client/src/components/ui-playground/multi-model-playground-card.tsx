@@ -173,7 +173,8 @@ interface MultiModelPlaygroundCardProps {
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode it's the card's `comparisonKey` (the bare model id for a default
    * selection, so Sonnet·Low and Sonnet·High are two columns); in host mode
-   * it's the host id.
+   * it's the pane id, so two panes on one client stay apart. The client
+   * itself is `hostedContext.hostId`.
    * The card uses `compareId` to key transcripts/summaries/`hasMessages`
    * callbacks so two columns running the same default model can't collide.
    */
@@ -896,7 +897,7 @@ export function MultiModelPlaygroundCard({
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
-      // multi-host mode it holds the host's `compareId`. Renaming the
+      // multi-host mode it holds the pane's `compareId`. Renaming the
       // field would ripple to ChatTabV2 + evals — keep the field name,
       // change what we put in it.
       modelId: compareId,
@@ -924,13 +925,12 @@ export function MultiModelPlaygroundCard({
     ],
   );
   const errorMessage = formatErrorMessage(error);
-  // In host mode each column IS a different client, and `compareId` is that
-  // client's id — so the column's own host is the one holding the pin that
-  // failed here, not the turn's. In model mode every column shares the turn's
-  // client, and `compareId` is a model id, which must not be used as one.
+  // The client holding the pin that failed here: in host mode the column's own
+  // client, in model mode the turn's. Never `compareId`, which names the pane
+  // (or, in model mode, a model).
   const changeProtocolVersionHandler = useChangeProtocolVersionAction({
     error: errorMessage,
-    hostId: compareKind === "host" ? compareId : hostedContext?.hostId,
+    hostId: hostedContext?.hostId,
     location: "playground_compare_card",
   });
   const mergedToolRenderOverrides = useMemo(

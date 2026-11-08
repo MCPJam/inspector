@@ -34,6 +34,7 @@ const config: HostDetail["config"] = {
 const host: HostDetail = { hostId: "a", name: "A", config };
 function resolve(client = host, models = [hosted, own]) {
   return resolvePlaygroundClientColumn({
+    paneId: client.hostId,
     hostId: client.hostId,
     slot: { host: client, isLoading: false },
     hosts: [],
@@ -102,8 +103,34 @@ describe("saved-client comparison resolution", () => {
     });
   });
 
+  it("keys a column by its pane, so two panes on one client stay apart", () => {
+    const panes = ["a", "a~2"].map((paneId) =>
+      resolvePlaygroundClientColumn({
+        paneId,
+        hostId: host.hostId,
+        slot: { host, isLoading: false },
+        hosts: [],
+        models: [hosted],
+      }),
+    );
+    expect(panes).toMatchObject([
+      { status: "ready", column: { compareId: "a", hostId: "a" } },
+      { status: "ready", column: { compareId: "a~2", hostId: "a" } },
+    ]);
+    expect(
+      resolvePlaygroundClientColumn({
+        paneId: "a~2",
+        hostId: "a",
+        slot: { host: null, isLoading: true },
+        hosts: [],
+        models: [hosted],
+      }),
+    ).toMatchObject({ status: "loading", compareId: "a~2", hostId: "a" });
+  });
+
   it("reports loading, missing and invalid clients explicitly", () => {
     const args = {
+      paneId: "a",
       hostId: "a",
       hosts: [],
       models: [hosted],

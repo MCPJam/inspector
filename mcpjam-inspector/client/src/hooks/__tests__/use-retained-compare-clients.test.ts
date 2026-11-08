@@ -25,6 +25,7 @@ function input(
   client: HostDetail | null = host,
   enabled = true,
   loading = false,
+  hostId = "a",
 ) {
   return {
     scope: "actor:project:0" as string | null,
@@ -34,7 +35,8 @@ function input(
     running: new Set<string>(),
     resolutions: [
       resolvePlaygroundClientColumn({
-        hostId: "a",
+        paneId: "a",
+        hostId,
         slot: { host: client, isLoading: loading },
         hosts: [],
         models: [
@@ -108,6 +110,7 @@ it("ends confirmed missing, invalid, changed config and foreign-scope owners", (
     {
       status: "invalid",
       compareId: "a",
+      hostId: "a",
       compareLabel: "A",
       reason: "Invalid model choice",
     },
@@ -136,4 +139,24 @@ it("compares every saved field while ignoring JSON object key order", () => {
   const reordered = Object.fromEntries(Object.entries(host.config).reverse());
   view.rerender({ value: input({ ...host, config: { ...host.config, ...reordered, localBrowserEnabled: true } }) });
   expect(view.result.current[0]).toEqual(changed);
+});
+
+it("never shows a pane's old client while the client it now runs loads", () => {
+  const view = renderHook(({ value }) => useRetainedCompareClients(value), {
+    initialProps: { value: input() },
+  });
+  const before = view.result.current[0];
+  // The same pane, now on client "b", whose query has not answered yet.
+  view.rerender({ value: input(null, true, true, "b") });
+  expect(view.result.current[0]).toMatchObject({
+    status: "loading",
+    compareId: "a",
+    hostId: "b",
+  });
+  view.rerender({ value: input({ ...host, hostId: "b" }, true, false, "b") });
+  const after = view.result.current[0];
+  expect(after.status).toBe("ready");
+  if (before.status === "ready" && after.status === "ready") {
+    expect(after.ownerKey).not.toBe(before.ownerKey);
+  }
 });

@@ -47,11 +47,11 @@ export function useRetainedCompareClients(input: {
       : new Map<string, Entry>();
   const next = new Map<string, Entry>();
   const results = input.resolutions.map((resolution, index) => {
-    const id =
-      resolution.status === "ready"
-        ? resolution.column.compareId
-        : resolution.compareId;
-    const old = prior.get(id);
+    const { compareId: id, hostId } =
+      resolution.status === "ready" ? resolution.column : resolution;
+    // A pane that now runs another client never keeps the old client's owner.
+    const entryKey = JSON.stringify([id, hostId]);
+    const old = prior.get(entryKey);
     const host = input.slots[index]?.host;
     const config =
       resolution.status === "invalid"
@@ -67,6 +67,7 @@ export function useRetainedCompareClients(input: {
         return {
           status: "invalid" as const,
           compareId: id,
+          hostId,
           compareLabel: resolution.column.compareLabel,
           reason:
             "The saved client configuration is invalid. Edit this client in Connect.",
@@ -96,11 +97,11 @@ export function useRetainedCompareClients(input: {
     } else {
       return resolution;
     }
-    if (input.scope) next.set(id, entry);
+    if (input.scope) next.set(entryKey, entry);
     return {
       status: "ready" as const,
       column: entry.column,
-      ownerKey: JSON.stringify([input.scope, id, entry.version]),
+      ownerKey: JSON.stringify([input.scope, id, hostId, entry.version]),
       ...(pausedReason ? { pausedReason } : {}),
     };
   });

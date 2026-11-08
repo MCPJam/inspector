@@ -19,7 +19,10 @@ const INVALID_CHOICE_REASON =
   "The saved model choice is invalid. Edit this client in Connect.";
 
 export interface PlaygroundClientColumn {
+  /** The pane's id: keys its card, transcript, readiness and delivery. */
   compareId: string;
+  /** The client the column runs. Two panes can run one client. */
+  hostId: string;
   compareLabel: string;
   compareKind: "host";
   compareSubLabel: string;
@@ -34,6 +37,7 @@ export type PlaygroundClientResolution =
   | {
       status: "loading" | "unavailable" | "invalid";
       compareId: string;
+      hostId: string;
       compareLabel: string;
       reason: string;
       /** The saved model, when it resolved but is disabled (e.g. sign-in locked). */
@@ -47,12 +51,15 @@ export type PlaygroundClientResolution =
  * against a Claude Code lead's list.
  */
 export function resolvePlaygroundClientColumn({
+  paneId,
   hostId,
   slot,
   hosts,
   models,
   orgConfig,
 }: {
+  /** The pane this column renders. */
+  paneId: string;
   hostId: string;
   slot: HostSlot | undefined;
   hosts: readonly HostListItem[];
@@ -62,7 +69,8 @@ export function resolvePlaygroundClientColumn({
   const host = slot?.host?.hostId === hostId ? slot.host : null;
   const listed = hosts.find((item) => item.hostId === hostId);
   const identity = {
-    compareId: hostId,
+    compareId: paneId,
+    hostId,
     compareLabel: clientDisplayName(
       listed ?? host ?? { name: "Unavailable client" },
     ),
