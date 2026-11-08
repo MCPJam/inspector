@@ -167,17 +167,17 @@ describe("Compare pane settings", () => {
     };
     const environment = { environmentId: "private", visible, preview: null, isLoading: false, error: null };
     const resolution = resolveEnvironmentPaneColumn({
-      paneId: pane.paneId, environment, slot: undefined, hosts: [], models: catalog,
+      paneId: pane.paneId, index: 1, environment, slot: undefined, hosts: [], models: catalog,
     });
     expect(resolution.status).toBe(visible === false ? "unavailable" : "loading");
     expect(resolution.status !== "ready" && resolution.reason).not.toMatch(/environment/i);
     const user = userEvent.setup();
     render(<Harness paneId={pane.paneId} spies={spies()} lineup={[panes[0], pane]}
       lineupResolutions={[resolutions[0], resolution]} paneEnvironments={new Map([[pane.paneId, environment]])} />);
-    await user.click(screen.getByRole("button", { name: "Pane settings for Saved setup" }));
+    await user.click(screen.getByRole("button", { name: "Pane settings for Pane 2" }));
     const settings = screen.getByTestId("compare-pane-settings");
     expect(settings).not.toHaveTextContent(/environment/i);
-    const select = within(settings).getByRole("combobox", { name: "What Saved setup runs" });
+    const select = within(settings).getByRole("combobox", { name: "What Pane 2 runs" });
     expect(select).toHaveTextContent("Choose a client");
     await user.click(select);
     const options = screen.getAllByRole("option");
@@ -373,6 +373,7 @@ describe("Compare pane settings", () => {
     };
     const envResolution = resolveEnvironmentPaneColumn({
       paneId: "env_1",
+      index: 1,
       environment,
       slot: { host: codex, isLoading: false },
       hosts: [],
