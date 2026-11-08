@@ -1352,6 +1352,16 @@ async function handleTurn(c: Context): Promise<Response> {
         chatSessionId: runtimeChatSessionId,
       });
       const context: BuiltInToolContext = {
+        // The harness box is acquired after the browser attaches, so its apps
+        // are resolved when the agent first opens a localhost page.
+        ...(engine.kind === "harness"
+          ? {
+              browserPreviewWorkspace: () =>
+                conversationBox
+                  ? { sandboxId: conversationBox.binding.sandboxId }
+                  : undefined,
+            }
+          : {}),
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,

@@ -808,6 +808,39 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
     );
   });
 
+  it("keeps a watched conversation's own browser beside its terminal box", () => {
+    // The shell's box has no display, but a watched conversation has a browser
+    // box of its own; the shell's apps open there through the preview tunnel.
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        sandboxBinding: { sandboxId: "sbx_1", lifetime: "conversation" },
+        onToolSuppressed: (info) => suppressed.push(info),
+      },
+    );
+    expect(suppressed).toEqual([]);
+    expect(tools?.browser_navigate?.description).toContain(
+      "Apps running on this conversation's computer open at http://localhost:<port>.",
+    );
+  });
+
+  it("tells a browser attached before its workspace where the apps open", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        browserPreviewWorkspace: () => undefined,
+      },
+    );
+    expect(tools?.browser_navigate?.description).toContain("http://localhost:<port>");
+  });
+
   it("suppresses it for ANY unattended hosted run with no binding at all", () => {
     // Generalized from the journey-only gate: an eval is in exactly the same
     // position, and the hosted engine has one computer per project+member.

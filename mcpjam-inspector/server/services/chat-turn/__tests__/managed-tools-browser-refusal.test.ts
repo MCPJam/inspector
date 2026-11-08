@@ -69,6 +69,8 @@ async function runTurn(args: {
   compare?: boolean;
   tools?: string[];
   chatSessionId?: string;
+  /** Without a conversation scope there is no browser box to attach. */
+  conversationScope?: boolean;
 }) {
   const chatSessionId = args.chatSessionId ?? "chat-1";
   const setup = {
@@ -77,7 +79,10 @@ async function runTurn(args: {
       chatSessionId,
       ...(args.compare ? { comparePane: true } : {}),
     },
-    body: { chatSessionId, browserScope: "conversation" },
+    body: {
+      chatSessionId,
+      ...(args.conversationScope === false ? {} : { browserScope: "conversation" }),
+    },
     turnMode: "interactive",
     pinsEnvironment: args.pinned === true,
     ...(args.pinned
@@ -146,15 +151,24 @@ describe("Browser on for the client and missing from the turn", () => {
     ["pinned", true],
     ["unpinned", false],
   ])(
-    "tells a %s cloud harness turn why, with no notice",
+    "gives a %s cloud harness conversation Browser beside its terminal",
     async (_label, pinned) => {
       const turn = await runTurn({ harness: "claude-code", pinned });
-      expect(turn.tools).toEqual(["bash"]);
-      expect(turn.prompt).toBe(`Baseline\n\n## Browser\n\n${TERMINAL_ONLY}`);
+      expect(turn.tools).toContain("bash");
+      expect(turn.tools).toContain("browser_navigate");
+      expect(turn.prompt).toBe("Baseline");
       expect(turn.notices).toEqual([]);
+      // The browser box is attached on first use, not while building the turn.
       expect(fetch).not.toHaveBeenCalled();
     },
   );
+
+  it("tells a harness turn with no browser of its own why, with no notice", async () => {
+    const turn = await runTurn({ harness: "claude-code", conversationScope: false });
+    expect(turn.tools).toEqual(["bash"]);
+    expect(turn.prompt).toBe(`Baseline\n\n## Browser\n\n${TERMINAL_ONLY}`);
+    expect(turn.notices).toEqual([]);
+  });
 
   it("decides each compare column from its own turn", async () => {
     const withBrowser = await runTurn({
@@ -168,9 +182,9 @@ describe("Browser on for the client and missing from the turn", () => {
       chatSessionId: "column-b",
       tools: ["bash"],
     });
-    expect(withBrowser.prompt).toBe(
-      `Baseline\n\n## Browser\n\n${TERMINAL_ONLY}`,
-    );
+    expect(withBrowser.tools).toContain("browser_navigate");
+    expect(withoutBrowser.tools).toEqual(["bash"]);
+    expect(withBrowser.prompt).toBe("Baseline");
     expect(withoutBrowser.prompt).toBe("Baseline");
     expect(withBrowser.notices).toEqual([]);
     expect(withoutBrowser.notices).toEqual([]);

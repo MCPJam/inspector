@@ -78,6 +78,10 @@ import {
 import { buildSandboxBashTool } from "./sandbox-bash.js";
 import type { BrowserSuppressionCode } from "./browser-refusal.js";
 import {
+  personalComputerWorkspace,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
+import {
   buildMcpjamTool,
   isMcpjamToolId,
   WORKSPACE_APPROVAL_UNAVAILABLE_REASON,
@@ -243,6 +247,12 @@ export interface BuiltInToolContext {
    * no wire shape that can inject one.
    */
   sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The workspace a watched conversation's browser opens at localhost, when
+   * the browser and the shell run on different boxes and this context cannot
+   * see the shell's binding (the public API attaches the browser first).
+   */
+  browserPreviewWorkspace?: PreviewWorkspaceSource;
   /**
    * MATERIALIZED project secrets for this turn, exported into every `bash`
    * command's environment.
@@ -750,12 +760,35 @@ export function resolveHostTools(
       // project computer. Reading the binding first is what lets those gates
       // stay about the thing they describe instead of accumulating "…unless a
       // sandbox" clauses.
+      // A watched conversation whose shell runs on a terminal box keeps its
+      // own browser box; the shell's apps open there through the preview
+      // tunnel. An unattended run still needs one box that can do both.
+      const previewWorkspace: PreviewWorkspaceSource | undefined =
+        !isLocalBrowser &&
+        conversationBrowser?.kind === "conversation" &&
+        ctx.browserApprovalDelivery?.kind !== "unattended" &&
+        ctx.sandboxBinding &&
+        ctx.sandboxBinding.runtimeKind !== "desktop-browser"
+          ? { sandboxId: ctx.sandboxBinding.sandboxId }
+          : (ctx.browserPreviewWorkspace ??
+            (!isLocalBrowser &&
+            conversationBrowser?.kind === "conversation" &&
+            computer &&
+            ctx.computerEngine !== "local" &&
+            ctx.localComputerRequested !== true
+              ? personalComputerWorkspace({
+                  authHeader,
+                  projectId: ctx.projectId,
+                  ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+                })
+              : undefined));
       const sandboxBrowser =
-        !isLocalBrowser && ctx.sandboxBinding?.sandboxRowId
+        !isLocalBrowser && !previewWorkspace && ctx.sandboxBinding?.sandboxRowId
           ? ctx.sandboxBinding
           : undefined;
       if (
         !isLocalBrowser &&
+        !previewWorkspace &&
         ctx.sandboxBinding &&
         (!sandboxBrowser ||
           ctx.sandboxBinding.runtimeKind !== "desktop-browser")
@@ -862,6 +895,7 @@ export function resolveHostTools(
           ? { approvalDelivery: ctx.browserApprovalDelivery }
           : {}),
         ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
+        ...(previewWorkspace ? { previewWorkspace } : {}),
         ...(ctx.browserProfileId
           ? { browserProfileId: ctx.browserProfileId }
           : {}),

@@ -1108,9 +1108,236 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/workspace-preview.ts
+import http from "node:http";
+import net from "node:net";
+import tls from "node:tls";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { PassThrough } from "node:stream";
+var WORKSPACE_PREVIEW_FEATURE = "workspace-preview-v1";
+var HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+var HEADER_VALUE = /^[\x20-\x7e]{0,4096}$/;
+function parsePreviewGrant(body) {
+  if (typeof body !== "object" || body === null) return void 0;
+  const { port, upstreamUrl, upstreamHeaders, key } = body;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535)
+    return void 0;
+  if (typeof key !== "string" || !/^[0-9a-f]{64}$/.test(key)) return void 0;
+  if (typeof upstreamUrl !== "string") return void 0;
+  let url;
+  try {
+    url = new URL(upstreamUrl);
+  } catch {
+    return void 0;
+  }
+  if (!["ws:", "wss:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    return void 0;
+  const headers = {};
+  if (upstreamHeaders !== void 0) {
+    if (typeof upstreamHeaders !== "object" || upstreamHeaders === null) return void 0;
+    for (const [name, value] of Object.entries(upstreamHeaders)) {
+      if (!HEADER_NAME.test(name) || typeof value !== "string" || !HEADER_VALUE.test(value))
+        return void 0;
+      headers[name] = value;
+    }
+  }
+  return { port, upstreamUrl: url.toString(), upstreamHeaders: headers, key };
+}
+function previewRequestRefusal(headers, port, grantedPorts) {
+  const host2 = (headers.host ?? "").toLowerCase();
+  if (host2 !== `localhost:${port}` && host2 !== `127.0.0.1:${port}` && host2 !== `[::1]:${port}`)
+    return "host";
+  const site = headers["sec-fetch-site"];
+  const origin = headers.origin;
+  const granted = (value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && grantedPorts.has(Number(url.port));
+    } catch {
+      return false;
+    }
+  };
+  if (site === "cross-site") return "cross-site";
+  if (site === "same-site" && !(origin && granted(origin))) return "cross-site";
+  if (origin && origin !== "null" && !granted(origin)) return "origin";
+  return void 0;
+}
+function openTunnel(grant) {
+  const url = new URL(grant.upstreamUrl);
+  const secure = url.protocol === "wss:";
+  const port = Number(url.port) || (secure ? 443 : 80);
+  const path = `${url.pathname.replace(/\/+$/, "")}/tunnel?port=${grant.port}`;
+  const head = [
+    `GET ${path} HTTP/1.1`,
+    `Host: ${url.host}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Version: 13",
+    `Sec-WebSocket-Key: ${randomBytes2(16).toString("base64")}`,
+    `x-mcpjam-preview-key: ${grant.key}`,
+    ...Object.entries(grant.upstreamHeaders).map(([k, v]) => `${k}: ${v}`)
+  ].join("\r\n");
+  return new Promise((resolve2, reject) => {
+    const socket = secure ? tls.connect({ host: url.hostname, servername: url.hostname, port }) : net.connect(port, url.hostname);
+    socket.once(
+      secure ? "secureConnect" : "connect",
+      () => socket.write(`${head}\r
+\r
+`)
+    );
+    let buf = Buffer.alloc(0);
+    const onData = (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) {
+        if (buf.length > 16384) socket.destroy(new Error("tunnel_handshake_too_large"));
+        return;
+      }
+      socket.off("data", onData);
+      const status = buf.subarray(0, buf.indexOf("\r\n")).toString("latin1");
+      if (!/^HTTP\/1\.1 101 /.test(status)) {
+        socket.destroy();
+        reject(new Error(status.includes(" 502 ") ? "app_not_listening" : "tunnel_refused"));
+        return;
+      }
+      const rest = buf.subarray(end + 4);
+      if (rest.length) socket.unshift(rest);
+      resolve2(socket);
+    };
+    socket.on("data", onData);
+    socket.once("error", reject);
+    socket.setTimeout(15e3, () => socket.destroy(new Error("tunnel_timeout")));
+    socket.once("connect", () => socket.setTimeout(0));
+  });
+}
+var notListening = (port) => `<!doctype html><title>Nothing on port ${port}</title><p>Nothing is running on port ${port} on this conversation's computer. Start your app, then reload.</p>`;
+var WorkspacePreviewRelay = class {
+  ports = /* @__PURE__ */ new Map();
+  granted() {
+    return new Set(this.ports.keys());
+  }
+  /** Serve `grant.port`, or repoint an existing listener at a new upstream. */
+  async grant(grant) {
+    const existing = this.ports.get(grant.port);
+    if (existing) {
+      if (existing.grant.upstreamUrl !== grant.upstreamUrl || existing.grant.key !== grant.key) {
+        existing.agent.destroy();
+        existing.grant = grant;
+        existing.agent = this.agentFor(existing);
+      }
+      return { ok: true, port: grant.port };
+    }
+    const relay = { grant, servers: [], agent: new http.Agent() };
+    relay.agent = this.agentFor(relay);
+    const server = this.serverFor(relay);
+    try {
+      await listen(server, grant.port, "127.0.0.1");
+    } catch {
+      relay.agent.destroy();
+      return { ok: false, error: "port_unavailable" };
+    }
+    relay.servers.push(server);
+    const v6 = this.serverFor(relay);
+    if (await listen(v6, grant.port, "::1").then(() => true, () => false))
+      relay.servers.push(v6);
+    this.ports.set(grant.port, relay);
+    return { ok: true, port: grant.port };
+  }
+  async close() {
+    const all = [...this.ports.values()];
+    this.ports.clear();
+    await Promise.all(
+      all.flatMap((relay) => {
+        relay.agent.destroy();
+        return relay.servers.map(
+          (server) => new Promise((done) => server.close(() => done()))
+        );
+      })
+    );
+  }
+  agentFor(relay) {
+    class TunnelAgent extends http.Agent {
+      createConnection(_options, callback) {
+        openTunnel(relay.grant).then(
+          (socket) => callback?.(null, socket),
+          (error) => {
+            const unused = new PassThrough();
+            unused.destroy();
+            callback?.(error, unused);
+          }
+        );
+        return void 0;
+      }
+    }
+    return new TunnelAgent({ keepAlive: true, maxSockets: 8 });
+  }
+  serverFor(relay) {
+    const port = relay.grant.port;
+    const server = http.createServer((req, res) => {
+      if (previewRequestRefusal(req.headers, port, this.granted())) {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("This preview only answers requests from its own pages.");
+        return;
+      }
+      const upstream = http.request(
+        {
+          agent: relay.agent,
+          method: req.method,
+          path: req.url,
+          headers: req.headers,
+          setHost: false
+        },
+        (answer) => {
+          res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
+          answer.pipe(res);
+        }
+      );
+      upstream.on("error", (error) => {
+        if (res.headersSent) return void res.destroy();
+        const idle = error.message === "app_not_listening";
+        res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+        res.end(idle ? notListening(port) : "The conversation's computer did not answer. Reload to try again.");
+      });
+      req.pipe(upstream);
+    });
+    server.on("upgrade", (req, client, head) => {
+      if (previewRequestRefusal(req.headers, port, this.granted())) {
+        client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      openTunnel(relay.grant).then(
+        (tunnel) => {
+          const lines = [`${req.method} ${req.url} HTTP/1.1`];
+          for (let i = 0; i < req.rawHeaders.length; i += 2)
+            lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+          tunnel.write(`${lines.join("\r\n")}\r
+\r
+`);
+          if (head.length) tunnel.write(head);
+          tunnel.pipe(client);
+          client.pipe(tunnel);
+          tunnel.on("error", () => client.destroy());
+          client.on("error", () => tunnel.destroy());
+        },
+        () => client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+      );
+    });
+    return server;
+  }
+};
+function listen(server, port, host2) {
+  return new Promise((resolve2, reject) => {
+    server.once("error", reject);
+    server.listen(port, host2, () => {
+      server.off("error", reject);
+      resolve2();
+    });
+  });
+}
+
 // server/services/browserd/daemon/video-recorder.ts
 import { spawn } from "node:child_process";
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 var MIN_RECORD_FPS = 1;
@@ -1210,7 +1437,7 @@ function createVideoRecorder(options) {
   const ffmpegPath = options.ffmpegPath ?? "ffmpeg";
   const statFile = options.statFile ?? (async (path) => stat(path));
   const now = options.now ?? Date.now;
-  const nonce = options.nonce ?? randomBytes2(4).toString("hex");
+  const nonce = options.nonce ?? randomBytes3(4).toString("hex");
   const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
   let take;
@@ -1612,6 +1839,7 @@ var BrowserdRequestHandler = class {
   captureTypedText;
   recorder;
   profileExport;
+  preview;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -1651,7 +1879,8 @@ var BrowserdRequestHandler = class {
     this.authority = deps.authority ?? "lease";
     this.features = [
       "sharp-stream-v1",
-      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES])
+      .../* @__PURE__ */ new Set([...deps.features ?? [], ...BROWSERD_WEBMCP_FEATURES]),
+      ...deps.preview ? [WORKSPACE_PREVIEW_FEATURE] : []
     ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
@@ -1661,6 +1890,7 @@ var BrowserdRequestHandler = class {
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
     this.profileExport = deps.profileExport;
+    this.preview = deps.preview;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -1867,6 +2097,18 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleViewport(req);
+    }
+    if (req.path === "/v1/preview" && this.preview) {
+      if (req.method !== "POST") return { status: 405, headers: { allow: "POST" } };
+      let grant;
+      try {
+        grant = parsePreviewGrant(JSON.parse(req.body || "null"));
+      } catch {
+        grant = void 0;
+      }
+      if (!grant) return { status: 400, body: { error: "invalid_grant" } };
+      const result = await this.preview.grant(grant);
+      return result.ok ? { status: 200, body: { ok: true, port: result.port } } : { status: 409, body: { error: result.error } };
     }
     return { status: 404 };
   }
@@ -3750,7 +3992,8 @@ function buildBrowserdStack(driver, config) {
     ...config.captureTypedText ? { captureTypedText: true } : {},
     ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {},
     ...config.recorder ? { recorder: config.recorder } : {},
-    ...config.profileExport ? { profileExport: config.profileExport } : {}
+    ...config.profileExport ? { profileExport: config.profileExport } : {},
+    ...config.preview ? { preview: config.preview } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
@@ -9688,7 +9931,7 @@ function safeUrl(page) {
 // server/services/browserd/local/egress-proxy.ts
 import { createServer as createServer2, request } from "node:http";
 import { connect } from "node:net";
-import { randomBytes as randomBytes3, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { randomBytes as randomBytes4, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
 
 // server/services/browserd/local/security-policy.ts
 import { networkInterfaces } from "node:os";
@@ -9922,7 +10165,7 @@ function pinnedAddressOptions(addresses) {
 }
 async function startLocalBrowserProxy(policy) {
   const username = "browser";
-  const password = randomBytes3(32).toString("hex");
+  const password = randomBytes4(32).toString("hex");
   const expected = Buffer.from(
     `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
   );
@@ -11314,7 +11557,7 @@ async function resizeHostedDisplay(deps, next, previous) {
 }
 
 // server/services/browserd/daemon/config.ts
-import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash2, randomBytes as randomBytes5 } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 var DEFAULT_ON_FEATURES = [
   "a11yFrames",
@@ -11409,7 +11652,7 @@ function readRecordMaxBytes(env) {
   return Math.min(Math.floor(raw), DEFAULT_BROWSERD_RECORD_MAX_BYTES);
 }
 function defaultMintToken(path) {
-  const token = randomBytes4(32).toString("hex");
+  const token = randomBytes5(32).toString("hex");
   writeFileSync(path, token, { encoding: "utf8", mode: 384 });
   chmodSync(path, 384);
   return token;
@@ -11582,8 +11825,10 @@ async function main() {
     });
     return { width, height };
   };
+  const preview = new WorkspacePreviewRelay();
   const stack = buildBrowserdStack(driver, {
     token: config.token,
+    preview,
     lease,
     // Read ONCE, at boot: the file cannot change under a running process in
     // any way that would make a later read more truthful, and hashing a
@@ -11628,6 +11873,7 @@ async function main() {
     await recorder?.finalize({ graceMs: 2e3 }).catch(() => {
     });
     video?.dispose();
+    await preview.close();
     stack.server.close();
     await driver.close().catch(() => {
     });
