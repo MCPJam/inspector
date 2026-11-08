@@ -520,7 +520,7 @@ describe("ClientSelector with environment panes", () => {
     );
     await user.click(screen.getByTestId("client-selector-trigger"));
     expect(
-      screen.getByText("Max 3 panes. Remove one to add another."),
+      screen.getByText("Remove a pane to add another client."),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Compare with MCPJam" }),
