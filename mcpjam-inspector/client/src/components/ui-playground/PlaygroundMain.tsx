@@ -257,6 +257,7 @@ import {
 } from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
@@ -1034,7 +1035,8 @@ export function PlaygroundMain({
   // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
   // outside environment mode every field below is inert and the Playground
   // behaves exactly as it does today.
-  const environmentsEnabled = useProjectEnvironmentsVisible(isConvexAuthenticated);
+  const paneMember = useIsMemberActor();
+  const environmentsEnabled = useProjectEnvironmentsVisible(paneMember);
   const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId, environmentsEnabled);
   const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
   // Whether this turn may use the tools of the page open in the WebMCP tab.
