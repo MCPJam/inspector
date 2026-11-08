@@ -55,6 +55,12 @@ const startConformanceRunInput = serverScopedInput.extend({
     ),
   protocolVersion: z.string().trim().min(1).optional(),
   engineVersion: z.string().trim().min(1).optional(),
+  settings: z
+    .enum(["saved", "none"])
+    .optional()
+    .describe(
+      'Which settings the run uses. "saved", the default, runs the checks, advice and tool inputs saved for this server; "none" runs every check with no tool inputs.'
+    ),
 });
 
 export type StartConformanceRunInput = z.infer<typeof startConformanceRunInput>;
@@ -72,7 +78,7 @@ export const startConformanceRunOperation: PlatformOperation<
   name: "start_conformance_run",
   title: "Start a conformance run",
   description:
-    "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
+    "Run the protocol, apps, and tasks conformance suites against a saved MCP server, with the checks and tool inputs saved for it. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
   readOnly: false,
   risk: "none",
   permalink: derivePermalinks((result) => [
@@ -106,6 +112,7 @@ export const startConformanceRunOperation: PlatformOperation<
           ? { protocolVersion: input.protocolVersion }
           : {}),
         ...(input.engineVersion ? { engineVersion: input.engineVersion } : {}),
+        ...(input.settings ? { settings: input.settings } : {}),
       },
       { signal }
     );

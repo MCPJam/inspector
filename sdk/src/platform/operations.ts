@@ -16284,7 +16284,7 @@ export const getCapabilitiesOperation: PlatformOperation<
   name: "get_capabilities",
   title: "Get what you may do in an MCPJam project",
   description:
-    "What you may do in one project: your organization `role` and `projectRole`; your `plan` with its seat-scaled limits and plan features (null without an organization); `features.sandboxes`, whether Swarms is enabled for you; the product `vocabulary`; and a `can` block of booleans for Swarms, user-testing and eval actions, including which need a project admin. The eval entries are always true and do not reflect plan quota or credits. No other beta feature is reported here — the tool list is the same for every caller, and an action your account cannot take is refused with 403 FORBIDDEN.",
+    "What you may do in one project: your organization `role` and `projectRole`; your `plan` with its seat-scaled limits and plan features (null without an organization); `features.sandboxes`, whether Swarms is enabled for you; `features.conformance`, when reported, whether you can start conformance runs; the product `vocabulary`; and a `can` block of booleans for Swarms, user-testing and eval actions, including which need a project admin. The eval entries are always true and do not reflect plan quota or credits. No other beta feature is reported here; the tool list is the same for every caller, and an action your account cannot take is refused with 403 FORBIDDEN.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",

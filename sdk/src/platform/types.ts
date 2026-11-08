@@ -10,6 +10,7 @@ export type {
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceRunReportSummary,
+  PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
 } from "./conformance-types.js";
 import type {
@@ -5568,6 +5569,11 @@ export interface PlatformCapabilities {
       enforced: boolean;
       reason?: string;
     };
+    /**
+     * Whether you can start conformance runs. Absent on a deployment that
+     * does not report it, which means unknown, not off.
+     */
+    conformance?: { enabled: boolean };
   };
   plan: {
     name: string;

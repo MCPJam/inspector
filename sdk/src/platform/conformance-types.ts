@@ -5,6 +5,13 @@
 /** Suites the hosted agent/API surface can start. OAuth is refused. */
 export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";
 
+/**
+ * Which settings a hosted run used: the server's saved conformance settings,
+ * the defaults of a server with none saved (every check, no tool inputs), or
+ * none because the start asked for `settings: "none"`.
+ */
+export type PlatformConformanceSettingsSource = "saved" | "defaults" | "none";
+
 /** The `202` receipt. Poll the run detail; do not re-POST. */
 export interface PlatformConformanceRunReceipt {
   runId: string;
@@ -20,6 +27,8 @@ export interface PlatformConformanceRunReceipt {
   /** True when an idempotency key replayed an existing run. */
   deduped: boolean;
   requestedSuites: PlatformConformanceSuiteKind[];
+  /** Absent from deployments that predate saved settings on hosted runs. */
+  settingsSource?: PlatformConformanceSettingsSource;
 }
 
 export interface PlatformConformanceRunReportSummary {
@@ -51,6 +60,8 @@ export interface PlatformConformanceRun {
   pending: number;
   advisoryCount: number;
   requestedSuites: string[];
+  /** Null for runs whose deployment did not record it. */
+  settingsSource?: PlatformConformanceSettingsSource | null;
   protocolVersion: string | null;
   engineVersion: string | null;
   createdAt: number;

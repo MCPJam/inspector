@@ -79,6 +79,11 @@ export type RunConformanceConfig = {
   apps?: Partial<Omit<MCPAppsConformanceConfig, "url" | "command" | "args">>;
   tasks?: Partial<Omit<MCPTasksConformanceConfig, "url" | "command" | "args">>;
   oauth?: OAuthConformanceConfig;
+  /**
+   * Stops the run. Every suite receives it beside its own signal, so aborting
+   * it ends the suites still running.
+   */
+  signal?: AbortSignal;
   engineVersion?: string;
   onProgress?: (event: ConformanceRunProgress) => void | Promise<void>;
   /**
@@ -197,6 +202,23 @@ async function runSuite(
   }
 }
 
+/** Each suite's config with the run's signal joined to the suite's own. */
+function withRunSignal(config: RunConformanceConfig): RunConformanceConfig {
+  const run = config.signal;
+  if (!run) return config;
+  const join = (own: AbortSignal | undefined) =>
+    own ? AbortSignal.any([run, own]) : run;
+  return {
+    ...config,
+    protocol: { ...config.protocol, signal: join(config.protocol?.signal) },
+    apps: { ...config.apps, signal: join(config.apps?.signal) },
+    tasks: { ...config.tasks, signal: join(config.tasks?.signal) },
+    ...(config.oauth
+      ? { oauth: { ...config.oauth, signal: join(config.oauth.signal) } }
+      : {}),
+  };
+}
+
 /**
  * Run the requested suites independently (Protocol, Apps, and Tasks in
  * parallel; OAuth only when configured) and pool the existing v1 reports.
@@ -204,6 +226,7 @@ async function runSuite(
 export async function runConformance(
   config: RunConformanceConfig,
 ): Promise<ConformanceRunReportV1> {
+  config = withRunSignal(config);
   const requestedSuites = normalizeConformanceSuites(config.suites);
   if (requestedSuites.includes("oauth") && !config.oauth) {
     throw new Error(

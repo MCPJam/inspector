@@ -9,6 +9,7 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
+import { MCP_PROTOCOL_VERSIONS } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -17,6 +18,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
 import {
   HOSTED_CONFORMANCE_SUITES,
   fetchSuiteReports,
@@ -47,8 +49,16 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
 const startConformanceSchema = z.strictObject({
   suites: z.array(z.enum(HOSTED_CONFORMANCE_SUITES)).min(1).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
-  protocolVersion: z.string().trim().min(1).optional(),
+  // Refused here, before a run exists: an unknown version used to start a
+  // run whose every suite then ended incomplete.
+  protocolVersion: z
+    .enum(MCP_PROTOCOL_VERSIONS, {
+      error: `protocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(", ")}.`,
+    })
+    .optional(),
   engineVersion: z.string().trim().min(1).optional(),
+  /** `saved` (the default) runs the server's saved conformance settings. */
+  settings: z.enum(["saved", "none"]).optional(),
 });
 
 function reportUrlFor(projectId: string, runId: string): string {
@@ -167,9 +177,11 @@ conformanceRuns.post(
       serverId,
       authorized,
       suites: body.suites,
-      idempotencyKey: body.idempotencyKey,
+      // The header wins, in the order the eval launch routes read it.
+      idempotencyKey: readAnyIdempotencyKey(c) ?? body.idempotencyKey,
       protocolVersion: body.protocolVersion,
       engineVersion: body.engineVersion,
+      settings: body.settings,
       translateError: (error) =>
         translateConvexError(error, { resource: "Conformance run" }),
     });

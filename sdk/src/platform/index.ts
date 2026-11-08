@@ -181,6 +181,7 @@ export type {
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceRunReportSummary,
+  PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
   PlatformReadinessStageResult,
   PlatformReadinessLazyAuthProbe,
