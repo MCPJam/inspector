@@ -11,17 +11,20 @@ const { constructed, probeMcpServer } = vi.hoisted(() => ({
   probeMcpServer: vi.fn(),
 }));
 
-vi.mock(import("../src/oauth-conformance/runner.js"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  OAuthConformanceTest: class {
-    constructor(config: OAuthConformanceConfig) {
-      constructed.push(config);
-    }
-    async run(): Promise<never> {
-      throw new Error("stub runner");
-    }
-  } as never,
-}));
+vi.mock(
+  import("../src/oauth-conformance/runner.js"),
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    OAuthConformanceTest: class {
+      constructor(config: OAuthConformanceConfig) {
+        constructed.push(config);
+      }
+      async run(): Promise<never> {
+        throw new Error("stub runner");
+      }
+    } as never,
+  })
+);
 
 vi.mock(import("../src/server-probe.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -87,10 +90,9 @@ describe("runConformance settles OAuth registration auto", () => {
     await runOAuth({ registrationStrategy: "auto" }, "2025-06-18");
     await runOAuth({ registrationStrategy: "auto" }, "2025-11-25");
 
-    expect(probeMcpServer.mock.calls.map(([input]) => input.protocolVersion)).toEqual([
-      "2025-06-18",
-      "2025-11-25",
-    ]);
+    expect(
+      probeMcpServer.mock.calls.map(([input]) => input.protocolVersion)
+    ).toEqual(["2025-06-18", "2025-11-25"]);
     expect(
       constructed.map(({ protocolVersion, registrationStrategy }) => ({
         protocolVersion,
@@ -118,13 +120,18 @@ describe("runConformance settles OAuth registration auto", () => {
   it("reports the suite as not run when no registration is usable", async () => {
     discovers({});
 
-    const progress = await runOAuth({ registrationStrategy: "auto" }, "2025-06-18");
+    const progress = await runOAuth(
+      { registrationStrategy: "auto" },
+      "2025-06-18"
+    );
 
     expect(constructed).toEqual([]);
     expect(progress.at(-1)).toMatchObject({
       suiteKind: "oauth",
       status: "failed",
-      error: expect.stringContaining("could not find a usable CIMD or DCR flow"),
+      error: expect.stringContaining(
+        "could not find a usable CIMD or DCR flow"
+      ),
     });
   });
 });
