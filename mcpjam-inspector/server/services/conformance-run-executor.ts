@@ -29,6 +29,8 @@ import {
   assertAllowedHostedTargetUrl,
 } from "../utils/hosted-egress-guard.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
+import { isAnalyticsDisabled } from "../utils/analytics.js";
+import { resolveEnvironment } from "../utils/log-events.js";
 
 export type ConformanceRunSource =
   | "ui"
@@ -38,6 +40,28 @@ export type ConformanceRunSource =
   | "github_app"
   | "api"
   | "benchmark";
+
+/**
+ * How the SDK counts a hosted run as `conformance_run_triggered`. The SDK
+ * sends to the production PostHog project, so only a prod deployment with
+ * analytics on labels the run; a staging or dev run would read as prod
+ * usage. UI runs are counted in the browser, and SDK/CLI runs never come
+ * through here, so every other source stays quiet.
+ */
+function conformanceRunTelemetry(
+  source: ConformanceRunSource,
+):
+  | { __telemetryRunSource: "api" | "github_app" | "benchmark" }
+  | { __suppressTelemetry: true } {
+  if (
+    (source === "api" || source === "github_app" || source === "benchmark") &&
+    !isAnalyticsDisabled() &&
+    resolveEnvironment() === "prod"
+  ) {
+    return { __telemetryRunSource: source };
+  }
+  return { __suppressTelemetry: true };
+}
 
 export type ExecutePersistedConformanceArgs = {
   convexToken: string;
@@ -495,6 +519,7 @@ export async function executePersistedConformanceRun(
             protocolVersion: args.protocolVersion as never,
             engineVersion: args.engineVersion,
             ...(guarded.oauth ? { oauth: guarded.oauth } : {}),
+            ...conformanceRunTelemetry(args.source),
             onProgress: async (event) => {
               if (event.status === "running") return;
               const body = prepareReportForPersistence(

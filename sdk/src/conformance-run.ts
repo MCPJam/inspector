@@ -23,6 +23,10 @@ import { OAuthConformanceTest } from "./oauth-conformance/runner.js";
 import type { OAuthConformanceConfig } from "./oauth-conformance/types.js";
 import { MCPTasksConformanceTest } from "./tasks-conformance/runner.js";
 import {
+  captureConformanceRun,
+  type SdkConformanceRunSource,
+} from "./telemetry.js";
+import {
   resolveRunProtocolVersion,
   requestedRunProtocolVersion,
   serverConfigFetch,
@@ -77,6 +81,17 @@ export type RunConformanceConfig = {
   oauth?: OAuthConformanceConfig;
   engineVersion?: string;
   onProgress?: (event: ConformanceRunProgress) => void | Promise<void>;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector's suite routes). Wins over `__telemetryRunSource`. See
+   * `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
+  /**
+   * @internal the Inspector's label for a run it hosts. Absent means a
+   * direct SDK run, labeled `sdk`.
+   */
+  __telemetryRunSource?: Exclude<SdkConformanceRunSource, "sdk">;
 };
 
 function isHeaderRecord(value: unknown): value is Record<string, string> {
@@ -127,6 +142,8 @@ async function runSuite(
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }
           : {}),
+        // runConformance counted this run. Last, so no spread undoes it.
+        __suppressTelemetry: true,
       } as MCPConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromProtocolResult(result) };
@@ -141,6 +158,7 @@ async function runSuite(
               supportedProtocolVersions: [config.protocolVersion],
             }
           : {}),
+        __suppressTelemetry: true,
       } as MCPAppsConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromAppsResult(result) };
@@ -155,6 +173,7 @@ async function runSuite(
               supportedProtocolVersions: [config.protocolVersion],
             }
           : {}),
+        __suppressTelemetry: true,
       } as MCPTasksConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromTasksResult(result) };
@@ -170,6 +189,7 @@ async function runSuite(
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }
           : {}),
+        __suppressTelemetry: true,
       }).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromOAuthResult(result) };
@@ -189,6 +209,10 @@ export async function runConformance(
     throw new Error(
       "OAuth is opt-in and requires an explicit supported auth strategy"
     );
+  }
+  // One event for the whole run; every inner suite is told to stay quiet.
+  if (!config.__suppressTelemetry) {
+    void captureConformanceRun(config.__telemetryRunSource ?? "sdk");
   }
   const startedAt = Date.now();
   const reports: Partial<Record<ConformanceSuiteKind, ConformanceReport>> = {};

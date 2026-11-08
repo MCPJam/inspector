@@ -44,6 +44,7 @@ import {
   uploadConformanceReport,
 } from "../lib/conformance-upload.js";
 import { declareMcpjamUse } from "../lib/deployment-preflight.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   addSharedServerOptions,
@@ -203,6 +204,7 @@ export function registerConformanceRunCommand(program: Command): void {
       };
     }
 
+    captureConformanceRunEvent();
     const report = await runConformance({
       server,
       suites,
@@ -220,6 +222,8 @@ export function registerConformanceRunCommand(program: Command): void {
           `Run incomplete: the ${event.suiteKind} suite could not run.${reason}\n`,
         );
       },
+      // The CLI counts the run itself, under its own opt-outs.
+      __suppressTelemetry: true,
     });
 
     // An explicit reporter wins over the output format, as on every suite
