@@ -17,10 +17,15 @@ import {
   runningSandboxConnection,
 } from "../attach-sandbox.js";
 
-const control = vi.hoisted(() => ({ status: vi.fn(), prepare: vi.fn() }));
+const control = vi.hoisted(() => ({
+  status: vi.fn(),
+  prepare: vi.fn(),
+  token: vi.fn(),
+}));
 vi.mock("../control-plane-client.js", () => ({
   getSandboxEgressStatus: control.status,
   prepareSandboxConnection: control.prepare,
+  getSandboxTrafficToken: control.token,
 }));
 const data = {
   sandboxID: "box-1",
@@ -62,6 +67,7 @@ beforeEach(() => {
   control.prepare
     .mockReset()
     .mockResolvedValue({ ok: true, value: { ok: true } });
+  control.token.mockReset();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -138,6 +144,28 @@ describe("controlled sandbox attachment", () => {
       "never-copy-network-secret",
     );
     expect(connection.signal).toBeUndefined();
+  });
+  it("leaves a public box without a traffic token and never asks for one", async () => {
+    const connection = await runningSandboxConnection("box-1", opts);
+    expect(connection).not.toHaveProperty("trafficAccessToken");
+    expect(control.token).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["an ordinary attach", runningSandboxConnection],
+    ["a broker-prepared attach", attachBrokerPreparedSandbox],
+  ] as const)("reads a private box's traffic token on %s", async (_label, attach) => {
+    responseBody = { ...data, network: { ...data.network, allowPublicTraffic: false } };
+    control.token.mockResolvedValue({ ok: true, value: { trafficAccessToken: "traffic-token" } });
+    const attached = await attach("box-1", opts);
+    expect(attached.trafficAccessToken).toBe("traffic-token");
+    expect(control.token).toHaveBeenCalledWith(expect.objectContaining({ providerComputerId: "box-1" }));
+  });
+  it("refuses a private box whose token the backend cannot give", async () => {
+    responseBody = { ...data, network: { allowPublicTraffic: false } };
+    control.token.mockResolvedValue({ ok: true, value: {} });
+    await expect(runningSandboxConnection("box-1", opts)).rejects.toMatchObject({ code: "sandbox_attach_failed" });
+    control.token.mockResolvedValue({ ok: false, status: 404, error: "gone" });
+    await expect(runningSandboxConnection("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
   });
   it("refuses a quarantine before calling prepare or the vendor", async () => {
     control.status.mockResolvedValue({
