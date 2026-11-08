@@ -1,3 +1,8 @@
+import { reportCaught } from "@/lib/error-reporting";
+import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
+import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
+import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
+import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
 import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
@@ -2282,6 +2287,12 @@ export function useChatSession(
    * noise.
    */
   const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  const [recoverPersistReceipt] = useState(() => createPersistReceiptRecovery(authFetch));
+  const persistReceiptGenerationRef = useRef(0);
+  useEffect(() => {
+    persistReceiptGenerationRef.current++;
+    return () => { persistReceiptGenerationRef.current++; };
+  }, [chatSessionId]);
   /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
   const receiptTurnIdentityRef = useRef<{
     chatSessionId: string;
@@ -2592,6 +2603,11 @@ export function useChatSession(
   );
 
   const harnessStartupRequestRef = useRef<string | null>(null);
+  const [turnAuthorizationRenewal] = useState(() => createTurnAuthorizationRenewal(() => ({
+    chatSessionId: chatSessionIdRef.current,
+    requestId: harnessStartupRequestRef.current,
+  })));
+  useEffect(() => () => turnAuthorizationRenewal.stop(), [turnAuthorizationRenewal]);
   const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
 
   // Mid-session sign-in: show the Connect card for a `data-auth-required`
@@ -2721,6 +2737,17 @@ export function useChatSession(
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (turnAuthorizationRenewal.accept(part)) return;
+      const appToolEvent = appToolInvocationEvent(part);
+      if (appToolEvent) {
+        void fulfillHarnessAppTool(appToolEvent, {
+          registry: appToolsRegistryRef.current,
+          chatSessionId: () => chatSessionIdRef.current,
+          claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
+          complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
+        }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
+        return;
+      }
       if (isHarnessStartupPart(part)) {
         if (isCurrentHarnessStartup(part, {
           chatSessionId: chatSessionIdRef.current,
@@ -2987,37 +3014,35 @@ export function useChatSession(
           // which point a reset, fork, or thread switch may already have moved
           // this surface somewhere else. Applying a stale receipt would sync a
           // version baseline onto a thread it does not belong to.
-          const receipt = part.data;
-          const expectedTurn = receiptTurnIdentityRef.current;
-          const sameSession =
-            receipt.chatSessionId === chatSessionIdRef.current;
-          // The turn check is against the identity captured at `turn_start`,
-          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
-          // arrives BEFORE the receipt.
-          const sameTurn =
-            !receipt.turnId ||
-            !expectedTurn?.turnId ||
-            receipt.turnId === expectedTurn.turnId;
-          if (sameSession && sameTurn) {
+          const accept = (receipt: PersistReceiptData) => {
+            const expectedTurn = receiptTurnIdentityRef.current;
+            if (receipt.chatSessionId !== chatSessionIdRef.current ||
+                (receipt.turnId && expectedTurn?.turnId && receipt.turnId !== expectedTurn.turnId)) return false;
+            const prior = persistReceiptRef.current;
+            if (receipt.outcome === "failed" && prior?.chatSessionId === receipt.chatSessionId &&
+                prior.turnId === receipt.turnId && (prior.outcome === "saved" || prior.outcome === "duplicate")) return false;
             persistReceiptRef.current = receipt;
-            // The SDK can start a client-tool continuation before React effects.
-            // Preserve unversioned surfaces; only advance an existing cursor.
-            if (
-              (receipt.outcome === "saved" ||
-                receipt.outcome === "duplicate") &&
-              typeof receipt.version === "number" &&
-              resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
-              resumedVersionRef.current.version !== null
-            ) {
-              const next = nextResumedVersion({
-                previous: resumedVersionRef.current,
-                currentSessionId: chatSessionIdRef.current,
-                sessionId: receipt.chatSessionId,
-                version: receipt.version,
-              });
+            if ((receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+                typeof receipt.version === "number" &&
+                resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
+                resumedVersionRef.current.version !== null) {
+              const next = nextResumedVersion({ previous: resumedVersionRef.current,
+                currentSessionId: chatSessionIdRef.current, sessionId: receipt.chatSessionId,
+                version: receipt.version });
               resumedVersionRef.current = next;
               setResumedVersion(next);
             }
+            return true;
+          };
+          const currentReceipt = accept(part.data);
+          if (currentReceipt && part.data.retryHandle && part.data.chatSessionId === chatSessionIdRef.current &&
+              part.data.retryProjectId === hostedProjectId) {
+            const generation = persistReceiptGenerationRef.current;
+            void recoverPersistReceipt(part.data).then((receipt) => {
+              if (generation === persistReceiptGenerationRef.current) accept(receipt);
+            }).catch((error: unknown) => {
+              reportCaught(error, { source: "chat_persistence_recovery" });
+            });
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -3085,6 +3110,7 @@ export function useChatSession(
           turnId: part.data.turnId,
         };
         persistReceiptRef.current = null;
+        persistReceiptGenerationRef.current++;
         // Same lifetime as the receipt: a new turn invalidates the previous
         // turn's abort just as it invalidates the previous turn's receipt.
         // `onFinish` already clears it at every turn end, so this only matters
@@ -3101,6 +3127,7 @@ export function useChatSession(
       appState,
       handleMrtrInputRequired,
       presentChatAuthRequiredEvent,
+      convexClient,
     ],
   );
 
@@ -3121,11 +3148,14 @@ export function useChatSession(
   const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
     const receipt = persistReceiptRef.current;
     persistReceiptRef.current = null;
+    persistReceiptGenerationRef.current++;
     // Re-checked at CONSUME time, not just on arrival: the session can change
     // in the window between the receipt landing and a post-stream effect
     // reading it, and handing a receipt for the old thread to the new one would
     // sync its version baseline — or detach it — on the wrong conversation.
-    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+    if (receipt && (receipt.chatSessionId !== chatSessionIdRef.current ||
+        (receipt.turnId && receiptTurnIdentityRef.current?.turnId &&
+         receipt.turnId !== receiptTurnIdentityRef.current.turnId))) {
       return null;
     }
     return receipt;
@@ -3797,6 +3827,7 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
       setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
@@ -4086,6 +4117,9 @@ export function useChatSession(
                 // The project's skills reach this turn as they reach a client
                 // turn, alongside the plugins' own.
                 includeProjectSkills: true,
+                autoContributedPluginServerIds: hiddenPluginServerIds.filter(
+                  (id) => !resolvedServerIds.includes(id),
+                ),
               }
             : // Host-bound direct preview: forward the saved host id so the server
               // re-resolves the host's authoritative runtime config (harness /
@@ -4124,6 +4158,7 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        turnAuthorizationRenewal.stop();
         harnessStartupRequestRef.current = crypto.randomUUID();
         setHarnessStartupPhase(null);
         const taskOwnerScope = getOwnedTaskScope();
@@ -4409,13 +4444,14 @@ export function useChatSession(
     experimental_throttle: 50,
     transport: proxyTransport,
     onData: handleStreamDataPart,
-    onError: handleChatError,
+    onError: (error) => { turnAuthorizationRenewal.stop(); handleChatError(error); },
     // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
     // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
     // React renders that status — so a post-stream effect reading it on the
     // ready transition sees the final request's answer. Client-tool continuations
     // can start before that effect; receipts advance the cursor in onData.
     onFinish: ({ isAbort, message, finishReason }) => {
+      turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
@@ -6802,7 +6838,8 @@ export function useChatSession(
    * a suspended operation's stream always ends while its round is pending.)
    */
   const stopChat = useCallback(() => {
-    harnessStartupRequestRef.current = null;
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
     setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
@@ -6833,12 +6870,14 @@ export function useChatSession(
   useEffect(() => {
     if (status !== "submitted" && status !== "streaming") {
       setHarnessStartupPhase(null);
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
     }
   }, [status]);
   useEffect(() => {
     setHarnessStartupPhase(null);
-    harnessStartupRequestRef.current = null;
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
   return {

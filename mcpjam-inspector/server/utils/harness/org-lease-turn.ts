@@ -66,6 +66,7 @@ export class OrgLeaseTurn {
   private readonly selectionField: { modelSelection?: OrgHarnessSelection };
   private readonly profile: string | undefined;
   private readonly bearer: string | undefined;
+  private readonly authorization: MCPJamHandlerOptions["turnAuthorization"];
   /** A run (eval, swarm) owns the local session id and cleans up only it. */
   private readonly runOwnsSession: boolean;
   private readonly turnStartedAt = Date.now();
@@ -81,7 +82,7 @@ export class OrgLeaseTurn {
   constructor(
     options: Pick<
       MCPJamHandlerOptions,
-      "harness" | "modelSelection" | "authHeader" | "harnessExecutionTarget"
+      "harness" | "modelSelection" | "authHeader" | "harnessExecutionTarget" | "turnAuthorization"
     >,
   ) {
     this.selection = orgHarnessSelection(options.modelSelection);
@@ -93,6 +94,7 @@ export class OrgLeaseTurn {
       ? harnessOrgUpstream(options.harness ?? "")?.profile
       : undefined;
     this.bearer = options.authHeader;
+    this.authorization = options.turnAuthorization;
     this.runOwnsSession = Boolean(
       options.harnessExecutionTarget?.localSessionId,
     );
@@ -297,15 +299,20 @@ export class OrgLeaseTurn {
    * a bare refusal status or as nothing typed; the proxy recorded its reason
    * on the lease, so it is read back.
    */
-  failedTurnEvidence(
+  async failedTurnEvidence(
     evidence: InfraFailureEvidence | undefined,
     modelInvoked: boolean,
   ): Promise<InfraFailureEvidence | undefined> {
+    let bearer = this.bearer;
+    if (this.authorization) {
+      try { bearer = await this.authorization.getCleanupAuthorization(); }
+      catch { return evidence; } // A refused identity cannot read additional failure evidence.
+    }
     return failedTurnEvidence({
       evidence,
       modelInvoked,
       leaseRunId: this.leaseRunId,
-      bearer: this.bearer,
+      bearer,
       turnStartedAt: this.turnStartedAt,
     });
   }

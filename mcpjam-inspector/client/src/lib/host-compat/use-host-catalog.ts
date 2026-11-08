@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 import {
   fetchHostCompatCatalog,
@@ -36,6 +36,11 @@ type ResolvedHostCatalogState = Exclude<
   HostCatalogState,
   { status: "loading" }
 >;
+
+const HostCatalogContext = createContext<ResolvedHostCatalogState | null>(null);
+
+/** Supplies a resolved catalog for isolated hosts that do not have an API origin. */
+export const HostCatalogProvider = HostCatalogContext.Provider;
 
 const LOADING_STATE: HostCatalogState = {
   status: "loading",
@@ -111,9 +116,11 @@ export function resetHostCatalogForTests(): void {
 }
 
 export function useHostCatalog(): HostCatalogState {
+  const supplied = useContext(HostCatalogContext);
   const [state, setState] = useState<HostCatalogState>(cached ?? LOADING_STATE);
 
   useEffect(() => {
+    if (supplied) return;
     if (cached) {
       // The cache may have been populated by another consumer's in-flight
       // fetch between this component's render (which seeded `state` from a
@@ -151,7 +158,7 @@ export function useHostCatalog(): HostCatalogState {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [supplied]);
 
-  return state;
+  return supplied ?? state;
 }

@@ -16,6 +16,10 @@ const f = vi.hoisted(() => ({
   get: vi.fn(),
   live: vi.fn(),
   lifetime: vi.fn(),
+  describeFormFiles: vi.fn(),
+  verifyCurrent: vi.fn(),
+  resolveTools: vi.fn(),
+  formOwner: vi.fn(),
 }));
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   createConvexClient: () => ({ query: f.plugins }),
@@ -36,6 +40,7 @@ vi.mock("../../../services/plugin-host/instances.js", () => ({
     getPersistent: f.get,
     get: f.live,
     signal: f.lifetime,
+    getFormOwner: f.formOwner,
   },
 }));
 vi.mock("../../../services/plugin-host/request-runtime.js", async (original) => ({
@@ -47,6 +52,8 @@ vi.mock("../../../services/plugin-host/request-runtime.js", async (original) => 
     catalog: f.catalog,
     resolve: f.resolve,
     release: f.release,
+    verifyCurrent: f.verifyCurrent,
+    resolveTools: f.resolveTools,
   }),
 }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
@@ -55,8 +62,14 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 vi.mock("../../../utils/tool-approval-token.js", () => ({
   toolApprovalSubjectFromAuthHeader: () => "verified-subject",
 }));
+vi.mock("../../../services/plugin-host/form-files.js", async original => ({
+  ...await original<typeof import("../../../services/plugin-host/form-files.js")>(),
+  describePluginFormFiles: f.describeFormFiles,
+}));
 import routes from "../plugin-instances";
 import { PluginWorkspaceAdmissionError } from "../../../services/plugin-host/admission";
+import { pluginFormSources } from "../../../services/plugin-host/form-sources.js";
+import { webReceiptApp, withReceiptSigning, expectOwnedSourceReceipt } from "./owned-source-receipt-fixture.js";
 const app = new Hono().route("/instances", routes);
 const body = {
   projectId: "project",
@@ -1034,4 +1047,85 @@ describe("form preview refusals", () => {
       });
     },
   );
+});
+
+
+describe("form operation projection request", () => {
+  const request = { projectId: "project", pluginWorkspace: body.pluginWorkspace, sourceToken: "s".repeat(43), parent: { kind: "legacy", id: "form", round: 0 } };
+  it("passes only an explicit operation projection opt-in through the authorized service route", async () => {
+    f.describeFormFiles.mockResolvedValue({ userResources: false, userResourceKinds: [] });
+    const response = await post("form-files/services", { ...request, includeOperation: true });
+    expect(response.status).toBe(200);
+    expect(f.admission).toHaveBeenCalled();
+    expect(f.describeFormFiles).toHaveBeenCalledWith(expect.objectContaining({ includeOperation: true, sourceToken: request.sourceToken }));
+    expect(await response.json()).toEqual({ userResources: false, userResourceKinds: [] });
+  });
+  it("refuses a caller-authored operation tuple before service access", async () => {
+    const response = await post("form-files/services", { ...request, operation: { instanceId: "forged" } });
+    expect(response.status).toBe(400);
+    expect(f.describeFormFiles).not.toHaveBeenCalled();
+  });
+});
+
+describe("owned App source receipts", () => {
+  const web = webReceiptApp(routes, "instances");
+  const request = (path: string, input: unknown) => web.request(`/api/web/instances/${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  });
+  const html = "<p>Owned part α</p>";
+  const csp = { connectDomains: ["https://parts.example"], resourceDomains: ["https://assets.example"] };
+  const manager = { readResource: f.read, getServerConfig: () => ({}) };
+
+  it("binds activation bytes to the verified actor/project and server-issued operation", async () => {
+    await withReceiptSigning(async () => {
+      const operationId = crypto.randomUUID();
+      f.catalog.mockResolvedValue({ tools: [tool], manager, hostRevision: "host-v1", bindingId: "binding", serverIdentity: { kind: "standalone", serverId: "saved-id" }, runtime: "chatgpt" });
+      f.read.mockResolvedValue({ contents: [{ uri: "ui://fixture", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+      f.open.mockResolvedValue({ token: "a".repeat(43), instance: { owner: { instanceId: crypto.randomUUID(), generation: 1 }, activation: { operationId } } });
+      const input = { ...body, threadId: "thread", toolName: tool.name, kind: "thread" };
+      const response = await request("activation/open", input);
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.operationId).toBe(operationId);
+      expect(result.widgetContent).toMatchObject({ html, csp });
+      expectOwnedSourceReceipt(result.widgetContent, { serverId: "saved-id", resourceUri: "ui://fixture", toolCallId: operationId });
+      f.read.mockClear();
+      f.admission.mockRejectedValueOnce(new PluginWorkspaceAdmissionError());
+      const denied = await request("activation/open", input);
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("sourceReceipt");
+      expect(f.read).not.toHaveBeenCalled();
+    });
+  });
+
+  it("binds an authorized form-preview child and withholds a receipt after its source closes", async () => {
+    await withReceiptSigning(async () => {
+      const parent = { kind: "legacy" as const, id: crypto.randomUUID(), round: 0 as const };
+      const target = { type: "mcp_app_tool" as const, name: "preview", arguments: { part: "bolt" } };
+      const owner = { actorId: "actor", projectId: "project", workspaceId: "workspace", instanceId: crypto.randomUUID(), generation: 1, serverId: "saved-id", bindingId: "binding", placement: "interactive" as const };
+      const expiresAt = Date.now() + 60_000;
+      const source = pluginFormSources.bind({ owner, hostId: "host", hostRevision: "host-v1", invocationId: "original", origin: "entrypoint", revision: "source-revision", toolName: "source", parent, expiresAt, requestedSchema: { type: "object", properties: { part: { type: "string", format: "uri", "x-openai-input": { type: "resource", options: [{ uri: "fixture://part", name: "Part", _meta: { "openai/preview": { target } } }] } } } } });
+      f.formOwner.mockReturnValue({ hostId: "host", owner });
+      f.plugins.mockResolvedValue({ actorId: "actor", expiresAt });
+      f.resolveTools.mockImplementation(async (names: string[]) => new Map(names.map(name => [name, { tool: { name, inputSchema: { type: "object", properties: { part: { type: "string" } } }, _meta: { ui: { resourceUri: "ui://preview", visibility: ["app"] } } }, revision: name === "source" ? "source-revision" : "preview-revision", hostRevision: "host-v1", bindingId: "binding", appToolsEnabled: true, manager }])));
+      f.read.mockResolvedValue({ contents: [{ uri: "ui://preview", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+      const input = { projectId: "project", pluginWorkspace: body.pluginWorkspace, sourceToken: source.token, parent, target };
+      try {
+        const response = await request("form-preview/app/open", input);
+        expect(response.status).toBe(200);
+        const result = await response.json();
+        expect(result.operationId).toEqual(expect.any(String));
+        expect(result.widgetContent).toMatchObject({ html, csp });
+        expectOwnedSourceReceipt(result.widgetContent, { serverId: "saved-id", resourceUri: "ui://preview", toolCallId: result.operationId });
+        source.release();
+        f.read.mockClear();
+        const denied = await request("form-preview/app/open", input);
+        expect(denied.status).toBe(403);
+        expect(await denied.text()).not.toContain("sourceReceipt");
+        expect(f.read).not.toHaveBeenCalled();
+      } finally {
+        source.release();
+      }
+    });
+  });
 });

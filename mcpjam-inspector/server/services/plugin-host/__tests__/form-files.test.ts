@@ -34,7 +34,7 @@ async function fixture(
   target: unknown = { command: "node" },
   local = true,
   fileResources = true,
-  origin: "app" | "model" = "app",
+  origin: "app" | "model" | "settings" = "app",
 ) {
   // The client's CURRENT toggles, as each request's fresh admission reads them.
   const toggles = { forms: true, fileResources: true };
@@ -130,7 +130,7 @@ async function fixture(
     sourceToken: source.token,
     parent,
     signal: request.signal,
-    runtime: () => ({ resolve, release } as any),
+    runtime: () => ({ resolve, release }) as any,
   };
   return {
     options,
@@ -145,6 +145,39 @@ async function fixture(
   };
 }
 describe("connected original form target authorization", () => {
+  it.each(["app", "settings"] as const)(
+    "projects an exact legacy %s operation only for an opted-in reader",
+    async (origin) => {
+      const f = await fixture(undefined, true, true, origin);
+      const result = await describePluginFormFiles({
+        ...f.options,
+        includeOperation: true,
+      });
+      expect(result.operation).toEqual({
+        projectId: f.actor.projectId,
+        workspaceId: f.actor.workspaceId,
+        instanceId: f.instance.instance.owner.instanceId,
+        generation: f.instance.instance.owner.generation,
+        serverId: "server",
+        invocationId: "operation",
+        expiresAt: f.expiresAt,
+      });
+      expect(
+        (await describePluginFormFiles(f.options)).operation,
+      ).toBeUndefined();
+    },
+  );
+  it("withdraws the operation when Forms is off, while File resources off still allows human input", async () => {
+    const f = await fixture();
+    f.toggles.fileResources = false;
+    expect((await describePluginFormFiles({ ...f.options, includeOperation: true })).operation).toBeDefined();
+    f.toggles.forms = false;
+    expect((await describePluginFormFiles({ ...f.options, includeOperation: true })).operation).toBeUndefined();
+  });
+  it("does not project a model-origin form as an App operation", async () => {
+    const f = await fixture(undefined, true, true, "model");
+    expect((await describePluginFormFiles({ ...f.options, includeOperation: true })).operation).toBeUndefined();
+  });
   it("admits actual local opt-in through two durable checks and releases the discovery connection", async () => {
     const f = await fixture();
     expect(await describePluginFormFiles(f.options)).toEqual({
@@ -191,6 +224,7 @@ describe("connected original form target authorization", () => {
       await expect(
         describePluginFormFiles({
           ...f.options,
+          includeOperation: true,
           actor: { ...f.actor, [key]: "foreign" },
         }),
       ).rejects.toThrow();

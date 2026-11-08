@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
@@ -293,6 +293,13 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function profileExtensionsError(parsed: unknown): string | null {
+  return isPlainObject(parsed) && parsed.extensions !== undefined &&
+    !isPlainObject(parsed.extensions)
+    ? "MCP profile extensions must be a JSON object. Replace this value with { } or remove the extensions field."
+    : null;
+}
+
 function findAuthorizationKey(
   headers: Record<string, string>,
 ): string | undefined {
@@ -551,7 +558,7 @@ export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2,
 ): HostConfigInputV2 | null {
-  if (!isPlainObject(parsed)) return null;
+  if (!isPlainObject(parsed) || profileExtensionsError(parsed)) return null;
 
   // clientInfo — require both name and version, like the form did. A bare
   // `{}` or partial object collapses to "not set", matching the persisted
@@ -768,6 +775,14 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const extensionsError = useMemo(() => {
+    try {
+      return profileExtensionsError(JSON.parse(content));
+    } catch {
+      // The JSON editor already reports syntax errors in its status bar.
+      return null;
+    }
+  }, [content]);
   // Every known version has its own entry, so a stored pin shows itself
   // rather than collapsing onto a neighbour. Only genuinely unknown values
   // (hand-edited junk, a version retired from the SDK) fall back to
@@ -1464,6 +1479,7 @@ export function ProtocolTab({
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
           rawContent={content}
+          error={extensionsError}
           onRawChange={onRawChange}
           mode={effectiveJsonMode}
           onModeChange={readOnly ? undefined : setJsonMode}

@@ -13,7 +13,9 @@
  *
  *   - CIDRs, IPv4 or IPv6: `10.0.0.0/8`, `fd00::/8`. A bare address is its own
  *     /32 or /128. They match ADDRESSES only — an IP literal in a URL, or an
- *     address a hostname resolved to — never a name.
+ *     address a hostname resolved to — never a name. An IPv4-mapped entry
+ *     (`::ffff:10.0.0.0/104`) is the IPv4 range it carries (`10.0.0.0/8`), as a
+ *     mapped destination is the IPv4 address it carries.
  *   - Host suffixes: `svc.cluster.local` (a leading dot is optional). They
  *     match NAMES only, on label boundaries: `corp.example` matches
  *     `corp.example` and `mcp.corp.example`, never `evilcorp.example`.
@@ -49,9 +51,15 @@ export interface PrivateEgressAllowlist {
 }
 
 export interface InvalidAllowlistEntry {
+  /** As written. Not for logs: a mistyped entry can be a pasted URL with credentials. */
   entry: string;
+  /** Its 1-based place in the comma-separated value, for messages that must not quote it. */
+  position: number;
   reason: string;
 }
+
+/** What the entry parsers report; the list parser adds the position. */
+type EntryFault = Omit<InvalidAllowlistEntry, "position">;
 
 export interface ParsedPrivateEgressAllowlist {
   allowlist: PrivateEgressAllowlist;
@@ -117,6 +125,16 @@ export function ipv6Bytes(text: string): AddressBytes | null {
   return hextets.flatMap((hextet) => [hextet >> 8, hextet & 0xff]);
 }
 
+/** The IPv4 address an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) carries, or null. */
+function ipv4MappedTail(bytes: AddressBytes): AddressBytes | null {
+  const mapped =
+    bytes.length === 16 &&
+    bytes.slice(0, 10).every((byte) => byte === 0) &&
+    bytes[10] === 0xff &&
+    bytes[11] === 0xff;
+  return mapped ? bytes.slice(12) : null;
+}
+
 /**
  * The bytes a destination address is matched as. An IPv4-mapped IPv6 address
  * (`::ffff:10.0.0.5`) is the IPv4 address it carries, so a listed IPv4 range
@@ -127,11 +145,7 @@ function matchableBytes(address: string): AddressBytes | null {
   if (v4) return v4;
   const v6 = ipv6Bytes(address);
   if (!v6) return null;
-  const mapped =
-    v6.slice(0, 10).every((byte) => byte === 0) &&
-    v6[10] === 0xff &&
-    v6[11] === 0xff;
-  return mapped ? v6.slice(12) : v6;
+  return ipv4MappedTail(v6) ?? v6;
 }
 
 function cidrContains(cidr: Cidr, bytes: AddressBytes): boolean {
@@ -155,7 +169,20 @@ function addressBytes(text: string): AddressBytes | null {
   return ipv4Bytes(text) ?? (text.includes(":") ? ipv6Bytes(text) : null);
 }
 
-function parseCidr(entry: string): Cidr | InvalidAllowlistEntry {
+/**
+ * A listed range as destinations are matched: an IPv4-mapped one becomes the
+ * IPv4 range it carries. Kept as 16 bytes, it could never match a destination,
+ * which `matchableBytes` reads as 4. Its prefix is at least 96 by now, since a
+ * shorter one leaves the `ffff` bits as host bits, which `parseCidr` refuses.
+ */
+function asMatchable(cidr: Cidr): Cidr {
+  const v4 = ipv4MappedTail(cidr.bytes);
+  return v4 && cidr.prefix >= 96
+    ? { bytes: v4, prefix: cidr.prefix - 96 }
+    : cidr;
+}
+
+function parseCidr(entry: string): Cidr | EntryFault {
   const slash = entry.lastIndexOf("/");
   const address = slash === -1 ? entry : entry.slice(0, slash);
   const bytes = addressBytes(address);
@@ -163,7 +190,7 @@ function parseCidr(entry: string): Cidr | InvalidAllowlistEntry {
     return { entry, reason: "is not a valid IPv4 or IPv6 address or range" };
   }
   const maxPrefix = bytes.length * 8;
-  if (slash === -1) return { bytes, prefix: maxPrefix };
+  if (slash === -1) return asMatchable({ bytes, prefix: maxPrefix });
   const rawPrefix = entry.slice(slash + 1);
   const prefix = /^(?:0|[1-9]\d{0,2})$/.test(rawPrefix)
     ? Number(rawPrefix)
@@ -177,13 +204,13 @@ function parseCidr(entry: string): Cidr | InvalidAllowlistEntry {
       reason: `has bits set past its /${prefix} prefix; write the network address it should cover`,
     };
   }
-  return { bytes, prefix };
+  return asMatchable({ bytes, prefix });
 }
 
 /** RFC 1123 labels: letters, digits and inner hyphens. */
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-function parseSuffix(entry: string): string | InvalidAllowlistEntry {
+function parseSuffix(entry: string): string | EntryFault {
   const suffix = normalizeEgressHost(entry.replace(/^\./, ""));
   const labels = suffix.split(".");
   if (
@@ -218,7 +245,7 @@ export function parsePrivateEgressAllowlist(
   const suffixes: string[] = [];
   const invalid: InvalidAllowlistEntry[] = [];
 
-  for (const piece of (raw ?? "").split(",")) {
+  for (const [index, piece] of (raw ?? "").split(",").entries()) {
     const entry = piece.trim();
     if (!entry) continue;
     // Anything shaped like an address is judged as one: an entry made of
@@ -228,7 +255,8 @@ export function parsePrivateEgressAllowlist(
         ? parseCidr(entry)
         : parseSuffix(entry);
     if (typeof parsed === "string") suffixes.push(parsed);
-    else if ("reason" in parsed) invalid.push(parsed);
+    else if ("reason" in parsed)
+      invalid.push({ ...parsed, position: index + 1 });
     else cidrs.push(parsed);
   }
 

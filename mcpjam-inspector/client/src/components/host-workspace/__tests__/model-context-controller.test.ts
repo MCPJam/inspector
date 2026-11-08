@@ -99,6 +99,57 @@ describe("context refused before it was stored", () => {
     await expect(update({ content: [] })).rejects.toThrow("network");
     await expect(update({ content: [] })).rejects.toThrow("outcome unknown");
   });
+
+  it("reads current context before sending a new replacement after a lost response", async () => {
+    const events: string[] = [];
+    const read = vi.fn(async () => {
+      events.push("read");
+      return { revision: 1, sequence: 1, state: { updateId: "first", content: [] } };
+    });
+    const send = vi.fn()
+      .mockImplementationOnce(async () => {
+        events.push("first");
+        throw new Error("lost response");
+      })
+      .mockImplementationOnce(async () => {
+        events.push("second");
+        return result("second");
+      });
+    const update = createModelContextController({ requireLive: () => {}, send, read });
+    await expect(update({ structuredContent: { view: "first" } })).rejects.toThrow("lost response");
+    await expect(update({ structuredContent: { view: "second" } })).resolves.toEqual(result("second"));
+    expect(events).toEqual(["first", "read", "second"]);
+    expect(send.mock.calls[1][0]).toMatchObject({ sequence: 2, params: { structuredContent: { view: "second" } } });
+    expect(send.mock.calls[1][0].operationId).not.toBe(send.mock.calls[0][0].operationId);
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("does not send the next replacement when reconciliation cannot read current context", async () => {
+    const send = vi.fn().mockRejectedValueOnce(new Error("lost response"));
+    const read = vi.fn().mockRejectedValueOnce(new Error("read unavailable"));
+    const update = createModelContextController({ requireLive: () => {}, send, read });
+    await expect(update({})).rejects.toThrow("lost response");
+    await expect(update({ structuredContent: { next: true } })).rejects.toThrow("read unavailable");
+    expect(send).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("checks the owner after a reconciliation read before sending any replacement", async () => {
+    let live = true;
+    const send = vi.fn().mockRejectedValueOnce(new Error("lost response"));
+    const read = vi.fn(async () => {
+      live = false;
+      return { revision: 1, sequence: 1, state: null };
+    });
+    const update = createModelContextController({
+      requireLive: () => { if (!live) throw new Error("owner closed"); },
+      send,
+      read,
+    });
+    await expect(update({})).rejects.toThrow("lost response");
+    await expect(update({ structuredContent: { next: true } })).rejects.toThrow("owner closed");
+    expect(send).toHaveBeenCalledOnce();
+  });
 });
 
 describe("context replace queue", () => {

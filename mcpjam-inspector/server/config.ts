@@ -1,3 +1,4 @@
+import { PLUGIN_FILE_METADATA_HEADER } from "../shared/plugin-file-headers.js";
 /**
  * Server configuration constants
  */
@@ -231,6 +232,7 @@ export const CORS_OPTIONS = {
     "x-mcpjam-error-origin",
     "X-MCPJam-Session",
     "x-mcpjam-failure-captured",
+    PLUGIN_FILE_METADATA_HEADER,
   ],
 };
 

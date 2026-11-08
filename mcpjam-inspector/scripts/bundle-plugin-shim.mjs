@@ -1,4 +1,4 @@
-// Copies the in-VM plugin shim (server/services/plugins/shim/mcpjam-plugin-shim.mjs)
+// Bundles the in-VM plugin shim (server/services/plugins/shim/mcpjam-plugin-shim.mjs)
 // into a generated TS const, because nothing in the server graph IMPORTS the
 // .mjs — it is uploaded into a sandbox and executed there. Without this step the
 // bundler never walks to it and the published package would not contain it.
@@ -8,8 +8,9 @@
 // The emitted version is the shim's own content hash, so the backend's
 // `shim_outdated` staleness check fires exactly when this file changes — there
 // is no hand-maintained version to forget to bump.
+import { build } from "esbuild";
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,7 +26,8 @@ const outputTsPath = join(
 );
 
 try {
-  const source = readFileSync(shimPath, "utf-8");
+  const bundled = await build({ absWorkingDir: join(__dirname, ".."), entryPoints: [shimPath], bundle: true, write: false, platform: "node", format: "esm", target: "node20" });
+  const source = bundled.outputFiles[0].text;
   // 128 bits. This doubles as a CONTENT ADDRESS (the in-box shim filename) and
   // as the identity the backend's `shim_outdated` check and session reuse turn
   // on, so a collision would run a stale shim as if it were current. 64 bits

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { stableStringifyJson } from "@/lib/client-config";
 
 interface UseJsonDraftBufferOptions {
   draft: HostConfigInputV2;
@@ -45,8 +46,8 @@ export function useJsonDraftBuffer({
   useEffect(() => {
     if (draft === lastSeededDraftRef.current) return;
 
-    const lastSer = JSON.stringify(serialize(lastSeededDraftRef.current));
-    const freshSer = JSON.stringify(serialize(draft));
+    const lastSer = stableStringifyJson(serialize(lastSeededDraftRef.current));
+    const freshSer = stableStringifyJson(serialize(draft));
     if (freshSer === lastSer) {
       // Reference changed but no semantic difference — advance the ref and
       // bail so we don't churn the editor for nothing.
@@ -56,7 +57,7 @@ export function useJsonDraftBuffer({
 
     let contentCanon: string | null;
     try {
-      contentCanon = JSON.stringify(JSON.parse(content));
+      contentCanon = stableStringifyJson(JSON.parse(content));
     } catch {
       contentCanon = null;
     }

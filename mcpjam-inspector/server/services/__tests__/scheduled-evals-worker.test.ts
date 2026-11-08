@@ -1,6 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const prepareEvalRun = vi.fn();
+const loadSuiteHostConfig = vi.fn();
+const resolveEnvironmentForLaunch = vi.fn();
+
+vi.mock("../evals/compat-runtime.js", () => ({
+  loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfig(...args),
+}));
+vi.mock("../evals/route-helpers.js", () => ({
+  createConvexClient: (bearer: string) => ({ bearer }),
+}));
+vi.mock("../environments/resolve.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../environments/resolve.js")>()),
+  resolveEnvironmentForLaunch: (...args: unknown[]) =>
+    resolveEnvironmentForLaunch(...args),
+}));
+vi.mock("../xaa-configured-issuer.js", () => ({
+  resolveConfiguredXaaIssuer: () => "https://issuer.test/api/web/xaa",
+}));
 
 vi.mock("../../utils/v1-convex-token.js", () => ({
   getConvexBearerForDelegation: vi.fn().mockResolvedValue("bearer"),
@@ -28,6 +45,18 @@ import {
 import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import { logger } from "../../utils/logger";
 import { serverDrain } from "../lifecycle/drain.js";
+import { createAuthorizedManager } from "../../routes/web/auth.js";
+
+const ENTERPRISE_POLICY_HOST = {
+  mcpProfile: {
+    extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" } },
+  },
+};
+
+beforeEach(() => {
+  // A host with no enterprise policy, unless a test says otherwise.
+  loadSuiteHostConfig.mockResolvedValue({});
+});
 
 const CLAIM = {
   triggerId: "trig-1",
@@ -128,6 +157,123 @@ describe("executeClaimedRun setup failure", () => {
     expect(completion()).toMatchObject({
       ok: false,
       failureReason: "run_create_failed: run start exploded",
+    });
+  });
+});
+
+describe("executeClaimedRun connection", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    prepareEvalRun.mockResolvedValue({
+      runId: "run-1",
+      suiteId: "suite-1",
+      execute: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    prepareEvalRun.mockReset();
+  });
+
+  function connectOptions() {
+    expect(createAuthorizedManager).toHaveBeenCalledTimes(1);
+    return vi.mocked(createAuthorizedManager).mock.calls[0][7];
+  }
+
+  it("keeps plugin placement disabled before an iteration sandbox exists", async () => {
+    await executeClaimedRun(CLAIM);
+    expect(connectOptions()).toMatchObject({ pluginComputerRuntime: false });
+  });
+
+  it("passes the deployment's XAA issuer, having no request to read one from", async () => {
+    await executeClaimedRun(CLAIM);
+
+    expect(connectOptions()).toMatchObject({
+      xaaIssuer: "https://issuer.test/api/web/xaa",
+    });
+  });
+
+  it("applies the enterprise policy of the suite's own host", async () => {
+    loadSuiteHostConfig.mockResolvedValue(ENTERPRISE_POLICY_HOST);
+
+    await executeClaimedRun(CLAIM);
+
+    // Failing closed: a suite config that cannot be read must stop the run,
+    // not fall back to the default host and connect with no policy.
+    expect(loadSuiteHostConfig).toHaveBeenCalledWith(
+      { bearer: "bearer" },
+      "suite-1",
+      undefined,
+      { failClosed: true },
+    );
+    expect(connectOptions()).toMatchObject({ xaaPolicy: { idp: "mcpjam" } });
+  });
+
+  it("reads the policy from the pinned environment's host", async () => {
+    resolveEnvironmentForLaunch.mockResolvedValue({
+      environmentRef: { environmentId: "env-1", name: "Prod", revision: 3 },
+      hostId: "host-env",
+      selectedServerIds: ["srv-1"],
+    });
+    loadSuiteHostConfig.mockResolvedValue(ENTERPRISE_POLICY_HOST);
+
+    await executeClaimedRun({ ...CLAIM, environmentId: "env-1" });
+
+    expect(loadSuiteHostConfig).toHaveBeenCalledWith(
+      { bearer: "bearer" },
+      "suite-1",
+      "host-env",
+      { failClosed: true },
+    );
+    expect(connectOptions()).toMatchObject({ xaaPolicy: { idp: "mcpjam" } });
+  });
+
+  it("stops the run when the host settings cannot be read", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    loadSuiteHostConfig.mockRejectedValue(
+      new Error("Couldn't load this suite's host settings"),
+    );
+
+    await executeClaimedRun(CLAIM);
+
+    expect(createAuthorizedManager).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(init.body)).toMatchObject({ ok: false });
+  });
+
+  it("connects with no policy when the host sets none", async () => {
+    await executeClaimedRun(CLAIM);
+
+    expect(connectOptions().xaaPolicy).toBeUndefined();
+  });
+
+  it("refuses a host whose policy is invalid before connecting anything", async () => {
+    vi.spyOn(logger, "error").mockImplementation(() => {});
+    loadSuiteHostConfig.mockResolvedValue({
+      mcpProfile: {
+        extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "okta" } },
+      },
+    });
+
+    await executeClaimedRun(CLAIM);
+
+    expect(createAuthorizedManager).not.toHaveBeenCalled();
+    expect(prepareEvalRun).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls.at(-1)!;
+    expect(JSON.parse(init.body)).toMatchObject({
+      ok: false,
+      failureReason: expect.stringContaining(
+        "unsupported enterprise-managed authorization policy",
+      ),
     });
   });
 });

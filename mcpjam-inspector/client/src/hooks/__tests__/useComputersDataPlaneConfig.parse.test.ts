@@ -56,6 +56,13 @@ describe("useComputersDataPlaneConfig — engines parse", () => {
     },
   );
 
+  it.each([true, false, undefined, "yes"])("requires a positive plugin runtime declaration (%s)", async (pluginComputerRuntime) => {
+    const mod = await loadWithConfig({ localConfigured: true, remoteDataPlaneUrl: null, capabilities: { pluginComputerRuntime } });
+    const { result } = renderHook(() => mod.useComputersDataPlaneConfig());
+    await waitFor(() => expect(result.current).toBeDefined());
+    expect(result.current?.pluginComputerRuntime).toBe(pluginComputerRuntime === true);
+  });
+
   it("derives for an OLD server: local never exists, cloud from the legacy pair", async () => {
     const mod = await loadWithConfig({
       localConfigured: false,
@@ -114,6 +121,7 @@ describe("useComputersDataPlaneConfig — engines parse", () => {
     const { result } = renderHook(() => mod.useComputersDataPlaneConfig());
     await waitFor(() => expect(result.current).toBeDefined());
     expect(result.current!.localConfigured).toBe(true);
+    expect(result.current!.pluginComputerRuntime).not.toBe(true);
     expect(result.current!.engines.local.available).toBe(false);
     expect(result.current!.engines.cloud.available).toBe(true);
   });

@@ -28,6 +28,7 @@ import {
   validateOAuthClientId,
   validateOAuthClientSecret,
 } from "@/lib/server-form-validation";
+import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import type {
   ServerFormAuthType,
@@ -953,7 +954,7 @@ export function FirstRunOnboardingOverlay({
                   htmlFor="first-run-server-url"
                   className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
                 >
-                  Server URL or command
+                  {HOSTED_MODE ? "Server URL" : "Server URL or command"}
                 </Label>
                 <Input
                   id="first-run-server-url"
@@ -977,7 +978,9 @@ export function FirstRunOnboardingOverlay({
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[10.5px] text-muted-foreground">
-                    HTTP, SSE, and stdio all work.
+                    {HOSTED_MODE
+                      ? "Connect an HTTP or SSE server."
+                      : "HTTP, SSE, and stdio all work."}
                   </p>
                 )}
                 <Button
