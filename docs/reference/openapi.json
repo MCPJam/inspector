@@ -12004,13 +12004,23 @@
         "operationId": "startConformanceRun",
         "tags": ["Conformance runs"],
         "summary": "Start a persisted conformance run",
-        "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.",
+        "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.\n\nBy default the run uses the server's saved conformance settings: the checks they select, their tool inputs and their run time budget. The receipt's `settingsSource` says what applied: `saved`, or `defaults` when the server has nothing saved. `settings: \"none\"` runs every check with no tool inputs. A run still going at its budget ends with its unfinished suites incomplete.\n\nOn hosted MCPJam, a user's starts past 30 in 10 minutes can be refused with `429` and `Retry-After`. A server that is restarting also answers `429` with `Retry-After`, with `details.reason` `SERVER_DRAINING`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "The body's `idempotencyKey` sent as a header. It wins over the body field.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
           }
         ],
         "requestBody": {
@@ -12036,10 +12046,17 @@
                     "description": "Deduplicates a retried POST for the same saved server. Mapped to a namespaced externalRunId (`api:<projectId>:<serverId>:<key>`); a keyless start always inserts and spends quota."
                   },
                   "protocolVersion": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"],
+                    "description": "Pin one MCP protocol version. Without it the run uses the version the server negotiates."
                   },
                   "engineVersion": {
                     "type": "string"
+                  },
+                  "settings": {
+                    "type": "string",
+                    "enum": ["saved", "none"],
+                    "description": "`saved` (the default) runs the server's saved conformance settings. `none` runs every check with no tool inputs."
                   }
                 }
               }
@@ -12082,6 +12099,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "settingsSource": {
+                      "type": "string",
+                      "enum": ["saved", "defaults", "none"],
+                      "description": "The settings the run used. `defaults` means the server has no saved settings, so every check runs."
                     }
                   }
                 }
@@ -12089,7 +12111,7 @@
             }
           },
           "400": {
-            "description": "The body carried an unknown key, named OAuth, or the server uses a transport conformance cannot grade."
+            "description": "The body carried an unknown key or an unknown `protocolVersion`, named OAuth, asked only for suites the saved settings leave out, or the server uses a transport conformance cannot grade."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -12099,6 +12121,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The server's saved tool inputs could not be read. Save them again on the Conformance page, or start with `settings: \"none\"`."
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
