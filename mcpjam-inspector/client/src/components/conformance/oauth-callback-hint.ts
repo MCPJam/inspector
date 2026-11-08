@@ -18,7 +18,7 @@ export const OAUTH_CALLBACK_HINT_PREFIX =
 /** One toast for both triggers, so a closed pop-up and the deadline never stack. */
 export function showOAuthCallbackHint(): void {
   const url = getDebugRedirectUrl();
-  toast.warning("OAuth sign-in didn't finish", {
+  toast.warning("OAuth sign-in didn't finish. Check your OAuth app's redirect URLs.", {
     id: HINT_TOAST_ID,
     description: `${OAUTH_CALLBACK_HINT_PREFIX} ${url} to it, then run again.`,
     action: {

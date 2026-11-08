@@ -121,7 +121,7 @@ describe("useConformanceRun OAuth callback hint", () => {
 
     expect(toast.warning).toHaveBeenCalledTimes(1);
     expect(toast.warning).toHaveBeenCalledWith(
-      "OAuth sign-in didn't finish",
+      "OAuth sign-in didn't finish. Check your OAuth app's redirect URLs.",
       expect.objectContaining({
         description: expect.stringContaining(
           `${window.location.origin}/oauth/callback/debug`,
