@@ -18,14 +18,12 @@ import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
-  isHttpServer,
   type ConformanceSelection,
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
 import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
-import { showOAuthCallbackNotice } from "./oauth-callback-hint";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
@@ -275,12 +273,8 @@ export function ConformanceSetup({
           ? await onLoadDefaults(targetServerName)
           : undefined;
       if (currentServerName.current !== targetServerName) return;
-      const nextSelection =
-        targetServerName !== selectionFor
-          ? (loaded?.selection ?? startingSelection(targetServerName))
-          : selection;
       if (targetServerName !== selectionFor) {
-        setSelection(nextSelection);
+        setSelection(loaded?.selection ?? startingSelection(targetServerName));
         setSelectionFor(targetServerName);
         setProbes(
           loaded?.inputs ??
@@ -289,8 +283,6 @@ export function ConformanceSetup({
         setInputsValid(true);
       }
       setStep(1);
-      if (picked && isHttpServer(picked) && nextSelection.oauth !== false)
-        showOAuthCallbackNotice();
     } catch {
       if (currentServerName.current === targetServerName)
         setDefaultsError(true);

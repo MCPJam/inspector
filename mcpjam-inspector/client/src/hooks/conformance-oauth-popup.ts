@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   dismissOAuthCallbackHint,
   showOAuthCallbackHint,
-} from "@/components/conformance/oauth-callback-hint";
+} from "@/lib/oauth/callback-hint";
 
 /** Only web URLs may open the authorization popup. */
 export function isWebUrl(raw: string): boolean {
