@@ -181,6 +181,7 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
@@ -3405,7 +3406,7 @@ export class PlatformApiClient {
   }
 
   getConformanceReport(
-    params: { projectId: string; runId: string },
+    params: { projectId: string; runId: string; cursor?: string },
     options?: RequestOptions
   ): Promise<PlatformConformanceReport> {
     return this.request(
@@ -3413,7 +3414,24 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
-      {},
+      params.cursor ? { query: { cursor: params.cursor } } : {},
+      options
+    );
+  }
+
+  /** One check of a stored run in full; `suite` only when an id is in two. */
+  getConformanceCheck(
+    params: { projectId: string; runId: string; checkId: string; suite?: string },
+    options?: RequestOptions
+  ): Promise<PlatformConformanceCheck> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/conformance-runs/${encodeURIComponent(
+        params.runId
+      )}/checks/${encodeURIComponent(params.checkId)}`,
+      params.suite ? { query: { suite: params.suite } } : {},
       options
     );
   }

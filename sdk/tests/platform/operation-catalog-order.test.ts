@@ -30,6 +30,7 @@ describe("platform operation catalog", () => {
       ([, value]) => typeof value === "object" && value !== null
     );
     expect(moved.map(([name]) => name).sort()).toEqual([
+      "getConformanceCheckOperation",
       "getConformanceReportOperation",
       "getConformanceRunOperation",
       "listConformanceRunsOperation",

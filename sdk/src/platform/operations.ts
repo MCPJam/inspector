@@ -109,6 +109,7 @@ import {
   type ServerScopedInput,
 } from "./operation-support.js";
 import {
+  getConformanceCheckOperation,
   getConformanceReportOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -2351,6 +2352,7 @@ export const getReadinessReportOperation: PlatformOperation<
 // operation stays importable from this module.
 
 export {
+  getConformanceCheckOperation,
   getConformanceReportOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -2358,6 +2360,9 @@ export {
 };
 export type {
   ConformanceRunScopedInput,
+  GetConformanceCheckInput,
+  GetConformanceCheckResult,
+  GetConformanceReportInput,
   GetConformanceReportResult,
   GetConformanceRunResult,
   ListConformanceRunsInput,
@@ -19247,6 +19252,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,

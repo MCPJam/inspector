@@ -66,6 +66,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   generateEvalCasesOperation,
   importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
@@ -1590,6 +1591,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getConformanceRunOperation, tier: "direct" },
   { operation: listConformanceRunsOperation, tier: "direct" },
   { operation: getConformanceReportOperation, tier: "direct" },
+  { operation: getConformanceCheckOperation, tier: "direct" },
   {
     operation: cancelReadinessRunOperation,
     tier: "direct",

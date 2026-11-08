@@ -26,6 +26,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
@@ -221,19 +222,15 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
   {
-    feature: "conformance and readiness",
+    feature: "readiness",
     operations: [
       startClaudeReadinessRunOperation,
       startOpenAIReadinessRunOperation,
-  startMuseReadinessRunOperation,
+      startMuseReadinessRunOperation,
       getReadinessRunOperation,
       listReadinessRunsOperation,
       cancelReadinessRunOperation,
       getReadinessReportOperation,
-      startConformanceRunOperation,
-      getConformanceRunOperation,
-      listConformanceRunsOperation,
-      getConformanceReportOperation,
     ],
   },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
@@ -349,6 +346,7 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -1192,6 +1190,19 @@ function errorStructuredContent(
     // server envelope — so an agent can wait instead of looping or suggesting
     // a top-up that cannot lift it.
     const refusal = describePlatformRefusal(error);
+    // A feature-gate refusal keeps its own code and the feature it names, so
+    // an agent can tell FEATURE_UNAVAILABLE for one beta from any other 403.
+    // Only these two keys: the rest of `details` is the server's envelope.
+    const feature = error.details?.feature;
+    const details =
+      typeof feature === "string"
+        ? {
+            ...(typeof error.details?.code === "string"
+              ? { code: error.details.code }
+              : {}),
+            feature,
+          }
+        : {};
     return {
       error: {
         code: error.code,
@@ -1200,6 +1211,7 @@ function errorStructuredContent(
         // to the server's logs. Only responses carry one.
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
+        ...(Object.keys(details).length > 0 ? { details } : {}),
       },
     };
   }
