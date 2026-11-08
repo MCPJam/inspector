@@ -13,9 +13,11 @@
  * only with every check picked.
  */
 
-import { useState, type ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, ChevronRight, Copy } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { copyToClipboard } from "@/lib/clipboard";
+import { getDebugRedirectUrl } from "@/lib/oauth/debug-state-machine-adapter";
 import type {
   ConformanceSelection,
   ProtocolVersionPin,
@@ -36,6 +38,7 @@ import {
   protocolCatalog,
 } from "./conformance-catalogs";
 import { Collapse, SUITE_COPY } from "./conformance-ui";
+import { OAUTH_CALLBACK_HINT_PREFIX } from "./oauth-callback-hint";
 
 export type CheckSuite = "protocol" | "apps" | "tasks";
 
@@ -380,9 +383,53 @@ export function ConformanceCheckPicker({
           onChange(withOAuthStep(selection, id, value))
         }
         listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
+        headerNote={
+          selection.oauth !== false ? <OAuthCallbackNote /> : undefined
+        }
         advice={oauthAdvice.prop}
       />
     </div>
+  );
+}
+
+/**
+ * The OAuth checks sign in through their own callback URL, which an OAuth app
+ * with a redirect allow list rejects inside the pop-up. Said before the run,
+ * with the URL to copy.
+ */
+function OAuthCallbackNote() {
+  const url = getDebugRedirectUrl();
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <p className="text-xs text-muted-foreground">
+      {OAUTH_CALLBACK_HINT_PREFIX}{" "}
+      <code className="break-all font-mono text-foreground">{url}</code>{" "}
+      <button
+        type="button"
+        aria-label="Copy callback URL"
+        title="Copy callback URL"
+        onClick={() => {
+          copyToClipboard(url).then((ok) => {
+            if (ok) setCopied(true);
+          });
+        }}
+        className="inline-flex size-4 items-center justify-center align-middle text-muted-foreground hover:text-foreground"
+      >
+        {copied ? (
+          <Check className="size-3 text-green-500" />
+        ) : (
+          <Copy className="size-3" />
+        )}
+      </button>{" "}
+      to it before you run.
+    </p>
   );
 }
 
@@ -402,6 +449,7 @@ function SuiteChecks({
   needsInput,
   onCheckChange,
   listNote = ".",
+  headerNote,
   suiteExtra,
   renderExtra,
   renderTag,
@@ -420,6 +468,8 @@ function SuiteChecks({
   needsInput?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
+  /** A line under the header, shown while the suite is closed too. */
+  headerNote?: ReactNode;
   suiteExtra?: ReactNode;
   renderExtra?: (entry: CatalogEntry) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
@@ -498,6 +548,8 @@ function SuiteChecks({
           />
         </button>
       </div>
+      {/* Outside the toggle button, so a control in it is not nested in one. */}
+      {headerNote ? <div className="-mt-2 pb-4 pl-11 pr-4">{headerNote}</div> : null}
       <Collapse open={open}>
         <div className="border-t border-border/60 px-4">
           {suiteExtra}
