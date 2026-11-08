@@ -918,6 +918,7 @@ export type {
   ConformanceSuiteKind,
 } from "./conformance-run-types.js";
 export { runConformance } from "./conformance-run.js";
+export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,

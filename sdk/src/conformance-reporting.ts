@@ -1314,9 +1314,33 @@ function renderConformanceTestSuite(
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
+/** One report's `<testsuite>` elements and tallies, without the document root. */
+export interface ConformanceJUnitSuites {
+  name: string;
+  tests: number;
+  failures: number;
+  skipped: number;
+  durationMs: number;
+  /** Zero or more `<testsuite>` elements, newline-joined. */
+  xml: string;
+}
+
 export function renderConformanceReportJUnitXml(
   report: ConformanceReport,
 ): string {
+  const suites = renderConformanceReportJUnitSuites(report);
+  const time = (suites.durationMs / 1000).toFixed(3);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${escapeXml(suites.name)}" tests="${suites.tests}" failures="${suites.failures}" skipped="${suites.skipped}" time="${time}">\n${suites.xml}\n</testsuites>\n`;
+}
+
+/**
+ * The body of {@link renderConformanceReportJUnitXml}, for a document that
+ * holds several reports under one `<testsuites>` root: a second XML prolog or
+ * root element would make the whole file unparseable.
+ */
+export function renderConformanceReportJUnitSuites(
+  report: ConformanceReport,
+): ConformanceJUnitSuites {
   const redactedReport = renderConformanceReportJson(report);
   const tests = redactedReport.groups.reduce(
     (sum, group) => sum + group.cases.length,
@@ -1339,9 +1363,6 @@ export function renderConformanceReportJUnitXml(
       ).length,
     0,
   );
-  const time = (redactedReport.durationMs / 1000).toFixed(3);
-  const name = escapeXml(redactedReport.name);
-
   const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
     .map((group) =>
@@ -1365,5 +1386,12 @@ export function renderConformanceReportJUnitXml(
         )}\n    </properties>\n  </testsuite>`
       : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
+  return {
+    name: redactedReport.name,
+    tests,
+    failures,
+    skipped,
+    durationMs: redactedReport.durationMs,
+    xml: `${suites}${orphanSuite}`,
+  };
 }
