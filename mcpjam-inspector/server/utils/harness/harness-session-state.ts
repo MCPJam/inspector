@@ -275,12 +275,13 @@ export async function heartbeatHarnessSessionState(args: {
   leaseId: string;
   leaseTtlMs: number;
   bearer: string;
+  signal?: AbortSignal;
 }): Promise<HarnessHeartbeatResult> {
   const res = await postSessionState("heartbeat", args.bearer, {
     ...args.owner,
     leaseId: args.leaseId,
     leaseTtlMs: args.leaseTtlMs,
-  });
+  }, args.signal);
   if (res.ok) {
     // The request reached the endpoint; `extended` is the definitive answer.
     return res.payload?.extended === true ? "ok" : "lost";

@@ -4,6 +4,7 @@ import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -226,6 +227,11 @@ import {
   getCaniuseMetaTagsHtml,
   getCaniuseTitleTag,
 } from "./utils/caniuse-meta-tags";
+import {
+  conformanceShareTokenFromPath,
+  injectConformanceShareMetaTags,
+  requestOrigin,
+} from "./utils/conformance-share-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
@@ -323,7 +329,7 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
-if (!HOSTED_MODE) void startPluginFormFileJanitor();
+void startPluginFormFileJanitor(!HOSTED_MODE);
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
@@ -412,6 +418,7 @@ const app = new Hono().onError((err, c) => {
 // registered on this app below; `injectWebSocket` is called on the node
 // server after `serve()` at the bottom of this file.
 const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
@@ -637,6 +644,7 @@ if (!HOSTED_MODE) {
 // stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
 // see routes/web/webmcp-frames.
 if (!HOSTED_MODE) {
+  app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
   app.get(
     "/api/web/webmcp/sessions/:id/frames",
     createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -852,6 +860,24 @@ if (process.env.NODE_ENV === "production") {
           "</head>",
           `${getCaniuseMetaTagsHtml()}</head>`,
         );
+      }
+
+      // A shared conformance run's link unfurls as its score card. The image
+      // route answers only for links anyone may open; for any other link the
+      // crawler finds no image and shows the title alone.
+      const sharedRunToken = conformanceShareTokenFromPath(reqPath);
+      const sharedRunOrigin = sharedRunToken
+        ? requestOrigin({
+            host: c.req.header("Host"),
+            forwardedHost: c.req.header("X-Forwarded-Host"),
+            forwardedProto: c.req.header("X-Forwarded-Proto"),
+          })
+        : null;
+      if (sharedRunToken && sharedRunOrigin) {
+        htmlContent = injectConformanceShareMetaTags(htmlContent, {
+          origin: sharedRunOrigin,
+          token: sharedRunToken,
+        });
       }
 
       const host = c.req.header("Host");
@@ -1080,6 +1106,7 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    localMrtrStream.shutdown();
     // Same again for the agent browser's own viewport sockets.
     shutdownLocalBrowserFrameSockets();
     // Hosted panes too: an established WS survives `server.close()`.

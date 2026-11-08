@@ -64,6 +64,7 @@ import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { PLUGIN_FORM_PREVIEW_TIMEOUT_MS } from "../form-resource-preview";
 import { PLUGIN_FORM_SUBMIT_TIMEOUT_MS } from "../OwnedPluginFormHost";
+import { CompareLaneWorkspace } from "../../host-workspace/CompareLaneWorkspace";
 
 /** The ChatInput contract in miniature: status lines plus the card slot. */
 function Composer({ workspaceId }: { workspaceId: string }) {
@@ -107,6 +108,57 @@ function ui(workspaceId = "chat-a") {
     </>
   );
 }
+
+it("keeps actual Compare lane forms private and retains drafts while lanes or diagnostics are hidden", async () => {
+  state.rows = [row("one", "compare-a"), row("two", "compare-b")];
+  const lane = (workspaceId: string, active: boolean, diagnostics = false) => (
+    <CompareLaneWorkspace
+      key={workspaceId}
+      active={active}
+      showDiagnostics={diagnostics}
+      diagnostics={<p>Trace {workspaceId}</p>}
+      apps={{
+        scope: { projectId: "project", hostId: "host", threadId: workspaceId, pluginWorkspace: { version: 1, workspaceId } },
+        panel: null, fileActions: null, open: false,
+      }}
+    ><p>Chat {workspaceId}</p></CompareLaneWorkspace>
+  );
+  const lanes = (active: string, diagnostics = false) => <>
+    {lane("compare-a", active === "a", diagnostics)}
+    {lane("compare-b", active === "b")}
+  </>;
+  const view = render(lanes("a"));
+  const first = await screen.findByLabelText(/Note/);
+  fireEvent.change(first, { target: { value: "private answer A" } });
+  first.focus();
+  expect(screen.getByText("Form one")).toBeVisible();
+  expect(screen.queryByText("Form two")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  view.rerender(lanes("b"));
+  const second = await screen.findByLabelText(/Note/);
+  expect(second).not.toBe(first);
+  expect(first).not.toBeInTheDocument();
+  expect(second).toHaveValue("");
+  fireEvent.change(second, { target: { value: "private answer B" } });
+  second.focus();
+  expect(document.activeElement).toBe(second);
+  expect(state.mutate).not.toHaveBeenCalled();
+  view.rerender(lanes("a", true));
+  expect(screen.getByText("Trace compare-a")).toBeVisible();
+  expect(screen.queryByLabelText(/Note/)).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  view.rerender(lanes("a"));
+  expect(await screen.findByLabelText(/Note/)).toBe(first);
+  expect(first).toHaveValue("private answer A");
+  expect(document.activeElement).toBe(first);
+  view.rerender(lanes("b"));
+  expect(await screen.findByLabelText(/Note/)).toBe(second);
+  expect(second).toHaveValue("private answer B");
+  expect(document.activeElement).toBe(second);
+  expect(state.mutate).not.toHaveBeenCalled();
+  view.unmount();
+  expect(state.mutate).not.toHaveBeenCalled();
+});
 
 beforeEach(() => {
   __resetComposerFormStore();
@@ -464,6 +516,19 @@ describe("owned plugin MRTR rounds in the composer", () => {
       </>,
     );
     await waitFor(() => expect(screen.queryByLabelText(/Note/)).toBeNull());
+    const otherSubmit = vi.fn(async () => {});
+    const original = useHostedMrtrStore.getState().rounds[0]!;
+    act(() => useHostedMrtrStore.getState().enqueue({
+      ...original,
+      key: "other:1",
+      continuationId: "other",
+      pluginFormServiceScope: { projectId: "project", workspaceId: "chat-b" },
+      requests: [{ key: "other", mode: "form", message: "Question other", requestedSchema: {
+        type: "object", properties: { other: { type: "string", title: "Other answer" } },
+      } }],
+    }, { submit: otherSubmit }));
+    fireEvent.change(await screen.findByLabelText(/Other answer/), { target: { value: "other draft" } });
+    expect(screen.queryByLabelText(/Note/)).toBeNull();
     view.rerender(
       <>
         <Composer workspaceId="chat-a" />
@@ -471,7 +536,13 @@ describe("owned plugin MRTR rounds in the composer", () => {
       </>,
     );
     expect(await screen.findByLabelText(/Note/)).toHaveValue("kept");
+    expect(screen.queryByLabelText(/Other answer/)).toBeNull();
     expect(submit).not.toHaveBeenCalled();
+    expect(otherSubmit).not.toHaveBeenCalled();
+    act(() => useHostedMrtrStore.getState().resolveContinuation("other"));
+    view.rerender(<><span /><HostedMrtrHost /></>);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Note/)).toHaveValue("kept");
   });
 });
 
@@ -513,7 +584,9 @@ const appTarget = { type: "mcp_app_tool", name: "part.preview" };
 function servePreviews() {
   services.fetch.mockReset().mockImplementation(async (url: string) =>
     Response.json(
-      url.endsWith("/form-preview")
+      url.endsWith("/services")
+        ? { userResources: false, userResourceKinds: [] }
+        : url.endsWith("/form-preview")
         ? {
             type: "resource",
             contents: [
@@ -585,7 +658,7 @@ describe("form previews in the composer card", () => {
       const requests = services.fetch.mock.calls.map(([url, init]) => ({
         url: url as string,
         body: JSON.parse(String((init as RequestInit).body)),
-      }));
+      })).filter(({ body }) => body.includeOperation !== true);
       expect(requests[0].body).toMatchObject({
         sourceToken: "a".repeat(43),
         parent: { kind: "legacy", id: "one", round: 0 },

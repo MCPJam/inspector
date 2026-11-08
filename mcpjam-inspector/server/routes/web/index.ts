@@ -1,3 +1,5 @@
+import turnAuthorization from "./turn-authorization.js";
+import chatPersistence from "./chat-persistence.js";
 import pluginFormAnswers from "./plugin-form-answers.js";
 import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
@@ -49,6 +51,7 @@ import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
+import conformanceShareCard from "./conformance-share-card.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -225,6 +228,8 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+web.use("/apps/mcp-apps/view-admissions", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/apps/mcp-apps/view-admissions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 // MJ-012. The rate limit for signed-in callers on this family.
 //
@@ -291,6 +296,8 @@ web.route("/export", exporter);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat-persistence", chatPersistence);
+web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.
@@ -365,6 +372,9 @@ web.route("/bench", bench);
 // as `/score`: the token is the credential, and the backend only returns the
 // redacted public artifact.
 web.route("/conformance-shared", conformanceShared);
+// The og:image of a shared run's link. Same no-session contract: crawlers
+// carry no bearer, and the backend answers only for links anyone may open.
+web.route("/conformance-share-card", conformanceShareCard);
 web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this

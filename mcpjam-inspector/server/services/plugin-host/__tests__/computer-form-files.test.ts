@@ -58,6 +58,7 @@ function upload(
   registry: PluginFormFileGrants,
   fs: ReturnType<typeof fakeComputerFiles>,
   now = () => Date.now(),
+  sourceSignal = new AbortController().signal,
 ) {
   return registry.upload({
     source: source(),
@@ -67,7 +68,7 @@ function upload(
     files: [
       { name: "bolt.stl", type: "model/stl", bytes: Buffer.from("solid") },
     ],
-    sourceSignal: new AbortController().signal,
+    sourceSignal,
     signal: new AbortController().signal,
     authorize: vi.fn().mockResolvedValue({}),
     store: createComputerFormFileStore(async () => fs, now),
@@ -99,6 +100,40 @@ describe("form uploads on the project's Computer", () => {
       bytes: 5,
     });
     expect(marker.expiresAt - marker.createdAt).toBe(30 * 60_000);
+  });
+
+  it("removes consumed bytes on terminal close, but retains them through source close", async () => {
+    const fs = fakeComputerFiles();
+    const registry = new PluginFormFileGrants();
+    registries.push(registry);
+    const sourceAbort = new AbortController();
+    const result = await upload(registry, fs, () => Date.now(), sourceAbort.signal);
+    const delivered = registry.deliver(source(), "opaque", { file: result.uris[0] });
+    const path = fileURLToPath(delivered.file as string);
+    sourceAbort.abort();
+    await registry.drain();
+    expect(fs.files.has(path)).toBe(true);
+    registry.closeOperation(source().owner, source().invocationId);
+    await registry.drain();
+    expect(fs.files.has(path)).toBe(false);
+  });
+
+  it("does not delete a folder whose ownership marker changed", async () => {
+    const fs = fakeComputerFiles();
+    const store = createComputerFormFileStore(async () => fs);
+    const reserved = await store.reserve("op", 1);
+    fs.files.set(`${reserved.root}/ownership.json`, Buffer.from("replacement"));
+    await expect(reserved.release()).rejects.toMatchObject({ code: "FORM_FILE_UNAVAILABLE" });
+    expect(fs.files.has(`${reserved.root}/ownership.json`)).toBe(true);
+  });
+
+  it("refuses a replaced ownership marker symlink on release", async () => {
+    const fs = fakeComputerFiles();
+    const store = createComputerFormFileStore(async () => fs);
+    const reserved = await store.reserve("op", 1);
+    fs.symlinks.add(`${reserved.root}/ownership.json`);
+    await expect(reserved.release()).rejects.toMatchObject({ code: "FORM_FILE_UNAVAILABLE" });
+    expect(fs.dirs.has(reserved.root)).toBe(true);
   });
 
   it("sweeps only expired journal entries, at the next upload", async () => {

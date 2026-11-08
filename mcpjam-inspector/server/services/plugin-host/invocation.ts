@@ -1,6 +1,8 @@
 import {
   INVOCATION_RECEIPT_VALUE_BYTES,
   INVOCATION_RECEIPT_MAX_ROUNDS,
+  INVOCATION_RECEIPT_TTL_MS,
+  INVOCATION_RECEIPT_RETENTION_MS,
 } from "../../../shared/plugin-invocation-receipts.js";
 import { createHash, randomBytes } from "node:crypto";
 import { logger } from "../../utils/logger.js";
@@ -71,6 +73,8 @@ export type ResolvedInvocationContext = AuthorizedInvocation & {
   origin: PluginInvocationOrigin;
 };
 export interface PluginInvocationPorts {
+  /** Recover a terminal receipt without creating or dispatching an operation. */
+  readonly receiptOnly?: boolean;
   /** Inspector-owned durable receipts; never a caller-authored JSON snapshot. */
   receipts?: PluginInvocationReceiptPort;
   /** Fresh request ports for one owned continuation leg; never retained by a receipt. */
@@ -173,6 +177,7 @@ export class PluginInvocationSuspension {
 }
 
 interface InvocationReceipt {
+  terminal?: boolean;
   fingerprint: string;
   result: Promise<unknown>;
   revision?: string;
@@ -348,12 +353,14 @@ export class PluginContinuationRefused extends PluginInvocationError {
   }
 }
 
-/** The continuation ended before this leg reached the wire (it expired or was
- * cancelled): a known, final outcome, never an uncertain effect. */
+/** The continuation ended before this leg reached the wire: a known, final
+ * outcome, never an uncertain effect from this attempt. */
 export class PluginContinuationTerminal extends PluginInvocationError {
   constructor(
     code:
       | "CONTINUATION_EXPIRED"
+      | "CONTINUATION_FAILED"
+      | "PLUGIN_FORM_WEB_UPLOAD_UNSUPPORTED"
       | "CONTINUATION_CANCELLED"
       | "PLUGIN_FORMS_DISABLED",
   ) {
@@ -515,6 +522,7 @@ export class AuthorizedToolInvoker {
           : new PluginInvocationError("INVALID_INVOCATION"),
       );
     }
+    if (this.ports.receiptOnly) return this.recoverReadOnly(origin, invocationId, snapshot, fingerprint, signal);
     const existing = this.receipts.get(invocationId);
     const continuation = this.ports.continuation;
     if (existing) {
@@ -630,14 +638,32 @@ export class AuthorizedToolInvoker {
     receipt.result = result;
     this.receipts.set(invocationId, receipt);
     result.then(
-      (value) => this.retainSettled(invocationId, receipt, value),
+      (value) => { receipt.terminal = !(value instanceof PluginInvocationSuspension); this.retainSettled(invocationId, receipt, value); },
       () => {
+        receipt.terminal = true;
         // Nothing ran: a retry with this ID asks again (approval included).
         if (receipt.retryable && this.receipts.get(invocationId) === receipt)
           this.receipts.delete(invocationId);
       },
     );
     return result;
+  }
+
+  private async recoverReadOnly(origin: PluginInvocationOrigin, id: string,
+    params: PluginToolCallParams, fingerprint: string, signal?: AbortSignal,
+    completedOnly = false) {
+    let receipt = this.receipts.get(id);
+    if (receipt && receipt.fingerprint !== fingerprint) fail("INVOCATION_ID_REUSED");
+    if (!receipt?.terminal || receipt.evicted) {
+      const active = signal ?? new AbortController().signal;
+      const saved = this.ports.receipts ? await awaitOwned(active, () => this.ports.receipts!.read(id, active)) : null;
+      const state = saved?.legs.at(-1)?.state;
+      if (!saved || !state || (completedOnly ? state !== "completed" : !["completed", "failed", "unknown", "unavailable"].includes(state)))
+        fail("INVOCATION_OUTCOME_UNKNOWN", true);
+      receipt = { fingerprint, result: undefined!, continuations: new Map(), terminal: true };
+      this.restore(receipt, saved!);
+    }
+    return this.replay(origin, params, receipt, receipt.result, signal);
   }
 
   /** Account a settled value against the per-actor memory budget. */
@@ -884,6 +910,8 @@ export class AuthorizedToolInvoker {
       });
     receipt.result = result;
     receipt.continuations.set(submission.round, { fingerprint, result });
+    void result.then((value) => { receipt.terminal = !(value instanceof PluginInvocationSuspension); },
+      (error) => { receipt.terminal = !(error instanceof PluginContinuationRefused); });
     return result;
   }
 
@@ -937,10 +965,13 @@ export class AuthorizedToolInvoker {
     if (
       !saved.revision ||
       !Number.isSafeInteger(saved.expiresAt) ||
-      saved.expiresAt <= Date.now() ||
       !Array.isArray(saved.legs) ||
       saved.legs.length < 1 ||
-      saved.legs.length > INVOCATION_RECEIPT_MAX_ROUNDS + 1
+      saved.legs.length > INVOCATION_RECEIPT_MAX_ROUNDS + 1 ||
+      (saved.expiresAt <= Date.now() && (
+        saved.legs.at(-1)?.state !== "completed" ||
+        saved.expiresAt + INVOCATION_RECEIPT_RETENTION_MS - INVOCATION_RECEIPT_TTL_MS <= Date.now()
+      ))
     )
       fail("RECEIPT_STORE_INVALID");
     receipt.revision = saved.revision;
@@ -1353,6 +1384,16 @@ export class AuthorizedToolInvoker {
       }
       return result;
     } catch (error) {
+      if (
+        !claimed && !dispatched && !this.closed && !signal.aborted &&
+        this.ports.receipts && error instanceof PluginInvocationError &&
+        error.code === "RECEIPT_EXPIRED"
+      ) {
+        // Retained completed data can be delivered after its write lease ends;
+        // the read and replay still require the original live owner and revision.
+        receipt.retryable = true;
+        return this.recoverReadOnly(origin, invocationId, params, receipt.fingerprint, signal, true);
+      }
       // A cancelled/revoked owner cannot deliver a result or safely retry a
       // write. Only an authoritative server failure is a known outcome.
       logInvocationFailure(error, dispatched);

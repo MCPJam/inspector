@@ -48,8 +48,10 @@ vi.mock("../../../utils/tool-approval-token.js", () => ({
   toolApprovalSubjectFromAuthHeader: () => "verified-subject",
 }));
 import routes from "../plugin-settings";
+import { PLUGIN_APP_READ_RESULT_BYTES } from "../../../services/plugin-host/tool-call-validation";
 import { resolvePluginSettingsCatalog } from "../../../services/plugin-host/settings-catalog";
 import { settingsFixture } from "../../../../shared/__tests__/plugin-settings-fixture";
+import { webReceiptApp, withReceiptSigning, expectOwnedSourceReceipt } from "./owned-source-receipt-fixture.js";
 const app = new Hono().route("/settings", routes);
 const scope = {
   projectId: "project",
@@ -112,7 +114,10 @@ beforeEach(() => {
   f.admit.mockResolvedValue({ actorId: "actor", projectId: "project" });
   f.catalog.mockImplementation(async () => catalog());
   f.release.mockResolvedValue(undefined);
-  f.open.mockResolvedValue({ token });
+  f.open.mockResolvedValue({
+    token,
+    instance: { owner: { instanceId: "settings-instance", generation: 1 } },
+  });
   f.close.mockResolvedValue(undefined);
   f.get.mockImplementation(() => ({
     hostId: "host",
@@ -161,6 +166,34 @@ beforeEach(() => {
   });
 });
 describe("owned structured settings", () => {
+  it("uses cached JSON after hosted request budgeting has consumed the raw body", async () => {
+    const budgeted = new Hono();
+    budgeted.use("*", async (c, next) => {
+      // Hosted mcpOperationRateLimit reads and caches JSON to choose a server bucket.
+      await c.req.json();
+      expect(c.req.raw.bodyUsed).toBe(true);
+      await next();
+    });
+    budgeted.route("/settings", routes);
+    const response = await budgeted.request("/settings/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer fixture" },
+      body: JSON.stringify(server),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).settings).not.toBeNull();
+    expect(f.admit).toHaveBeenCalledOnce();
+    expect(f.invoke).not.toHaveBeenCalled();
+    expect(f.open).not.toHaveBeenCalled();
+    const invalid = await budgeted.request("/settings/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer fixture" },
+      body: JSON.stringify({ ...server, forged: true }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(f.admit).toHaveBeenCalledOnce();
+  });
+
   it("discovers without executing or creating an instance", async () => {
     const response = await post("discover", server);
     expect(response.status).toBe(200);
@@ -301,6 +334,56 @@ describe("owned structured settings", () => {
     const response = await post("app/open", { ...handle(), toolName: "reset" });
     expect(response.status).toBe(status);
   });
+  it.each([
+    [true, 1_200_000, 200],
+    [false, 1_200_000, 403],
+    [true, PLUGIN_APP_READ_RESULT_BYTES + 1, 403],
+  ])(
+    "uses the admitted read-only App result budget: readOnly=%s bytes=%s",
+    async (readOnlyHint, bytes, status) => {
+      await opened();
+      f.catalog.mockImplementation(async () => {
+        const current = catalog();
+        return {
+          ...current,
+          tools: current.tools.map((tool) =>
+            tool.name === "reset"
+              ? { ...tool, annotations: { readOnlyHint } }
+              : tool,
+          ),
+        };
+      });
+      const openedApp = await post("app/open", {
+        ...handle(),
+        toolName: "reset",
+      });
+      expect(openedApp.status).toBe(200);
+      const child = await openedApp.json();
+      const result = { content: [{ type: "text", text: "x".repeat(bytes) }] };
+      f.invoke.mockImplementation(async (c, input) => {
+        try {
+          const resolved = await input.resolve(
+            input.params.name,
+            c.req.raw.signal,
+          );
+          input.assertLive();
+          input.assertOrigin(resolved);
+          input.validate(resolved)(result);
+          return c.json({ status: "completed", result });
+        } finally {
+          await input.runtime.release();
+        }
+      });
+      const response = await post("app/call", {
+        ...op(),
+        childToken: child.childToken,
+        params: { name: "reset", arguments: {} },
+      });
+      expect(response.status).toBe(status);
+      if (status === 200)
+        expect((await response.json()).result).toEqual(result);
+    },
+  );
   it("clears the private document on original owner close", async () => {
     await opened();
     abort.abort();
@@ -311,5 +394,32 @@ describe("owned structured settings", () => {
       (await post("discover", { ...server, actorId: "foreign" })).status,
     ).toBe(400);
     expect(f.admit).not.toHaveBeenCalled();
+  });
+});
+
+it("binds Settings App receipts to the child token and refuses undeclared actions before reading", async () => {
+  await withReceiptSigning(async () => {
+    await opened();
+    const html = "<p>Settings α</p>";
+    const csp = { connectDomains: ["https://settings.example"] };
+    f.read.mockResolvedValue({ contents: [{ uri: "ui://settings", mimeType: "text/html;profile=mcp-app", text: html, _meta: { ui: { csp } } }] });
+    const web = webReceiptApp(routes, "settings");
+    const request = (toolName: string) => web.request("/api/web/settings/app/open", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...handle(), toolName }),
+    });
+    const response = await request("reset");
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    try {
+      expect(result.widgetContent).toMatchObject({ html, csp });
+      expectOwnedSourceReceipt(result.widgetContent, { serverId: "server", resourceUri: "ui://settings", toolCallId: result.childToken });
+      f.read.mockClear();
+      const denied = await request("not-declared");
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("sourceReceipt");
+      expect(f.read).not.toHaveBeenCalled();
+    } finally {
+      await post("app/close", { ...handle(), childToken: result.childToken });
+    }
   });
 });

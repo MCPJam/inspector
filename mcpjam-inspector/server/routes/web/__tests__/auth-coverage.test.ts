@@ -122,6 +122,10 @@ const NON_AUTH_REFUSALS = new Map<string, string>([
     "the token in the path IS the credential; 500 is the absent Convex",
   ],
   [
+    "GET /api/web/conformance-share-card/:file",
+    "a crawler's og:image fetch: the link token in the path IS the credential; 404 is a link with no public card",
+  ],
+  [
     "GET /api/web/score/runs/:token",
     "the token in the path IS the credential; 503 is the absent Convex",
   ],

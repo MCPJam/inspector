@@ -13342,7 +13342,7 @@
         "operationId": "renderServerWidget",
         "tags": ["Execution"],
         "summary": "Render an MCP App widget headlessly",
-        "description": "Call an MCP App tool and mount its `ui://` widget in real headless Chromium running the production host bridge, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements.\n\n**Executes the tool**, so it has whatever side effects that tool has — the render is what happens afterwards.\n\nStateless: connect, call, render, read, dispose, all inside one request. Interactive widget sessions are a local-Inspector capability (`/api/mcp/widget-session`) because they hold a live browser in process, which a no-affinity hosted plane cannot serve.\n\nEach render launches a browser, so the endpoint carries a per-replica concurrency cap and answers 429 when it is full.",
+        "description": "Call an MCP App tool and mount its `ui://` widget in real headless Chromium running the production host bridge, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements.\n\n**Executes the tool**, so it has whatever side effects that tool has — the render is what happens afterwards.\n\nStateless: connect, call, render, read, dispose, all inside one request. Interactive widget sessions use the local Inspector’s `/api/v1/projects/{projectId}/servers/{serverId}/widget-sessions` endpoints. They hold a live browser in process and return 404 on hosted deployments without session affinity.\n\nEach render launches a browser, so the endpoint carries a per-replica concurrency cap and answers 429 when it is full.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -13409,6 +13409,319 @@
         }
       }
     },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions": {
+        "post": {
+          "operationId": "createServerWidgetSession",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Create a retained widget session",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Executes the tool and retains its App in one local Chromium context. A render failure returns its verdict without a session ID.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionCreated"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimited"
+            },
+            "503": {
+              "description": "The local session registry is unavailable.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionCreateRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/snapshot": {
+        "get": {
+          "operationId": "getServerWidgetSessionSnapshot",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Read a retained widget snapshot",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Returns an accessibility tree and addressable elements without replaying the tool.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionSnapshot"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action": {
+        "post": {
+          "operationId": "executeServerWidgetSessionAction",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Act on a retained widget",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Runs one coordinate action with fresh project/server authorization.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionActionResult"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionActionRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step": {
+        "post": {
+          "operationId": "executeServerWidgetSessionStep",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Run a retained widget step",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Runs one semantic action or assertion, using the same locator vocabulary as the snapshot.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionStepResult"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionStepRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}": {
+        "delete": {
+          "operationId": "closeServerWidgetSession",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Close a retained widget session",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Disposes the original owner's browser. Returns closed=false if no matching live session exists. Closing remains available after project/server access is revoked.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionClosed"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            }
+          }
+        }
+      },
     "/projects/{projectId}/eval-runs/{runId}/gate-waivers": {
       "post": {
         "operationId": "createGateWaiver",
@@ -32468,6 +32781,642 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "WidgetViewport": {
+        "type": "object",
+        "required": [
+          "width",
+          "height"
+        ],
+        "properties": {
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          }
+        }
+      },
+      "WidgetSessionCreateRequest": {
+        "type": "object",
+        "required": [
+          "toolName"
+        ],
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "injectOpenAiCompat": {
+            "type": "boolean"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/WidgetViewport"
+          },
+          "clientCapabilities": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionCreated": {
+        "type": "object",
+        "required": [
+          "status",
+          "elapsedMs"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "mountedWidgetId": {
+            "type": "string"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/WidgetViewport"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "idleTimeoutMs": {
+            "type": "number"
+          },
+          "resourceUri": {
+            "type": "string"
+          },
+          "bridgeInitialized": {
+            "type": "boolean"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "consoleErrors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blockedRequests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hint": {
+            "type": "string"
+          }
+        },
+        "description": "A render verdict. Only a rendered widget has a session ID and lifetime metadata; an unsuccessful render does not create a session."
+      },
+      "WidgetAction": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "screenshot",
+              "left_click",
+              "double_click",
+              "right_click",
+              "mouse_move",
+              "type",
+              "key",
+              "scroll",
+              "wait"
+            ]
+          },
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "text": {
+            "type": "string"
+          },
+          "scrollDirection": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "scrollAmount": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "WidgetToolCall": {
+        "type": "object",
+        "required": [
+          "name",
+          "args",
+          "ok",
+          "elapsedMs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          },
+          "result": {},
+          "visibility": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "model",
+                "app"
+              ]
+            }
+          }
+        }
+      },
+      "WidgetSessionActionRequest": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/WidgetAction"
+          }
+        }
+      },
+      "WidgetSessionActionResult": {
+        "type": "object",
+        "required": [
+          "action",
+          "widgetToolCalls",
+          "elapsedMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/WidgetAction"
+          },
+          "widgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            }
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "pluginWorkspace": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionSnapshot": {
+        "type": "object",
+        "required": [
+          "snapshot",
+          "expiresAt"
+        ],
+        "properties": {
+          "snapshot": {
+            "$ref": "#/components/schemas/WidgetSnapshot"
+          },
+          "expiresAt": {
+            "type": "number"
+          }
+        }
+      },
+      "WidgetSessionLocator": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "object",
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "exact": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "css": {
+            "type": "string",
+            "minLength": 1
+          },
+          "testId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "nth": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "role"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "css"
+            ]
+          },
+          {
+            "required": [
+              "testId"
+            ]
+          }
+        ]
+      },
+      "WidgetSessionAssertion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "text"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "textVisible"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "elementVisible"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "elementHidden"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target",
+              "equals"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "inputValue"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "equals": {
+                "type": "string",
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "toolName"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "widgetToolCalled"
+                ]
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "WidgetSessionStep": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "click"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "clickType": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "double",
+                  "right"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "target",
+              "text"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "type"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "key"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "key"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "direction"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scroll"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              },
+              "amount": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "ms"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "wait"
+                ]
+              },
+              "ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "assertion"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "assert"
+                ]
+              },
+              "assertion": {
+                "$ref": "#/components/schemas/WidgetSessionAssertion"
+              }
+            }
+          }
+        ]
+      },
+      "WidgetSessionStepRequest": {
+        "type": "object",
+        "required": [
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "$ref": "#/components/schemas/WidgetSessionStep"
+          },
+          "priorWidgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            },
+            "maxItems": 1000
+          }
+        }
+      },
+      "WidgetSessionStepResult": {
+        "type": "object",
+        "required": [
+          "step",
+          "ok",
+          "widgetToolCalls",
+          "followUps",
+          "elapsedMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "step": {
+            "$ref": "#/components/schemas/WidgetSessionStep"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "widgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            }
+          },
+          "followUps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "pluginWorkspace": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionClosed": {
+        "type": "object",
+        "required": [
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "boolean"
           }
         }
       },

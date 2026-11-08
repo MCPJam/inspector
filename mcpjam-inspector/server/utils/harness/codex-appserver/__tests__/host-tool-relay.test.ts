@@ -9,6 +9,7 @@
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildHostToolCatalog } from "../bridge/host-tool-catalog.js";
+import { toMcpToolResult } from "../bridge/host-tool-result.js";
 import {
   MAX_CALL_BODY_BYTES,
   startHostToolRelay,
@@ -19,7 +20,6 @@ import {
   createHostToolMcpServer,
   pumpJsonLines,
   relayFetch,
-  toMcpToolResult,
 } from "../bridge/host-tools-mcp.js";
 import {
   aliasHostToolName,

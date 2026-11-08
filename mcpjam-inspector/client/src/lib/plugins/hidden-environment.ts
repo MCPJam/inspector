@@ -18,9 +18,9 @@ import type { PluginServerUnavailable } from "@/shared/plugin-server-unavailable
  * chat keeps today's client turn, request body included.
  *
  * Where those plugins run is the composition's VENUE (see
- * {@link hiddenEnvironmentVenue}). Hosted composes remote components only, so
- * a plugin with a component that would start a process is skipped as
- * `placement`. Local also composes components that start a process on this
+ * {@link hiddenEnvironmentVenue}). Hosted composes remote components, plus
+ * verified stdio components when the selected client has a Computer and this
+ * deployment supports that runtime. Local also composes processes on this
  * machine, and only follows the member's own choice to run this chat's client
  * here. An environment they choose explicitly is the other way such a plugin
  * runs.
@@ -28,9 +28,10 @@ import type { PluginServerUnavailable } from "@/shared/plugin-server-unavailable
 
 /**
  * `hosted`: remote components only. `local`: remote components, plus ones
- * that start a process on this machine.
+ * that start a process on this machine. `computer`: verified stdio components
+ * on the selected client's Computer, supported by this deployment.
  */
-export type HiddenEnvironmentVenue = "hosted" | "local";
+export type HiddenEnvironmentVenue = "hosted" | "local" | "computer";
 
 /**
  * The venue a Playground chat's plugins are composed for.
@@ -40,6 +41,8 @@ export type HiddenEnvironmentVenue = "hosted" | "local";
  * - the member chose to run this chat's client here and authorized it
  *   (`clientRunsHere`);
  * - a plugin needs it (`needsLocal`).
+ * A hosted client with a saved Computer and an explicit deployment capability
+ * instead composes verified stdio components for the `computer` venue.
  *
  * A local build alone is not that choice, and neither is a client profile
  * named after a desktop app. Without a plugin that needs it, the chat keeps
@@ -49,7 +52,10 @@ export function hiddenEnvironmentVenue(args: {
   hostedMode: boolean;
   clientRunsHere: boolean;
   needsLocal: boolean;
+  computerAvailable?: boolean;
 }): HiddenEnvironmentVenue {
+  if (args.hostedMode && args.computerAvailable && args.needsLocal)
+    return "computer";
   return !args.hostedMode && args.clientRunsHere && args.needsLocal
     ? "local"
     : "hosted";
@@ -70,7 +76,7 @@ export function isRunnablePlugin(
     plugin.servers.every(
       (server) =>
         server.placement === "remote" ||
-        (venue === "local" && server.placement === "local"),
+        ((venue === "local" || venue === "computer") && server.placement === "local"),
     )
   );
 }
@@ -146,7 +152,7 @@ export function hiddenEnvironmentCompositionKey(input: {
     input.hostId,
     input.pluginVersionIds,
     input.secretIds ?? [],
-    ...(input.venue === "local" ? ["local"] : []),
+    ...(input.venue && input.venue !== "hosted" ? [input.venue] : []),
   ]);
 }
 
@@ -249,13 +255,15 @@ function signInFor(
 export function unavailableServersForNotice(
   plugins: readonly ActivePluginRow[],
   servers: readonly PluginServerUnavailable[],
+  projectId?: string,
 ): PluginNoticePlugin[] {
   return plugins.flatMap((plugin): PluginNoticePlugin[] => {
     const own = servers.filter((unavailable) =>
       plugin.servers.some((server) => server.serverId === unavailable.serverId),
     );
     const chosen =
-      own.find((unavailable) => unavailable.reason === "needs_auth") ?? own[0];
+      own.find((unavailable) => unavailable.reason === "needs_auth") ??
+      own.find((unavailable) => unavailable.reason === "needs_approval") ?? own[0];
     if (!chosen) return [];
     const componentKey = plugin.servers.find(
       (server) => server.serverId === chosen.serverId,
@@ -267,6 +275,17 @@ export function unavailableServersForNotice(
         displayName: plugin.displayName,
         reason: chosen.reason,
         partial: true,
+        ...(chosen.reason === "needs_approval" && projectId
+          ? {
+              reviewCommand: {
+                projectId,
+                serverId: chosen.serverId,
+                serverName: plugin.servers.find(
+                  (server) => server.serverId === chosen.serverId,
+                )?.name ?? plugin.name,
+              },
+            }
+          : {}),
         ...signInFor(
           plugin,
           chosen.reason,
@@ -349,6 +368,7 @@ export function retargetHiddenEnvironmentBody(
     executionTarget: _target,
     environmentOverrides: _overrides,
     includeProjectSkills,
+    autoContributedPluginServerIds: _automatic,
     ...rest
   } = parsed;
   if (next.environmentId === null) {
@@ -365,6 +385,9 @@ export function retargetHiddenEnvironmentBody(
         next.pluginServerIds,
       ),
     },
+    autoContributedPluginServerIds: next.pluginServerIds.filter(
+      (id) => !selected.includes(id),
+    ),
     ...(includeProjectSkills !== undefined ? { includeProjectSkills } : {}),
   });
 }

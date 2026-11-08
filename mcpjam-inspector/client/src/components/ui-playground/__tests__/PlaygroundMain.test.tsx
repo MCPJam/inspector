@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -1258,6 +1259,22 @@ describe("PlaygroundMain", () => {
       const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
       expect(composer.pluginServers).toEqual([]);
     });
+  });
+
+  it("shows local manual-tool input before a chat thread exists", () => {
+    const store = useMrtrElicitationStore.getState();
+    vi.spyOn(store, "connect").mockImplementation(() => {});
+    store.__reset();
+    render(<PlaygroundMain {...defaultProps} />);
+    act(() => store.__ingest({
+      type: "mrtr_input_request", opId: "manual-review", roundKey: "manual-review:1", round: 1,
+      serverId: "test-server", timestamp: new Date().toISOString(),
+      requests: [{ key: "review", mode: "form", message: "Manual review input", requestedSchema: {
+        type: "object", properties: { approved: { type: "boolean" } },
+      } }],
+    }));
+    expect(screen.getByText("Manual review input")).toBeInTheDocument();
+    store.__reset();
   });
 
   describe("rendering", () => {

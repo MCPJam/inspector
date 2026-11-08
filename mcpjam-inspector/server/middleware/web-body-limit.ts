@@ -11,6 +11,7 @@
  * carve-outs are POST-only because each route's own cap is on POST. The two
  * plugin App context updates take one App update up to the model-context
  * policy ceiling, refused with a typed 413 the App's client recovers from.
+ * App document admission applies its own 16MB envelope cap after authentication.
  *
  * Skill supporting files (v2) do NOT need a carve-out here: the blob bytes are
  * POSTed by the browser to the backend's upload route, never through
@@ -18,6 +19,7 @@
  * transit this surface, all well under 1MB.
  */
 import { bodyLimit } from "hono/body-limit";
+import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../shared/plugin-file-transfer.js";
 import type { Context, Next } from "hono";
 import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
 import { describePluginError } from "../../shared/plugin-diagnostics.js";
@@ -76,6 +78,16 @@ const SELF_LIMITED_UPLOAD_PATHS = new Set([
 
 export function webBodyLimit() {
   return (c: Context, next: Next) => {
+    if (c.req.method === "POST" &&
+        c.req.path === "/api/web/apps/mcp-apps/view-admissions") {
+      // The route owns its larger HTML envelope limit after the bearer gate.
+      return next();
+    }
+    if (c.req.method === "POST" &&
+        c.req.path === "/api/web/apps/plugin-instances/files/write" &&
+        c.req.header("content-type") === PLUGIN_FILE_MEDIA_TYPE) {
+      return bodyLimit({ maxSize: PLUGIN_FILE_MAX_BYTES })(c, next);
+    }
     if (c.req.method === "POST" && SELF_LIMITED_UPLOAD_PATHS.has(c.req.path)) {
       return next();
     }

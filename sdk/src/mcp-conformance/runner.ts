@@ -58,6 +58,10 @@ import { collectClientReadiness, collectRawReadiness } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
+  createNegotiationProbeHold,
+  type NegotiationProbeHold,
+} from "./negotiation-probes.js";
+import {
   eraForProtocolVersion,
   normalizeMCPConformanceConfig,
 } from "./validation.js";
@@ -140,6 +144,7 @@ const buildSummary = buildOutcomeSummary;
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
   recorder: WireObservationRecorder,
+  negotiationProbes: NegotiationProbeHold
 ): HttpServerConfig {
   // The client's traffic is only visible UNNORMALIZED here: by the time a
   // result reaches app code the official Client has consumed the wire-only
@@ -185,6 +190,7 @@ function createServerConfig(
     });
     const response = await capture.fetch(input, init);
     for (const exchange of capture.exchanges) {
+      if (negotiationProbes.hold(exchange)) continue;
       recorder.recordExchange(exchange);
     }
     return response;
@@ -302,12 +308,16 @@ async function runClientChecks(
     return { checks: [], config, readiness: [] };
   }
 
+  const negotiationProbes = createNegotiationProbeHold(
+    recorder,
+    config.protocolVersion === undefined
+  );
   // The connect is the initialize handshake, so `server-initialize` reports
   // its duration rather than the near-zero time to read the stored result.
   const connectStartedAt = Date.now();
   try {
     return await withEphemeralClient(
-      createServerConfig(config, recorder),
+      createServerConfig(config, recorder, negotiationProbes),
       async (manager, serverId) => {
         config.signal?.throwIfAborted();
         const connectDurationMs = Date.now() - connectStartedAt;
@@ -333,6 +343,7 @@ async function runClientChecks(
                 era: eraForProtocolVersion(negotiatedProtocolVersion),
               }
             : config;
+        negotiationProbes.settle(effectiveConfig.era);
 
         const [
           toolsResult,

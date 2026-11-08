@@ -1,6 +1,14 @@
+import type { InspectorProjectTarget } from "./inspector-project-target.js";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 import { InspectorApiClient } from "./inspector-api.js";
 import { operationalError, usageError } from "./output.js";
+import {
+  rememberWidgetSession,
+  forgetWidgetSession,
+  resolveWidgetSessionBinding,
+  requireLocalWidgetEndpoint,
+  savedWidgetPath,
+} from "./widget-session-binding.js";
 import {
   resolveRenderRequestTimeoutMs,
   type WidgetRenderClient,
@@ -97,7 +105,9 @@ export interface WidgetSessionCloseResponse {
 
 export interface RunWidgetSessionStartOptions {
   baseUrl?: string;
-  config: MCPServerConfig;
+  config?: MCPServerConfig;
+  target?: InspectorProjectTarget;
+  clientCapabilities?: Record<string, unknown>;
   serverName: string;
   toolName: string;
   parameters: Record<string, unknown>;
@@ -119,8 +129,47 @@ export async function runWidgetSessionStart(
     startIfNeeded: options.startIfNeeded ?? true,
     timeoutMs: options.timeoutMs,
   });
+  if (options.target) {
+    requireLocalWidgetEndpoint(options.baseUrl);
+    const route = `${savedWidgetPath(options.target)}/widget-sessions`;
+    const headers = { Authorization: `Bearer ${options.target.accessToken}` };
+    const response = normalizeStartResponse(
+      await client.request(route, {
+        method: "POST",
+        headers,
+        retrySessionAuth: false,
+        body: {
+          toolName: options.toolName,
+          parameters: options.parameters,
+          ...(options.clientCapabilities
+            ? { clientCapabilities: options.clientCapabilities }
+            : {}),
+          ...(options.injectOpenAiCompat ? { injectOpenAiCompat: true } : {}),
+          ...(options.viewport ? { viewport: options.viewport } : {}),
+        },
+        timeoutMs: resolveRenderRequestTimeoutMs(options.timeoutMs),
+      }),
+    );
+    if (response.sessionId) {
+      try {
+        await rememberWidgetSession(
+          response.sessionId,
+          options.baseUrl,
+          options.target,
+        );
+      } catch (error) {
+        await client.request(
+          `${route}/${encodeURIComponent(response.sessionId)}`,
+          { method: "DELETE", headers, timeoutMs: options.timeoutMs },
+        );
+        throw error;
+      }
+    }
+    return response;
+  }
   await client.connectServer(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
+    ...(options.target ? { target: options.target } : {}),
   });
 
   const response = await client.request("/api/mcp/widget-session", {
@@ -144,6 +193,7 @@ export interface RunWidgetSessionActionOptions {
   sessionId: string;
   action: BrowserActionSpec;
   timeoutMs: number;
+  apiKey?: string;
 }
 
 /** Drive an action on an existing session (no connect/start — the session
@@ -152,17 +202,22 @@ export async function runWidgetSessionAction(
   options: RunWidgetSessionActionOptions,
   deps: { client?: WidgetRenderClient } = {},
 ): Promise<WidgetSessionActionResponse> {
+  const binding = await resolveWidgetSessionBinding(options);
   const client =
-    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+    deps.client ??
+    new InspectorApiClient({ baseUrl: binding?.baseUrl ?? options.baseUrl });
 
   // A session only exists on a running Inspector; don't auto-start a fresh one
   // (it wouldn't hold the session).
   await client.ensureBackend({ startIfNeeded: false, timeoutMs: options.timeoutMs });
 
   const response = await client.request(
-    `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}/action`,
+    binding
+      ? `${binding.route}/action`
+      : `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}/action`,
     {
       method: "POST",
+      ...(binding ? { headers: binding.headers, retrySessionAuth: false } : {}),
       body: { action: options.action },
       timeoutMs: options.timeoutMs,
     },
@@ -207,6 +262,7 @@ export interface RunWidgetSessionSnapshotOptions {
   baseUrl?: string;
   sessionId: string;
   timeoutMs: number;
+  apiKey?: string;
 }
 
 /**
@@ -220,15 +276,23 @@ export async function runWidgetSessionSnapshot(
   options: RunWidgetSessionSnapshotOptions,
   deps: { client?: WidgetRenderClient } = {},
 ): Promise<WidgetSnapshotResponse> {
+  const binding = await resolveWidgetSessionBinding(options);
   const client =
-    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+    deps.client ??
+    new InspectorApiClient({ baseUrl: binding?.baseUrl ?? options.baseUrl });
   await client.ensureBackend({
     startIfNeeded: false,
     timeoutMs: options.timeoutMs,
   });
   const response = (await client.request(
-    `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}/snapshot`,
-    { method: "GET", timeoutMs: options.timeoutMs },
+    binding
+      ? `${binding.route}/snapshot`
+      : `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}/snapshot`,
+    {
+      method: "GET",
+      ...(binding ? { headers: binding.headers, retrySessionAuth: false } : {}),
+      timeoutMs: options.timeoutMs,
+    },
   )) as WidgetSnapshotResponse;
   if (!response?.snapshot) {
     throw operationalError("The Inspector returned no snapshot.");
@@ -242,6 +306,7 @@ export interface RunWidgetSessionScriptedStepOptions {
   step: unknown;
   priorWidgetToolCalls?: WidgetToolCall[];
   timeoutMs: number;
+  apiKey?: string;
 }
 
 /**
@@ -252,18 +317,23 @@ export async function runWidgetSessionScriptedStep(
   options: RunWidgetSessionScriptedStepOptions,
   deps: { client?: WidgetRenderClient } = {},
 ): Promise<WidgetScriptedStepResponse> {
+  const binding = await resolveWidgetSessionBinding(options);
   const client =
-    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+    deps.client ??
+    new InspectorApiClient({ baseUrl: binding?.baseUrl ?? options.baseUrl });
   await client.ensureBackend({
     startIfNeeded: false,
     timeoutMs: options.timeoutMs,
   });
   return (await client.request(
-    `/api/mcp/widget-session/${encodeURIComponent(
-      options.sessionId,
-    )}/scripted-step`,
+    binding
+      ? `${binding.route}/scripted-step`
+      : `/api/mcp/widget-session/${encodeURIComponent(
+          options.sessionId,
+        )}/scripted-step`,
     {
       method: "POST",
+      ...(binding ? { headers: binding.headers, retrySessionAuth: false } : {}),
       body: {
         step: options.step,
         ...(options.priorWidgetToolCalls
@@ -325,7 +395,9 @@ export function parsePriorWidgetToolCalls(
 export function parseScriptedStepInput(raw: string | undefined): unknown {
   const text = raw?.trim();
   if (!text) {
-    throw usageError("--step needs a JSON object, e.g. --step '{\"kind\":\"click\",\"target\":{\"role\":{\"role\":\"button\",\"name\":\"Submit\"}}}'.");
+    throw usageError(
+      '--step needs a JSON object, e.g. --step \'{"kind":"click","target":{"role":{"role":"button","name":"Submit"}}}\'.',
+    );
   }
   let parsed: unknown;
   try {
@@ -347,6 +419,7 @@ export interface RunWidgetSessionCloseOptions {
   baseUrl?: string;
   sessionId: string;
   timeoutMs: number;
+  apiKey?: string;
 }
 
 /** Close + dispose a session. */
@@ -354,14 +427,25 @@ export async function runWidgetSessionClose(
   options: RunWidgetSessionCloseOptions,
   deps: { client?: WidgetRenderClient } = {},
 ): Promise<WidgetSessionCloseResponse> {
+  const binding = await resolveWidgetSessionBinding(options);
   const client =
-    deps.client ?? new InspectorApiClient({ baseUrl: options.baseUrl });
+    deps.client ??
+    new InspectorApiClient({ baseUrl: binding?.baseUrl ?? options.baseUrl });
 
-  await client.ensureBackend({ startIfNeeded: false, timeoutMs: options.timeoutMs });
+  await client.ensureBackend({
+    startIfNeeded: false,
+    timeoutMs: options.timeoutMs,
+  });
 
   const response = await client.request(
-    `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}`,
-    { method: "DELETE", timeoutMs: options.timeoutMs },
+    binding
+      ? binding.route
+      : `/api/mcp/widget-session/${encodeURIComponent(options.sessionId)}`,
+    {
+      method: "DELETE",
+      ...(binding ? { headers: binding.headers, retrySessionAuth: false } : {}),
+      timeoutMs: options.timeoutMs,
+    },
   );
 
   const closed = Boolean(
@@ -369,6 +453,7 @@ export async function runWidgetSessionClose(
       ? (response as { closed?: unknown }).closed
       : false,
   );
+  if (binding) await forgetWidgetSession(options.sessionId);
   return { closed };
 }
 

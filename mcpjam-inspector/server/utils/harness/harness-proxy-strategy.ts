@@ -22,6 +22,7 @@ import {
   ensureHarnessWebTunnel,
 } from "../../services/ensure-server-tunnel.js";
 import { isPubliclyReachableUrl } from "../localhost-check.js";
+import { configuredInspectorPublicUrl } from "../inspector-public-url.js";
 
 export type HarnessMcpProxyStrategy =
   | { plane: "local-mcp" }
@@ -50,9 +51,7 @@ export type HarnessMcpProxyStrategy =
  * `ensureHarnessWebTunnel` throws at tunnel-creation with a concrete error.
  */
 export function resolveWebAuthorizedHarnessStrategy(): HarnessMcpProxyStrategy {
-  const publicUrl =
-    process.env.MCPJAM_INSPECTOR_PUBLIC_URL?.trim() ||
-    process.env.BASE_URL?.trim();
+  const publicUrl = configuredInspectorPublicUrl();
   if (publicUrl && isHttpsUrl(publicUrl) && isPubliclyReachableUrl(publicUrl)) {
     return { plane: "web-authorized", mode: "direct", publicBaseUrl: publicUrl };
   }
