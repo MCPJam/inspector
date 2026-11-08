@@ -49,6 +49,7 @@ const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
     "claude-code": ["forwarded-bridge", "host-tools"],
     codex: ["forwarded-bridge", "host-tools"],
     cursor: [],
+    "copilot-cli": [],
   };
 
 const REQUALIFY = [
@@ -173,6 +174,10 @@ function pinSites({
           ).codexVersion
         : `none of ${schemas.join(", ")}`,
     ]);
+  }
+  if (id === "copilot-cli") {
+    const bridge = readJson(join(HARNESS_DIR, "copilot-cli/bridge/package.json"));
+    sites.push(["Copilot CLI bridge runtime", bridge.dependencies["@github/copilot"]]);
   }
   if (id === "cursor") sites.push(["CURSOR_CLI_VERSION", CURSOR_CLI_VERSION]);
   return sites;

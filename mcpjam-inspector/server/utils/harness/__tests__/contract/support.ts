@@ -34,6 +34,7 @@ export function assertFullMatrix(): void {
 export const OWN_MODEL: Record<Harness, string> = {
   "claude-code": "anthropic/claude-haiku-4.5",
   codex: "openai/gpt-5.5",
+  "copilot-cli": "openai/gpt-5.5",
   cursor: "cursor/auto",
 };
 
@@ -41,6 +42,7 @@ export const OWN_MODEL: Record<Harness, string> = {
 export const FOREIGN_MODEL: Record<Harness, string> = {
   "claude-code": "openai/gpt-5.5",
   codex: "anthropic/claude-haiku-4.5",
+  "copilot-cli": "anthropic/claude-haiku-4.5",
   cursor: "anthropic/claude-haiku-4.5",
 };
 
