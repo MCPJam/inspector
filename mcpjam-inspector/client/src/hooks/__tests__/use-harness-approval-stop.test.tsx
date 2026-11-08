@@ -86,4 +86,18 @@ describe("active harness Stop", () => {
     expect(result.current.dispatchBlocked.current).toBe(true);
     expect(result.current.stopping).toBe(false);
   });
+  it("keeps a newer Stop blocked when an older cancellation completes", async () => {
+    const completions: Array<() => void> = [];
+    db.mutation.mockImplementation(() => new Promise<void>((resolve) => { completions.push(resolve); }));
+    const { result } = renderHook(useTestChat);
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => { first = result.current.stopActiveTurn("old"); second = result.current.stopActiveTurn("new"); });
+    await act(async () => { completions[0](); await first; });
+    expect(result.current.dispatchBlocked.current).toBe(true);
+    expect(result.current.stopping).toBe(true);
+    await act(async () => { completions[1](); await second; });
+    expect(result.current.dispatchBlocked.current).toBe(false);
+  });
+
 });

@@ -44,7 +44,8 @@ export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchB
   const [stopFailed, setStopFailed] = useState(false);
   const ownerKey = JSON.stringify(owner);
   const currentOwner = useRef(ownerKey);
-  useLayoutEffect(() => { currentOwner.current = ownerKey; dispatchBlocked.current = false; setStopping(false); setStopFailed(false); }, [ownerKey]);
+  const stopGeneration = useRef(0);
+  useLayoutEffect(() => { currentOwner.current = ownerKey; stopGeneration.current++; dispatchBlocked.current = false; setStopping(false); setStopFailed(false); }, [ownerKey]);
   const inFlight = useRef(false);
   const approvalIds = useMemo(() => owner ? pendingHarnessApprovalIds(messages) : [], [messages, ownerKey]);
   const pendingKey = JSON.stringify(approvalIds);
@@ -86,22 +87,24 @@ export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchB
 
   const stopActiveTurn = useCallback(async (requestId: string) => {
     if (!owner) return;
+    const generation = ++stopGeneration.current;
+    const isCurrent = () => currentOwner.current === ownerKey && stopGeneration.current === generation;
     dispatchBlocked.current = true;
     setStopping(true);
     setStopFailed(false);
     try {
       await convex.mutation(cancelActiveMutation, { ...owner, requestId });
       const cancelled = await convex.query(cancelledQuery, owner);
-      if (currentOwner.current === ownerKey) {
+      if (isCurrent()) {
         setMessages((current) => closeCancelledHarnessApprovals(current, cancelled));
         dispatchBlocked.current = false;
       }
     } catch (error) {
-      if (currentOwner.current === ownerKey) setStopFailed(true);
+      if (isCurrent()) setStopFailed(true);
       reportCaught(error, { source: "harness_stop_active_turn" });
       toast.error("Could not confirm Stop. Refresh this conversation before continuing.");
     } finally {
-      if (currentOwner.current === ownerKey) setStopping(false);
+      if (isCurrent()) setStopping(false);
     }
   }, [convex, ownerKey]);
 
