@@ -43,6 +43,8 @@ import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { invalidateParkedLocalSession } from "./local/approval-park.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { toToolResultOutput } from "./tool-result-output.js";
+import { sessionProxyInputs, type HarnessSessionTurn } from "./session-mcp-config.js";
+import { startHarnessSessionGrant } from "./session-grant.js";
 export { toToolResultOutput } from "./tool-result-output.js";
 import {
   mergeMcpToolConnectionMetadata,
@@ -348,6 +350,8 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
   toolPolicySealExpiresAtMs?: number;
   /** Only this running chat lease can use the issued credential. */
   proxyTurn?: { laneId: string; leaseId: string };
+  /** The lane's session handles replace per-turn tokens (`sessionStableMcpConfig`). */
+  session?: HarnessSessionTurn;
   /**
    * The eval iteration and turn this `.mcp.json` is being built for.
    *
@@ -384,7 +388,9 @@ export async function buildHarnessProxyMcpJsonFromManager(args: {
 
   const inputs: HarnessProxyServerInput[] = [];
   let mintedHarnessEvidence: HarnessEvidenceDecision | undefined;
-  if (configured.length > 0 && strategy.plane === "web-authorized") {
+  if (configured.length > 0 && strategy.plane === "web-authorized" && args.session) {
+    inputs.push(...(await sessionProxyInputs({ manager, serverIds: configured, strategy, authHeader, toolPolicy, session: args.session })));
+  } else if (configured.length > 0 && strategy.plane === "web-authorized") {
     // HOSTED plane: servers are persisted Convex rows, and the harness-mcp route
     // rebuilds the connection per-request via acting-as. Convex mints a signed
     // identity token per server (bearer-authed + access-checked). Fail closed:
@@ -1626,8 +1632,9 @@ export async function runHarnessTurn(
           turnId,
         });
       }
-      const buildNativeProxyConfig = (proxyTurn?: { laneId: string; leaseId: string }) => buildHarnessProxyMcpJsonFromManager({
+      const buildNativeProxyConfig = (proxyTurn?: { laneId: string; leaseId: string }, session?: HarnessSessionTurn) => buildHarnessProxyMcpJsonFromManager({
         proxyTurn,
+        session,
         manager: mcpClientManager,
         selectedServerIds: selectedServers ?? [],
         unavailableServerIds: options.unavailableServerIds,
@@ -1683,7 +1690,11 @@ export async function runHarnessTurn(
           `[harness] retaining configured bridge (${mcpPlan.gaps.join(", ")})`, { gaps: mcpPlan.gaps },
         );
       if (!useNativeForwarding) onHarnessMcpReady?.();
-      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot
+      // A runtime that fingerprints its MCP config gets the lane's session
+      // handles once its lane is claimed; an eval turn has no lane to keep.
+      const deferSessionConfig = harnessAdapter.sessionStableMcpConfig === true && nativeMcpDelivery &&
+        !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot && !evalIterationId;
+      const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !warmAgentPilot && !deferSessionConfig
         ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
       let { mcpJson, keyToServerId } = proxyConfig;
@@ -2251,6 +2262,19 @@ export async function runHarnessTurn(
         }));
         harnessKeyToServerId = keyToServerId;
       }
+      // Session envelopes need the box grant egress injects on the public
+      // origin, which only a turn with no model lease installs (`session-grant.ts`).
+      let sessionGrantOrigin: string | undefined;
+      if (deferSessionConfig) {
+        const publicBaseUrl = harnessMcpProxy?.plane === "web-authorized" && harnessMcpProxy.mode === "direct"
+          ? harnessMcpProxy.publicBaseUrl : undefined;
+        ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, continuity?.laneId && externalAccountAuth && publicBaseUrl
+          ? { owner: continuity.owner, leaseId: continuity.leaseId, turnId }
+          : undefined));
+        if (continuity?.laneId && externalAccountAuth && publicBaseUrl && Object.keys(mcpJson.mcpServers).length > 0)
+          sessionGrantOrigin = new URL(publicBaseUrl).origin;
+        harnessKeyToServerId = keyToServerId;
+      }
       tClaim = Date.now();
 
       // 3. Get the box this turn runs on. TWO paths, and the choice is made by
@@ -2635,8 +2659,8 @@ export async function runHarnessTurn(
         modelEndpoint = "byok_hosted";
         // EXTERNAL-ACCOUNT: no lease exists to mint, so this whole step is
         // skipped rather than made conditional inside it. `brokerRunId` stays
-        // unset, which is what keeps teardown from issuing a revoke for a lease
-        // that never existed.
+        // unset unless the turn installs a session grant, so teardown revokes
+        // only a grant that exists, never a lease that does not.
         //
         // The RESERVATION is deliberately NOT released here. On the brokered
         // path the lease consumes the claim and takes over the per-box fence;
@@ -2645,6 +2669,23 @@ export async function runHarnessTurn(
         // could start bootstrapping the same box mid-run. `reservationHeld`
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
+        if (sessionGrantOrigin && continuity?.laneId) {
+          brokerRunId = turnRunId;
+          const grant = await startHarnessSessionGrant({ box: box!, harnessId: harnessAdapter.id, modelId, runId: turnRunId,
+            laneId: continuity.laneId, leaseId: continuity.leaseId, bearer: await currentAuthorization(), ...(abortSignal ? { signal: abortSignal } : {}) });
+          if (!grant.ok) throw new HarnessInfraSetupError(grant.error, { source: "platform_setup", code: grant.code ?? "harness_session_grant_unavailable", httpStatus: grant.status });
+          // Egress injects the grant on its origin only, so a proxy served from
+          // another one (a preview or self-hosted deployment) never sees it.
+          // That turn keeps per-turn tokens, as a relay does; teardown revokes
+          // the grant it installed. Every other refusal above fails closed.
+          if (grant.origin !== sessionGrantOrigin) {
+            logger.warn("[harness] session grant origin differs from the MCP proxy; using per-turn tokens", {
+              proxyOrigin: sessionGrantOrigin, grantOrigin: grant.origin,
+            });
+            ({ mcpJson, keyToServerId } = await buildNativeProxyConfig());
+            harnessKeyToServerId = keyToServerId;
+          }
+        }
       } else {
         reportStartup("authorization");
         brokerRunId = turnRunId;

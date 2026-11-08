@@ -217,6 +217,7 @@
       "modelAccess": "external-account",
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "requiresComputer": true,
+      "sessionStableMcpConfig": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {
         "trailingNewline": false

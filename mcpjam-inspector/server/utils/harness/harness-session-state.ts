@@ -313,6 +313,66 @@ export async function releaseHarnessSessionState(args: {
   }
 }
 
+/** One server a session-handle turn binds, with the policy digest its envelope carries. */
+export type HarnessSessionTurnServer = {
+  serverId: string;
+  connectionId?: string;
+  policyDigest: string;
+};
+
+/**
+ * Bind this turn to the lane's lease and get the lane's session handles
+ * (`/web/harness/session-state/bind-turn`). The backend returns the same handle
+ * for a server on every turn of the lane, so a runtime that fingerprints its
+ * MCP configuration sees no change; the binding itself ends with the lease.
+ */
+export async function bindHarnessSessionTurn(args: {
+  owner: HarnessOwnerRef;
+  leaseId: string;
+  turnId: string;
+  servers: HarnessSessionTurnServer[];
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<
+  | { ok: true; handles: Record<string, string> }
+  | { ok: false; status: number; error: string }
+> {
+  const res = await postSessionState(
+    "bind-turn",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+      turnId: args.turnId,
+      servers: args.servers,
+    },
+    args.signal
+  );
+  if (!res.ok) return res;
+  if (res.payload?.bound !== true)
+    return {
+      ok: false,
+      status: 409,
+      error: `The turn could not be bound to its session (${String(res.payload?.reason ?? "unknown")}).`,
+    };
+  const returned: unknown = res.payload.handles;
+  const handles: Record<string, string> = {};
+  for (const { serverId } of args.servers) {
+    const handle =
+      returned && typeof returned === "object"
+        ? Reflect.get(returned, serverId)
+        : undefined;
+    if (typeof handle !== "string" || !handle)
+      return {
+        ok: false,
+        status: 502,
+        error: "The session binding returned no handle for a selected server.",
+      };
+    handles[serverId] = handle;
+  }
+  return { ok: true, handles };
+}
+
 /** Bounded: the caller awaits this on its terminal path. */
 const UNCOMMITTED_LANE_RELEASE_TIMEOUT_MS = 5_000;
 
