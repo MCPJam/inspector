@@ -22,6 +22,24 @@ import {
 } from "./mcp-protocol-version.js";
 
 /**
+ * Negotiation strategies an unpinned HTTP connection can take instead of Auto,
+ * each reproducing a real client's measured handshake. A pin always wins.
+ *
+ * - `"legacy-first"` — Cursor CLI's: open with the 2025 `initialize` (the first
+ *   pre-2026 entry of `supportedProtocolVersions`, else the SDK's newest) and
+ *   never probe `server/discover` first. Only a `-32022` refusal whose
+ *   `data.supported` lists {@link LEGACY_FIRST_FALLBACK_VERSION} moves the
+ *   connection to `server/discover` at that revision. Any other refusal fails
+ *   the connect after the usual SSE attempt, whose GET the CLI also makes.
+ */
+export const VERSION_NEGOTIATION_PREFERENCES = ["legacy-first"] as const;
+export type VersionNegotiationPreference =
+  (typeof VERSION_NEGOTIATION_PREFERENCES)[number];
+
+/** The one revision `"legacy-first"` falls back to, as the CLI does. */
+export const LEGACY_FIRST_FALLBACK_VERSION = "2026-07-28" as const;
+
+/**
  * Map a resolved pin to `ClientOptions.versionNegotiation`.
  *
  * - **Modern-era pin** (`2026-07-28`, per `isStatelessProtocolVersion`) →
@@ -31,6 +49,8 @@ import {
  *   `initialize` handshake. The specific revision still travels via
  *   `ClientOptions.supportedProtocolVersions`; this function does not touch
  *   that accept-list.
+ * - **No pin, `"legacy-first"`** → `undefined`: the exact legacy handshake,
+ *   with the manager's one fallback (`legacyFirstFallback`).
  * - **No pin** → `{ mode: "auto" }`: probe with `server/discover`, selecting
  *   the modern era only on definitive modern evidence. Fallback is
  *   deliberately broad — per the official client's documented contract,
@@ -51,13 +71,72 @@ import {
  * HTTP-only and the manager never forwards a pin to a stdio transport.
  */
 export function resolveVersionNegotiation(
-  mcpProtocolVersion: McpProtocolVersion | undefined
+  mcpProtocolVersion: McpProtocolVersion | undefined,
+  preference?: VersionNegotiationPreference
 ): VersionNegotiationOptions | undefined {
   if (mcpProtocolVersion === undefined) {
-    return { mode: "auto" };
+    return preference === "legacy-first" ? undefined : { mode: "auto" };
   }
   if (isStatelessProtocolVersion(mcpProtocolVersion)) {
     return { mode: { pin: mcpProtocolVersion } };
   }
   return undefined;
+}
+
+/**
+ * The revision a failed legacy-first connect retries on, or `undefined` when
+ * the config is not legacy-first or the failure is not the CLI's fallback
+ * signal: `initialize` refused with `-32022` UnsupportedProtocolVersion whose
+ * `data.supported` lists {@link LEGACY_FIRST_FALLBACK_VERSION}. The refusal is
+ * a `400` whose body the transport puts on the error it throws (`data.text`),
+ * or a JSON-RPC error the client raised; either may sit down the cause chain.
+ */
+export function legacyFirstFallback(
+  config: {
+    versionNegotiation?: VersionNegotiationPreference;
+    mcpProtocolVersion?: McpProtocolVersion;
+  },
+  error: unknown
+): typeof LEGACY_FIRST_FALLBACK_VERSION | undefined {
+  if (
+    config.versionNegotiation !== "legacy-first" ||
+    config.mcpProtocolVersion !== undefined
+  ) {
+    return undefined;
+  }
+  let candidate = error;
+  for (
+    let hops = 0;
+    candidate && typeof candidate === "object" && hops < 8;
+    hops++
+  ) {
+    const refusal = jsonRpcRefusal(candidate);
+    const supported = (refusal?.data as { supported?: unknown } | undefined)
+      ?.supported;
+    if (
+      refusal?.code === -32022 &&
+      Array.isArray(supported) &&
+      supported.includes(LEGACY_FIRST_FALLBACK_VERSION)
+    ) {
+      return LEGACY_FIRST_FALLBACK_VERSION;
+    }
+    candidate = (candidate as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+function jsonRpcRefusal(
+  candidate: object
+): { code?: unknown; data?: unknown } | undefined {
+  const { code, data } = candidate as { code?: unknown; data?: unknown };
+  if (typeof code === "number") return { code, data };
+  const text = (data as { text?: unknown } | undefined)?.text;
+  if (typeof text !== "string") return undefined;
+  try {
+    return (JSON.parse(text) as { error?: { code?: unknown; data?: unknown } })
+      .error;
+  } catch {
+    // Not a JSON-RPC body (an HTML error page, a proxy's text): no signal.
+    return undefined;
+  }
 }

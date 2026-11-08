@@ -25,6 +25,7 @@ import {
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
 } from "../mcp-client-manager/auth-challenge.js";
+import { VERSION_NEGOTIATION_PREFERENCES } from "../mcp-client-manager/version-negotiation.js";
 import {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
@@ -942,6 +943,7 @@ function canonicalizeMcpProfile(
     ["unauthorizedChallengeTrigger", UNAUTHORIZED_CHALLENGE_TRIGGERS],
     ["toolResultAuthChallenge", AUTH_CHALLENGE_ACTIONS],
     ["toolResultAuthChallengeTrigger", TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS],
+    ["versionNegotiation", VERSION_NEGOTIATION_PREFERENCES],
   ] as const;
   for (const [key, modes] of conformanceKnobs) {
     const value = input[key];

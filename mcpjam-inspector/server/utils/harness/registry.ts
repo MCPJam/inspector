@@ -1238,6 +1238,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     ownedInput: false,
     passThroughOnly: true,
     boundApprovals: true,
+    // Measured on this runtime: `initialize` at 2025-11-25 on every server,
+    // and `server/discover` at 2026-07-28 only after a `-32022` naming it.
+    nativeVersionNegotiation: "legacy-first",
     refresh: (runtime) => runtime,
   },
   // OFF for v1. ACP supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this

@@ -2271,7 +2271,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // The CLI's native toolset (bash/read/edit/…) is NOT seeded into
       // `builtInToolIds`: under `harness: "cursor"` those come from the real
       // runtime inside the sandbox, not MCPJam's built-in tool registry.
-      base.mcpProfile = { profileVersion: 1 };
+      //
+      // The CLI's own negotiation, measured: `initialize` at 2025-11-25 on
+      // every server, and `server/discover` at 2026-07-28 only after a
+      // `-32022` refusal naming it. Not a pin: Auto would probe 2026-07-28
+      // first and land a both-era server on a revision the CLI never speaks.
+      base.mcpProfile = {
+        profileVersion: 1,
+        versionNegotiation: "legacy-first",
+      };
       return base;
     },
   },

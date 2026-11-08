@@ -236,12 +236,17 @@ describe("seedHostTemplate", () => {
       respectToolVisibility?: boolean;
       connectionDefaults: { requestTimeout: number };
       clientCapabilities: Record<string, unknown>;
-      mcpProfile?: { profileVersion?: number; initialize?: unknown };
+      mcpProfile?: {
+        profileVersion?: number;
+        initialize?: unknown;
+        versionNegotiation?: unknown;
+      };
     }) => ({
       respectToolVisibility: config.respectToolVisibility,
       requestTimeout: config.connectionDefaults.requestTimeout,
       clientCapabilities: config.clientCapabilities,
       initialize: config.mcpProfile?.initialize,
+      versionNegotiation: config.mcpProfile?.versionNegotiation,
     });
     const seeded = seedHostTemplate("cursor-cli", { theme: "dark" });
     expect(passThroughFields(seeded)).toEqual({
@@ -249,17 +254,20 @@ describe("seedHostTemplate", () => {
       requestTimeout: 300_000,
       clientCapabilities: {},
       initialize: undefined,
+      // The CLI's own negotiation, which native admission counts as no pin.
+      versionNegotiation: "legacy-first",
     });
     expect(
       passThroughFields(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"])
     ).toEqual(passThroughFields(seeded));
     expect(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"]).toMatchObject({
       provenance: "probe",
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
     });
-    expect(canonicalizeHostConfigV2(seeded).mcpProfile?.initialize).toBe(
-      undefined
-    );
+    expect(canonicalizeHostConfigV2(seeded).mcpProfile).toEqual({
+      profileVersion: 1,
+      versionNegotiation: "legacy-first",
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
