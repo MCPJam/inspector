@@ -282,11 +282,11 @@ import {
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
-import { usePersistedHost } from "@/hooks/use-persisted-host";
+import { useComparePanes } from "@/hooks/use-compare-panes";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import { paneHostId, promoteLeadPane } from "@/lib/compare-panes";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -1020,7 +1020,7 @@ export function PlaygroundMain({
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
     convexProjectId ?? activeProjectId,
   );
-  // Same storage scope as `usePersistedHost` / `usePreviewedHostId` below.
+  // Same storage scope as `useComparePanes` / `usePreviewedHostId` below.
   // Hoisted above `useChatSession` because the environment target has to be in
   // the hosted context before the first transport body is built.
   const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
@@ -2211,24 +2211,23 @@ export function PlaygroundMain({
     !isSharedSession &&
     !isEnvironmentMode;
 
-  // Phase 4 (multi-host plan): read multi-host state in parallel to
-  // multi-model. Lead host is derived inside `usePersistedHost` from the
-  // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
-  // the lead.
+  // The Compare panes, pane 0 on the lead: `useComparePanes` reads the lead
+  // from the per-project `usePreviewedHostId`.
   //
   // This is the SINGLE source of truth for picker + grid. The chat-input
   // `ClientSelector` (`clientSelector` below) is a controlled component —
-  // it does NOT call `usePersistedHost` itself. Two sibling hooks
-  // wouldn't stay in sync because `selected-host-storage.ts` doesn't
-  // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
+  // it does NOT call `useComparePanes` itself. Two sibling hooks
+  // wouldn't stay in sync because `compare-panes.ts` doesn't
+  // dispatch same-tab events on `saveComparePanes` (deliberate, per
   // the Phase-1 multi-select regression fix); lifting state to this
   // common parent is the correct fix instead of adding event traffic.
   const {
+    panes: comparePanes,
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
     setMultiHostEnabled,
-  } = usePersistedHost(multiHostProjectId);
+  } = useComparePanes(multiHostProjectId);
 
   // Environment mode ⇒ single host, always.
   //
@@ -2336,7 +2335,7 @@ export function PlaygroundMain({
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
   const hostSlots = usePlaygroundHostSlots(
     isConvexAuthenticated,
-    selectedHostIds,
+    comparePanes.map(paneHostId),
   );
   // `!isEnvironmentMode`: comparison and environment mode are mutually
   // exclusive in v1 (see the effect above). Withdrawing the affordance also
@@ -2348,7 +2347,8 @@ export function PlaygroundMain({
   // The "is the user actually comparing right now" signal for render-
   // gating and mutual-exclusion, computed fresh every render from
   // `selectedHostIds` (reliably persisted — see
-  // `usePlaygroundClientInitialization` and `usePersistedHost`) rather than trusted from the separately-persisted
+  // `usePlaygroundClientInitialization` and `useComparePanes`) rather than
+  // trusted from the separately-persisted
   // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
   // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
   // checked with comparison intentionally off, so `multiHostEnabled` no
@@ -2363,7 +2363,7 @@ export function PlaygroundMain({
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
   const isComparingHosts =
-    !isSharedSession && !isEnvironmentMode && selectedHostIds.length > 1;
+    !isSharedSession && !isEnvironmentMode && comparePanes.length > 1;
   // Whether this page load came back from a comparison's sign-in. Read once:
   // a Connect click on this page adds the request before it redirects.
   const [comparisonRecoveryRequested, setComparisonRecoveryRequested] =
@@ -2410,9 +2410,10 @@ export function PlaygroundMain({
     () =>
       !isMultiHostMode
         ? []
-        : selectedHostIds.map((hostId, index) =>
+        : comparePanes.map((pane, index) =>
             resolvePlaygroundClientColumn({
-              hostId,
+              paneId: pane.paneId,
+              hostId: paneHostId(pane) ?? "",
               slot: hostSlots[index],
               hosts: hostList,
               // Unfiltered: each column applies its own harness.
@@ -2422,7 +2423,7 @@ export function PlaygroundMain({
           ),
     [
       isMultiHostMode,
-      selectedHostIds,
+      comparePanes,
       hostList,
       catalogModels,
       hostedOrgModelConfig,
@@ -2610,7 +2611,7 @@ export function PlaygroundMain({
   // `usePlaygroundBrowserToolSlots`.
   const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
     multiHostColumns.map((column) => ({
-      hostId: column.compareId,
+      hostId: column.hostId,
       config: column.hostConfig,
     })),
     playgroundBrowserEngine.engine,
@@ -2631,7 +2632,7 @@ export function PlaygroundMain({
   // that could never unblock it — the local target is not a thing that lane
   // can ever have.
   //
-  // Keyed by `compareId` (the column's hostId) rather than by harness, so a
+  // Keyed by `compareId` (the column's pane) rather than by harness, so a
   // grid comparing two Claude Code hosts still gets one entry each.
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
@@ -5042,7 +5043,7 @@ export function PlaygroundMain({
   // Phase 4 lightweight mutual exclusion (see comment on
   // `handleMultiModelEnabledChange`). Wired into the chat-input
   // `ClientSelector` via `onMultiHostEnabledChange`. The selector does
-  // not call `usePersistedHost` itself — both the toggle value and its
+  // not call `useComparePanes` itself — both the toggle value and its
   // setter come from THIS component's single hook instance, so any flip
   // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
@@ -5057,17 +5058,17 @@ export function PlaygroundMain({
 
   // Lead-host promotion: the picker delegates the "make this host the
   // lead" gesture to the parent so the canonical write
-  // (`replaceLeadHostId(projectId, hostId)`) targets the SAME project
-  // id as `usePersistedHost` above. If the picker called
-  // `replaceLeadHostId` itself with a different project id (e.g.
+  // (`promoteLeadPane(projectId, hostId)`) targets the SAME project
+  // id as `useComparePanes` above. If the picker called
+  // `promoteLeadPane` itself with a different project id (e.g.
   // `activeProjectId` while the grid was scoped to `convexProjectId`),
   // the storage scope would split and the grid wouldn't see the
-  // promotion. See `selected-host-storage.ts` for the canonical-write
+  // promotion. See `compare-panes.ts` for the canonical-write
   // contract.
   const handlePromoteLead = useCallback(
     (hostId: string) => {
       if (!multiHostProjectId) return;
-      replaceLeadHostId(multiHostProjectId, hostId);
+      promoteLeadPane(multiHostProjectId, hostId);
     },
     [multiHostProjectId],
   );
@@ -5131,13 +5132,14 @@ export function PlaygroundMain({
 
   const broadcastRecipient = (kind: "host" | "model", compareId: string) => {
     const client = clientResolutions.find((value) => value.status === "ready" && value.column.compareId === compareId);
+    const laneHostId = client?.status === "ready" ? client.column.hostId : null;
     return compareBroadcastRecipient({
       actorId: currentUserForSender?._id ?? null,
       projectId: convexProjectId ?? activeProjectId ?? null,
       chatSessionId,
       generation: multiModelSessionGeneration,
       kind,
-      hostId: kind === "host" ? compareId : previewedHostId ?? null,
+      hostId: kind === "host" ? laneHostId : (previewedHostId ?? null),
       compareId,
       ownerKey: kind === "host" && client?.status === "ready" ? client.ownerKey : null,
     });
@@ -7052,10 +7054,10 @@ export function PlaygroundMain({
                       data-testid="playground-multi-host-grid"
                       className={cn(
                         "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                        selectedHostIds.length <= 1 && "grid-cols-1",
-                        selectedHostIds.length === 2 &&
+                        comparePanes.length <= 1 && "grid-cols-1",
+                        comparePanes.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
-                        selectedHostIds.length >= 3 &&
+                        comparePanes.length >= 3 &&
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
@@ -7077,7 +7079,7 @@ export function PlaygroundMain({
                           className={compareLaneHidden(`host:${column.compareId}`)}
                           active={!singleCompareLane || activeCompareLaneId === `host:${column.compareId}`}
                           extensionBinding={compareLaneBinding(
-                            column.compareId,
+                            column.hostId,
                             {
                               hostStyle: column.hostConfig.hostStyle,
                               harness: column.hostConfig.harness,
@@ -7124,12 +7126,15 @@ export function PlaygroundMain({
                             // host's own config. Exactly what the single pane
                             // sends, rather than substituting the raw host
                             // list and pre-empting the loading guard.
-                            builtInToolIds: columnBuiltInToolIds[selectedHostIds.indexOf(column.compareId)],
+                            builtInToolIds:
+                              columnBuiltInToolIds[
+                                multiHostColumns.indexOf(column)
+                              ],
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
                             selectedServerIds: hostedSelectedServerIds,
-                            hostId: column.compareId,
+                            hostId: column.hostId,
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
                           personalBrowserEngine={personalBrowserEngineOption}

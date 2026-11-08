@@ -55,7 +55,7 @@ export interface ClientSelectorData {
   cloudProjectId: string | null;
   /** Lead host id — the single active client / first compare column. */
   currentHostId: string | null;
-  /** Persisted compare lineup (from `usePersistedHost`). */
+  /** Persisted compare lineup (from `useComparePanes`). */
   selectedHostIds: string[];
   /** Switch the single lead host (not comparing). */
   onHostChange: (hostId: string) => void;
@@ -214,7 +214,7 @@ export function ClientSelector({
   const clientListMaxHeight = isComparing ? 160 : 220;
 
   const handleSelectLead = (hostId: string) => {
-    // Collapsing the lineup is required, not cosmetic. `usePersistedHost`
+    // Collapsing the lineup is required, not cosmetic. `useComparePanes`
     // preserves the column COUNT when only the lead changes, so changing the
     // lead alone would swap a compare column rather than leave comparison.
     if (effectiveSelectedHostIds.length > 1) {

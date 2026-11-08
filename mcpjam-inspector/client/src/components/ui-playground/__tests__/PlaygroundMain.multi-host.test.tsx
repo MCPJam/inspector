@@ -18,10 +18,6 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 
@@ -539,13 +535,16 @@ const multiHostFixture = {
   multiHostEnabled: true,
   loading: false,
   selectedHostIds: [] as string[],
+  panes: undefined as
+    | { paneId: string; target: { kind: "host"; hostId: string } }[]
+    | undefined,
   hostList: [] as { hostId: string; name: string }[],
   hosts: {} as Record<string, HostDetail>,
 };
 
 const previewedHostFixture = { resolve: false };
 
-// Track the project id `PlaygroundMain` passes to `usePersistedHost`
+// Track the project id `PlaygroundMain` passes to `useComparePanes`
 // (a.k.a. `multiHostProjectId`). After Blocker 2 (project-id alignment)
 // the picker must receive the SAME id; we assert both reads.
 const usePersistedHostProjectIds: (string | null)[] = [];
@@ -602,10 +601,18 @@ vi.mock("@/hooks/useLocalHarnessTarget", async (importOriginal) => ({
   useLocalHarnessRunsHere: () => false,
 }));
 
-vi.mock("@/hooks/use-persisted-host", () => ({
-  usePersistedHost: (projectId: string | null) => {
+vi.mock("@/hooks/use-compare-panes", () => ({
+  useComparePanes: (projectId: string | null) => {
     usePersistedHostProjectIds.push(projectId);
     return {
+      // A test can give panes their own ids; by default each client's pane
+      // is keyed by its id, as a migrated v1 lineup is.
+      panes:
+        multiHostFixture.panes ??
+        multiHostFixture.selectedHostIds.map((hostId) => ({
+          paneId: hostId,
+          target: { kind: "host", hostId },
+        })),
       selectedHostIds: multiHostFixture.selectedHostIds,
       setSelectedHostIds: mockSetSelectedHostIds,
       multiHostEnabled: multiHostFixture.multiHostEnabled,
@@ -785,6 +792,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.multiHostEnabled = true;
     multiHostFixture.loading = false;
     multiHostFixture.selectedHostIds = [];
+    multiHostFixture.panes = undefined;
     multiHostFixture.hostList = [];
     multiHostFixture.hosts = {};
     localHarnessFixture.requestedTarget = "local-native";
@@ -2134,6 +2142,50 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(broadcastsAfter.length).toBeGreaterThan(0);
     const latestBroadcast = broadcastsAfter.at(-1)!;
     expect(latestBroadcast.text).toBe("hello hosts");
+  });
+
+  it("runs two panes on one client as two cards, each claiming one turn per send", async () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA };
+    multiHostFixture.selectedHostIds = ["h-A"];
+    multiHostFixture.panes = ["pane-1", "pane-2"].map((paneId) => ({
+      paneId,
+      target: { kind: "host", hostId: "h-A" },
+    }));
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const cards = screen.getAllByTestId("multi-host-card");
+    expect(cards.map((card) => card.dataset.compareId)).toEqual([
+      "pane-1",
+      "pane-2",
+    ]);
+    const initialInputProps = mockChatInput.mock.calls.at(-1)![0];
+    await act(async () => {
+      initialInputProps.onChange("hello panes");
+    });
+    await act(async () => {
+      await mockChatInput.mock.calls.at(-1)![0].onSubmit({
+        preventDefault: () => {},
+      } as any);
+    });
+
+    const latest = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      latest.set(props.compareId, props);
+    }
+    const request = latest.get("pane-1")?.broadcastRequest;
+    expect(request?.text).toBe("hello panes");
+    for (const paneId of ["pane-1", "pane-2"]) {
+      const props = latest.get(paneId);
+      expect(props.hostedContext?.hostId).toBe("h-A");
+      expect(props.claimBroadcastDelivery(request)).toBe(true);
+      expect(props.claimBroadcastDelivery(request)).toBe(false);
+    }
   });
 
   it("deterministic tool execution in multi-host mode fans out to the visible cards (not the hidden root session)", () => {
