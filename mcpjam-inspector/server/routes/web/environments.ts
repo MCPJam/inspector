@@ -30,6 +30,7 @@ import {
   runtimeServerIds,
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
+import { paneSkillsRequest, previewPaneSkills } from "../../services/environments/pane-skills.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { toPlaygroundEnvironmentPreview } from "../../services/environments/playground-preview.js";
@@ -40,10 +41,23 @@ import {
   callerContextFromHono,
   createAuthorizedManager,
   handleRoute,
+  parseWithSchema,
+  readJsonBody,
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 
 const environments = new Hono();
+
+environments.post("/skills-preview", async (c) =>
+  handleRoute(c, async () => {
+    if (c.get("guestId")) {
+      throw new WebRouteError(403, ErrorCode.FORBIDDEN, "Project membership is required.");
+    }
+    const input = parseWithSchema(paneSkillsRequest, await readJsonBody(c));
+    const bearer = await getConvexBearerForRequest(c);
+    return previewPaneSkills(createConvexClient(bearer), bearer, input, c.req.raw.signal);
+  })
+);
 
 // GET /api/web/environments/:environmentId/preview?projectId=...
 //
