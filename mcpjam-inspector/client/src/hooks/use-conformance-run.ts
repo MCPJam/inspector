@@ -36,8 +36,8 @@ import {
 } from "@/hooks/use-conformance-probes";
 import {
   conformanceTargetKey,
-  ConformanceLoginRequiredError,
   useConformanceRunVersion,
+  versionErrorState,
 } from "./use-conformance-run-version";
 import {
   createAppsState,
@@ -645,9 +645,9 @@ export function useConformanceRun({
       resolved = await resolveVersion(currentServer, versionPin, runBudget());
     } catch (e) {
       if (!isRunActive(runToken, currentServer.name)) return;
-      const state = { status: "error" as const, error: suiteErrorMessage(e) };
+      const state = versionErrorState(e, suiteErrorMessage(e));
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
-      loginRequired = e instanceof ConformanceLoginRequiredError;
+      loginRequired = state.verdict === "incomplete";
       if (!loginRequired) {
         if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
         if (isSelected(selected?.apps)) setApps(state);

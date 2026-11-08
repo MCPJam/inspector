@@ -33,6 +33,20 @@ export class ConformanceLoginRequiredError extends Error {
   }
 }
 
+/**
+ * The suite state a failed version check leaves. A 401 still owes the run an
+ * "incomplete" verdict, so a run of OAuth alone reports the login gap instead
+ * of "nothing applicable".
+ */
+export function versionErrorState(
+  error: unknown,
+  message: string,
+): { status: "error"; error: string; verdict?: "incomplete" } {
+  return error instanceof ConformanceLoginRequiredError
+    ? { status: "error", error: message, verdict: "incomplete" }
+    : { status: "error", error: message };
+}
+
 /** Setup's result belongs to its first run only; reruns resolve a fresh connection. */
 export function useConformanceRunVersion(
   server: ServerWithName,

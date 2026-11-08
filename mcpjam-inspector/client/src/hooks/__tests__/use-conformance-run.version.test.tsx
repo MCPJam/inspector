@@ -158,6 +158,7 @@ describe("conformance run version snapshot", () => {
     expect(result.current.oauth).toMatchObject({
       status: "error",
       error: "The server requires authorization (HTTP 401).",
+      verdict: "incomplete",
     });
     expect(result.current.resolvedProtocolVersion).toBeUndefined();
   });
