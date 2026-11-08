@@ -54,7 +54,7 @@ describe("the OpenCode adapter", () => {
     );
   });
 
-  it("observes OpenCode's /messages request on the broker /v1/messages path", async () => {
+  it("builds an OpenCode broker base URL that already includes /v1", async () => {
     const seen: string[] = [];
     const server: Server = createServer((request, response) => {
       seen.push(request.url ?? "");
@@ -68,7 +68,8 @@ describe("the OpenCode adapter", () => {
     try {
       const leaseBase = `http://127.0.0.1:${port}/web/harness/model-proxy/anthropic`;
       const auth = buildBrokerDummyAuth("opencode", leaseBase);
-      // OpenCode 1.18.23 appends `/messages` to ANTHROPIC_BASE_URL.
+      // This appends `/messages` itself. It checks MCPJam's dummy base URL,
+      // not what the OpenCode binary appends (that evidence is the 1.18.23 run).
       const outgoing = `${String(auth.ANTHROPIC_BASE_URL).replace(/\/+$/, "")}/messages`;
       const response = await fetch(outgoing, {
         method: "POST",

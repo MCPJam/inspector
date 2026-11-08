@@ -112,7 +112,7 @@ describe("harnessPickerModels", () => {
     expect(harnessPickerModels(CATALOG, null)).toBe(CATALOG);
   });
 
-  it("leaves the list alone rather than emptying it when nothing is runnable", () => {
+  it("leaves an external-account catalog alone when nothing in it is runnable", () => {
     // Cursor runs on the user's Cursor account, which picks its own model.
     expect(harnessPickerModels(CATALOG, { harnessId: "cursor" })).toBe(CATALOG);
   });
@@ -272,6 +272,12 @@ describe("organization-key rows on a harness", () => {
       harnessPickerModels([LOCAL_ANTHROPIC, ORG_OPENROUTER_CLAUDE], {
         harnessId: "claude-code",
       }),
+    ).toEqual([]);
+  });
+
+  it("an org-only catalog leaves OpenCode empty rather than restoring refused rows", () => {
+    expect(
+      harnessPickerModels([ORG_ANTHROPIC], { harnessId: "opencode" }),
     ).toEqual([]);
   });
 
@@ -448,6 +454,18 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         "eval",
       ),
     ).toMatch(/MCPJam model/);
+    expect(
+      harnessChoiceRefusalReason(
+        {
+          modelId: "anthropic/claude-haiku-4.5",
+          selection: { source: "local" },
+        },
+        { harnessId: "opencode" },
+        "chat",
+      ),
+    ).toBe(
+      "The OpenCode client does not support organization provider keys. Choose another client.",
+    );
   });
 
   it("a hosted or legacy choice keeps the evidence rule", () => {

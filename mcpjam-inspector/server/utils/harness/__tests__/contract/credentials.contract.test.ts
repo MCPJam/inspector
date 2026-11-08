@@ -15,13 +15,13 @@ describe.each(CASES)(
       expect(adapter.modelAccess).toBe(descriptor.modelAccess);
       if (descriptor.modelAccess === "broker") {
         const auth = buildBrokerDummyAuth(id, "https://broker.test");
-        expect(
-          Object.values(auth).some(
-            (value) =>
-              typeof value === "string" &&
-              value.startsWith("https://broker.test"),
-          ),
-        ).toBe(true);
+        if (id === "codex") {
+          expect(auth.OPENAI_BASE_URL).toBe("https://broker.test");
+        } else if (id === "opencode") {
+          expect(auth.ANTHROPIC_BASE_URL).toBe("https://broker.test/v1");
+        } else {
+          expect(auth.ANTHROPIC_BASE_URL).toBe("https://broker.test");
+        }
         expect(descriptor.credential).toBeNull();
       } else {
         expect(() => buildBrokerDummyAuth(id, "https://broker.test")).toThrow(

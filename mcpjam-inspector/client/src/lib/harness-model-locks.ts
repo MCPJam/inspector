@@ -19,6 +19,8 @@
  * organization connection to its own vendor, and the copy says so.
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type { Harness } from "@mcpjam/sdk/host-config/internal";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   harnessOrgUpstream,
   harnessModelSupport,
@@ -78,6 +80,19 @@ function harnessModelRefusalReason(
 /** Does this harness run on an organization's own provider key at all? */
 function harnessTakesOrgKeys(harnessId: string): boolean {
   return harnessOrgUpstream(harnessId) !== null;
+}
+
+/**
+ * MCPJam brokers this harness's model credentials. A local key never pays,
+ * and an empty picker stays empty rather than restoring refused rows.
+ * Cursor (`modelAccess: "external-account"`) is the exception: its account
+ * picks the model, so the turn's catalog is not what runs.
+ */
+function harnessIsBrokered(harnessId: string): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(HARNESS_DESCRIPTORS, harnessId) &&
+    HARNESS_DESCRIPTORS[harnessId as Harness].modelAccess === "broker"
+  );
 }
 
 /**
@@ -184,7 +199,7 @@ export function harnessChoiceRefusalReason(
       return harnessOrgProviderUnsupportedReason(target.harnessId);
     }
   }
-  if (harnessTakesOrgKeys(target.harnessId) && source === "local") {
+  if (harnessIsBrokered(target.harnessId) && source === "local") {
     return harnessOrgProviderUnsupportedReason(target.harnessId);
   }
   return harnessModelRefusalReason(choice.modelId, target, purpose);
@@ -263,11 +278,10 @@ export function harnessModelLockReasonsByRow(
  * verified (`unknown`) stays, with its reason as a warning, because the server
  * runs it in chat with the same warning. Nothing runnable leaves the list
  * EMPTY — the picker's empty state — never the unfiltered list, which would
- * offer only rows the server refuses.
- *
- * A harness that never takes an org key (Cursor, whose account picks its own
- * model and ignores the turn's) keeps the list as it was when nothing in it
- * is runnable: there the turn's model is not what runs.
+ * offer only rows the server refuses. That includes a platform-funded
+ * brokered harness (OpenCode) whose filter removed every org-key row. The
+ * catalog fallback is only for an external-account harness (Cursor): its
+ * account picks the model, so the turn's picker is not what runs.
  *
  * Under the organization's key policy (`policy.requireOrgKeys`) a brokered
  * harness offers only organization rows on its own vendor. A saved model the
@@ -308,7 +322,7 @@ export function harnessPickerModels(
         : model,
     );
   }
-  if (kept.length > 0 || harnessTakesOrgKeys(target.harnessId)) return kept;
+  if (kept.length > 0 || harnessIsBrokered(target.harnessId)) return kept;
   return models;
 }
 
