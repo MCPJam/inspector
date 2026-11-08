@@ -223,6 +223,8 @@ export function sessionClaimConflictMessage(reason: string | undefined): string 
 
 export async function claimHarnessSessionState(args: {
   approvalIds?: string[];
+  /** The call each decision names, so a renumbered approval id cannot take the lease. */
+  approvalCalls?: Array<{ approvalId: string; toolCallId: string }>;
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -240,6 +242,7 @@ export async function claimHarnessSessionState(args: {
     {
       ...args.owner,
       ...(args.approvalIds !== undefined ? { approvalIds: args.approvalIds } : {}),
+      ...(args.approvalCalls !== undefined ? { approvalCalls: args.approvalCalls } : {}),
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,

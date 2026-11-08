@@ -73,14 +73,8 @@ const LOOP_CONTROLS: Record<
     // The ACP bridge pauses on its own built-ins: every tool call goes through
     // `session/request_permission`, and under the adapter's "allow-reads" mode
     // anything outside read/search/think/fetch emits a `tool-approval-request`
-    // the turn waits on. Verified against a live cursor-agent.
-    //
-    // ENFORCED describes the NATIVE surface, which is what this control means
-    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
-    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
-    // so a host that requires approval AND selects servers is refused outright
-    // rather than run with some calls unapproved. Refused, never silently
-    // un-enforced.
+    // the turn waits on. Verified against a live cursor-agent, MCP-server
+    // tools included: Cursor asks (kind `other`) before it sends the call.
     requireToolApproval: ENFORCED,
     // The real Cursor CLI owns its own tool discovery, same as the other two.
     progressiveToolDiscovery: {

@@ -212,6 +212,7 @@
         "CURSOR_API_KEY"
       ],
       "forwardingRuntime": {
+        "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
         "ownedInput": false,
         "passThroughOnly": true,
@@ -230,7 +231,7 @@
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": false,
-      "supportsMcpToolApproval": false,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
       "supportsSkills": false
