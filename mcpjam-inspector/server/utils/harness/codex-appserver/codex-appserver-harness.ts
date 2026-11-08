@@ -46,6 +46,7 @@ import {
   createBridgeStartupError,
   createBridgeToken,
   drainBridgeProcessStream,
+  extractHarnessPromptContent,
   forwardBridgeProcessStream,
   getRestrictedSandboxSession,
   markBridgeStarting,
@@ -77,7 +78,6 @@ import {
   type OutboundMessage,
   type StartMessage,
 } from "./codex-appserver-bridge-protocol.js";
-import { toCodexPromptContent } from "./codex-prompt-content.js";
 import {
   turnConfigurationFingerprintInput,
   type TurnFingerprintTool,
@@ -890,7 +890,7 @@ function createRetainedBridgeSession(input: {
   ): StartMessage => {
     const message = {
       type: "start" as const,
-      prompt: toCodexPromptContent(turnInput.prompt),
+      prompt: extractHarnessPromptContent({ prompt: turnInput.prompt }),
       ...(input.settings.warmAgent ? { warmWorkDir: input.workDir, nativeMcpServers: input.settings.nativeMcpServers ?? {} } : {}),
       tools: turnInput.tools.map((tool) => ({
         name: tool.name,
