@@ -1,4 +1,7 @@
+import { useSandboxReadyDeadline, SANDBOX_READY_TIMEOUT_MS } from "./use-sandbox-ready-deadline";
 import { createAppToolDiscovery } from "./app-tool-discovery";
+import { useFullscreenDismissal } from "./use-fullscreen-dismissal";
+import { useAppToolPresentation } from "./app-tool-presentation";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
@@ -53,6 +56,7 @@ import {
   extractMethod,
   stableStringifyJson,
   type AppToolInvocationUpdate,
+  type AppToolRequestContext,
 } from "@mcpjam/sdk/widget-runtime";
 import { McpAppsModal } from "./mcp-apps-modal";
 import {
@@ -325,7 +329,13 @@ function sanitizeHostStyleVariables(
 // CSP and permissions metadata types are now imported from SDK
 
 export interface MCPAppsRendererProps {
+  /** Host-owned instance label, never a filesystem path or guest claim. */
+  appToolSourceLabel?: string;
+  /** A form owned by this exact chat must stay above its App presentation. */
+  hostInputPending?: boolean;
   chatSessionId?: string;
+  /** Conversation eligible to call a retained workspace App; ownership stays fixed. */
+  getModelChatSessionId?: () => string | undefined;
   serverId: string;
   serverName?: string;
   toolCallId: string;
@@ -351,7 +361,8 @@ export interface MCPAppsRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    context?: AppToolRequestContext
   ) => Promise<unknown>;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -790,7 +801,10 @@ export function MCPAppsRenderer(props: MCPAppsRendererProps) {
 }
 
 export function MCPAppsRendererSurface({
+  appToolSourceLabel,
+  hostInputPending = false,
   chatSessionId,
+  getModelChatSessionId,
   serverId,
   serverName,
   toolCallId,
@@ -1342,6 +1356,18 @@ export function MCPAppsRendererSurface({
       displayMode,
     ]
   );
+  const fullscreenContainerRef = useRef<HTMLDivElement>(null);
+  const fullscreenDismissal = useFullscreenDismissal({
+    fullscreen: effectiveDisplayMode === "fullscreen",
+    enabled: !hostManagedPresentation,
+    canInline: effectiveAvailableDisplayModes.includes("inline"),
+    unowned: fixedDisplayMode === undefined && isControlled && !!onRequestFullscreen && !ownsFullscreenDisplayMode,
+    hostInputPending,
+    element: () => fullscreenContainerRef.current,
+    inline: () => { userPreferInlineRef.current = true; setDisplayMode("inline"); },
+    exit: () => onExitFullscreen?.(displayWidgetId),
+    open: () => setDisplayMode("fullscreen"),
+  });
   const lastForcedDisplayModeRef = useRef<DisplayMode | null>(null);
 
   // A host-given fullscreen rectangle (e.g. a side-panel tab) instead of the
@@ -1350,6 +1376,7 @@ export function MCPAppsRendererSurface({
   const placedFullscreen =
     !hostManagedPresentation &&
     effectiveDisplayMode === "fullscreen" &&
+    !fullscreenDismissal.collapsed &&
     !(
       isPlaygroundActive &&
       (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet")
@@ -1359,8 +1386,7 @@ export function MCPAppsRendererSurface({
   fullscreenPlacementRef.current = fullscreenPlacement;
   const placedExitRef = useRef(() => {});
   placedExitRef.current = () => {
-    userPreferInlineRef.current = true;
-    setDisplayMode("inline");
+    fullscreenDismissal.dismiss();
   };
   const fullscreenLabel = serverName?.trim() || serverId.trim() || "App";
   useEffect(() => {
@@ -1373,6 +1399,7 @@ export function MCPAppsRendererSurface({
   }, [placedFullscreen, fullscreenLabel]);
 
   useEffect(() => {
+    if (fullscreenDismissal.collapsed) return;
     if (requestedDisplayMode === effectiveDisplayMode) {
       lastForcedDisplayModeRef.current = null;
       return;
@@ -1384,7 +1411,7 @@ export function MCPAppsRendererSurface({
 
     lastForcedDisplayModeRef.current = effectiveDisplayMode;
     setDisplayMode(effectiveDisplayMode);
-  }, [effectiveDisplayMode, requestedDisplayMode, setDisplayMode]);
+  }, [effectiveDisplayMode, requestedDisplayMode, setDisplayMode, fullscreenDismissal.collapsed]);
 
   const [isReady, setIsReady] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
@@ -2278,13 +2305,23 @@ export function MCPAppsRendererSurface({
     []
   );
 
+  const modelChatAccessorRef = useRef(getModelChatSessionId);
+  modelChatAccessorRef.current = getModelChatSessionId;
+  const readModelChatSessionId = useCallback(
+    () =>
+      modelChatAccessorRef.current
+        ? modelChatAccessorRef.current()
+        : chatSessionId,
+    [chatSessionId],
+  );
+  const readAppToolPresentation = useAppToolPresentation(appToolsRegistry, appToolsBridgeIdState, appToolSourceLabel, () => sandboxRef.current?.getIframeElement() ?? null);
   const discoverAppTools = useMemo(() => createAppToolDiscovery({
     registry: appToolsRegistry,
-    context: () => ({ chatSessionId, parentToolCallId: toolCallIdRef.current, serverId: serverIdRef.current }),
+    context: () => ({ chatSessionId, getModelChatSessionId: readModelChatSessionId, parentToolCallId: toolCallIdRef.current, serverId: serverIdRef.current, presentation: readAppToolPresentation() }),
     onError: error => logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
       error: error instanceof Error ? error.message : String(error),
     }),
-  }), [appToolsRegistry, chatSessionId, logWidgetDebug]);
+  }), [appToolsRegistry, chatSessionId, readModelChatSessionId, logWidgetDebug, readAppToolPresentation]);
   const refreshAppProvidedTools = useCallback((bridge: AppBridge, bridgeId: string, options: {
     force?: boolean; surface?: "inline" | "modal";
     getIframeElement?: () => HTMLIFrameElement | null; isLive?: () => boolean;
@@ -3416,17 +3453,18 @@ export function MCPAppsRendererSurface({
           onOpenLink: (url) => {
             window.open(url, "_blank", "noopener,noreferrer");
           },
-          onCallTool: async (name, invocationInput) => {
+          onCallTool: async (name, invocationInput, context) => {
             if (!onCallToolRef.current) {
               throw new Error("Tool calls not supported");
             }
             // Apps-compat seam (§1D): the host returns a v2-client
             // CallToolResult; the bridge's onCallTool expects its own nominal
             // type (ext-apps v1-sdk peer). Erase across the version boundary.
-            return (await onCallToolRef.current(
-              name,
-              invocationInput
-            )) as never;
+            const input = fullscreenDismissal.trackInput(context?.onInputPending);
+            try {
+              return (await onCallToolRef.current(name, invocationInput,
+                context ? { ...context, onInputPending: input.update } : context)) as never;
+            } finally { input.finish(); }
           },
           onAppToolInvocation: (update) => {
             onAppToolInvocationChangeRef.current?.(update);
@@ -3629,13 +3667,14 @@ export function MCPAppsRendererSurface({
             ctxToolCallId,
             { content, structuredContent }
           ) => {
-            // Store in debug store for UI display.
-            setWidgetModelContextRef.current(ctxToolCallId, {
+            // Notify parent component to queue for next model turn. It may
+            // refuse the update, and the App gets that error.
+            onModelContextUpdateRef.current?.(ctxToolCallId, {
               content,
               structuredContent,
             });
-            // Notify parent component to queue for next model turn.
-            onModelContextUpdateRef.current?.(ctxToolCallId, {
+            // Store in debug store for UI display, once it is accepted.
+            setWidgetModelContextRef.current(ctxToolCallId, {
               content,
               structuredContent,
             });
@@ -3781,6 +3820,18 @@ export function MCPAppsRendererSurface({
     hasWidgetHtml,
     logReady: (details) =>
       logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", details),
+  });
+
+  useSandboxReadyDeadline({
+    waiting: !!widgetHtml && sandboxProxyGeneration === 0 && !loadError,
+    identity: toolCallId,
+    onTimeout: () => {
+      setLoadError("The app sandbox did not become ready. Reload this page to try again.");
+      logWidgetDebug("host-to-ui", "debug/sandbox-proxy-timeout", {
+        code: "SANDBOX_PROXY_TIMEOUT",
+        timeoutMs: SANDBOX_READY_TIMEOUT_MS,
+      });
+    },
   });
 
   useEffect(() => {
@@ -4581,9 +4632,17 @@ export function MCPAppsRendererSurface({
   );
 
   return (
+    <>
+    {fullscreenDismissal.collapsed && (
+      <button className="rounded-md border border-border px-3 py-2 text-sm text-foreground" disabled={fullscreenDismissal.pending} onClick={fullscreenDismissal.open}>
+        {fullscreenDismissal.pending ? "App is waiting for input" : "Open App"}
+      </button>
+    )}
     <div
+      ref={fullscreenContainerRef}
+      hidden={fullscreenDismissal.collapsed}
       className={containerClassName}
-      style={
+      style={fullscreenDismissal.collapsed ? { display: "none" } :
         placedFullscreen && fullscreenPlacement?.rect
           ? {
               inset: "auto",
@@ -4606,11 +4665,11 @@ export function MCPAppsRendererSurface({
           <>
             <button
               onClick={() => {
-                userPreferInlineRef.current = true;
-                setDisplayMode("inline");
                 if (isPip) {
+                  userPreferInlineRef.current = true;
+                  setDisplayMode("inline");
                   onExitPip?.(pipWidgetId ?? displayWidgetId);
-                }
+                } else fullscreenDismissal.dismiss();
                 // onExitFullscreen is called within setDisplayMode when leaving fullscreen
               }}
               className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
@@ -4634,16 +4693,16 @@ export function MCPAppsRendererSurface({
       {!hostManagedPresentation &&
         isFullscreen &&
         !isContainedFullscreenMode && (
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
-            <div />
-            <div className="font-medium text-sm text-muted-foreground min-w-0 max-w-[40vw] truncate">
+          <div className={`grid items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0 ${placedFullscreen ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-[1fr_auto_1fr]"}`}>
+            {!placedFullscreen && <div />}
+            <div className={`font-medium text-sm text-muted-foreground min-w-0 truncate ${placedFullscreen ? "" : "max-w-[40vw]"}`}>
               {openInAppLabel}
             </div>
             <div className="flex items-center justify-end gap-2 min-w-0">
               {showOpenInAppButton && (
                 <button
                   onClick={handleOpenInApp}
-                  className="inline-flex items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                  className="inline-flex min-w-0 items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
                   aria-label={`Open in ${openInAppLabel}`}
                   title={`Open in ${openInAppLabel}`}
                 >
@@ -4655,8 +4714,7 @@ export function MCPAppsRendererSurface({
               )}
               <button
                 onClick={() => {
-                  userPreferInlineRef.current = true;
-                  setDisplayMode("inline");
+                  fullscreenDismissal.dismiss();
                   if (ownsPipDisplayMode) {
                     onExitPip?.(pipWidgetId ?? displayWidgetId);
                   }
@@ -4664,7 +4722,7 @@ export function MCPAppsRendererSurface({
                 }}
                 className={
                   placedFullscreen && fullscreenPlacement?.exitLabel
-                    ? "rounded-lg px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                    ? "shrink-0 whitespace-nowrap rounded-lg px-2 py-1 text-sm font-medium text-foreground hover:bg-muted transition-colors"
                     : "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 }
                 aria-label="Exit fullscreen"
@@ -4822,5 +4880,6 @@ export function MCPAppsRendererSurface({
         />
       )}
     </div>
+    </>
   );
 }

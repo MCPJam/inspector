@@ -1,4 +1,5 @@
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import { registerArtifactUrls } from "@/lib/artifact-urls";
@@ -132,6 +133,8 @@ export interface ChatHistoryTurnTrace {
    * browser — see `resolvePageToolAttribution`'s header for why that matters.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** Harness turns only: the MCP route the turn ran on, and why. */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
 export interface ChatHistoryDetailResponse {

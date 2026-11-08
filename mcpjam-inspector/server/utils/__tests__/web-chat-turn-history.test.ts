@@ -128,6 +128,7 @@ import {
   historyProvenanceContextFor,
   verifyAssistantText,
 } from "../history-provenance";
+import { logger } from "../logger";
 import { streamWebChatTurn } from "../web-chat-turn";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
 import {
@@ -847,6 +848,47 @@ describe("hosted web chat shows the model only the history it can verify (MJ-009
       "user",
     ]);
     expect(modelRequests[0]!.raw).toContain("LOCAL_REPLY_6");
+  });
+
+  it("refuses a history it cannot convert with a 400, before any model call", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    await expect(
+      runTurn([
+        user("u1", "hi"),
+        {
+          id: "u2",
+          role: "user",
+          parts: [{ type: "file", mediaType: "image/png", url: "/a.png" }],
+        },
+      ]),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      details: { messageIndex: 1, partIndex: 0, problem: "file_url_invalid" },
+    });
+    expect(modelRequests).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("client-sent history"),
+      {
+        messageIndex: 1,
+        partIndex: 0,
+        problem: "file_url_invalid",
+        requestId: "request_1",
+        route: "/api/web/chat-v2",
+        projectId: "project_1",
+        chatSessionId: "chat_1",
+      },
+    );
+    warn.mockRestore();
+  });
+
+  it("checks the history verification hands on, so a demoted system message still runs", async () => {
+    await runTurn([
+      { id: "s1", role: "system", content: "be brief" },
+      user("u1", "hi"),
+    ]);
+
+    expect(modelRequests).toHaveLength(1);
   });
 });
 

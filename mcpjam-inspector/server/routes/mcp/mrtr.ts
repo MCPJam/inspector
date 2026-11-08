@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { OPENAI_ELICITATION_EXTENSION } from "@mcpjam/sdk";
+import { selectLocalMrtrForm, selectLocalMrtrSchema, validateLocalMrtrAnswer } from "./local-mrtr-forms.js";
 import type {
   ElicitResult,
   InputRequests,
@@ -72,6 +74,7 @@ type PendingRound = {
   serverId: string;
   /** The exact server-assigned keys this round must answer. */
   keys: string[];
+  event: MrtrRoundEvent;
   resolve: (responses: InputResponses) => void;
   reject: (error: unknown) => void;
   /** Detaches the abort listener once the round settles. */
@@ -91,8 +94,19 @@ export type MrtrBridgeInputRequest = {
   message: string;
   /** Present for form mode only. */
   requestedSchema?: Record<string, unknown>;
+  pluginForm?: boolean;
   /** Present for url mode only. */
   url?: string;
+};
+
+type MrtrRoundEvent = {
+  type: "mrtr_input_request";
+  opId: string;
+  roundKey: string;
+  round: number;
+  serverId: string;
+  requests: MrtrBridgeInputRequest[];
+  timestamp: string;
 };
 
 /**
@@ -113,13 +127,15 @@ export function projectInputRequests(
     };
     const params = req?.params ?? {};
     const mode = (params.mode as string | undefined) === "url" ? "url" : "form";
+    const selected = mode === "form" ? selectLocalMrtrForm(params) : undefined;
     out.push({
       key,
       mode,
+      ...(selected?.pluginForm ? { pluginForm: true } : {}),
       message: typeof params.message === "string" ? params.message : "",
-      ...(mode === "form" && params.requestedSchema !== undefined
+      ...(mode === "form" && selected?.schema !== undefined
         ? {
-            requestedSchema: params.requestedSchema as Record<string, unknown>,
+            requestedSchema: selected.schema as Record<string, unknown>,
           }
         : {}),
       ...(mode === "url" && typeof params.url === "string"
@@ -187,27 +203,26 @@ function makeCollector(serverId: string): MrtrInputCollector {
         stale.reject(new Error("Superseded by a newer MRTR round"));
       }
 
-      pendingRounds.set(opId, {
-        opId,
-        round,
-        serverId,
-        keys,
-        resolve,
-        reject,
-        cleanup,
-      });
-
-      broadcast({
+      const event: MrtrRoundEvent = {
         type: "mrtr_input_request",
         opId,
-        // A per-round identity so the browser can dedupe SSE redelivery and key
-        // its dialog to exactly one round.
         roundKey: `${opId}:${round}`,
         round,
         serverId,
         requests,
         timestamp: new Date().toISOString(),
+      };
+      pendingRounds.set(opId, {
+        opId,
+        round,
+        serverId,
+        keys,
+        event,
+        resolve,
+        reject,
+        cleanup,
       });
+      broadcast(event);
     });
   };
 }
@@ -276,6 +291,10 @@ export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
       ...era,
       modern: {
         ...era?.modern,
+        extensions: {
+          [OPENAI_ELICITATION_EXTENSION]: { form: {} },
+          ...(isPlainObject(era?.modern?.extensions) ? era.modern.extensions : {}),
+        },
         elicitation: {
           ...MRTR_ELICITATION_CAPABILITY,
           ...(isPlainObject(era?.modern?.elicitation)
@@ -326,7 +345,10 @@ export function registerLocalMrtrCollector(
   serverId: string,
 ): void {
   try {
-    manager.setMrtrInputCollector(serverId, makeCollector(serverId));
+    manager.setMrtrInputCollector(serverId, makeCollector(serverId), {
+      extensionClaims: [OPENAI_ELICITATION_EXTENSION],
+      selectFormSchema: selectLocalMrtrSchema,
+    });
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
@@ -417,6 +439,15 @@ export function submitMrtrResponses(
     }
   }
 
+  for (const request of pending.event.requests) {
+    const answer = responsesByKey[request.key];
+    if (request.pluginForm && answer?.action === "accept") {
+      const validation = validateLocalMrtrAnswer(request.requestedSchema, answer.content);
+      if (!validation.valid)
+        return { ok: false, status: 400, error: "The form answer is invalid. Check its fields and try again." };
+    }
+  }
+
   // Null-prototype map — the keys are server-chosen and untrusted.
   const responses = Object.create(null) as InputResponses;
   for (const key of answeredKeys) {
@@ -444,6 +475,7 @@ const mrtr = new Hono();
 // SSE stream of MRTR round events (mirrors the legacy elicitation bridge).
 mrtr.get("/stream", async (c) => {
   const encoder = new TextEncoder();
+  let disconnect: (() => void) | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: unknown) => {
@@ -464,11 +496,22 @@ mrtr.get("/stream", async (c) => {
       controller.enqueue(encoder.encode(`retry: 1500\n\n`));
       const subscriber: Subscriber = { send, close };
       subscribers.add(subscriber);
-
-      (c.req.raw as any).signal?.addEventListener?.("abort", () => {
+      const signal = c.req.raw.signal;
+      const remove = () => {
         subscribers.delete(subscriber);
+        signal.removeEventListener("abort", remove);
+        disconnect = undefined;
         close();
-      });
+      };
+      disconnect = remove;
+      signal.addEventListener("abort", remove, { once: true });
+      // A late mount or reconnect must recover the existing round, not rerun
+      // the tool. The browser deduplicates this unchanged roundKey.
+      for (const pending of pendingRounds.values()) send(pending.event);
+      if (signal.aborted) remove();
+    },
+    cancel() {
+      disconnect?.();
     },
   });
 

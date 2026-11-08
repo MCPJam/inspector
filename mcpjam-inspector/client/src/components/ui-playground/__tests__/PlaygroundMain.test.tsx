@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -1260,6 +1261,22 @@ describe("PlaygroundMain", () => {
     });
   });
 
+  it("shows local manual-tool input before a chat thread exists", () => {
+    const store = useMrtrElicitationStore.getState();
+    vi.spyOn(store, "connect").mockImplementation(() => {});
+    store.__reset();
+    render(<PlaygroundMain {...defaultProps} />);
+    act(() => store.__ingest({
+      type: "mrtr_input_request", opId: "manual-review", roundKey: "manual-review:1", round: 1,
+      serverId: "test-server", timestamp: new Date().toISOString(),
+      requests: [{ key: "review", mode: "form", message: "Manual review input", requestedSchema: {
+        type: "object", properties: { approved: { type: "boolean" } },
+      } }],
+    }));
+    expect(screen.getByText("Manual review input")).toBeInTheDocument();
+    store.__reset();
+  });
+
   describe("rendering", () => {
     it("sends the project default's browser capability when no host is selected", () => {
       mockConvexAuthState.isAuthenticated = true;
@@ -1423,6 +1440,46 @@ describe("PlaygroundMain", () => {
         const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
         expect(composer.reasoningEffort).toBe("low");
         expect(composer.onReasoningEffortChange).toBeTypeOf("function");
+      });
+
+      it("settles a saved comparison column when an effort change replaces its card", () => {
+        localStorage.setItem(V2_KEY, JSON.stringify([hosted(sonnet.id)]));
+        render(
+          <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+        );
+        const [lead] = renderedCardProps();
+        // The card is still restoring a comparison saved before sign-in.
+        window.history.replaceState({}, "", "/?comparisonRecovery=saved");
+        const column = { kind: "model", order: 0, hasMessages: true };
+        sessionStorage.setItem(
+          "mcp-comparison-auth-v1:saved",
+          JSON.stringify({
+            version: 1,
+            id: "saved",
+            projectId: "local",
+            multiModelEnabled: true,
+            hostIds: [],
+            modelSelections: null,
+            selectedServers: [],
+            clickedColumn: lead.compareId,
+            continuationId: "c1",
+            columns: [
+              { ...column, compareId: lead.compareId, chatSessionId: "a" },
+            ],
+          }),
+        );
+        try {
+          act(() => {
+            lead.effort.onChange("low");
+          });
+          expect(
+            sessionStorage.getItem("mcp-comparison-auth-v1:saved"),
+          ).toBeNull();
+          expect(window.location.search).toBe("");
+        } finally {
+          sessionStorage.clear();
+          window.history.replaceState({}, "", "/");
+        }
       });
 
       it("caps the line-up at three cards", () => {

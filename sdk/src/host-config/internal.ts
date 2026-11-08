@@ -196,3 +196,21 @@ export type {
   ModelSelectionIssueCode,
   ModelSelectionValidation,
 } from "./model-selection.js";
+export {
+  HARNESS_MCP_AT_TURN_DELIVERIES,
+  HARNESS_MCP_AT_TURN_FORWARDING_KINDS,
+  HARNESS_MCP_AT_TURN_LIMITS,
+  HARNESS_MCP_AT_TURN_PROFILES,
+  HARNESS_MCP_AT_TURN_QUALIFICATION_STATUSES,
+  HARNESS_MCP_AT_TURN_UPSTREAMS,
+  HARNESS_MCP_AT_TURN_VERSION,
+  parseHarnessMcpAtTurn,
+} from "./harness-mcp-at-turn.js";
+export type {
+  HarnessMcpAtTurn,
+  HarnessMcpAtTurnDelivery,
+  HarnessMcpAtTurnForwardingKind,
+  HarnessMcpAtTurnProfile,
+  HarnessMcpAtTurnQualificationStatus,
+  HarnessMcpAtTurnUpstream,
+} from "./harness-mcp-at-turn.js";

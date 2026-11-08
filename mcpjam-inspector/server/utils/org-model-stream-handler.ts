@@ -834,6 +834,11 @@ export async function postLocalUsage(params: {
    */
   journeyRunId?: string;
   /**
+   * MCP Events trigger run the turn served. The backend charges the usage
+   * record's cost to that run and its trigger's daily spend cap.
+   */
+  eventRunId?: string;
+  /**
    * The eval iteration (and suite run) a local-runtime eval turn belongs to.
    * With `execution`, the backend merges the record onto that iteration row;
    * a swarm turn is attributed by `journeyRunId` + `chatSessionId` instead.
@@ -889,6 +894,7 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.eventRunId ? { eventRunId: params.eventRunId } : {}),
         ...(params.evalIterationId
           ? { evalIterationId: params.evalIterationId }
           : {}),

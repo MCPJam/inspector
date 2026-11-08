@@ -51,6 +51,7 @@ export async function driveOwnedPluginMrtr(
   value: unknown,
   options: {
     signal: AbortSignal;
+    onInputPending?: (pending: boolean) => void;
     formScope?: { projectId: string; workspaceId: string };
     submit: (resume: {
       continuationId: string;
@@ -97,6 +98,7 @@ export async function driveOwnedPluginMrtr(
       let abort: (() => void) | undefined;
       let outcome: unknown;
       try {
+        options.onInputPending?.(true);
         outcome = await new Promise<unknown>((resolve, reject) => {
           abort = () => reject(new Error("Plugin input owner closed"));
           options.signal.addEventListener("abort", abort, { once: true });
@@ -111,6 +113,7 @@ export async function driveOwnedPluginMrtr(
               continuationId,
               round: round.round,
               serverId: round.serverId,
+              serverName: round.serverName,
               method: round.method,
               operationLabel: round.operationLabel,
               requests: round.inputRequests,
@@ -123,15 +126,21 @@ export async function driveOwnedPluginMrtr(
               submit: async (
                 responses: Record<string, MrtrElicitationResponse>,
               ) => {
-                const responsesBlobId = await answer.prepare(responses);
-                options.signal.throwIfAborted();
-                const next = await options.submit({
-                  continuationId,
-                  round: round.round,
-                  responsesBlobId,
-                });
-                options.signal.throwIfAborted();
-                resolve(next);
+                options.onInputPending?.(false);
+                try {
+                  const responsesBlobId = await answer.prepare(responses);
+                  options.signal.throwIfAborted();
+                  const next = await options.submit({
+                    continuationId,
+                    round: round.round,
+                    responsesBlobId,
+                  });
+                  options.signal.throwIfAborted();
+                  resolve(next);
+                } catch (error) {
+                  if (!options.signal.aborted) options.onInputPending?.(true);
+                  throw error;
+                }
               },
               cancel: async () => {
                 reject(new Error("Plugin input round withdrawn"));
@@ -141,6 +150,7 @@ export async function driveOwnedPluginMrtr(
           );
         });
       } finally {
+        options.onInputPending?.(false);
         answer.dispose();
         if (timer) clearTimeout(timer);
         if (abort) options.signal.removeEventListener("abort", abort);

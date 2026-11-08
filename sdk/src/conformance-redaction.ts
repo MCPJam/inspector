@@ -208,15 +208,18 @@ export function redactUrlSecrets(value: string): string {
     const fragment = parsed.hash.slice(1);
     // Only treat it as parameters when it actually looks like them; a plain
     // `#section-2` anchor must survive untouched.
-    const isRoute = /^!?\//.test(fragment);
+    const routeMarker = /^!?\//.exec(fragment)?.[0] ?? "";
+    const isRoute = routeMarker !== "";
     const queryStart = isRoute ? fragment.search(/[?&]/) : -1;
+    const routePath =
+      queryStart >= 0 ? fragment.slice(0, queryStart) : fragment;
+    // A route path has no `=`. When the first segment does
+    // (`#/access_token=…`), only the marker is route; the segment is a field.
     const prefix =
-      isRoute && queryStart >= 0 ? fragment.slice(0, queryStart + 1) : "";
-    const parameters = isRoute
-      ? queryStart >= 0
-        ? fragment.slice(queryStart + 1)
-        : ""
-      : fragment;
+      !isRoute || routePath.includes("=")
+        ? routeMarker
+        : fragment.slice(0, queryStart + 1);
+    const parameters = fragment.slice(prefix.length);
     if (parameters.includes("=")) {
       const redacted = redactParams(parameters, isRoute);
       if (redacted !== null) {

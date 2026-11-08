@@ -2,7 +2,7 @@ import { getManagerResourceSnapshot, setManagerResourceSnapshots } from "../../.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
-const m = vi.hoisted(() => ({ order: [] as string[] }));
+const m = vi.hoisted(() => ({ order: [] as string[], refused: {} as Record<string, unknown> }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
     typeof import("../../../routes/web/hosted-elicitation.js")
@@ -29,7 +29,7 @@ vi.mock("../../../routes/web/auth.js", async (original) => ({
     },
     oauthServerUrls: {},
     authenticatedUserId: "user-1",
-    refusedServers: [],
+    refusedServers: m.refused,
   }),
 }));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
@@ -70,6 +70,7 @@ const setup = {
 describe("managed connection ownership", () => {
   beforeEach(() => {
     m.order = [];
+    m.refused = {};
   });
   afterEach(() => vi.unstubAllEnvs());
 
@@ -151,4 +152,41 @@ describe("managed connection ownership", () => {
     await resources.dispose();
     expect(m.order).toEqual(["withdraw elicitations", "disconnect servers"]);
   });
+});
+
+it("continues a real managed setup only for automatic unapproved additions", async () => {
+  const { ErrorCode, WebRouteError } = await import("../../../routes/web/errors.js");
+  const error = new WebRouteError(403, ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED, "Review command");
+  const value: Setup = {
+    ...setup,
+    environmentSpec: {
+      environmentOrigin: "adhoc", environmentRef: { environmentId: "env", name: "Chat", revision: 1 },
+      host: { hostId: "host", runtimeConfig: {} },
+      servers: { effectiveServerIds: ["server-1", "automatic"] },
+    },
+    effectiveCapabilities: {
+      explicitServerIds: ["server-1"], pluginServerIds: ["automatic"], effectiveServerIds: ["server-1", "automatic"],
+      servers: [], pluginSkills: [], standaloneSkills: [], serverSkills: [], localSkills: [], pluginVersions: [], problems: [],
+    },
+    effectiveServerIds: ["server-1", "automatic"],
+  };
+  const run = async (refused: Record<string, unknown>, automatic: string[]) => {
+    m.refused = refused;
+    const resources = new TurnResources((failure) => { throw failure; });
+    const app = new Hono();
+    app.onError((failure) => { throw failure; });
+    let retained: unknown;
+    app.post("/", async (c) => {
+      const result = await prepareManagedConnections({ c, rawBody: { autoContributedPluginServerIds: automatic },
+        bearerToken: "bearer", rpcCollector: createHostedRpcLogCollector({}), resources, setup: value,
+        onOAuthServerUrls: () => {}, });
+      retained = result.refusedServers;
+      return c.json({ ok: true });
+    });
+    try { await app.request("/", { method: "POST" }); return retained; }
+    finally { await resources.dispose(); }
+  };
+  expect(await run({ automatic: error }, ["automatic"])).toEqual({ automatic: error });
+  await expect(run({ automatic: error }, [])).rejects.toBe(error);
+  await expect(run({ automatic: error, "server-1": error }, ["automatic", "server-1"])).rejects.toBe(error);
 });

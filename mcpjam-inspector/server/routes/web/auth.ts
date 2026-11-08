@@ -1,3 +1,5 @@
+import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
+import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
@@ -515,6 +517,8 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     hasHeaders?: boolean;
     useOAuth?: boolean;
+    oauthProtocolMode?: string;
+    oauthProtocolVersion?: string;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
     // are resolved separately at mint time via the hardened reveal-secret path.
@@ -985,7 +989,12 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
-): Promise<{ chatEnvironments: boolean }> {
+): Promise<{
+  chatEnvironments: boolean;
+  chatPreparation: boolean;
+  organizationId?: string;
+  projectAccess?: { projectRole: "admin" | "editor" };
+}> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -1016,9 +1025,23 @@ export async function authorizeProject(
       payload = await response.json();
     } catch {
       // Older successful authorization responses need not advertise features.
-      return { chatEnvironments: false };
+      return { chatEnvironments: false, chatPreparation: false };
     }
+    const projectRole =
+      payload && typeof payload === "object" && "projectRole" in payload
+        ? payload.projectRole
+        : undefined;
     return {
+      ...(payload && typeof payload === "object" && "organizationId" in payload &&
+        typeof payload.organizationId === "string" ? { organizationId: payload.organizationId } : {}),
+      chatPreparation:
+        !!payload &&
+        typeof payload === "object" &&
+        "chatPreparationVersion" in payload &&
+        payload.chatPreparationVersion === 1,
+      ...(projectRole === "admin" || projectRole === "editor"
+        ? { projectAccess: { projectRole } }
+        : {}),
       chatEnvironments:
         !!payload &&
         typeof payload === "object" &&
@@ -1282,6 +1305,7 @@ function resolveEffectiveInitializePinsForServer(
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>,
+  serverConfig?: ConvexAuthorizeResponse["serverConfig"],
 ):
   | {
       clientInfo?: { name?: string; version?: string } & Record<
@@ -1299,10 +1323,19 @@ function resolveEffectiveInitializePinsForServer(
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
+  // Reconstruct the browser's server-specific OAuth pin from fresh authority.
+  // Auto retains negotiation; its last resolved OAuth profile is not a pin.
+  const oauthProfilePin =
+    serverConfig?.useOAuth === true &&
+    serverConfig.oauthProtocolVersion === "2026-07-28" &&
+    (serverConfig.oauthProtocolMode === undefined ||
+      serverConfig.oauthProtocolMode === "2026-07-28")
+      ? "2026-07-28"
+      : undefined;
   const mcpProtocolVersion =
     typeof perServerPin === "string" && isKnownProtocolVersion(perServerPin)
       ? perServerPin
-      : initializePins?.mcpProtocolVersion;
+      : oauthProfilePin ?? initializePins?.mcpProtocolVersion;
   const supportedProtocolVersions =
     mcpProtocolVersion &&
     !isStatelessProtocolVersion(mcpProtocolVersion) &&
@@ -1495,10 +1528,12 @@ export async function createAuthorizedManager(
      */
     requestTimeoutByServerId?: Record<string, number>;
     /**
-     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
-     * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`. Required whenever the batch contains a `useXaa` server — the
-     * builder throws a 500 rather than connecting tokenless if it's missing.
+     * Pre-resolved MCPJam test-IdP issuer for Cross-App Access servers.
+     * Callers holding the request `Context` pass
+     * `resolveXaaIssuer(c, HOSTED_MODE)`; the claim loops, which have none,
+     * pass `resolveConfiguredXaaIssuer()`. Required whenever the batch
+     * contains a `useXaa` server — the builder throws a 500 rather than
+     * connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
     /**
@@ -1564,6 +1599,10 @@ export async function createAuthorizedManager(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    /** Claims and schema selection owned by the collector installed above. */
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
@@ -1660,6 +1699,25 @@ export async function createAuthorizedManager(
         if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
           auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
         }
+        // A member's only login on a server arrives as the default credential,
+        // not as an account list (the backend lists two or more). Without a
+        // group its calls carry no connection, so a sign-in continuation binds
+        // to nothing and its resume cannot prove the credential it replays on.
+        // Same rails as the stored-token path below: OAuth or discover only,
+        // never XAA or a bearer header, whose tokens the group would override.
+        if (
+          !selectedId &&
+          options.multiConnection &&
+          !auth.oauthConnections &&
+          auth.oauthCredentialId &&
+          auth.oauthAccessToken &&
+          auth.accessLevel === "project_member" &&
+          ["oauth", "discover"].includes(
+            resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
+          )
+        ) {
+          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
+        }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
             c.accessToken &&
@@ -1689,9 +1747,14 @@ export async function createAuthorizedManager(
           serverId: id,
           connectionId: c.connectionId,
           key: connectionKey(id, c.connectionId, c.isDefault),
-          label: groupLabels[index],
+          // An implicit login is the server itself to the user; its sign-in
+          // errors name the server, exactly as the ungrouped path does.
+          label: c.implicit
+            ? displayNameForServer(id, serverNamesById, auth.serverConfig)
+            : groupLabels[index],
           profile: c.profile,
           isDefault: c.isDefault,
+          ...(c.implicit ? { implicit: true } : {}),
         }));
       }
     }
@@ -1785,10 +1848,11 @@ export async function createAuthorizedManager(
 
       // Backend-resolved identity failure (legacy partial per-server override):
       // a distinct configuration error, surfaced before any mint AND before the
-      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-      // would mask this actionable 400 behind the caller-contract 500. Gated on
-      // the same XAA selection the mint pass uses. No silent fallback to the
-      // demo identity, no silent XAA→OAuth fallback.
+      // issuer guard, so a surface that has no issuer to pass (a claim loop on
+      // a deployment with no public URL) still gets this actionable 400 rather
+      // than the caller-contract 500. Gated on the same XAA selection the mint
+      // pass uses. No silent fallback to the demo identity, no silent XAA→OAuth
+      // fallback.
       //
       // Framed like every other connect-time XAA failure: the backend's sentence
       // is written for the server's auth form, and on its own ("Complete or
@@ -2100,6 +2164,7 @@ export async function createAuthorizedManager(
           serverId,
           options?.initializePins,
           options?.mcpProtocolVersionsByServerId,
+          auth.serverConfig,
         );
         // Per-server timeout: a pinned `requestTimeoutOverride` (threaded by the
         // swarm runner) wins over the batch-uniform host default. Guard against a
@@ -2269,9 +2334,11 @@ export async function createAuthorizedManager(
           // sibling server can mint.)
           if (!options?.xaaIssuer) {
             // Caller-contract violation: a `useXaa` server reached a manager
-            // builder that didn't thread the issuer (only callers holding the
-            // request `Context` can resolve it). Fail loud here rather than
-            // connecting tokenless and surfacing a confusing downstream 401.
+            // builder that didn't thread the issuer. A claim loop lands here
+            // when the deployment configures no public URL
+            // (`MCPJAM_INSPECTOR_PUBLIC_URL`, see `resolveConfiguredXaaIssuer`).
+            // Fail loud here rather than connecting tokenless and surfacing a
+            // confusing downstream 401.
             //
             // Always MCPJam's own bug, so it is declared ours: the origin it
             // carries reaches `http.request.failed`, where the MCPJam-fault
@@ -2685,7 +2752,11 @@ export async function createAuthorizedManager(
         batch.organizationId,
       );
       if (collector) {
-        manager.setMrtrInputCollector(serverId, collector);
+        manager.setMrtrInputCollector(
+          serverId,
+          collector,
+          options.mrtrInputOptionsForServer?.(baseServerId),
+        );
       }
     }
   }
@@ -2700,14 +2771,21 @@ export async function createAuthorizedManager(
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
-  for (const [key] of connectionEntries) {
+  const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
+  for (const [key, config] of connectionEntries) {
     const connection = connectionsByKey.get(key);
     const serverId = connection?.serverId ?? key;
     const auth = batch.results[serverId];
-    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (!auth?.ok) continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
-    if (connection && credentialAuthorizedAt === undefined) continue;
+    if (bindWarmAccounts) bindWarmApprovalConnection(manager, key, {
+      serverId, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined,
+      updatedAt: auth.serverConfig.updatedAt, authorizedAt: credentialAuthorizedAt,
+      defaultAccount: connection?.isDefault, profileId: connection?.profile?.id,
+    }, "url" in config ? config.requestInit?.headers : undefined);
+    if (auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (connection && !connection.implicit && credentialAuthorizedAt === undefined) continue;
     resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);

@@ -32,6 +32,7 @@ import {
   GOOSE_PLATFORM,
 } from "./goose-style.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
+import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
 
 type HostThemeMode = "light" | "dark";
 
@@ -1220,12 +1221,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
-          // OpenAI plugin extensions (sidebar Apps, forms, …) are on for
-          // ChatGPT; each one can be switched off in the client's Apps tab.
-          // This seed emulates ChatGPT on the web, so the extensions the
-          // OpenAI extensions spec's Platform Support table marks "Not
-          // supported" on Web start off: fileViewers, localFiles,
-          // fileResources and mentions. Mirrors the backend template.
+          // Match the backend Web preset and current product availability:
+          // composer mentions and file capabilities require the desktop app.
+          // Explicit client overrides can emulate the broader protocol support.
           pluginExtensions: {
             capabilities: {
               fileResources: false,
@@ -1235,6 +1233,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             enabled: true,
           },
+          modelContextPolicy: { ...CHATGPT_MODEL_CONTEXT_POLICY },
           // MCP Apps extension: hostInfo sent to the View iframe in
           // `ui/initialize`. Different protocol layer from clientInfo
           // above — apps that branch on `hostInfo.name === "chatgpt"`

@@ -66,3 +66,13 @@ test("a platform window too short for the teardown leaves no drain at all", () =
   assert.equal(settings.drainMs, 0);
   assert.equal(settings.drainClamped, true);
 });
+
+test("a drain too long to schedule is held to the longest Node's timers can wait", () => {
+  const settings = resolveShutdownSettings({
+    MCPJAM_SHUTDOWN_DRAIN_MS: "3000000000",
+  });
+  // Past 2^31-1 ms setTimeout fires at once, so the force-exit would land
+  // immediately and the launcher's SIGKILL one millisecond after the signal.
+  assert.equal(settings.parentKillMs, 2 ** 31 - 1);
+  assert.ok(settings.drainMs > 0);
+});

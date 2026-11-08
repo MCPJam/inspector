@@ -1,3 +1,6 @@
+import { discoveryIcons, openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
+import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
+import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../../shared/plugin-file-transfer.js";
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
@@ -25,12 +28,9 @@ import { readPluginFormResourcePreview } from "../../services/plugin-host/form-r
 import {
   PluginFileTargetRefusal,
   pluginFileTargetsWarning,
-  refusePluginFileOpen,
 } from "../../services/plugin-host/file-targets.js";
 import {
-  createComputerFileTargetAdapter,
   createProjectComputerConnector,
-  resolveComputerFilePath,
   type ComputerFileSystem,
 } from "../../services/plugin-host/computer-file-target.js";
 import type { ExecutionScope } from "../../utils/execution-scope.js";
@@ -64,7 +64,6 @@ import {
 import path from "node:path";
 import {
   resolveLocalFileTarget,
-  resolveLocalFilePath,
 } from "../../services/plugin-host/local-file-target.js";
 import { stream } from "hono/streaming";
 import { streamListedFileUpdates } from "../../services/plugin-host/listed-file-subscription.js";
@@ -74,10 +73,6 @@ import {
   parsePluginFileRead,
 } from "../../../shared/plugin-file.js";
 import { pluginFileEntrypoints } from "../../../shared/plugin-activation.js";
-import {
-  pluginIconMetadata,
-  type PluginIconMetadata,
-} from "../../../shared/plugin-icons.js";
 import { ownedFileResources } from "../../services/plugin-host/owned-file-resources.js";
 import {
   resolveListedFileResource,
@@ -349,13 +344,17 @@ async function routeUntimed(c: Context, action: () => Promise<Response>) {
 }
 const instances = new Hono();
 const instanceBodyLimit = bodyLimit({ maxSize: 512 * 1024 });
-// A context update carries one App update up to the policy ceiling, and
-// `webBodyLimit` bounds it with a typed 413 before anything reads it.
-instances.use("*", (c, next) =>
-  c.req.method === "POST" && PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path)
-    ? next()
-    : instanceBodyLimit(c, next),
-);
+const instanceFileBodyLimit = bodyLimit({ maxSize: PLUGIN_FILE_MAX_BYTES });
+// Context updates use the policy ceiling enforced by the typed web body limit.
+instances.use("*", (c, next) => {
+  if (c.req.method === "POST" && PLUGIN_CONTEXT_UPDATE_PATHS.has(c.req.path))
+    return next();
+  const limit = c.req.method === "POST" &&
+    c.req.path.endsWith("/files/write") &&
+    c.req.header("content-type") === PLUGIN_FILE_MEDIA_TYPE
+    ? instanceFileBodyLimit : instanceBodyLimit;
+  return limit(c, next);
+});
 instances.use("*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   await next();
@@ -421,29 +420,6 @@ instances.route(
     },
   }),
 );
-
-/** Icons for discovery: each entrypoint tool's `icons`, plus the server icon
- * (initialize `serverInfo.icons`, or `server/discover`'s serverInfo on
- * 2026-07-28), so the client resolves tool → server → generic. Bounded per
- * tool and per response; data: images past the byte budget are dropped. */
-const DISCOVERY_ICONS_PER_TOOL = 4;
-const DISCOVERY_ICON_BYTES = 512 * 1024;
-function discoveryIcons(serverInfoIcons: unknown) {
-  let budget = DISCOVERY_ICON_BYTES;
-  const take = (icons: PluginIconMetadata["toolIcons"]) =>
-    icons.slice(0, DISCOVERY_ICONS_PER_TOOL).filter((icon) => {
-      const size = icon.src.length;
-      if (size > budget) return false;
-      budget -= size;
-      return true;
-    });
-  const serverIcons = take(pluginIconMetadata([], serverInfoIcons).serverIcons);
-  return {
-    serverIcons,
-    toolIcons: (icons: unknown) =>
-      take(pluginIconMetadata(icons, []).toolIcons),
-  };
-}
 
 instances.post("/discover", (c) =>
   route(c, async () => {
@@ -782,7 +758,7 @@ instances.post("/files/read", (c) =>
         ...diagnostic,
         serverId: access.instance.owner.serverId,
       }));
-      return c.json({ ...result, diagnostics });
+      return fileReadResponse(c, result, diagnostics);
     } finally {
       await access.runtime.release();
     }
@@ -808,79 +784,13 @@ instances.post("/files/open", (c) =>
     );
     try {
       const current = await runtime.catalog(c.req.raw.signal);
-      if (current.extensions) {
-        assertPluginExtensionEnabled(current.extensions, "localFiles");
-        assertPluginExtensionEnabled(current.extensions, "fileViewers");
-      }
-      const fileIdentity = {
-        actorId: actor.actorId,
-        projectId: actor.projectId,
-        serverId: instance.owner.serverId,
-      };
-      // Say what's missing (an allowed folder, a listed file) instead of a
-      // bare denial, and log it.
-      if (!current.localFileTargetContract)
-        refusePluginFileOpen(
-          current.fileTargets ?? { placement: "local" },
-          fileIdentity,
-        );
-      const onComputer = current.fileTargets?.placement === "computer";
-      const target = (onComputer ? resolveComputerFilePath : resolveLocalFilePath)(
-        current.localFileTargetContract,
-        instance.owner.serverId,
-        body.path,
-      );
-      if (!target)
-        refusePluginFileOpen(
-          { placement: onComputer ? "computer" : "local" },
-          fileIdentity,
-        );
-      // On the Computer, the path is resolved on the VM itself.
-      if (onComputer)
-        await createComputerFileTargetAdapter(
-          target!,
-          computerPort(
-            bearer,
-            admission.projectId,
-            instance.owner.serverId,
-            () => current.executionScope,
-          ),
-        ).check(c.req.raw.signal);
-      const file = await resolveListedFileResource(
-        current.manager,
-        instance.owner.serverId,
-        target.uri,
-        c.req.raw.signal,
-      );
-      const icons = discoveryIcons(
-        current.manager?.getInitializationInfo?.(instance.owner.serverId)
-          ?.serverVersion?.icons,
-      );
-      const entries = pluginFileEntrypoints(current.tools)
-        .filter((entry) =>
-          entry.extensions.some((extension) =>
-            pluginFileNameMatchesExtension(
-              path.basename(target.relativePath),
-              extension,
-            ),
-          ),
-        )
-        .map((entry) => {
-          const toolIcons = icons.toolIcons(
-            (
-              current.tools.find((tool) => tool.name === entry.toolName) as
-                | { icons?: unknown }
-                | undefined
-            )?.icons,
-          );
-          return toolIcons.length ? { ...entry, toolIcons } : entry;
-        });
-      await admission.revalidate({ signal: c.req.raw.signal });
-      return c.json({
-        file,
-        entries,
-        ...(icons.serverIcons.length ? { serverIcons: icons.serverIcons } : {}),
-      });
+      return c.json(await openOwnedLocalFile({
+        current, actorId: actor.actorId, projectId: admission.projectId,
+        serverId: instance.owner.serverId, bearer, path: body.path,
+        signal: c.req.raw.signal,
+        connect: computerPort(bearer, admission.projectId, instance.owner.serverId, () => current.executionScope),
+        verify: () => admission.revalidate({ signal: c.req.raw.signal }),
+      }));
     } finally {
       await runtime.release();
     }
@@ -890,7 +800,7 @@ instances.post("/files/write", (c) =>
   route(c, async () => {
     const body = fileRequestSchema
       .extend({ operationId: z.string().uuid() })
-      .parse(await c.req.json());
+      .parse(await readFileWriteBody(c));
     const access = await fileAccess(c, body);
     try {
       if (!access.file.localTarget)
@@ -1418,6 +1328,7 @@ async function invoke(
           new PluginInvocationError(
             `INSTANCE_TOOL_${kind.toUpperCase()}_INVALID`,
           ),
+        origin,
       ),
     ...(instance.activation.file?.localTarget
       ? {

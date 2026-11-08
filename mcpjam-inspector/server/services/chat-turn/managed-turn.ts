@@ -558,11 +558,12 @@ export async function handleManagedChatTurn(
           ...(turnProvenance ? { turnProvenance } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           setupSkillProvenanceIncomplete: projectSkillReadFailed,
-          // Arbitrary client-info fields cannot safely be hashed as provenance.
+          // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
-            initializePins !== undefined ||
-            mcpProtocolVersionsByServerId !== undefined ||
-            (!authoritativeConnectionPolicy && xaaPolicy != null),
+            !authoritativeConnectionPolicy &&
+            (initializePins !== undefined ||
+              mcpProtocolVersionsByServerId !== undefined ||
+              xaaPolicy != null),
           // WHAT THIS TURN ACTUALLY ADVERTISED from the page. Written down
           // rather than re-derived, so a reopened conversation shows the tools
           // the model really had rather than the ones the browser has now.

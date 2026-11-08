@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const rootDir = process.cwd();
 const expectedMcpV2PackageVersions = {
   "@modelcontextprotocol/client": "2.3.1",
-  "@modelcontextprotocol/node": "2.0.0",
+  "@modelcontextprotocol/node": "2.1.2",
   "@modelcontextprotocol/server": "2.3.1",
 };
 const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

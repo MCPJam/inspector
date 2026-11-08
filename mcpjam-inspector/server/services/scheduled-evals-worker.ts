@@ -31,7 +31,10 @@ import {
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { loadSuiteHostConfig } from "./evals/compat-runtime.js";
 import { isPlatformFeeRefusal } from "./evals/platform-fee-refusal.js";
+import { xaaPolicyFromMcpProfile } from "../utils/effective-auth.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -163,6 +166,7 @@ export async function executeClaimedRun(
       claimed.createdByExternalId,
       claimed.organizationId,
     );
+    const convex = createConvexClient(bearer);
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
     // predates (or ignores) the pinned environment. The SAME resolution is
@@ -177,7 +181,7 @@ export async function executeClaimedRun(
     } = claimed.environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
-            createConvexClient(bearer),
+            convex,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
               projectId: claimed.projectId!,
@@ -197,15 +201,25 @@ export async function executeClaimedRun(
           "authorized",
         );
 
+    // The host the run executes under, resolved as `prepareEvalRun` resolves
+    // it: the pinned environment's host, else the suite's own config. Its
+    // enterprise-managed authorization policy governs this connection as it
+    // does an API launch of the same suite, so a monitor takes the auth path
+    // a real run takes, and an unconfigured `auto` server is refused rather
+    // than connected through the discover path, on the schedule creator's own
+    // OAuth grant when one is stored. A failed read stops this window's run:
+    // the default host it would fall back to carries no policy.
+    const hostConfig = await loadSuiteHostConfig(
+      convex,
+      claimed.suiteId,
+      selection.resolvedEnvironment?.hostId,
+      { failClosed: true },
+    );
+
     // Empty caller context = plain-JWT caller (locked by caller-context
-    // contract test); the delegated JWT is the principal.
-    //
-    // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
-    // derive the issuer from, and the scheduled-suite selection carries no
-    // host-persona input, so there is no enterprise policy to enforce. A
-    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
-    // the manager builder ("Missing XAA issuer") — the pre-existing behavior
-    // on this surface. Lifting it needs an env-derived public issuer URL.
+    // contract test); the delegated JWT is the principal. There is no request
+    // to read the XAA issuer from, so it comes from the deployment's public
+    // origin; without one, a `useXaa` server fails closed in the builder.
     const authorized = await createAuthorizedManager(
       {},
       bearer,
@@ -214,7 +228,11 @@ export async function executeClaimedRun(
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames: selection.serverNames },
+      {
+        serverNames: selection.serverNames,
+        xaaIssuer: resolveConfiguredXaaIssuer(),
+        xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
+      },
     );
     manager = authorized.manager;
 
@@ -259,16 +277,15 @@ export async function executeClaimedRun(
       return;
     }
 
-    // The trigger id IS this run's idempotency key, so a redelivered trigger
-    // replays the run it already started. If that run has finished, there is
-    // nothing left to do — executing would re-run the suite and bill the
-    // organization a second time for a scheduled run it only asked for once.
+    // A redelivered trigger adopts the original worker's run. Acknowledge the
+    // launch receipt; the run lifecycle owns completion and failure reporting.
     if (shouldSkipExecution(prepared)) {
       logger.info("[scheduled-evals] trigger already ran — not re-executing", {
         ...logContext,
         runId: prepared.runId,
         status: prepared.status,
       });
+      await reportComplete({ triggerId: claimed.triggerId, ok: true, runId: prepared.runId });
       return;
     }
 

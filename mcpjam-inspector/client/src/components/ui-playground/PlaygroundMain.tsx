@@ -1,5 +1,6 @@
 import {
   hasComparisonAuthRecoveryRequest,
+  markComparisonColumnSettled,
   readComparisonAuthRecovery,
   registerComparisonLayout,
   clearComparisonAuthRecovery,
@@ -13,7 +14,10 @@ import {
   type SendPluginOnboarding,
 } from "./playground-onboarding";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
-import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
+import {
+  usePluginIconsById,
+  pluginDisplayNamesById,
+} from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
 import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-environment";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -35,6 +39,7 @@ import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
 } from "@/components/elicitation/OwnedPluginFormHost";
+import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
@@ -130,6 +135,7 @@ import {
   UrlElicitationRequiredDialog,
 } from "@/components/elicitation/ElicitationRequestDialog";
 import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -141,7 +147,6 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -365,8 +370,7 @@ import {
   isDynamicTool,
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -760,9 +764,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -1761,11 +1764,14 @@ export function PlaygroundMain({
   // One subscription to the project's plugins; discovery names each
   // server's plugin, and the hidden environment's plugin servers carry them
   // directly.
-  const pluginIconsById = usePluginIconsById(
-    useProjectPlugins(
-      extensionScope?.projectId ??
-        (hiddenPluginServers.length > 0 ? convexProjectId : null),
-    ),
+  const projectPlugins = useProjectPlugins(
+    extensionScope?.projectId ??
+      (hiddenPluginServers.length > 0 ? convexProjectId : null),
+  );
+  const pluginIconsById = usePluginIconsById(projectPlugins);
+  const pluginNamesById = useMemo(
+    () => pluginDisplayNamesById(projectPlugins),
+    [projectPlugins],
   );
   // A chat that carries its plugins through a hidden environment shows their
   // servers beside the selected ones: they run on every turn, so the Apps
@@ -1911,6 +1917,9 @@ export function PlaygroundMain({
           identity: extensionIdentity,
           chatId: chatSessionId,
           servers: extensionServers,
+          ...(hiddenEnvironmentActive && hiddenEnvironment.environmentId && hiddenPluginServers.length
+            ? { includedPluginTools: { environmentId: hiddenEnvironment.environmentId, serverIds: hiddenPluginServers.map((server) => server.serverId), includeAppOnly: previewedHost?.config?.respectToolVisibility === false } }
+            : {}),
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
@@ -2005,7 +2014,7 @@ export function PlaygroundMain({
     pluginExtensions.capabilities.modelContext,
     pluginExtensions.capabilities.displayModes,
   );
-  usePublishPluginIcons(pluginIconsById);
+  usePublishPluginIcons(pluginIconsById, pluginNamesById);
   const composerMentions = useComposerMentions(
     pluginExtensions.capabilities.mentions ? extensionScope : null,
     extensionServers,
@@ -2409,6 +2418,29 @@ export function PlaygroundMain({
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
   );
+  // A restored host column whose host no longer exists renders no card, so
+  // nothing else settles it. Only a definite answer counts: signed in, the
+  // list loaded, and the slot's query done without a host.
+  const absentRestoredHostIds =
+    comparisonRecovery && isConvexAuthenticated && !hostListLoading
+      ? clientResolutions.flatMap((resolution, index) =>
+          resolution.status === "unavailable" &&
+          !hostSlots[index].host &&
+          !hostSlots[index].isLoading
+            ? [resolution.compareId]
+            : [],
+        )
+      : [];
+  // A string, so the effect runs when the set changes, not on every render.
+  const absentRestoredHostKey = absentRestoredHostIds.join("\n");
+  useEffect(() => {
+    if (!absentRestoredHostKey) return;
+    for (const compareId of absentRestoredHostKey.split("\n"))
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "host",
+        compareId,
+      });
+  }, [absentRestoredHostKey, convexProjectId]);
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -4747,22 +4779,6 @@ export function PlaygroundMain({
     onStreamingChange?.(isRunBusy);
   }, [isRunBusy, onStreamingChange]);
 
-  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
-  );
-
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
     // Clearing empties the transcript and mints a fresh `chatSessionId`, so the
@@ -4919,6 +4935,12 @@ export function PlaygroundMain({
       const next = setCompareCardEffort(compareCards, cardKey, effort);
       if (!next) return;
       compareSeedSourceRef.current[next.key] = cardKey;
+      // The replaced card unmounts, perhaps mid-restore; left unsettled, its
+      // saved column would bring the old effort back on the next reload.
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "model",
+        compareId: cardKey,
+      });
       setCompareSelections(next.selections);
       // A new effort is a new comparison key; the phone switcher follows
       // the card rather than falling back to the first one.
@@ -4926,7 +4948,7 @@ export function PlaygroundMain({
         current === `model:${cardKey}` ? `model:${next.key}` : current,
       );
     },
-    [compareCards, setCompareSelections],
+    [compareCards, convexProjectId, setCompareSelections],
   );
 
   // Efforts in the model menu: a model and its effort in one pick; in
@@ -6591,6 +6613,7 @@ export function PlaygroundMain({
           {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
           {showFullscreenChatOverlay && (
             <FullscreenChatOverlay
+              contextAttachments={sharedChatInputProps.contextAttachments}
               chatSessionId={chatSessionId}
               messages={messages}
               open={isFullscreenChatOpen}
@@ -6715,6 +6738,7 @@ export function PlaygroundMain({
           // The chat fullscreen's floating composer, over the global App.
           // Messages go to the current chat.
           <FullscreenChatOverlay
+            contextAttachments={sharedChatInputProps.contextAttachments}
             contained
             chatSessionId={chatSessionId}
             messages={messages}
@@ -6734,6 +6758,16 @@ export function PlaygroundMain({
               setIsTakeoverChatOpen(true);
               void performComposerSubmit();
             }}
+          />
+        ) : null}
+        {hasExtensionProvider && globalTakeoverOpen ? (
+          <TakeoverFormSlot
+            chatWorkspaceId={extensionScope?.pluginWorkspace.workspaceId}
+            globalWorkspaceId={
+              extensionIdentity
+                ? globalOwnerWorkspace(extensionIdentity).workspaceId
+                : undefined
+            }
           />
         ) : null}
         {showLoadingOverlay && (
@@ -7407,6 +7441,7 @@ export function PlaygroundMain({
       />
       {/* Hosted MRTR (§12.5): a suspended `input_required` round. Durable, so
           it outlives its turn — answering it re-drives the chat turn. */}
+      <MrtrElicitationHost />
       <HostedMrtrHost />
     </WidgetSurfaceProvider>
   );

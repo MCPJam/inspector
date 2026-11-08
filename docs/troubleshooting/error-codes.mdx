@@ -388,7 +388,8 @@ This is not `UNAUTHORIZED`. `UNAUTHORIZED` means your MCPJam API key is missing 
 **Next steps**
 - Sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`. Add `--scopes` with the scope the challenge names, if any.
 - Through the public API, store the tokens with `POST .../oauth/import-tokens`, then call again. See [Public API](/reference/public-api#errors).
-- In the inspector, run the call from the **Tools** tab and use the **Connect** card. See [Mid-session sign-in](/inspector/lazy-authentication).
+- In the inspector, if the server asked when connecting, use **Reconnect** on its card in the **Servers** tab to run the OAuth flow. See [Connecting servers](/inspector/connecting-servers).
+- If it asked on one call, run that call from the **Tools** tab and use the **Connect** card. See [Mid-session sign-in](/inspector/lazy-authentication).
 
 ### Forbidden 403
 
