@@ -1750,14 +1750,12 @@ async function handleTurn(c: Context): Promise<Response> {
         // The credential check `runHarnessTurn` would fail, run BEFORE the box
         // is booted: a refused turn must not pay for a box, nor fail past
         // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check — this surface hands the harness no
-        // materialized secrets, so only a brokered key can satisfy it.
+        // inputs as the turn's own check.
         const credentialRefusal = await playgroundCredentialRefusal({
           harnessId: engine.harness,
-          secretEnv: undefined,
           bearer: authHeader,
           projectId,
-          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+          signal: abortController.signal,
         });
         if (credentialRefusal) {
           return v1Error(c, "CONFLICT", credentialRefusal, {

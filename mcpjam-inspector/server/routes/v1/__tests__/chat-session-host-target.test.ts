@@ -694,7 +694,7 @@ describe("a harness that signs in with the member's own account", () => {
       environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
     );
     playgroundCredentialRefusalMock.mockResolvedValue(
-      "The Cursor harness found a brokered CURSOR_API_KEY project secret, but the environment this run uses does not select it.",
+      "Ask an org admin to add a Cursor key in Organization → AI providers.",
     );
 
     const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
@@ -706,11 +706,7 @@ describe("a harness that signs in with the member's own account", () => {
     // The session's own environment is the grant: nothing hidden is minted.
     expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
     expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        harnessId: "cursor",
-        projectId: PROJECT,
-        environmentId: ENVIRONMENT,
-      }),
+      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
     );
     expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
@@ -731,7 +727,7 @@ describe("a harness that signs in with the member's own account", () => {
       }),
     );
     expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: "env_hidden" }),
+      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
     );
     expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
       expect.objectContaining({

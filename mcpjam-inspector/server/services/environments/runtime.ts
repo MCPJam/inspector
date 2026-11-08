@@ -30,6 +30,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
+import { ORG_KEY_MISSING_MESSAGE } from "../../utils/harness/external-account-credentials.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */
@@ -217,6 +218,13 @@ export function translateEnvironmentRuntimeError(
         ...(data?.details?.hostId ? { hostId: data.details.hostId } : {}),
       },
     );
+  }
+  if (code === "cursor_key_missing") {
+    // Turn preparation refuses a harness whose org key isn't ready before the
+    // turn's own key check runs: the member reads the same refusal either way.
+    return new WebRouteError(409, ErrorCode.CONFLICT, ORG_KEY_MISSING_MESSAGE, {
+      reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+    });
   }
   if (code && code.startsWith("ENV_")) {
     if (RUNTIME_NOT_FOUND_CODES.has(code)) {

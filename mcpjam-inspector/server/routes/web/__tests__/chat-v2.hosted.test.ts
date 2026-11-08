@@ -2187,8 +2187,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           harnessId: "cursor",
         })
       );
+      // The org key's readiness, which no environment decides.
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentId: "env_hidden" })
+        expect.objectContaining({ harnessId: "cursor", projectId: "project-1" })
       );
       expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
         expect.objectContaining({ projectEnvironmentId: "env_hidden" })

@@ -21,6 +21,7 @@ export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
+import { cursorCredentialCleanupCommand } from "./runtime-credential-files.js";
 export {
   CURSOR_CLI_CHECKSUMS,
   CURSOR_CLI_VERSION,
@@ -505,6 +506,12 @@ type HarnessRuntimeAdapterBase = {
    * failed run.
    */
   runtimeVersionCommand?(sessionWorkDir: string): string;
+  /**
+   * Shell command that removes the files where the CLI keeps vendor tokens it
+   * exchanged for its key, given the session workdir. Run at every turn end
+   * (`runtime-credential-files.ts`); absent for runtimes that keep none.
+   */
+  runtimeCredentialCleanupCommand?(sessionWorkDir: string): string;
 };
 
 /** Base args every adapter's `createHarness` receives. (The per-adapter
@@ -1160,10 +1167,10 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // throws if anything asks it for one.
   modelAccess: HARNESS_DESCRIPTORS["cursor"].modelAccess,
   // The name the CLI itself reads — `@ai-sdk/harness-cursor` declares exactly
-  // this as its `credentialEnv`. Delivered as a PROJECT SECRET: one key per
-  // environment, set once by an admin under Project Settings → Secrets.
-  // Missing ⇒ the turn is refused up front with copy that says so, never
-  // defaulted.
+  // this as its `credentialEnv`. The ORGANIZATION's key, added once by an org
+  // admin under Organization → AI providers; the box gets a placeholder and
+  // the backend's egress injects the key. No ready key ⇒ the turn is refused
+  // up front, never defaulted.
   externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
   // …and it can be BROKERED, which is the preferred delivery and the only
   // one hosted evals and swarms accept at all (they refuse an environment that
@@ -1296,6 +1303,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     `'${shellSingleQuote(
       sessionWorkDir,
     )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
+  // The CLI writes the access and refresh tokens it exchanges for the org's
+  // key to `auth.json`; they leave the box at every turn end.
+  runtimeCredentialCleanupCommand: cursorCredentialCleanupCommand,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
     return pinCursorHarnessBootstrap(
