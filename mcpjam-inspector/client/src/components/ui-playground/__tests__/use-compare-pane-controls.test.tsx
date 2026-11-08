@@ -8,6 +8,7 @@ import {
   resolvePlaygroundClientColumn,
   type PlaygroundClientResolution,
 } from "@/lib/playground-client-columns";
+import { resolveEnvironmentPaneColumn } from "@/lib/compare-environment-columns";
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
 import type { ComparePaneTargetOption } from "../compare-pane-target-select";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
@@ -145,6 +146,30 @@ function spies() {
 describe("Compare pane settings", () => {
   beforeEach(() => {
     useComparePaneStore.setState({ panes: [], selectedPaneId: null });
+  });
+
+  it.each([false, undefined])("offers only clients for a hidden saved pane (%s)", async (visible) => {
+    const pane: RecoveryPane = {
+      paneId: "restored",
+      target: { kind: "environment", environmentId: "private" },
+    };
+    const environment = { environmentId: "private", visible, preview: null, isLoading: false, error: null };
+    const resolution = resolveEnvironmentPaneColumn({
+      paneId: pane.paneId, environment, slot: undefined, hosts: [], models: catalog,
+    });
+    expect(resolution.status).toBe(visible === false ? "unavailable" : "loading");
+    expect(resolution.status !== "ready" && resolution.reason).not.toMatch(/environment/i);
+    const user = userEvent.setup();
+    render(<Harness paneId={pane.paneId} spies={spies()} lineup={[panes[0], pane]}
+      lineupResolutions={[resolutions[0], resolution]} paneEnvironments={new Map([[pane.paneId, environment]])} />);
+    await user.click(screen.getByRole("button", { name: "Pane settings for Saved setup" }));
+    const settings = screen.getByTestId("compare-pane-settings");
+    expect(settings).not.toHaveTextContent(/environment/i);
+    const select = within(settings).getByRole("combobox", { name: "What Saved setup runs" });
+    expect(select).toHaveTextContent("Choose a client");
+    await user.click(select);
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["codex", "cursor"]);
   });
 
   it("turns a server off for one pane only, and back to following the chat", async () => {

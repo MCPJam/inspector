@@ -49,17 +49,19 @@ export function resolveEnvironmentPaneColumn({
     hostId,
     targetKey: paneTargetKey({ kind: "environment", environmentId }),
     environmentId,
-    compareLabel: preview?.environment.name ?? "Environment",
+    compareLabel: visible ? (preview?.environment.name ?? "Environment") : "Saved setup",
   };
-  if (visible === undefined || environment.isLoading)
-    return { ...identity, status: "loading", reason: "Loading environment…" };
+  if (visible === undefined)
+    return { ...identity, status: "loading", reason: "Loading setup…" };
   if (!visible)
     return {
       ...identity,
       status: "unavailable",
       reason:
-        "Environments aren't available here. Choose a client in pane settings.",
+        "This setup is unavailable. Choose a client in pane settings.",
     };
+  if (environment.isLoading)
+    return { ...identity, status: "loading", reason: "Loading environment…" };
   if (environment.error || !preview)
     return {
       ...identity,

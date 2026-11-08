@@ -116,7 +116,7 @@ export function useCompareEnvironmentHandoff({
                         (option) =>
                           option.target.kind === "environment" &&
                           option.target.environmentId === target.environmentId,
-                      )?.label ?? "Environment",
+                      )?.label ?? "Saved setup",
                   },
                 ]
               : [],
