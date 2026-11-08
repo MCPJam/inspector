@@ -660,7 +660,8 @@ export async function getHarnessCredentialReadiness(args: {
     args.signal,
   );
   if (!result.ok) return result;
-  const { readiness } = result.value;
+  // A 2xx whose body is not JSON parses to null: an unexpected answer, not a crash.
+  const readiness = result.value?.readiness;
   return readiness === "ready" ||
     readiness === "missing" ||
     readiness === "invalid"
