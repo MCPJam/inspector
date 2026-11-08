@@ -38,6 +38,8 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import { startEarly } from "../../utils/early-start.js";
+import { assertConversationExecution } from "../../utils/harness/conversation-execution.js";
 
 export async function handleManagedChatTurn(
   c: Context,
@@ -184,6 +186,33 @@ export async function handleManagedChatTurn(
       validatedPageTools,
       validatedWidgetModelContext,
     } = connections;
+    // A conversation with an earlier reply is already bound to its runtime, so
+    // the binding check is a read: it runs while tools are prepared and is
+    // awaited where the stream is prepared. A new chat's first bind keeps its
+    // place after the box, so a turn refused before then pins no runtime.
+    const executionBinding = messages.some(
+      (message) => message.role === "assistant",
+    )
+      ? startEarly(() =>
+          assertConversationExecution({
+            mcpClientManager: manager,
+            projectId: hostedBody.projectId,
+            chatSessionId: body.chatSessionId,
+            origin: scenarioId ? "scenario" : "playground",
+            executionBindingVersion: resolvedExecution.executionBindingVersion,
+            scenarioId,
+            executionScope,
+            ...(resolvedExecution.harness
+              ? {
+                  harness: resolvedExecution.harness,
+                  agentLoop: resolvedExecution.agentLoop,
+                }
+              : {}),
+            authHeader: c.req.header("authorization"),
+            signal: c.req.raw.signal as AbortSignal | undefined,
+          }),
+        )
+      : undefined;
     const tools = await prepareManagedTools({
       c,
       rawBody,
@@ -676,6 +705,7 @@ export async function handleManagedChatTurn(
         },
         runtime: {
           turnAuthorization,
+          ...(executionBinding ? { executionBinding } : {}),
           authHeader: c.req.header("authorization"),
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,

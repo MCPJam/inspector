@@ -1,4 +1,5 @@
 import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
@@ -574,6 +575,8 @@ export interface WebChatTurnPrepareInputs {
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
   turnAuthorization?: TurnAuthorization;
+  /** The execution-binding check, when the route already started it. */
+  executionBinding?: EarlyStart<void>;
   localScopeStepUp?: {
     bindingKey: string;
     resumeRequest?: ScopeStepUpResumeRequest;
@@ -1198,7 +1201,8 @@ export async function streamChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
-  await assertConversationExecution({
+  if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
+  else await assertConversationExecution({
     mcpClientManager: manager,
     projectId: persist.projectId, chatSessionId: hostedChatSessionId,
     origin: persist.scenarioId ? "scenario" : "playground",
