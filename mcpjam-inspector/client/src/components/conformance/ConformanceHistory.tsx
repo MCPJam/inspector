@@ -38,6 +38,7 @@ import {
   type HistorySort,
 } from "./ConformanceHistoryFilters";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
+import { conformanceRunTargetName } from "./conformance-run-target";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -188,8 +189,7 @@ export function ConformanceHistory({
   }, [readAll, page]);
 
   const serverLabel = (run: ConformanceRunListItem) =>
-    (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
-    run.targetKey.replace(/^server:/, "");
+    conformanceRunTargetName(run, serverNames);
 
   const changeServerFilter = (next: string | null) => {
     if (next === serverFilter) return;
@@ -427,8 +427,7 @@ export function ConformanceRunDetailPage({
   const savedServerName = detail.serverId
     ? serverNames?.get(detail.serverId)
     : undefined;
-  const serverName =
-    savedServerName ?? detail.targetKey.replace(/^server:/, "");
+  const serverName = conformanceRunTargetName(detail, serverNames);
   const finished = detail.status === "completed";
 
   if (settingsOpen && savedServerName && serverSettings) {
