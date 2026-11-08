@@ -7076,7 +7076,7 @@ export default function App() {
                 isOpeningPlayground={isOpeningFirstRunPlayground}
                 onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
                 onSkip={dismissFirstRunOverlay}
-                guestSessionRefused={Boolean(guestSessionRefusal)}
+                guestSessionRefusal={guestSessionRefusal?.reason ?? null}
                 organizationId={activeOrganizationId}
                 isSignedIn={Boolean(workOsUser)}
                 onSignIn={() => {

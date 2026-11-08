@@ -1,4 +1,6 @@
 import { reportCaught } from "@/lib/error-reporting";
+import { useHarnessApprovalStop } from "./use-harness-approval-stop";
+import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
 import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
@@ -1032,6 +1034,7 @@ export interface UseChatSessionReturn {
 
   // Computed state for UI
   isStreaming: boolean;
+  canStopApproval: boolean;
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
@@ -6837,7 +6840,18 @@ export function useChatSession(
    * the rail is withdrawn with it. (Stream END is deliberately NOT a trigger —
    * a suspended operation's stream always ends while its round is pending.)
    */
+  const { canStopApproval, stopApproval } = useHarnessApprovalStop({
+    owner: isHostedTransport && isAuthenticated && hostedProjectId && isHarness(harnessId) && !hostedScenarioId
+      ? { projectId: hostedProjectId, harnessId, chatSessionId }
+      : null,
+    messages,
+    setMessages,
+  });
   const stopChat = useCallback(() => {
+    if (status === "ready" && canStopApproval) {
+      void stopApproval();
+      return;
+    }
     turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
     setHarnessStartupPhase(null);
@@ -6846,7 +6860,7 @@ export function useChatSession(
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop, savedClientSendGuard, sendPreparationGuard]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval]);
 
   const submitBlocked =
     disableForAuthentication ||
@@ -6888,6 +6902,7 @@ export function useChatSession(
     rewindToMessage,
     sendMessage,
     stop: stopChat,
+    canStopApproval,
     status,
     error,
     autoResumeNotice,

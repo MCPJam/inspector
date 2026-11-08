@@ -155,6 +155,17 @@ describe("the OpenCode adapter", () => {
     });
   });
 
+  it("keeps host-tool requests open while a human decides an approval", () => {
+    vi.mocked(createOpenCode).mockClear();
+    createOpenCodeHarness({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: buildBrokerDummyAuth("opencode", "https://broker.example"),
+    });
+    expect(
+      vi.mocked(createOpenCode).mock.lastCall?.[0]?.openCodeConfig,
+    ).toMatchObject({ experimental: { mcp_timeout: 30 * 60 * 1000 } });
+  });
+
   it("maps Gateway and native Anthropic ids onto OpenCode's hyphenated spelling", () => {
     expect(toOpenCodeModel("anthropic/claude-haiku-4.5")).toBe(
       "anthropic/claude-haiku-4-5",
