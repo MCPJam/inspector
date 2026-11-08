@@ -17,6 +17,7 @@ import { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import {
   HARNESS_BAKED_BOOTSTRAP_DIRS,
+  HARNESS_STATE_DIRECTORY_NAME,
   HARNESS_TEMPLATE_NODE_VERSION,
   HARNESS_TEMPLATE_PNPM_VERSION,
   harnessPnpmGuardCommand,
@@ -223,7 +224,9 @@ describe("harnessRecipeIdentity", () => {
       const harness = hostedHarnesses()[id];
       const recipe = await harness.getBootstrap();
       const seen = await frameworkMarkerIdentity(harness);
-      expect(seen.bootstrapDir).toBe(recipe.bootstrapDir);
+      expect(seen.bootstrapDir).toBe(
+        `${HARNESS_STATE_DIRECTORY_NAME}/${recipe.bootstrapDir}`,
+      );
       expect(harnessRecipeIdentity(recipe)).toBe(seen.identity);
     },
   );
@@ -535,7 +538,9 @@ describe("the generated bake context", () => {
       cursor: HARNESS_PINNED_VERSIONS.cursor,
       opencode: HARNESS_PINNED_VERSIONS.opencode,
     });
-    expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
+    expect(manifest.bakeRoot).toBe(
+      "/home/user/.ai-sdk-harness/.harness-bootstrap",
+    );
     expect(manifest.runtimeUser).toBe("user");
   });
 
@@ -651,7 +656,7 @@ registerHooks({ resolve(specifier, context, next) {
     );
     expect(misplaced.status).toBe(1);
     expect(misplaced.stderr).toMatch(
-      /markers are only found at \/home\/user\/\.harness-bootstrap/,
+      /markers are only found at \/home\/user\/\.ai-sdk-harness\/\.harness-bootstrap/,
     );
 
     // Real path: `bake.mjs` locates itself through its module URL, which is

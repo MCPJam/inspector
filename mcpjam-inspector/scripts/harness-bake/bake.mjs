@@ -1,7 +1,7 @@
 // The in-image half of the harness bake. Runs ONCE, at image build time,
 // inside the computer template (mcpjam-backend `templates/computer/`) and the
 // hosted-harness CI test image, AS THE RUNTIME USER, from the directory the
-// bake context was copied into (`/home/user/.harness-bootstrap`).
+// bake context was copied into (`/home/user/.ai-sdk-harness/.harness-bootstrap`).
 //
 // What it does, for each recipe in `manifest.json`:
 //   1. checks every copied file against the digest the generator recorded —
@@ -53,13 +53,13 @@ if (manifest.schemaVersion !== 1) {
 }
 
 // ── Where, and as whom ──────────────────────────────────────────────────────
-// The framework resolves `.harness-bootstrap/<id>` against the box's working
-// directory, so a context copied anywhere else is a bake no turn will find.
+// The framework resolves `.harness-bootstrap/<id>` against `$HOME/.ai-sdk-harness`,
+// so a context copied anywhere else is a bake no turn will find.
 if (root !== manifest.bakeRoot) {
   fail(
     `the bake context is at ${root}, but markers are only found at ` +
       `${manifest.bakeRoot}. Copy the context's CONTENTS there ` +
-      "(`COPY harness-bake/ /home/user/.harness-bootstrap/`).",
+      "(`COPY harness-bake/ /home/user/.ai-sdk-harness/.harness-bootstrap/`).",
   );
 }
 // The runtime user, not root: a recipe installed by root is a directory the

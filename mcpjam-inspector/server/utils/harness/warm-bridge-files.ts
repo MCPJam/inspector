@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import type { HarnessV1, HarnessV1StartOptions } from "@ai-sdk/harness";
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1,
+  type HarnessV1StartOptions,
+} from "@ai-sdk/harness";
+import { resolveSandboxHomeDir } from "@ai-sdk/harness/utils";
 import { patchWarmClaudeQuery } from "./warm-claude-query.js";
 import { shellQuote } from "./shell-quote.js";
 import { processBirthIdentity, WARM_BRIDGE_WINDOW_MS } from "./warm-bridge.js";
@@ -133,7 +138,7 @@ export function fenceWarmBridgeSocket(source: string): string {
   for (const control of [
     'case "resume":',
     'case "destroy":',
-    'case "stop": {',
+    'case "stop":',
   ]) {
     if (!guarded.includes(control))
       throw new Error("The bridge ownership protocol changed.");
@@ -200,12 +205,18 @@ export function withWarmBridgeBootstrap<T extends HarnessV1>(runtime: T): T {
           const recipe = await target.getBootstrap?.({
             abortSignal: options.abortSignal,
           });
-          if (!recipe || !("defaultWorkingDirectory" in options.sandboxSession))
+          if (!recipe)
             throw new Error(
               "The hosted agent installation directory is unavailable.",
             );
+          const sandboxHomeDir = await resolveSandboxHomeDir({
+            sandbox: options.sandboxSession,
+            ...(options.abortSignal
+              ? { abortSignal: options.abortSignal }
+              : {}),
+          });
           const directory = posix.resolve(
-            options.sandboxSession.defaultWorkingDirectory,
+            harnessStateDirectoryPath({ sandboxHomeDir }),
             recipe.bootstrapDir,
           );
           return target.doStart({

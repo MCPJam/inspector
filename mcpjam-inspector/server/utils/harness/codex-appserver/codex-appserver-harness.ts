@@ -24,6 +24,8 @@
  */
 import {
   HarnessCapabilityUnsupportedError,
+  harnessSessionDataDirectoryPath,
+  harnessStateDirectoryPath,
   harnessV1DiagnosticFromBridgeFrame,
   type HarnessV1,
   type HarnessV1ContinueTurnState,
@@ -334,10 +336,10 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
        * WHERE THINGS LIVE — mirroring the published adapter, because the
        * framework and the local provider both assume this layout:
        *
-       *  - the bootstrap recipe is applied by the FRAMEWORK under the session's
-       *    DEFAULT working directory, so that is where `bridge.mjs` is;
+       *  - the bootstrap recipe is applied by the FRAMEWORK under
+       *    `$HOME/.ai-sdk-harness`, so that is where `bridge.mjs` is;
        *  - bridge and Codex state go under
-       *    `<defaultWorkingDirectory>/.agent-runs/<sessionId>`, which on a
+       *    `$HOME/.ai-sdk-harness/.agent-runs/<sessionId>`, which on a
        *    cloud box is the box and on a user's machine is session-owned state;
        *  - only the agent's cwd is `sessionWorkDir` — which locally is the
        *    user's checkout, and must never receive Codex's state or rollouts.
@@ -356,11 +358,15 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
       const sandboxHomeDir = await resolveSandboxHomeDir({
         sandbox: toolSafeSandboxSession,
       });
+      const stateDirectory = harnessStateDirectoryPath({ sandboxHomeDir });
       const bootstrapDir = posix.resolve(
-        defaultWorkingDirectory,
+        stateDirectory,
         runtime.bootstrapDir,
       );
-      const sessionDataDir = `${defaultWorkingDirectory}/.agent-runs/${startOpts.sessionId}`;
+      const sessionDataDir = harnessSessionDataDirectoryPath({
+        stateDirectory,
+        sessionId: startOpts.sessionId,
+      });
       const bridgeStateDir = `${sessionDataDir}/bridge`;
       const timeoutMs = settings.startupTimeoutMs ?? 120_000;
 

@@ -7,14 +7,14 @@
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
         "ownedInput": true,
-        "runtimeVersion": "2.1.245"
+        "runtimeVersion": "2.1.290"
       },
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
-      "pinnedRuntimeVersion": "2.1.245",
+      "pinnedRuntimeVersion": "2.1.290",
       "promptImageInput": false,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.claude/skills",
@@ -57,7 +57,7 @@
       },
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "2.1.245"
+      "runtimeVersion": "2.1.290"
     },
     "qualifiedDiscovery": [
       "forwarded-bridge",

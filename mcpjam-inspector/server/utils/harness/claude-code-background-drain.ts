@@ -1,7 +1,7 @@
 /**
  * Group D: background drain for the Claude Code bridge.
  *
- * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.121`,
+ * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.162`,
  * `dist/bridge/index.mjs`) ends every turn at the CLI's FIRST `result`: two
  * `break`s, then `queryInput.close()` and `q.return()` in its `finally`. That
  * kills any work the model sent to the background. A subagent started with
@@ -92,7 +92,7 @@
  * in the background there and the drain never engages; the one exception is
  * the `Workflow` tool, which the CLI always runs in the background.
  *
- * Every needle is quoted VERBATIM from 1.0.121, except the Group B result
+ * Every needle is quoted VERBATIM from 1.0.162, except the Group B result
  * fallback (this module's own earlier output). None of them touches the
  * regex anchors of the hosted typed-errors patch
  * (`claude-code-typed-errors.ts`); `registry.test.ts` pins that the hosted
@@ -672,21 +672,25 @@ const REPLACEMENTS: readonly Replacement[] = [
   // listener, so an abort during setup finds it unset, never uninitialized.
   [
     `  const onHostAbort = () => {
-    if (gracefulAbort) {`,
+    if (gracefulAbort) gracefulAbort();
+    else abortCtl.abort();
+  };`,
     `  let mcpjamDrainController;
   const onHostAbort = () => {
     if (mcpjamDrainController?.waiting) {
       mcpjamDrainController.stop("stopped");
       return;
     }
-    if (gracefulAbort) {`,
+    if (gracefulAbort) gracefulAbort();
+    else abortCtl.abort();
+  };`,
   ],
   // The drain state, and the uuid this turn's prompt is sent with.
   [
     `  const streamEventState = createClaudeStreamEventState();`,
     `  const streamEventState = createClaudeStreamEventState();
   const mcpjamDrainState = mcpjamCreateBackgroundDrainState({
-    promptUuid: randomUUID3(),
+    promptUuid: randomUUID(),
     turnStartedAt: Date.now()
   });
   streamEventState.mcpjamDrain = mcpjamDrainState;`,
@@ -699,17 +703,12 @@ const REPLACEMENTS: readonly Replacement[] = [
     initialMessageId: mcpjamDrainState.promptUuid,`,
   ],
   [
-    `function createQueryInput({
-  initialUserMessage,`,
-    `function createQueryInput({
-  initialUserMessage,
-  initialMessageId,`,
+    `function createQueryInput({ initialUserMessage, userMessages, abortSignal }) {`,
+    `function createQueryInput({ initialUserMessage, userMessages, abortSignal, initialMessageId: initialMessageIdOption }) {`,
   ],
   [
-    `                  text: initialUserMessage,
-                  messageId: randomUUID3()`,
-    `                  text: initialUserMessage,
-                  messageId: initialMessageId ?? randomUUID3()`,
+    `  const initialMessageId = randomUUID();`,
+    `  const initialMessageId = initialMessageIdOption ?? randomUUID();`,
   ],
   // The host's socket closing mid-turn, or reattaching to resume it.
   [
@@ -721,12 +720,14 @@ const REPLACEMENTS: readonly Replacement[] = [
   ],
   [
     `    ws.on("close", () => {
-      if (activeSocket === ws) {
-        activeSocket = void 0;`,
+      if (activeSocket === ws) activeSocket = void 0;
+    });`,
     `    ws.on("close", () => {
       if (activeSocket === ws) {
         activeSocket = void 0;
-        mcpjamHostPresence.onDetach?.();`,
+        mcpjamHostPresence.onDetach?.();
+      }
+    });`,
   ],
   // The controller (timers, notices, approvals). `q` is read lazily.
   [
@@ -754,8 +755,8 @@ const REPLACEMENTS: readonly Replacement[] = [
       input.approvalRequestedToolUseIds.add(approvalId);`,
   ],
   [
-    `      const decision = await input.turn.requestToolApproval(approvalId);`,
-    `      const decision = await (input.mcpjamRequestToolApproval ? input.mcpjamRequestToolApproval(approvalId) : input.turn.requestToolApproval(approvalId));`,
+    `      const decisionPromise = input.turn.requestToolApproval(approvalId);`,
+    `      const decisionPromise = (input.mcpjamRequestToolApproval ? input.mcpjamRequestToolApproval(approvalId) : input.turn.requestToolApproval(approvalId));`,
   ],
   [
     `  const permissionOptions = createPermissionOptions({
@@ -779,12 +780,8 @@ const REPLACEMENTS: readonly Replacement[] = [
     }
     streamEventState.observedTerminalError = normalized;`,
   ],
-  // `total_cost_usd` is cumulative per CLI process: take the latest.
-  [
-    `            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;`,
-    `            totalCostUsd = msg.total_cost_usd;`,
-  ],
   // Observe every message; a stale result is forwarded as nothing.
+  // 1.0.162 already assigns the latest `total_cost_usd` (it is cumulative).
   [
     `      emitStreamEvent(msg);
       if (type === "result") {`,
@@ -816,16 +813,18 @@ const REPLACEMENTS: readonly Replacement[] = [
   // A drain the bridge stopped itself (cap, Stop, a downgraded error) falls
   // through to the normal `finish`.
   [
-    `    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-      turn.emitError({ error: err, message: "claude-code turn failed" });
-    }
+    `    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+      error: err,
+      message: "claude-code turn failed"
+    });
     return;
   } finally {
     gracefulAbort = void 0;`,
     `    if (!mcpjamDrainController.stopped) {
-      if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-        turn.emitError({ error: err, message: "claude-code turn failed" });
-      }
+      if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+        error: err,
+        message: "claude-code turn failed"
+      });
       return;
     }
   } finally {
@@ -839,10 +838,6 @@ const REPLACEMENTS: readonly Replacement[] = [
     `    if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
       if (state.mcpjamDrain && mcpjamDrainIsBackgroundTask(state.mcpjamDrain, msg.task_id)) return;
       emitTerminalError(msg.patch.error);`,
-  ],
-  [
-    `    if (type === "user" && msg.message?.content) {`,
-    `    if (type === "user" && Array.isArray(msg.message?.content)) {`,
   ],
   // Group B's result fallback (this module's own earlier output): a follow-up
   // answer that is not streamed must not be suppressed by turn 1's stream.
@@ -871,7 +866,7 @@ export const CLAUDE_CODE_BACKGROUND_DRAIN_NEEDLES: readonly string[] =
  */
 export function patchClaudeCodeBackgroundDrain(content: string): string {
   if (content.includes(CLAUDE_CODE_BACKGROUND_DRAIN_MARKER)) return content;
-  let patched = content;
+  let patched = content.replaceAll("\t", "  ");
   for (const [needle, replacement] of REPLACEMENTS) {
     const at = patched.indexOf(needle);
     if (at < 0 || patched.indexOf(needle, at + needle.length) >= 0) {

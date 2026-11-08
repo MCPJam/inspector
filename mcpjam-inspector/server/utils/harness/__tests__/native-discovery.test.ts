@@ -80,6 +80,7 @@ describe("native discovery admission", () => {
   it.each([
     { harnessId: "codex", runtimeVersion: "0.163.0", modelId: "openai/gpt-5.5", adapterVersion: "native-mcp-v1" },
     { harnessId: "claude-code", runtimeVersion: "2.1.245", modelId: "anthropic/claude-haiku-4.5", adapterVersion: "tool-search-auto-v1" },
+    { harnessId: "claude-code", runtimeVersion: "2.1.290", modelId: "anthropic/claude-haiku-4.5", adapterVersion: "tool-search-auto-v1" },
   ])("admits the observed retained route for $harnessId", ({ harnessId, ...version }) => {
     expect(() => assertNativeDiscovery({
       required: true, harnessId, route: { ...route, ...version, delivery: "host-tools" },

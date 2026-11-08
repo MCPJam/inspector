@@ -36,7 +36,7 @@ describe("native profile admission", () => {
     } })).toEqual([]);
   });
   it("requires new elicitation qualification when the installed runtime pin changes", () => {
-    expect(harnessPinnedVersion("claude-code")).toBe("2.1.245");
+    expect(harnessPinnedVersion("claude-code")).toBe("2.1.290");
   });
   const formConfig = () => ({
     url: "https://mcp.example/mcp",

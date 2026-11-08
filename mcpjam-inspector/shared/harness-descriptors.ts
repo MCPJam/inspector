@@ -109,7 +109,7 @@ const LOOP_CONTROLS: Record<
 /** Runtime facts shared by the adapters, admission gates and client controls. */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
-    displayName: "Claude Code", runtimeVersion: "2.1.245", mcpClient: "harness",
+    displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
     modelAccess: "broker", local: true, guest: true,
     orgUpstream: { provider: "anthropic", profile: "anthropic-native" },
     protocol: "anthropic-messages", credential: null,
