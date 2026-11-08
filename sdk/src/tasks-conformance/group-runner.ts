@@ -10,7 +10,10 @@ import {
   AUTHORIZATION_REQUIRED_MESSAGE,
   isAuthorizationRefusal,
 } from "../conformance-authorization.js";
-import { getNumericStatus } from "../mcp-client-manager/errors.js";
+import {
+  extractAuthChallenge,
+  getNumericStatus,
+} from "../mcp-client-manager/errors.js";
 import {
   credentialsFromServerConfig,
   loginRequiredDetails,
@@ -193,7 +196,11 @@ export class TaskGroupRunner extends TaskOperations {
           ): MCPTasksCheckResult | undefined =>
             creationResult instanceof Error &&
             (isAuthorizationRefusal(creationResult) ||
-              getNumericStatus(creationResult) === 401)
+              getNumericStatus(creationResult) === 401 ||
+              // An auth-provider 401 can arrive as a bare UnauthorizedError;
+              // its recorded challenge, not its name, says it was a 401 and
+              // not a 403 insufficient-scope.
+              extractAuthChallenge(creationResult)?.source === "http_401")
               ? couldNotRun(
                   id,
                   AUTHORIZATION_REQUIRED_MESSAGE,

@@ -1135,6 +1135,31 @@ describe("MCPTasksConformanceTest", () => {
     }
   });
 
+  it("tells a recorded 401 challenge from a 403 on the task call", async () => {
+    const withChallenge = (source: string) =>
+      extensionManager({
+        executeTool: async () => {
+          throw Object.assign(new Error("Unauthorized"), {
+            name: "UnauthorizedError",
+            authChallenge: { source, facets: { challengeHeader: "bearer" } },
+          });
+        },
+      });
+
+    const unauthorized = await runAgainst(withChallenge("http_401"), {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+    const ttl401 = unauthorized.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl401)).toBe("login");
+
+    const forbidden = await runAgainst(
+      withChallenge("http_403_insufficient_scope"),
+      { config: { toolName: "long_job", pollTimeoutMs: 500 } }
+    );
+    const ttl403 = forbidden.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl403)).toBeUndefined();
+  });
+
   it("keeps a failing call on args that fit as the server's to answer for", async () => {
     const broken = Object.assign(new Error("Internal error"), { code: -32603 });
     const manager = extensionManager({
