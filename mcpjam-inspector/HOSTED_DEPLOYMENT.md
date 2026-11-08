@@ -211,6 +211,14 @@ without dialling anything, the server stops checking the platform worker URL
 at boot, and the app hides the agent's entry points. Any other value, or none,
 keeps the agent.
 
+The setting does not cover the headless agent in the public API
+(`POST /api/v1/projects/:projectId/agent`, the Slack bot's turn endpoint).
+Wherever `CONVEX_HTTP_URL` is set, each of its turns still checks the docs MCP
+server at `MCPJAM_DOCS_MCP_URL`, `https://docs.mcpjam.com/mcp` by default, and
+carries on without docs when that server does not answer. To keep those turns
+off the public docs server, set `MCPJAM_DOCS_MCP_URL` to one the deployment
+can reach.
+
 ## Organization-derived confidential CIMD (disabled by default)
 
 Hosted confidential CIMD is disabled unless `XAA_CIMD_ORG_MASTER_KEY` is set.
