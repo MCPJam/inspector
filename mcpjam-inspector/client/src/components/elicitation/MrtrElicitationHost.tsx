@@ -1,3 +1,4 @@
+import { MANUAL_PLUGIN_FORM_PROFILE } from "@/shared/plugin-extensions/manual-form";
 import {
   useCallback,
   useEffect,
@@ -216,6 +217,7 @@ export function MrtrElicitationHost() {
         ...(serverId ? { serverId } : {}),
       }}
       loading={responding}
+      pluginForm={current.pluginForm ? { profile: MANUAL_PLUGIN_FORM_PROFILE } : undefined}
       onResponse={async (action, parameters) =>
         recordAnswer(current.key, {
           action,
