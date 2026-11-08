@@ -14,6 +14,7 @@ import type {
 } from "@/shared/eval-trace";
 import { isModelFree, type PromptTurn, type TestStep } from "@/shared/steps";
 import type { UsageTotals } from "./types";
+import type { EvalTraceModelSource } from "./persist-eval-trace.js";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
@@ -141,6 +142,8 @@ export type SuiteRunRecorder = {
     messages: ModelMessage[];
     /** Effective model used by the iteration; persisted on the eval session. */
     modelId?: string;
+    /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+    modelSource?: EvalTraceModelSource;
     spans?: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /** Each harness turn's MCP route, by promptIndex. Pass-through. */
