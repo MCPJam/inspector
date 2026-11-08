@@ -89,6 +89,10 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
     setStopFailed(false);
     try {
       await convex.mutation(cancelActiveMutation, { ...owner, requestId });
+      const cancelled = await convex.query(cancelledQuery, owner);
+      if (currentOwner.current === ownerKey) {
+        setMessages((current) => closeCancelledHarnessApprovals(current, cancelled));
+      }
     } catch (error) {
       if (currentOwner.current === ownerKey) setStopFailed(true);
       reportCaught(error, { source: "harness_stop_active_turn" });
