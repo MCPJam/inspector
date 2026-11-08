@@ -299,6 +299,11 @@ const mockUseChatSession = {
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
   setMultiModelEnabled: vi.fn(),
+  // The root session's catalog before its harness filter; the mock has no
+  // filter, so it is the same list (and follows per-test overrides).
+  get catalogModels() {
+    return this.availableModels;
+  },
   availableModels: [
     {
       id: "openai/gpt-5-mini",
@@ -1455,9 +1460,12 @@ describe("PlaygroundMain — multi-host render path", () => {
   // has one local controller, for the previewed host's harness, so only the
   // columns running THAT harness can take its target.
   function seedClaudeCodeAndCodexGrid(previewed: "h-cc" | "h-codex") {
+    // Each column resolves on its own harness, so the Claude Code client
+    // saves a model Claude Code runs.
     const claudeCode = makeHost("h-cc", "Claude Code", {
       hostStyle: "claude",
       harness: "claude-code",
+      modelId: "anthropic/claude-sonnet-4.5",
     } as Partial<HostConfigDtoV2>);
     const codex = makeHost("h-codex", "Codex", {
       hostStyle: "chatgpt",
@@ -1506,9 +1514,12 @@ describe("PlaygroundMain — multi-host render path", () => {
   // it, so a Claude Code column is not special-cased into running here.
   it("leaves every column non-local when local execution is not requested", () => {
     localHarnessFixture.requestedTarget = "hosted";
+    // Each column resolves on its own harness, so the Claude Code client
+    // saves a model Claude Code runs.
     const claudeCode = makeHost("h-cc", "Claude Code", {
       hostStyle: "claude",
       harness: "claude-code",
+      modelId: "anthropic/claude-sonnet-4.5",
     } as Partial<HostConfigDtoV2>);
     const codex = makeHost("h-codex", "Codex", {
       hostStyle: "chatgpt",

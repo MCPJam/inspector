@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import type { HostDetail } from "@/hooks/useClients";
 import type { ModelDefinition } from "@/shared/types";
 import { resolvePlaygroundClientColumn } from "../playground-client-columns";
+import { harnessPickerModels } from "../harness-model-locks";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 
 const hosted: ModelDefinition = {
   id: "openai/gpt-5",
@@ -130,5 +133,99 @@ describe("saved-client comparison resolution", () => {
         },
       }).status,
     ).toBe("invalid");
+  });
+});
+
+describe("each column reads the catalog through its own harness", () => {
+  // MCPJam-provided rows across vendors: what the authorized catalog holds
+  // before any client's harness filter.
+  const catalog: ModelDefinition[] = [
+    "anthropic/claude-haiku-4.5",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-5.5",
+    "openai/gpt-5-mini",
+    "openai/gpt-5.6-luna",
+    "google/gemini-2.5-pro",
+  ].map((id) => ({
+    id,
+    name: id,
+    provider: id.split("/")[0] as ModelDefinition["provider"],
+    hosted: true,
+  }));
+  const clientOn = (
+    harness: { harness?: string; agentLoop?: string },
+    modelId: string,
+  ): HostDetail => ({
+    hostId: `client-${harness.agentLoop ?? harness.harness}`,
+    name: "Client",
+    config: { ...config, modelId, ...harness } as HostDetail["config"],
+  });
+
+  for (const harnessId of HARNESS_IDS) {
+    it(`${harnessId}: resolves its saved model on its own list, not the lead's`, () => {
+      if (HARNESS_DESCRIPTORS[harnessId].modelAccess === "external-account") {
+        // Its account picks the model: the sentinel is what runs.
+        const auto = resolve(clientOn({ harness: harnessId }, "cursor/auto"), catalog);
+        expect(auto).toMatchObject({
+          status: "ready",
+          column: { compareSubLabel: "Cursor Auto", model: { id: "cursor/auto" } },
+        });
+        // A stale ordinary model is a broken setup the server refuses, never
+        // a ready column showing a model the account doesn't run. The picker
+        // falls back to the whole catalog for this harness, so it would find
+        // every row.
+        for (const row of catalog) {
+          expect(
+            resolve(clientOn({ harness: harnessId }, String(row.id)), catalog),
+          ).toMatchObject({
+            status: "invalid",
+            reason: "The saved model choice is invalid. Edit this client in Connect.",
+          });
+        }
+        return;
+      }
+      const admitted = harnessPickerModels(catalog, { harnessId });
+      const refused = catalog.filter(
+        (row) => !admitted.some((kept) => kept.id === row.id),
+      );
+      for (const row of admitted) {
+        expect(
+          resolve(clientOn({ harness: harnessId }, String(row.id)), catalog),
+        ).toMatchObject({ status: "ready", column: { model: { id: row.id } } });
+      }
+      for (const row of refused) {
+        expect(
+          resolve(clientOn({ harness: harnessId }, String(row.id)), catalog).status,
+        ).toBe("unavailable");
+      }
+    });
+  }
+
+  it("a Codex column keeps its model while a Claude Code client leads", () => {
+    // The reported bug: every column used to resolve against the lead's
+    // Claude Code list, which has no OpenAI rows.
+    const codex = clientOn({ harness: "codex" }, "openai/gpt-5.5");
+    const leadList = harnessPickerModels(catalog, { harnessId: "claude-code" });
+    expect(resolve(codex, leadList).status).toBe("unavailable");
+    expect(resolve(codex, catalog)).toMatchObject({
+      status: "ready",
+      column: { model: { id: "openai/gpt-5.5" } },
+    });
+  });
+
+  it("reads the agent loop before the harness", () => {
+    const viaLoop = clientOn({ agentLoop: "codex" }, "openai/gpt-5.5");
+    expect(resolve(viaLoop, catalog)).toMatchObject({ status: "ready" });
+    const refusedOnLoop = clientOn({ agentLoop: "codex" }, "anthropic/claude-haiku-4.5");
+    expect(resolve(refusedOnLoop, catalog).status).toBe("unavailable");
+  });
+
+  it("an emulated client resolves against the whole catalog", () => {
+    for (const row of catalog) {
+      expect(resolve(clientOn({}, String(row.id)), catalog)).toMatchObject({
+        status: "ready",
+        column: { model: { id: row.id } },
+      });
+    }
   });
 });

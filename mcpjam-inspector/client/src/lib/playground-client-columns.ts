@@ -7,6 +7,16 @@ import { findModelForStoredChoice } from "@/components/chat-v2/shared/model-sele
 import { clientDisplayName } from "@/lib/client-display-name";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import { snapshotFromHostConfig, type HostSnapshot } from "@/lib/host-snapshot";
+import { harnessPickerModels } from "@/lib/harness-model-locks";
+import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
+import {
+  effectiveHarnessId,
+  harnessAccountChoosesModel,
+} from "@/shared/harness-descriptors";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+
+const INVALID_CHOICE_REASON =
+  "The saved model choice is invalid. Edit this client in Connect.";
 
 export interface PlaygroundClientColumn {
   compareId: string;
@@ -30,7 +40,12 @@ export type PlaygroundClientResolution =
       model?: ModelDefinition;
     };
 
-/** Resolve only this client's saved settings; ambient composer state is not an input. */
+/**
+ * Resolve only this client's saved settings; ambient composer state is not an
+ * input. `models` is the authorized catalog BEFORE any harness filter: each
+ * client reads it through its own harness, so a Codex client never resolves
+ * against a Claude Code lead's list.
+ */
 export function resolvePlaygroundClientColumn({
   hostId,
   slot,
@@ -67,19 +82,30 @@ export function resolvePlaygroundClientColumn({
     selection.source !== "legacy" &&
     !validateModelSelection(selection).ok
   ) {
-    return {
-      ...identity,
-      status: "invalid",
-      reason: "The saved model choice is invalid. Edit this client in Connect.",
-    };
+    return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
   }
-  const model = findModelForStoredChoice(
-    { modelId: config.modelId, selection },
-    models,
-    orgConfig,
-    { exactSelection: !!selection && selection.source !== "legacy" },
-  );
-  if (!model || model.disabled)
+  const harnessId = effectiveHarnessId(config);
+  // The account picks the model (Cursor Auto): the sentinel is what runs.
+  // Any other saved id is a setup the server refuses, so the column blocks
+  // instead of showing a model the account never runs.
+  const accountChosen = harnessAccountChoosesModel(harnessId)
+    ? runtimeChosenModelRow(config.modelId)
+    : undefined;
+  if (harnessAccountChoosesModel(harnessId) && !accountChosen)
+    return { ...identity, status: "invalid", reason: INVALID_CHOICE_REASON };
+  const model =
+    accountChosen ??
+    findModelForStoredChoice(
+      { modelId: config.modelId, selection },
+      harnessPickerModels(
+        [...models],
+        harnessId ? { harnessId } : null,
+        { requireOrgKeys: orgRequiresOwnKeys(orgConfig) },
+      ),
+      orgConfig,
+      { exactSelection: !!selection && selection.source !== "legacy" },
+    );
+  if (!model || (model.disabled && !accountChosen))
     return {
       ...identity,
       status: "unavailable",

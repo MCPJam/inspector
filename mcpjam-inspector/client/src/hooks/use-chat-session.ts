@@ -167,10 +167,8 @@ import {
   useOutOfCreditsReason,
 } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
-import {
-  providerForModelId,
-  runtimeChosenModelSentinelName,
-} from "@/shared/model-provider";
+import { providerForModelId } from "@/shared/model-provider";
+import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import {
@@ -847,6 +845,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The authorized catalog before this session's harness filter. */
+  catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
   /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
    * 3h"), or null while the org can spend. */
@@ -1085,17 +1085,8 @@ function createLockedInitialModel(modelId: string): ModelDefinition {
   // the raw id under "Sign in to use MCPJam provided models" gets both halves
   // wrong: the label names a model nothing ran, and the reason names a wall
   // signing in would not lift.
-  const sentinelName = runtimeChosenModelSentinelName(modelId);
-  if (sentinelName) {
-    return {
-      id: modelId,
-      name: sentinelName,
-      provider: inferModelProviderFromId(modelId),
-      disabled: true,
-      disabledReason:
-        "This host's runtime chooses its own model on your own account.",
-    };
-  }
+  const sentinel = runtimeChosenModelRow(modelId);
+  if (sentinel) return sentinel;
   return {
     id: modelId,
     name: modelId,
@@ -6917,6 +6908,9 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    // The authorized catalog before this session's harness filter, so another
+    // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
+    catalogModels: composedModels,
     isMcpJamModel,
     outOfCreditsReason,
 

@@ -150,6 +150,22 @@ export const LOCAL_HARNESS_IDS = HARNESS_IDS.filter(
   (id): id is "claude-code" | "codex" => HARNESS_DESCRIPTORS[id].local,
 );
 
+/** The harness a client config runs: its agent loop when set, else its harness. */
+export function effectiveHarnessId(
+  config: { agentLoop?: string | null; harness?: string | null } | null | undefined,
+): string | null {
+  return config?.agentLoop ?? config?.harness ?? null;
+}
+
+/** A harness whose own account picks the model (Cursor CLI), so no catalog row is the model that runs. */
+export function harnessAccountChoosesModel(harnessId: string | null | undefined): boolean {
+  return (
+    !!harnessId &&
+    Object.hasOwn(HARNESS_DESCRIPTORS, harnessId) &&
+    HARNESS_DESCRIPTORS[harnessId as Harness].modelAccess === "external-account"
+  );
+}
+
 /** Missing/unknown selectors never gain MCPJam-owned extension authority. */
 export function usesMcpjamClient(input: { agentLoop?: string | null; harness?: string | null }): boolean {
   if (input.agentLoop && input.harness) return false;

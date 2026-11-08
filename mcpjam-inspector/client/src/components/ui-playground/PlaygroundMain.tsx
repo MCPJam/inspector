@@ -300,6 +300,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -1337,6 +1338,7 @@ export function PlaygroundMain({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    catalogModels,
     isAuthLoading,
     systemPrompt,
     setSystemPrompt,
@@ -2414,7 +2416,8 @@ export function PlaygroundMain({
               hostId,
               slot: hostSlots[index],
               hosts: hostList,
-              models: availableModels,
+              // Unfiltered: each column applies its own harness.
+              models: catalogModels,
               orgConfig: hostedOrgModelConfig,
             }),
           ),
@@ -2422,7 +2425,7 @@ export function PlaygroundMain({
       isMultiHostMode,
       selectedHostIds,
       hostList,
-      availableModels,
+      catalogModels,
       hostedOrgModelConfig,
       hostSlots[0].host,
       hostSlots[0].isLoading,
@@ -2634,7 +2637,7 @@ export function PlaygroundMain({
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
     for (const column of multiHostColumns) {
-      const columnHarness = (column.hostConfig?.agentLoop ?? column.hostConfig?.harness) ?? null;
+      const columnHarness = effectiveHarnessId(column.hostConfig);
       const columnInScope =
         isLocalHarnessScope({
           // This column's own host, not the previewed one.
