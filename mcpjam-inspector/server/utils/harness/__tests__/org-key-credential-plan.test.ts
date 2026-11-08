@@ -29,9 +29,9 @@ vi.mock("../../logger.js", () => ({
 import {
   EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER,
   ExternalAccountCredentialRefusal,
-  ORG_KEY_MISSING_MESSAGE,
   resolveOrgKeyCredentialPlan,
 } from "../external-account-credentials";
+import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 
 const CURSOR = {
   id: "cursor",

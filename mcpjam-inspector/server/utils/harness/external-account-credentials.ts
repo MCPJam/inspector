@@ -34,6 +34,7 @@
  * missing key: guessing "ready" would start a CLI whose credential never
  * arrives.
  */
+import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 import { getHarnessCredentialReadiness } from "../computers/control-plane-client.js";
 import { logger } from "../logger.js";
 
@@ -55,10 +56,6 @@ import { logger } from "../logger.js";
  *  unauthenticated turn. */
 export const EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER =
   "mcpjam-brokered-credential";
-
-/** What a member reads when the org has no usable Cursor key. */
-export const ORG_KEY_MISSING_MESSAGE =
-  "Ask an org admin to add a Cursor key in Organization → AI providers.";
 
 /** The adapter's auth environment for an org-key turn: placeholders only. */
 export type OrgKeyCredentialPlan = { auth: Record<string, string> };
