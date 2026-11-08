@@ -161,11 +161,22 @@ describe("openPreviewForNavigation", () => {
     let workspace: { sandboxId: string } | undefined;
     const attach = vi.fn(async () => ws.sandbox);
     const navigate = { kind: "navigate", url: "http://localhost:5173" };
-    expect(await openPreviewForNavigation({ action: navigate, workspace: () => workspace, handle: hosted, attach })).toBeUndefined();
+    expect(await openPreviewForNavigation({ action: navigate, workspace: () => workspace, handle: hosted, attach })).toEqual({ action: navigate });
     expect(attach).not.toHaveBeenCalled();
     workspace = { sandboxId: "ws1" };
-    expect(await openPreviewForNavigation({ action: navigate, workspace: () => workspace, handle: hosted, attach })).toBeUndefined();
+    expect(await openPreviewForNavigation({ action: navigate, workspace: () => workspace, handle: hosted, attach })).toEqual({ action: navigate });
     expect(attach).toHaveBeenCalledWith("ws1");
+  });
+
+  it("opens a 0.0.0.0 address as localhost, the name the relay answers", async () => {
+    const ws = fakeWorkspace({ running: { port: 40001, pid: 7, secret: "k".repeat(64) }, alive: true });
+    const preview = await openPreviewForNavigation({
+      action: { kind: "navigate", url: "http://0.0.0.0:8000/docs?q=1" },
+      workspace: { sandboxId: "ws1" },
+      handle: hosted,
+      attach: async () => ws.sandbox,
+    });
+    expect(preview).toEqual({ action: { kind: "navigate", url: "http://localhost:8000/docs?q=1" } });
   });
 
   it("does nothing for the local engine or a non-navigation", async () => {
@@ -178,13 +189,13 @@ describe("openPreviewForNavigation", () => {
 
   it("returns the refusal for the model instead of throwing", async () => {
     const ws = fakeWorkspace({ hasNode: false });
-    const message = await openPreviewForNavigation({
+    const preview = await openPreviewForNavigation({
       action: { kind: "navigate", url: "http://localhost:5173" },
       workspace: { sandboxId: "ws1" },
       handle: hosted,
       attach: async () => ws.sandbox,
     });
-    expect(message).toBe(new WorkspacePreviewError("no_node_runtime").message);
+    expect(preview).toEqual({ refusal: new WorkspacePreviewError("no_node_runtime").message });
   });
 });
 

@@ -1313,8 +1313,9 @@ export function buildBrowserTools(
       throw error;
     }
     lastBootId = handle.bootId;
-    const previewRefusal = await openPreviewForNavigation({ action, workspace: opts.previewWorkspace, handle });
-    if (previewRefusal) return { ok: false, error: previewRefusal, tabId: args.tabId ?? "@session" };
+    const preview = await openPreviewForNavigation({ action, workspace: opts.previewWorkspace, handle });
+    if ("refusal" in preview) return { ok: false, error: preview.refusal, tabId: args.tabId ?? "@session" };
+    action = preview.action;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState

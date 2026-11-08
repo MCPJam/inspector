@@ -293,37 +293,49 @@ export function personalComputerWorkspace(args: {
 }
 
 /**
- * Before a navigation leaves the inspector: open the workspace port it names.
- * Answers the model-facing refusal, or `undefined` to send the command as is.
+ * A server that logs its listen address prints `0.0.0.0`, and the relay
+ * answers only the loopback names a page can keep as its origin.
  */
-export async function openPreviewForNavigation(args: {
-  action: { kind: string; url?: string };
+function loopbackUrl(raw: string): string {
+  const url = new URL(raw);
+  if (url.hostname !== "0.0.0.0") return raw;
+  url.hostname = "localhost";
+  return url.href;
+}
+
+/**
+ * Before a navigation leaves the inspector: open the workspace port it names.
+ * Answers the action to send, or the model-facing refusal.
+ */
+export async function openPreviewForNavigation<A extends { kind: string; url?: string }>(args: {
+  action: A;
   workspace: PreviewWorkspaceSource | undefined;
   handle: { engine: string; client: PreviewGrantClient };
   attach?: (sandboxId: string) => Promise<TunnelSandbox>;
-}): Promise<string | undefined> {
-  if (args.handle.engine !== "hosted") return undefined;
-  if (args.action.kind !== "navigate" || !args.action.url) return undefined;
+}): Promise<{ action: A } | { refusal: string }> {
+  const { action } = args;
+  if (args.handle.engine !== "hosted") return { action };
+  if (action.kind !== "navigate" || !action.url) return { action };
   const attach = args.attach ?? attachRunningSandbox;
   try {
     const workspace =
       typeof args.workspace === "function" ? await args.workspace() : args.workspace;
-    if (!workspace) return undefined;
+    if (!workspace) return { action };
     const sandboxId = workspace.sandboxId;
-    await preparePreviewNavigation({
-      url: args.action.url,
+    const granted = await preparePreviewNavigation({
+      url: action.url,
       client: args.handle.client,
       attach: () => attach(sandboxId),
     });
-    return undefined;
+    return { action: granted ? { ...action, url: loopbackUrl(action.url) } : action };
   } catch (error) {
     const code = error instanceof WorkspacePreviewError ? error.code : "tunnel_start_failed";
     logger.warn("[workspace-preview] could not open a workspace port", {
       code,
       errorName: error instanceof Error ? error.name : typeof error,
     });
-    return error instanceof WorkspacePreviewError
-      ? error.message
-      : MESSAGES.tunnel_start_failed;
+    return {
+      refusal: error instanceof WorkspacePreviewError ? error.message : MESSAGES.tunnel_start_failed,
+    };
   }
 }
