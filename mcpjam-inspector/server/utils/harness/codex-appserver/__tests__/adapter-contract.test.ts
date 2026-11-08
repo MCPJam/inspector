@@ -86,7 +86,7 @@ describe("builtin tool catalog", () => {
     // Codex reports one patch covering every path.
     expect(tools.fileChange?.commonName).toBeUndefined();
     expect(tools.fileChange?.toolUseKind).toBe("edit");
-    expect(tools.imageView?.nativeName).toBe("imageView");
+    expect(tools.imageView?.nativeName).toBe("view_image");
     expect(tools.imageView?.toolUseKind).toBe("readonly");
   });
 

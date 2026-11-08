@@ -300,7 +300,7 @@ describe("constructed frames (not recorded — see fixtures/README.md)", () => {
     });
     const call = parts.find((p) => p.type === "tool-call");
     expect(call?.toolName).toBe("imageView");
-    expect(call?.nativeName).toBe("imageView");
+    expect(call?.nativeName).toBe("view_image");
     expect(call?.input).toBe(
       JSON.stringify({ path: "/home/user/attachments/shot.png" }),
     );

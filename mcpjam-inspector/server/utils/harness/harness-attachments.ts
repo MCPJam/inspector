@@ -310,6 +310,13 @@ export function decodeHarnessAttachments(
   }
 }
 
+/** Drop decoded buffers once save and native-image prepare have both finished. */
+export function releaseHarnessAttachmentDecodes(
+  attachments: HarnessPromptAttachment[],
+): void {
+  for (const attachment of attachments) attachment.decoded = undefined;
+}
+
 /** A native Windows directory keeps its own separator in the note. */
 function joinAgentPath(dir: string, fileName: string): string {
   return dir.includes("\\") && !dir.includes("/")

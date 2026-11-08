@@ -227,6 +227,7 @@ import {
   buildHarnessAttachmentNote,
   computerQuotaReserver,
   decodeHarnessAttachments,
+  releaseHarnessAttachmentDecodes,
   saveHarnessAttachments,
   takeHarnessPromptAttachments,
   unsavedHarnessAttachments,
@@ -3506,6 +3507,7 @@ export async function runHarnessTurn(
         logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
         const images = await promptImages;
+        releaseHarnessAttachmentDecodes(promptAttachments.attachments);
         const res = resumeFromApproval
           ? await agent.continueStream({
               session,

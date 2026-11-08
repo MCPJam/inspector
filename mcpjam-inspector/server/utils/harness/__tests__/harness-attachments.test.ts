@@ -18,6 +18,8 @@ import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
   computerQuotaReserver,
+  decodeHarnessAttachments,
+  releaseHarnessAttachmentDecodes,
   safeHarnessAttachmentName,
   saveHarnessAttachments,
   takeHarnessPromptAttachments,
@@ -497,5 +499,15 @@ describe("the note", () => {
       { type: "text", text: "hi" },
       { type: "text", text: "NOTE" },
     ]);
+  });
+});
+
+describe("releaseHarnessAttachmentDecodes", () => {
+  it("drops decoded bytes after save and native-image prepare have finished", () => {
+    const attachments = [attachment("shot.png", dataUrl("png", "image/png"))];
+    decodeHarnessAttachments(attachments);
+    expect(attachments[0]?.decoded).toMatchObject({ bytes: expect.any(Uint8Array) });
+    releaseHarnessAttachmentDecodes(attachments);
+    expect(attachments[0]?.decoded).toBeUndefined();
   });
 });

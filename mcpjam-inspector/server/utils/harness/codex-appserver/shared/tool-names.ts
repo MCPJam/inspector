@@ -135,7 +135,7 @@ export const CODEX_APPSERVER_NATIVE_TOOL_NAMES = {
   commandExecution: "exec_command",
   fileChange: "apply_patch",
   webSearch: "web_search",
-  // Pinned 0.163.0 reports this as ImageViewThreadItem `{ id, path }`. There
-  // is no separate function-tool name in that schema.
-  imageView: "imageView",
+  // Thread item type is `imageView`; the model-facing tool is `view_image`
+  // (pinned 0.163.0, same as 0.149.1's Responses catalog).
+  imageView: "view_image",
 } as const;
