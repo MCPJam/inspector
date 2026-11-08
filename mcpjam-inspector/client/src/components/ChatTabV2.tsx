@@ -128,6 +128,10 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -975,9 +979,19 @@ export function ChatTabV2({
   ]);
 
   const ensureThreadReadyForSend = useCallback(async () => {
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+      })
+    ) {
+      return true;
+    }
     let detail: ChatHistoryStateSession | null = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
@@ -1000,8 +1014,11 @@ export function ChatTabV2({
     return true;
   }, [
     activeHistorySessionId,
+    chatSessionId,
     detachHistorySession,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(

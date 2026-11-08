@@ -651,6 +651,25 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
   });
 
+  it("sends without a state read when the live session already holds the thread's version", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    expect(mockUseChatSession.resumedVersion).toBe(mockHistorySession.version);
+    mockReactiveHistoryState.session = { ...mockHistorySession };
+    mockReactiveHistoryState.widgetSnapshots = [];
+    mockGetChatHistoryState.mockClear();
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test send" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
