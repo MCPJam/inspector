@@ -412,7 +412,7 @@ export interface MCPAppsRendererProps {
       structuredContent?: Record<string, unknown>;
     }
   ) => void;
-  /** Callback when app declares its supported display modes during ui/initialize */
+  /** Modes allowed by the host, resource and initialized App for presentation controls. */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
   /**
    * Called when the widget sends `ui/notifications/request-teardown`
@@ -1199,6 +1199,10 @@ export function MCPAppsRendererSurface({
   );
   const advertisedAvailableDisplayModes = effectiveAvailableDisplayModes;
 
+  useEffect(() => {
+    onAppSupportedDisplayModesChange?.(effectiveAvailableDisplayModes);
+  }, [effectiveAvailableDisplayModes, onAppSupportedDisplayModesChange]);
+
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = environment.playgroundCapabilities;
   const configuredCapabilities =
@@ -1534,6 +1538,8 @@ export function MCPAppsRendererSurface({
   // Per-server label for a dedicated view origin, from the widget-content
   // response. Changing it re-navigates the sandbox iframe, so it is state
   // rather than a ref.
+  const [sourceReceipt, setSourceReceipt] = useState<string | undefined>();
+  const [sandboxSource, setSandboxSource] = useState({ serverId, resourceUri, toolCallId });
   const [viewOriginLabel, setViewOriginLabel] = useState<string | undefined>(
     undefined
   );
@@ -1661,6 +1667,7 @@ export function MCPAppsRendererSurface({
     hasRenderedLiveRef.current = false;
     liveRenderIdentityRef.current = null;
     setWidgetHtml(null);
+    setSourceReceipt(undefined);
     setResourceDisplayHints(undefined);
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
@@ -1782,9 +1789,6 @@ export function MCPAppsRendererSurface({
   const ownsPipDisplayModeRef = useRef(ownsPipDisplayMode);
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
-  const onAppSupportedDisplayModesChangeRef = useRef(
-    onAppSupportedDisplayModesChange
-  );
 
   // Refs for values consumed inside the async fetchWidgetHtml function.
   // These change reference on every streaming chunk (AI SDK recreates part objects),
@@ -1930,6 +1934,7 @@ export function MCPAppsRendererSurface({
       hasRenderedLiveRef.current = false;
       liveRenderIdentityRef.current = null;
       setWidgetHtml(html);
+      setSourceReceipt(undefined);
       setWidgetCsp(undefined);
       // Same reasoning as the live commit below: new bytes, so a violation
       // held from the previous resource no longer describes the screen.
@@ -1987,6 +1992,7 @@ export function MCPAppsRendererSurface({
     // returned an invalid mimetype (which is a content error — caller
     // should surface it and NOT fall back to a cached blob).
     const loadFromLiveFetch = async (): Promise<boolean> => {
+      const fetchedSource = { serverId, resourceUri, toolCallId: toolCallIdRef.current };
       const {
         html,
         csp,
@@ -1998,6 +2004,7 @@ export function MCPAppsRendererSurface({
         resourceDisplayHints: resourceHints,
         declaredDomain: serverDeclaredDomain,
         viewOriginLabel: serverViewOriginLabel,
+        sourceReceipt: serverSourceReceipt,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
@@ -2018,7 +2025,7 @@ export function MCPAppsRendererSurface({
           readToolResultMeta(toolOutputRef.current) ??
           null,
         initialWidgetState,
-        toolId: toolCallIdRef.current,
+        toolId: fetchedSource.toolCallId,
         toolName,
         theme: themeModeRef.current,
         cspMode,
@@ -2098,6 +2105,8 @@ export function MCPAppsRendererSurface({
         setDisplayMode(initialMode);
       }
       setWidgetHtml(html);
+      setSourceReceipt(serverSourceReceipt);
+      setSandboxSource(fetchedSource);
       setWidgetCsp(csp);
       // New bytes are going on screen, so a violation still held here was
       // reported against the previous ones. The identity-keyed reset effect
@@ -3314,8 +3323,6 @@ export function MCPAppsRendererSurface({
     ownsPipDisplayModeRef.current = ownsPipDisplayMode;
     toolsMetadataRef.current = toolsMetadata;
     onModelContextUpdateRef.current = onModelContextUpdate;
-    onAppSupportedDisplayModesChangeRef.current =
-      onAppSupportedDisplayModesChange;
     onRequestTeardownRef.current = onRequestTeardown;
     onConfirmDownloadRef.current = onConfirmDownload;
   }, [
@@ -3336,7 +3343,6 @@ export function MCPAppsRendererSurface({
     ownsPipDisplayMode,
     toolsMetadata,
     onModelContextUpdate,
-    onAppSupportedDisplayModesChange,
     onRequestTeardown,
     onConfirmDownload,
   ]);
@@ -3371,7 +3377,6 @@ export function MCPAppsRendererSurface({
             const declaredAppModes = appCaps?.availableDisplayModes as
               | DisplayMode[]
               | undefined;
-            onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
             // SEP-1865: clamp the advertised + runtime mode set against the
             // app's declaration. The next render of `hostContext` will pick
             // up the new intersection and the post-init `setHostContext`
@@ -3382,6 +3387,7 @@ export function MCPAppsRendererSurface({
               resourceDisplayHintsRef.current,
               declaredAppModes
             );
+            setAppSupportedDisplayModes(declaredAppModes);
             if (negotiated.length === 0) {
               const fixed = fixedDisplayModeRef.current;
               setLoadError(
@@ -3389,10 +3395,11 @@ export function MCPAppsRendererSurface({
                   ? "This App can't open here because it doesn't support full screen. Add full screen support to the App, then open it again."
                   : "This App has no supported display mode"
               );
+              setIsReady(false);
+              isReadyRef.current = false;
               void b.close();
               return;
             }
-            setAppSupportedDisplayModes(declaredAppModes);
             // OpenAI rules: an App that can't stay in its starting mode moves
             // to the mode it would have started in among what it allows.
             if (
@@ -4591,6 +4598,16 @@ export function MCPAppsRendererSurface({
     <SandboxedIframe
       ref={sandboxRef}
       html={bridgeTransportReady ? widgetHtml : null}
+      viewAdmission={host.services.prepareSandboxView ? {
+        services: host.services,
+        request: {
+          source: sandboxSource, sourceReceipt,
+          html: widgetHtml ?? "",
+          policy: { csp: effectiveSandbox.csp, cspDirectives: effectiveSandbox.cspDirectives,
+            cspSubtypePolicy: effectiveSandbox.cspSubtypePolicy, permissive: effectiveSandbox.permissive },
+          mode: effectiveSandbox.permissive || Object.keys(effectiveSandbox.cspDirectives ?? {}).length > 0 ? "debugger" : "declared",
+        },
+      } : undefined}
       // A new bridge always gets a freshly loaded guest to initialize it.
       reloadKey={bridgeGeneration}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"

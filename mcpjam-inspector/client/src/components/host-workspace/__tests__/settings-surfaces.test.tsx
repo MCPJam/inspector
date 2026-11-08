@@ -27,6 +27,12 @@ vi.mock("../ServerSettingsView", () => ({
     return <div>{props.serverName} settings view</div>;
   },
 }));
+vi.mock("../../elicitation/OwnedPluginFormHost", () => ({
+  OwnedPluginFormHost: () => null,
+}));
+vi.mock("../../elicitation/HostedMrtrHost", () => ({
+  HostedMrtrHost: () => null,
+}));
 import { ServerSettingsPanel } from "../ServerSettingsPanel";
 import { useServerSettingsAvailability } from "../use-server-settings";
 import { useWorkspaceSettings } from "../use-workspace-settings";

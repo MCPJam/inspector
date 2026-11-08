@@ -1,4 +1,21 @@
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { randomBytes } from "node:crypto";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import {
+  settingsOperationIntent,
+  settingsContinuation,
+} from "../../../shared/plugin-settings-operation.js";
+import {
+  pluginOperationAuthorization,
+  pluginOperationRequest,
+} from "../../../shared/plugin-operation-authorization.js";
+import { settingsOperation } from "../../services/plugin-host/settings-operation.js";
+import {
+  preparePluginOperation,
+  bindPluginOperation,
+  cancelPluginOperation,
+  receiptOnlyPorts,
+} from "../../services/plugin-host/operation-authorization.js";
 import { getToolVisibility } from "@mcpjam/sdk/widget-runtime";
 import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { pluginResourceUri } from "../../services/plugin-host/bindings.js";
@@ -23,12 +40,14 @@ import {
 import {
   createPluginRequestRuntime,
   resolvePluginCatalogTool,
+  assertPluginInstanceBindingCurrent,
 } from "../../services/plugin-host/request-runtime.js";
 import { invokePluginRequest } from "../../services/plugin-host/request-invocation.js";
 import {
   resolvePluginSettingsCatalog,
   settingsActionBindings,
   settingsActionToolValidation,
+  settingsResultValidation,
   settingsToolValidation,
 } from "../../services/plugin-host/settings-catalog.js";
 import {
@@ -59,13 +78,21 @@ const server = scope.extend({
 const handle = scope.extend({ instanceToken: z.string().min(1) });
 const invocation = handle.extend({
   operationId: z.string().uuid(),
+  authorization: pluginOperationAuthorization.optional(),
+  resume: settingsContinuation.optional(),
   set: z.record(z.string(), z.unknown()).optional(),
   toolName: z.string().optional(),
   approval: z.object({ id: z.string(), approved: z.boolean() }).optional(),
 });
 const children = new Map<
   string,
-  { parent: string; action: string; revision: string; dispose: () => void }
+  {
+    parent: string;
+    action: string;
+    revision: string;
+    signal: AbortSignal;
+    dispose: () => void;
+  }
 >();
 const childHandle = handle.extend({ childToken: z.string().min(1) });
 const documents = new Map<string, PluginSettingsDocument>();
@@ -81,6 +108,7 @@ async function identity(c: Context, body: z.infer<typeof scope>) {
     projectId: body.projectId,
     descriptor: body.pluginWorkspace,
     bearer,
+    getAuthorization: () => getConvexBearerForRequest(c),
     signal: c.req.raw.signal,
   });
   return {
@@ -96,10 +124,11 @@ async function identity(c: Context, body: z.infer<typeof scope>) {
 }
 /** Errors carry a plain-English description; server-author mistakes in the
  * settings declaration also carry a Logs diagnostic. */
-const failure = (code: string, serverId?: string) => {
+const failure = (code: string, serverId?: string, outcomeUnknown = false) => {
   const description = describePluginError(code);
   return {
     code,
+    ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
     ...(description ? { description } : {}),
     ...(code.startsWith("PLUGIN_SETTINGS_") && serverId
       ? {
@@ -116,8 +145,8 @@ const failure = (code: string, serverId?: string) => {
 async function route(c: Context, run: () => Promise<Response>) {
   let serverId: string | undefined;
   try {
+    // Hosted request budgeting can consume the body first; Hono caches its JSON.
     serverId = await c.req
-      .raw.clone()
       .json()
       .then((value: { serverId?: unknown }) =>
         typeof value?.serverId === "string" ? value.serverId : undefined,
@@ -133,11 +162,85 @@ async function route(c: Context, run: () => Promise<Response>) {
       error instanceof PluginInvocationError ||
       error instanceof PluginSettingsError
     )
-      return c.json(failure(error.code, serverId), 403);
+      return c.json(
+        failure(
+          error.code,
+          serverId,
+          error instanceof PluginInvocationError && error.outcomeUnknown,
+        ),
+        403,
+      );
+    reportRouteFailure("Plugin Settings request failed", error, {
+      source: "web.pluginSettings",
+      hop: "mcpjam_internal",
+    });
     return c.json(failure("SETTINGS_UNAVAILABLE"), 503);
   }
 }
 const routes = new Hono();
+routes.post("/renew", (c) =>
+  route(c, async () => {
+    const body = handle
+      .extend({
+        operation: pluginOperationRequest.optional(),
+        cancelAuthorization: pluginOperationAuthorization.optional(),
+      })
+      .parse(await c.req.json());
+    const { bearer, admission, actor } = await identity(c, body);
+    const instance = await pluginInstances.getPersistent(
+      body.instanceToken,
+      actor,
+      c.req.raw.signal,
+    );
+    if (!instance.activation.settings) throw denied();
+    if (body.cancelAuthorization) {
+      await cancelPluginOperation(c, body.cancelAuthorization, instance);
+      return c.json({ status: "released" });
+    }
+    if (!body.operation || body.operation.kind !== "call") throw denied();
+    const intent = settingsOperationIntent.parse({
+      method: body.operation.params?.name,
+      ...body.operation.params?.arguments,
+    });
+    const child =
+      intent.method === "app/call"
+        ? children.get(intent.childToken)
+        : undefined;
+    if (
+      intent.method === "app/call" &&
+      (!child || child.parent !== body.instanceToken)
+    )
+      throw denied();
+    await assertPluginInstanceBindingCurrent({
+      admission,
+      bearer,
+      instance,
+      signal: c.req.raw.signal,
+    });
+    const lifetime = child
+      ? AbortSignal.any([
+          pluginInstances.signal(body.instanceToken, actor),
+          child.signal,
+        ])
+      : pluginInstances.signal(body.instanceToken, actor);
+    const operationAuthorization = await preparePluginOperation(
+      c,
+      instance,
+      settingsOperation(
+        instance,
+        intent,
+        body.operation.invocationId,
+        documents.get(body.instanceToken),
+      ),
+      body.operation.requestId,
+      lifetime,
+    );
+    return c.json({
+      status: "prepared",
+      ...(operationAuthorization ? { operationAuthorization } : {}),
+    });
+  }),
+);
 routes.post("/discover", (c) =>
   route(c, async () => {
     const body = server.parse(await c.req.json());
@@ -212,7 +315,12 @@ routes.post("/open", (c) =>
           { once: true },
         );
       }
-      return c.json({ instanceToken: opened.token, ...binding.settings });
+      return c.json({
+        instanceToken: opened.token,
+        instanceId: opened.instance.owner.instanceId,
+        generation: opened.instance.owner.generation,
+        ...binding.settings,
+      });
     } finally {
       await runtime.release();
     }
@@ -242,77 +350,99 @@ for (const method of ["read", "update", "action"] as const)
         method === "update"
           ? parsePluginSettingsSet(document!.fields, { set: body.set })
           : {};
-      const runtime = createPluginRequestRuntime(
-        c,
-        admission,
-        bearer,
-        { hostId: instance.hostId, serverId: instance.owner.serverId },
-        instance,
-      );
-      let catalog: Awaited<ReturnType<typeof runtime.catalog>>;
-      const resolve = async (
-        toolName: string,
-        signal: AbortSignal,
-        read?: PluginInstanceAdmissionRead,
-      ) => {
-        catalog = await runtime.catalog(signal, read);
-        const current = resolvePluginSettingsCatalog(catalog);
-        if (!current || current.revision !== settings.revision) throw denied();
-        if (
-          method === "action" &&
-          !settingsActionBindings(document!, catalog).some(
-            (action) => action.name === name && action.kind !== "unavailable",
-          )
-        )
-          throw denied();
-        return resolvePluginCatalogTool(catalog, toolName);
-      };
-      return await invokePluginRequest(c, {
-        actor,
-        owner: instance.owner,
-        admission,
-        runtime,
-        resolve,
-        origin: "settings",
-        invocationId: body.operationId,
-        params: { name, arguments: args },
-        approval: body.approval,
-        assertLive: () => {
-          pluginInstances.get(body.instanceToken, actor);
-        },
-        assertOrigin: () => {},
-        validate: (resolved) => {
-          const validate =
-            method === "action"
-              ? settingsActionToolValidation(resolved.tool)
-              : settingsToolValidation(resolved.tool, args);
-          return (result) => {
-            validate(result);
-            const content =
-              mcpAppToolResultSchema.parse(result).structuredContent;
-            if (method === "read") {
-              document = parsePluginSettingsDocument(content);
-              documents.set(body.instanceToken, document);
-            } else if (method === "update") {
-              const values = parsePluginSettingsUpdate(
-                document!.fields,
-                content,
-              );
-              documents.set(body.instanceToken, { ...document!, values });
-            }
-          };
-        },
-        invoke: (ports, params) =>
-          pluginInstances.invoke(
-            body.instanceToken,
-            actor,
-            ports,
-            body.operationId,
-            params,
-            c.req.raw.signal,
-            "settings",
-          ),
+      const intent = settingsOperationIntent.parse({
+        method,
+        ...(method === "update"
+          ? { set: body.set }
+          : method === "action"
+            ? { toolName: name }
+            : {}),
       });
+      const authorization = await bindPluginOperation(
+        c,
+        instance,
+        settingsOperation(instance, intent, body.operationId, document),
+        body.authorization,
+        c.req.raw.signal,
+      );
+      try {
+        const runtime = createPluginRequestRuntime(
+          c,
+          admission,
+          bearer,
+          { hostId: instance.hostId, serverId: instance.owner.serverId },
+          instance,
+        );
+        let catalog: Awaited<ReturnType<typeof runtime.catalog>>;
+        const resolve = async (
+          toolName: string,
+          signal: AbortSignal,
+          read?: PluginInstanceAdmissionRead,
+        ) => {
+          catalog = await runtime.catalog(signal, read);
+          const current = resolvePluginSettingsCatalog(catalog);
+          if (!current || current.revision !== settings.revision)
+            throw denied();
+          if (
+            method === "action" &&
+            !settingsActionBindings(document!, catalog).some(
+              (action) => action.name === name && action.kind !== "unavailable",
+            )
+          )
+            throw denied();
+          return resolvePluginCatalogTool(catalog, toolName);
+        };
+        return await invokePluginRequest(c, {
+          receiptOnly: authorization.receiptOnly,
+          actor,
+          owner: instance.owner,
+          admission,
+          runtime,
+          resolve,
+          origin: "settings",
+          invocationId: body.operationId,
+          params: { name, arguments: args },
+          approval: body.approval,
+          resume: body.resume,
+          assertLive: () => {
+            pluginInstances.get(body.instanceToken, actor);
+          },
+          assertOrigin: () => {},
+          validate: (resolved) => {
+            const validate =
+              method === "action"
+                ? settingsActionToolValidation(resolved.tool)
+                : settingsToolValidation(resolved.tool, args);
+            return settingsResultValidation((result) => {
+              validate(result);
+              const content =
+                mcpAppToolResultSchema.parse(result).structuredContent;
+              if (method === "read") {
+                document = parsePluginSettingsDocument(content);
+                documents.set(body.instanceToken, document);
+              } else if (method === "update") {
+                const values = parsePluginSettingsUpdate(
+                  document!.fields,
+                  content,
+                );
+                documents.set(body.instanceToken, { ...document!, values });
+              }
+            });
+          },
+          invoke: (ports, params) =>
+            pluginInstances.invoke(
+              body.instanceToken,
+              actor,
+              receiptOnlyPorts(ports, authorization.receiptOnly),
+              body.operationId,
+              params,
+              c.req.raw.signal,
+              "settings",
+            ),
+        });
+      } finally {
+        authorization.dispose();
+      }
     }),
   );
 routes.post("/actions", (c) =>
@@ -449,8 +579,21 @@ routes.post("/app/open", (c) =>
       )
         throw denied();
       const childToken = randomBytes(32).toString("base64url");
+      const sourceReceipt = await sandboxSourceReceipt(
+        c,
+        {
+          serverId: instance.owner.serverId,
+          resourceUri: uri,
+          toolCallId: childToken,
+        },
+        widgetContent.html,
+        widgetContent.csp,
+        body.projectId,
+      );
       const signal = pluginInstances.signal(body.instanceToken, actor);
+      const lifetime = new AbortController();
       const dispose = () => {
+        lifetime.abort();
         children.delete(childToken);
         signal.removeEventListener("abort", dispose);
         clearTimeout(timer);
@@ -461,13 +604,14 @@ routes.post("/app/open", (c) =>
         parent: body.instanceToken,
         action: body.toolName,
         revision: action.revision,
+        signal: lifetime.signal,
         dispose,
       });
       signal.addEventListener("abort", dispose, { once: true });
       return c.json({
         childToken,
         resourceUri: uri,
-        widgetContent,
+        widgetContent: { ...widgetContent, sourceReceipt },
         toolMetadata: tool._meta,
         appToolsEnabled: fresh.appToolsEnabled,
       });
@@ -481,6 +625,8 @@ routes.post("/app/call", (c) =>
     const body = childHandle
       .extend({
         operationId: z.string().uuid(),
+        authorization: pluginOperationAuthorization.optional(),
+        resume: settingsContinuation.optional(),
         params: z.object({
           name: z.string().min(1),
           arguments: z.record(z.string(), z.unknown()),
@@ -505,66 +651,96 @@ routes.post("/app/call", (c) =>
       !instance.activation.settings
     )
       throw denied();
-    const runtime = createPluginRequestRuntime(
+    const active = AbortSignal.any([c.req.raw.signal, child.signal]);
+    const authorization = await bindPluginOperation(
       c,
-      admission,
-      bearer,
-      { hostId: instance.hostId, serverId: instance.owner.serverId },
       instance,
+      settingsOperation(
+        instance,
+        {
+          method: "app/call",
+          childToken: body.childToken,
+          params: body.params,
+        },
+        body.operationId,
+        document,
+      ),
+      body.authorization,
+      active,
     );
-    const live = () => {
-      if (children.get(body.childToken) !== child) throw denied();
-      pluginInstances.get(body.instanceToken, actor);
-    };
-    return await invokePluginRequest(c, {
-      actor,
-      owner: instance.owner,
-      admission,
-      runtime,
-      origin: "app",
-      invocationId: body.operationId,
-      params: body.params,
-      approval: body.approval,
-      resolve: async (name, signal, read) => {
-        live();
-        const catalog = await runtime.catalog(signal, read);
-        live();
-        if (
-          resolvePluginSettingsCatalog(catalog)?.revision !==
-            instance.activation.settings!.revision ||
-          !settingsActionBindings(document, catalog).some(
-            (item) =>
-              item.name === child.action &&
-              item.revision === child.revision &&
-              item.kind === "app",
+    try {
+      const runtime = createPluginRequestRuntime(
+        c,
+        admission,
+        bearer,
+        { hostId: instance.hostId, serverId: instance.owner.serverId },
+        instance,
+      );
+      const live = () => {
+        active.throwIfAborted();
+        if (children.get(body.childToken) !== child) throw denied();
+        pluginInstances.get(body.instanceToken, actor);
+      };
+      return await invokePluginRequest(c, {
+        receiptOnly: authorization.receiptOnly,
+        actor,
+        owner: instance.owner,
+        admission,
+        runtime,
+        origin: "app",
+        invocationId: body.operationId,
+        params: body.params,
+        approval: body.approval,
+        resume: body.resume,
+        resolve: async (name, signal, read) => {
+          live();
+          const catalog = await runtime.catalog(
+            AbortSignal.any([signal, active]),
+            read,
+          );
+          live();
+          if (
+            resolvePluginSettingsCatalog(catalog)?.revision !==
+              instance.activation.settings!.revision ||
+            !settingsActionBindings(document, catalog).some(
+              (item) =>
+                item.name === child.action &&
+                item.revision === child.revision &&
+                item.kind === "app",
+            )
           )
-        )
-          throw denied();
-        return resolvePluginCatalogTool(catalog, name);
-      },
-      assertLive: live,
-      assertOrigin: (resolved) => {
-        if (
-          !resolved.appToolsEnabled ||
-          !getToolVisibility(resolved.tool._meta).includes("app")
-        )
-          throw denied();
-      },
-      validate: (resolved) =>
-        pluginToolCallValidation(resolved.tool, body.params.arguments, () =>
-          denied(),
-        ),
-      invoke: (ports, params) =>
-        pluginInstances.invoke(
-          body.instanceToken,
-          actor,
-          ports,
-          body.operationId,
-          params,
-          c.req.raw.signal,
-          "app",
-        ),
-    });
+            throw denied();
+          return resolvePluginCatalogTool(catalog, name);
+        },
+        assertLive: live,
+        assertOrigin: (resolved) => {
+          if (
+            !resolved.appToolsEnabled ||
+            !getToolVisibility(resolved.tool._meta).includes("app")
+          )
+            throw denied();
+        },
+        validate: (resolved) =>
+          pluginToolCallValidation(
+            resolved.tool,
+            body.params.arguments,
+            () => denied(),
+            "app",
+          ),
+        invoke: (ports, params) =>
+          pluginInstances.invoke(
+            body.instanceToken,
+            actor,
+            receiptOnlyPorts(ports, authorization.receiptOnly),
+            body.operationId,
+            params,
+            active,
+            "app",
+          ),
+      });
+    } finally {
+      authorization.dispose();
+    }
   }),
 );
 routes.post("/app/close", (c) =>

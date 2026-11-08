@@ -7,6 +7,8 @@ import {
 } from "@/lib/comparison-auth-recovery";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
+import { ResourceChatHandoff } from "@/components/host-workspace/resource-chat-handoff";
+import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
 import {
@@ -1176,6 +1178,7 @@ export function PlaygroundMain({
     hostId: previewedHostId,
     harnessId: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     hostResolved: !previewedHostConfigUnresolved,
+    computerAttached: !!previewedHost?.config?.computer,
   });
 
   // ONE dialog for the whole surface. Six composers each owning their own
@@ -1971,6 +1974,14 @@ export function PlaygroundMain({
     : inlineThreadApps;
   const globalOwnerApps =
     hasExtensionProvider && extensionScope ? extensionOwners.global : null;
+  const retainedGlobalScope = extensionOwners.global?.scope;
+  const globalFormScope = hasExtensionProvider && !isSigningOut &&
+    (extensionIdentity || extensionIdentityPending) && retainedGlobalScope &&
+    retainedGlobalScope.projectId === convexProjectId &&
+    retainedGlobalScope.hostId === previewedHostId &&
+    (!extensionIdentity || retainedGlobalScope.pluginWorkspace.workspaceId ===
+      globalOwnerWorkspace(extensionIdentity).workspaceId)
+      ? retainedGlobalScope : null;
   const threadApps = {
     fileActions: chatOwnerApps?.fileActions ?? null,
     approveMention: (
@@ -2020,6 +2031,7 @@ export function PlaygroundMain({
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
     pluginExtensions.capabilities.displayModes,
+    pluginExtensionProfileForHost(previewedHost?.config),
   );
   usePublishPluginIcons(pluginIconsById, pluginNamesById);
   const composerMentions = useComposerMentions(
@@ -6306,13 +6318,6 @@ export function PlaygroundMain({
                 : []
             }
           />
-          {/* Forms asked for by global Apps belong to the global owner. */}
-          {extensionScope && extensionIdentity && globalOwnerApps ? (
-            <OwnedPluginFormHost
-              projectId={extensionScope.projectId}
-              workspaceId={globalOwnerWorkspace(extensionIdentity).workspaceId}
-            />
-          ) : null}
           {showPinnedConversationTargetNotice ? (
             <div
               data-testid="pinned-conversation-target-notice"
@@ -6757,6 +6762,33 @@ export function PlaygroundMain({
             : "bg-muted/20",
         )}
       >
+        <PluginOnboardingHandoff projectId={convexProjectId} compareActive={isMultiModelLayoutMode} />
+        <ResourceChatHandoff
+          identity={extensionIdentity}
+          fileActions={threadApps.fileActions}
+          compareActive={isMultiModelLayoutMode}
+          ready={isSessionBootstrapComplete && !!previewedHost && !isRestoringConversation && !extensionIdentityPending}
+        />
+        {/* The global owner remains mounted in both single chat and Compare. */}
+        {globalFormScope ? (
+          <ScenarioHostStyleProvider value={hostStyle}>
+            <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+              <ScenarioHostThemeProvider value={effectiveThreadTheme}>
+                <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
+                  <ChatDeepLinkProvider value={chatDeepLinks}>
+                    <WorkspaceFileActionsProvider value={threadApps.fileActions}>
+                      <OwnedPluginFormHost
+                        retainWhileLoading
+                        projectId={globalFormScope.projectId}
+                        workspaceId={globalFormScope.pluginWorkspace.workspaceId}
+                      />
+                    </WorkspaceFileActionsProvider>
+                  </ChatDeepLinkProvider>
+                </WidgetFullscreenPlacementContext.Provider>
+              </ScenarioHostThemeProvider>
+            </ScenarioHostCapabilitiesOverrideProvider>
+          </ScenarioHostStyleProvider>
+        ) : null}
         {hasExtensionProvider ? (
           // Global Apps are portaled in here: mounted once, never moved, and
           // hidden (not unmounted) when you return to the chat.
@@ -6798,11 +6830,7 @@ export function PlaygroundMain({
         {hasExtensionProvider && globalTakeoverOpen ? (
           <TakeoverFormSlot
             chatWorkspaceId={extensionScope?.pluginWorkspace.workspaceId}
-            globalWorkspaceId={
-              extensionIdentity
-                ? globalOwnerWorkspace(extensionIdentity).workspaceId
-                : undefined
-            }
+            globalWorkspaceId={globalFormScope?.pluginWorkspace.workspaceId}
           />
         ) : null}
         {showLoadingOverlay && (
@@ -7190,6 +7218,7 @@ export function PlaygroundMain({
                             compareId={compareId}
                             compareLabel={entry.label}
                             pluginHostResolved={!previewedHostConfigUnresolved}
+                            pluginComputerAttached={!!previewedHost?.config?.computer}
                             pluginHarnessId={
                               previewedHost?.config?.agentLoop ??
                               previewedHost?.config?.harness

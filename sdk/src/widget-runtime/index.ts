@@ -81,3 +81,12 @@ export {
   pickOpenAIDisplayMode,
 } from "./resource-display.js";
 export type { ResourceDisplayHints } from "./resource-display.js";
+
+export type {
+  SandboxViewSource,
+  SandboxViewCsp,
+  SandboxViewPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
+} from "./sandbox-view-admission.js";

@@ -2379,11 +2379,21 @@ export function SessionsRoute() {
 }
 
 export function ResourcesRoute() {
-  const { selectedMCPConfig, selectedServerEntry, appState } =
-    useAppRouteContext();
+  const {
+    selectedMCPConfig, selectedServerEntry, appState, convexProjectId,
+    currentUser, hostedServerIdsByName = {},
+  } = useAppRouteContext();
+  const [hostId] = usePreviewedHostId(convexProjectId);
+  const selected = appState.selectedServer;
+  const serverId = hostedServerIdsByName[selected] ??
+    (Object.values(hostedServerIdsByName).includes(selected) ? selected : null);
+  const openInChatScope = currentUser?._id && hostId && convexProjectId && serverId
+    ? { actorId: currentUser._id, projectId: convexProjectId, hostId, serverId }
+    : null;
   return (
     <div className="h-full overflow-hidden">
       <ResourcesTab
+        openInChatScope={openInChatScope}
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         server={selectedServerEntry ?? undefined}
@@ -6637,6 +6647,7 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
+    currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,
     convexProjectId,
@@ -6664,6 +6675,7 @@ export default function App() {
     handleUpdateHostContext,
     handleUpdateProject,
     hostsTabSelectedHostId,
+    hostedServerIdsByName,
     isAuthLoading,
     isAuthenticated,
     isClientConfigSyncPending,

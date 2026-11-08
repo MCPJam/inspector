@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import type { UIMessage } from "ai";
 /** Saved-client comparison wiring and mode transitions. */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -11,6 +12,7 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { useSignOutStore } from "@/stores/sign-out-store";
 import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -21,6 +23,7 @@ import {
   saveSelectedHostIds,
 } from "@/lib/selected-host-storage";
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
+import { usePluginOnboardingIntentStore } from "@/lib/plugin-onboarding-intent";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -29,6 +32,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockLaneDispose = vi.fn();
+const extensionFormFixture = vi.hoisted(() => ({ enabled: false, ownerAvailable: true, actor: "actor" }));
 
 vi.mock("lucide-react", async (importOriginal) => ({
   // Spread the real icon set so a newly-rendered icon (e.g. Columns2) never
@@ -129,7 +133,7 @@ const {
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: (flag: string) =>
-    flag === "project-environments-enabled" ? environmentsFlag.value : false,
+    flag === "project-environments-enabled" ? environmentsFlag.value : flag === "plugin-extensions-enabled" ? extensionFormFixture.enabled : false,
 }));
 // The preview is a network read (`/api/web/environments/:id/preview`); the
 // fixture stands in for the resolver so the test drives what the environment
@@ -215,6 +219,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
+    if (name === "users:getCurrentUser" && extensionFormFixture.enabled) return extensionFormFixture.ownerAvailable ? { _id: extensionFormFixture.actor } : undefined;
     // Shaped like the real query: an object whose `enabled` is null when the
     // member has stored nothing. Returning a bare null would read as "still
     // loading" and mask what these tests are asserting.
@@ -236,6 +241,19 @@ const clientsRoleFixture = vi.hoisted(() => ({
 vi.mock("@/hooks/useProjects", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/useProjects")>()),
   useCanManageProjectClients: () => clientsRoleFixture.value,
+}));
+
+vi.mock("@/hooks/usePluginExtensionsAccess", () => ({
+  usePluginExtensionsAccess: () => ({ enabled: extensionFormFixture.enabled, status: "ready" }),
+}));
+vi.mock("@/components/host-workspace/ExtensionWorkspaceProvider", async original => ({
+  ...await original<typeof import("@/components/host-workspace/ExtensionWorkspaceProvider")>(),
+  useExtensionRegistration: () => extensionFormFixture.enabled,
+  useExtensionOwners: () => ({ global: extensionFormFixture.enabled ? { scope: { projectId: "project", hostId: "h-A", threadId: "global", pluginWorkspace: { version: 1, workspaceId: 'playground:["actor","project","h-A","global"]' } }, contextReferences: [], contextAttachments: [] } : null, chat: null }),
+}));
+vi.mock("@/components/elicitation/OwnedPluginFormHost", () => ({
+  ChatPluginFormHosts: () => null,
+  OwnedPluginFormHost: ({ projectId, workspaceId }: { projectId: string; workspaceId: string }) => <output data-testid="global-owned-form-host">{JSON.stringify({ projectId, workspaceId })}</output>,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -665,9 +683,59 @@ describe("PlaygroundMain — multi-host render path", () => {
     onExecutionInjected: vi.fn(),
   };
 
+  it("refuses imported plugin setup in Compare without selecting or sending to a lane", async () => {
+    mockSharedAppState.projects = { ...mockSharedAppState.projects, default: { ...mockSharedAppState.projects.default, sharedProjectId: "project" } };
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    usePluginOnboardingIntentStore.getState().request({
+      projectId: "project", serverIds: ["saved-server"],
+      pluginId: "plugin", pluginName: "Fixture", conversation: "new",
+    });
+    render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Setup did not start in Compare.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(usePluginOnboardingIntentStore.getState().intent).toBeNull();
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
+  it("consumes a resource handoff in the actual Compare branch without choosing a lane", async () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const router = createMemoryRouter([{ path: "/playground", element: <PlaygroundMain {...defaultProps} /> }], {
+      initialEntries: [{ pathname: "/playground", state: { pluginResourceFile: {
+        actorId: "actor", projectId: "k57aaaaaaaaaaaaaaaaaaaaaaaaa", hostId: "h-A", serverId: "saved-server",
+        resourceUri: "fixture-file://private/triangle.stl", nonce: crypto.randomUUID(), createdAt: Date.now(),
+      } } }],
+    });
+    render(<RouterProvider router={router} />);
+    expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Switch to a single chat");
+    expect(router.state.location.state).toEqual({});
+    expect(mockSetMultiHostEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.setMultiModelEnabled).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
+    usePluginOnboardingIntentStore.getState().clear();
     mobileFixture.isMobile = false;
     previewedHostFixture.resolve = false;
+    extensionFormFixture.enabled = false;
+    extensionFormFixture.ownerAvailable = true;
+    extensionFormFixture.actor = "actor";
+    useSignOutStore.setState({ isSigningOut: false });
+    mockPreferencesState.hostStyle = "claude";
     browserFixture.guest = false;
     browserFixture.granted = false;
     browserFixture.setting = null;
@@ -1595,6 +1663,44 @@ describe("PlaygroundMain — multi-host render path", () => {
     const compareIds = cards.map((c) => c.getAttribute("data-compare-id"));
     expect(new Set(compareIds).size).toBe(2);
     expect(compareIds.sort()).toEqual(["h-A", "h-B"]);
+  });
+
+  it("keeps one global owned form host in Compare and single chat with the exact owner", () => {
+    extensionFormFixture.enabled = true;
+    mockPreferencesState.hostStyle = "chatgpt";
+    savePreviewedHostId("project", "h-A");
+    previewedHostFixture.resolve = true;
+    mockSharedAppState.projects = { ...mockSharedAppState.projects, default: { ...mockSharedAppState.projects.default, sharedProjectId: "project" } };
+    mockSharedAppState.activeProjectId = "default";
+    const a = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const b = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = { "h-A": a, "h-B": b };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("playground-multi-host-grid")).toBeInTheDocument();
+    expect(screen.getAllByTestId("global-owned-form-host")).toHaveLength(1);
+    const hostNode = screen.getByTestId("global-owned-form-host");
+    const owner = hostNode.textContent;
+    expect(JSON.parse(owner!)).toEqual({ projectId: "project", workspaceId: 'playground:["actor","project","h-A","global"]' });
+    multiHostFixture.multiHostEnabled = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getAllByTestId("global-owned-form-host")).toHaveLength(1);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    expect(hostNode).toHaveTextContent(owner!);
+    extensionFormFixture.ownerAvailable = false;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    extensionFormFixture.ownerAvailable = true;
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.getByTestId("global-owned-form-host")).toBe(hostNode);
+    extensionFormFixture.actor = "another-actor";
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    expect(screen.queryByTestId("global-owned-form-host")).toBeNull();
+    extensionFormFixture.actor = "actor";
+    view.rerender(<PlaygroundMain {...defaultProps} />);
+    act(() => useSignOutStore.setState({ isSigningOut: true }));
+    expect(screen.queryByTestId("global-owned-form-host")).toBeNull();
   });
 
   it("keeps running lane owners and drafts through a temporary host-query gap", () => {

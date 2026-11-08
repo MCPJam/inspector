@@ -83,7 +83,7 @@ it.each([false, true])(
     view.rerender(ui(takeover));
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     const close = takeover
-      ? screen.getByRole("button", { name: "Close", exact: true })
+      ? screen.getByRole("button", { name: "Cancel form", exact: true })
       : screen.getByRole("button", { name: "Cancel", exact: true });
     fireEvent.click(close);
     await waitFor(() => expect(f.mutate).toHaveBeenCalledOnce());
@@ -111,7 +111,7 @@ it("returns to the same registered composer when the App opener is removed", asy
   view.rerender(ui(true));
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
   frame.remove();
-  fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel form", exact: true }));
   await waitFor(() => expect(f.mutate).toHaveBeenCalledOnce());
   f.rows = [];
   view.rerender(ui(true));
@@ -322,7 +322,7 @@ it.each(["cancel", "accept"])(
       ).toBeNull(),
     );
     const actionButton = screen.getByRole("button", {
-      name: action === "cancel" ? "Close" : "Continue",
+      name: action === "cancel" ? "Cancel form" : "Continue",
       exact: true,
     });
     actionButton.focus();
