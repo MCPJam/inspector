@@ -15,7 +15,7 @@ const cancelMutation = makeFunctionReference<
 >("harnessApprovalCancellation:cancelPendingApproval");
 
 const cancelActiveMutation = makeFunctionReference<
-  "mutation", Owner & { requestId: string }, null
+  "mutation", Owner & { requestId: string; approvalIds?: string[] }, null
 >("harnessApprovalCancellation:cancelActiveTurn");
 
 export function pendingHarnessApprovalIds(messages: UIMessage[]): string[] {
@@ -93,7 +93,15 @@ export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchB
     setStopping(true);
     setStopFailed(false);
     try {
-      await convex.mutation(cancelActiveMutation, { ...owner, requestId });
+      const lastUser = messages.findLastIndex((message) => message.role === "user");
+      const approvalIds = messages.slice(lastUser + 1).flatMap((message) =>
+        message.parts.flatMap((part) =>
+          isToolUIPart(part) && part.state === "approval-responded" ? [part.approval.id] : [],
+        ),
+      );
+      await convex.mutation(cancelActiveMutation, {
+        ...owner, requestId, ...(approvalIds.length ? { approvalIds } : {}),
+      });
       const cancelled = await convex.query(cancelledQuery, owner);
       if (isCurrent()) {
         setMessages((current) => closeCancelledHarnessApprovals(current, cancelled));
@@ -106,7 +114,7 @@ export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchB
     } finally {
       if (isCurrent()) setStopping(false);
     }
-  }, [convex, ownerKey]);
+  }, [convex, ownerKey, messages, setMessages, dispatchBlocked]);
 
   return { stopActiveTurn, stopFailed, canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
 }

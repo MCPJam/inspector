@@ -100,4 +100,21 @@ describe("active harness Stop", () => {
     expect(result.current.dispatchBlocked.current).toBe(false);
   });
 
+  it("binds Stop to the approval decision whose continuation has not claimed yet", async () => {
+    const { result } = renderHook(() => {
+      const [messages, setMessages] = useState<UIMessage[]>([
+        { id: "user", role: "user", parts: [{ type: "text", text: "write once" }] },
+        { ...pending[0], parts: [{ type: "dynamic-tool", toolName: "qa_write",
+          toolCallId: "call", state: "approval-responded", input: {},
+          approval: { id: "approved-before-claim", approved: true } }] },
+      ]);
+      const dispatchBlocked = useRef(false);
+      return useHarnessApprovalStop({ owner, messages, setMessages, dispatchBlocked });
+    });
+    await act(async () => { await result.current.stopActiveTurn("continuation"); });
+    expect(db.mutation).toHaveBeenCalledWith(expect.anything(), {
+      ...owner, requestId: "continuation", approvalIds: ["approved-before-claim"],
+    });
+  });
+
 });
