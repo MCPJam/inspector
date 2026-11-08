@@ -20,7 +20,9 @@ function showHint(title: string, ending: string): void {
     action: {
       label: "Copy URL",
       onClick: () => {
-        void copyToClipboard(url);
+        void copyToClipboard(url).then((copied) => {
+          if (!copied) toast.error(`Couldn't copy the URL. Copy it from here: ${url}`);
+        });
       },
     },
   });
