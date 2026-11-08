@@ -26,6 +26,7 @@ import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-en
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
+import { buildComparePaneTarget } from "@/lib/compare-pane-target";
 import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
@@ -1421,67 +1422,13 @@ export function PlaygroundMain({
         : {}),
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
-      // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
-      // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
-      ...(isEnvironmentMode
-        ? {
-            executionTarget: playgroundEnvironment.executionTarget,
-            // Only present when the user explicitly overrode the server set.
-            ...(playgroundEnvironment.environmentOverrides
-              ? {
-                  environmentOverrides:
-                    playgroundEnvironment.environmentOverrides,
-                }
-              : {}),
-            // The environment's servers resolve by Convex id server-side (and
-            // some are plugin-contributed, i.e. invisible to the browser's
-            // catalog), so the turn MUST use the managed setup, which
-            // resolves them.
-            requiresWebChatApi: true,
-            // Deliberately NO `ensureServerIds`: resolving environment servers
-            // by NAME would fail for plugin-contributed ones and bypass plugin
-            // lifecycle semantics for the rest.
-            //
-            // NOT a second execution pointer — a client-side cache key. The
-            // environment's host is already the previewed host (presentation
-            // only), and host-keyed client caches (the harness workdir the
-            // Shell opens a terminal in) are read by that id, so the write side
-            // has to know it. The server still resolves the host from the
-            // environment.
-            ...(previewedHostId ? { presentationHostId: previewedHostId } : {}),
-          }
-        : {
-            // Resolve/persist selected server names → Convex ids before a hosted
-            // harness send (ad-hoc/App servers included), so the proxy never
-            // sees a display name. Absent in isolated embeds → falls back to the
-            // pre-resolved selection above.
-            ...(playgroundServerActions?.ensureHostedServerIdsForNames
-              ? {
-                  ensureServerIds:
-                    playgroundServerActions.ensureHostedServerIdsForNames,
-                }
-              : {}),
-            // Forward the previewed host id so the server re-resolves its
-            // authoritative runtime config (harness/computer) for this direct
-            // session, and so switching hosts forks the chat session.
-            ...(previewedHostId ? { hostId: previewedHostId } : {}),
-            // The project has a runnable plugin and the environments UI is
-            // hidden: the chat hook sends this composition INSTEAD of
-            // `hostId` wherever a managed turn runs, keeping
-            // the server preflight above for the chat's own servers. Absent
-            // otherwise, so a chat without plugins sends exactly what it did.
-            ...(hiddenEnvironment.wanted || hiddenEnvironment.blockingError
-              ? {
-                  hiddenEnvironment: {
-                    environmentId: hiddenEnvironment.environmentId,
-                    blockingError: hiddenEnvironment.blockingError,
-                    pluginServerIds: hiddenEnvironment.pluginServerIds,
-                    venue: hiddenEnvironment.venue,
-                    recover: hiddenEnvironment.recover,
-                  },
-                }
-              : {}),
-          }),
+      ...buildComparePaneTarget({
+        target: isEnvironmentMode ? playgroundEnvironment.executionTarget : undefined,
+        hostId: previewedHostId,
+        overrides: playgroundEnvironment.environmentOverrides,
+        ensureServerIds: playgroundServerActions?.ensureHostedServerIdsForNames,
+        composition: hiddenEnvironment,
+      }),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
