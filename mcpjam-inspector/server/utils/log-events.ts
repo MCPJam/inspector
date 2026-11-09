@@ -547,12 +547,7 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
-  /**
-   * An eval's widget render could not read the MCP App's UI resource, so the
-   * run keeps no recorded render of that App. Emitted by the hosted server
-   * only, with Sentry on: a local install would report its user's server.
-   */
-  "mcp_app.resource_read.failed": { durationMs: number };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
