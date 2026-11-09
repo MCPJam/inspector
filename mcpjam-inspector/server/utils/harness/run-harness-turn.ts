@@ -1948,6 +1948,7 @@ export async function runHarnessTurn(
       const externalAccountAuth = (
         await resolveOrgKeyCredentialPlan({
           harness: harnessAdapter,
+          modelId,
           bearer: await currentAuthorization(),
           projectId,
           ...(abortSignal ? { signal: abortSignal } : {}),

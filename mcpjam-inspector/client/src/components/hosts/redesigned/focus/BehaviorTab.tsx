@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
@@ -44,7 +45,7 @@ import {
   savedModelRow,
 } from "@/components/chat-v2/shared/available-models";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { orgKeysSavableRows } from "@/lib/org-keys-model-target";
 import { FieldRow, FocusBlock } from "./primitives";
@@ -202,6 +203,7 @@ export function BehaviorTab({
   readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
+  const selectedHarness = effectiveHarnessId(draft);
 
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
@@ -212,7 +214,7 @@ export function BehaviorTab({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels();
+  } = useAvailableModels({ harnessTargets: selectedHarness ? [{ harnessId: selectedHarness }] : [] });
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
   // Under the organization's key policy that is only organization models on
@@ -222,13 +224,13 @@ export function BehaviorTab({
       orgKeysSavableRows(
         harnessPickerModels(
           catalogModels,
-          draft.harness ? { harnessId: draft.harness } : null,
+          selectedHarness ? { harnessId: selectedHarness } : null,
           { requireOrgKeys },
         ),
         requireOrgKeys,
         HOST_MODEL_SELECTION_PURPOSE,
       ),
-    [catalogModels, draft.harness, requireOrgKeys],
+    [catalogModels, selectedHarness, requireOrgKeys],
   );
   // Under the policy a pick must save an organization selection, which a
   // deployment without stored selections cannot keep.
@@ -252,7 +254,7 @@ export function BehaviorTab({
     if (
       requireOrgKeys &&
       draft.modelId &&
-      !isRuntimeChosenModelSentinel(draft.modelId)
+      !isRuntimeAccountModel(draft.modelId)
     ) {
       return orgKeysDisallowedRow(savedModelRow(draft.modelId));
     }

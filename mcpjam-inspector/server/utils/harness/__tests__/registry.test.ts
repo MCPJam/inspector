@@ -1280,11 +1280,12 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     );
   });
 
-  it("passes NO native model (Cursor Auto picks on the customer's account)", () => {
+  it("sets Auto and explicit Cursor native model IDs", () => {
     expect(
       cursor.toNativeModel?.("anthropic/claude-sonnet-4.5"),
     ).toBeUndefined();
-    expect(cursor.toNativeModel?.("cursor/auto")).toBeUndefined();
+    expect(cursor.toNativeModel?.("cursor/auto")).toBe("default");
+    expect(cursor.toNativeModel?.("cursor/mini")).toBe("mini");
   });
 
   it("declares the approval posture it can actually keep", () => {

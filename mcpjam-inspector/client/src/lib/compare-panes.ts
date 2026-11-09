@@ -1,6 +1,8 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
+import { isLegacySelection } from "@mcpjam/sdk/browser";
 import {
   validateModelSelection,
-  type ModelSelection,
+  type RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 
@@ -30,7 +32,7 @@ export interface ComparePane {
   paneId: string;
   target: ComparePaneTarget;
   /** The model picked in this pane. Absent: the pane runs its target's model. */
-  pickedSelection?: ModelSelection;
+  pickedSelection?: RequestedModelSelection;
 }
 
 export const MAX_COMPARE_PANES = 3;
@@ -110,6 +112,7 @@ export function normalizePanes(value: unknown): ComparePane[] {
     if (!paneId || !target || panes.some((kept) => kept.paneId === paneId)) {
       continue;
     }
+    const accountPick = isLegacySelection(pane.pickedSelection) && isRuntimeAccountModel(pane.pickedSelection.modelId) ? pane.pickedSelection : undefined;
     const picked =
       pane.pickedSelection === undefined
         ? null
@@ -117,7 +120,7 @@ export function normalizePanes(value: unknown): ComparePane[] {
     panes.push({
       paneId,
       target,
-      ...(picked?.ok ? { pickedSelection: picked.selection } : {}),
+      ...(accountPick ? { pickedSelection: accountPick } : picked?.ok ? { pickedSelection: picked.selection } : {}),
     });
   }
   return panes;

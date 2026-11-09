@@ -73,6 +73,17 @@ describe("resolveOrgKeyCredentialPlan", () => {
     ]);
   });
 
+  it("validates the chosen model before reserving a box", async () => {
+    readinessState.answer = { ok: true, value: { readiness: "ready", modelAvailable: true } };
+    await expect(resolveOrgKeyCredentialPlan({ ...ask(), modelId: "cursor/mini" })).resolves.toBeDefined();
+    expect(readinessState.calls.at(-1)).toMatchObject({ modelId: "cursor/mini" });
+    for (const modelAvailable of [false, undefined]) {
+      readinessState.answer = { ok: true, value: { readiness: "ready", modelAvailable } };
+      await expect(resolveOrgKeyCredentialPlan({ ...ask(), modelId: "cursor/mini" }))
+        .rejects.toThrow("Cursor no longer offers this model");
+    }
+  });
+
   it.each(["missing", "invalid"])(
     "refuses with the admin copy when readiness is %s",
     async (readiness) => {

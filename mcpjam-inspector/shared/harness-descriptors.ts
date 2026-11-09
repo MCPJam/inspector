@@ -55,16 +55,7 @@ const LOOP_CONTROLS: Record<
     progressiveToolDiscovery: { enforced: false, note: "GitHub Copilot CLI receives the selected tools at turn start." },
   },
   cursor: {
-    // The one harness whose MODEL is not MCPJam's to choose. It authenticates
-    // with the customer's own Cursor account and that account picks the model
-    // (Cursor Auto), so a selection here would persist onto the host, show in
-    // the editor, and reach nothing — a saved setting that silently lies about
-    // what ran. The host carries the `cursor/auto` sentinel instead, which is
-    // what the runtime actually resolves to.
-    modelId: {
-      enforced: false,
-      note: "The Cursor CLI runs on your Cursor account, which chooses the model itself.",
-    },
+    modelId: ENFORCED,
     // Permanent for the same reason: Cursor's CLI takes no temperature either.
     temperature: {
       enforced: false,
@@ -155,15 +146,6 @@ export function effectiveHarnessId(
   config: { agentLoop?: string | null; harness?: string | null } | null | undefined,
 ): string | null {
   return config?.agentLoop ?? config?.harness ?? null;
-}
-
-/** A harness whose own account picks the model (Cursor CLI), so no catalog row is the model that runs. */
-export function harnessAccountChoosesModel(harnessId: string | null | undefined): boolean {
-  return (
-    !!harnessId &&
-    Object.hasOwn(HARNESS_DESCRIPTORS, harnessId) &&
-    HARNESS_DESCRIPTORS[harnessId as Harness].modelAccess === "external-account"
-  );
 }
 
 /** Missing/unknown selectors never gain MCPJam-owned extension authority. */

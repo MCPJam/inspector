@@ -23,7 +23,7 @@ import {
   getCanonicalModelId,
   hostedProviderFromCanonicalId,
 } from "@/shared/types";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -301,13 +301,15 @@ export function externalAccountHostModelRefusalReason(args: {
   harnessId: HarnessId;
   /** The model id to hold to the rule. See the note above on which one. */
   modelId: string;
+  requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
   if (adapter.modelAccess !== "external-account") return undefined;
-  if (isRuntimeChosenModelSentinel(args.modelId)) return undefined;
+  const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
+  if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (
-    `The ${adapter.displayName} client chooses its own model and cannot use "${args.modelId}". ` +
-    "Reset this client's model selection or choose a client that supports your model."
+    `The ${adapter.displayName} client cannot use "${modelId}". ` +
+    "Choose a model from your organization's Cursor account."
   );
 }
 
