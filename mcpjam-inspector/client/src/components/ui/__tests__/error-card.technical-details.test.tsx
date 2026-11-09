@@ -120,6 +120,7 @@ describe("ErrorCard technical details", () => {
         error={{
           ...base(),
           errorType: "WebApiError",
+          cause: { name: "TypeError", message: "nested diagnostic" },
           requestId: "req-copy",
           stack: "WebApiError: nope\n    at webPost (base.ts:89:11)",
         }}
@@ -132,7 +133,8 @@ describe("ErrorCard technical details", () => {
     const payload = copyMock.mock.calls[0]?.[0] as string;
     expect(payload).toContain("Type: WebApiError");
     expect(payload).toContain("Request ID: req-copy");
-    expect(payload).toContain("Stack trace:");
+    expect(payload).toContain("Technical details for support");
+    expect(payload).toContain("Technical cause for support: TypeError: nested diagnostic");
     expect(payload).toContain("at webPost (base.ts:89:11)");
   });
 });

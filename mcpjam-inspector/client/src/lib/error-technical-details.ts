@@ -128,7 +128,7 @@ export function formatErrorDetailsForCopy(
     }`,
   );
   if (normalized.cause) {
-    lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
+    lines.push(`Technical cause for support: ${normalized.cause.name}: ${normalized.cause.message}`);
   }
   // The technical block goes last: it is the longest and the least readable,
   // and a human skimming a pasted report wants the prose first. Every field
@@ -140,7 +140,7 @@ export function formatErrorDetailsForCopy(
     lines.push(`Request ID: ${normalized.requestId}`);
   }
   if (normalized.stack) {
-    lines.push("", "Stack trace:", normalized.stack);
+    lines.push("", "Technical details for support", normalized.stack);
   }
   return lines.join("\n");
 }
