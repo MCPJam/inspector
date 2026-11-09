@@ -14,13 +14,13 @@
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "16c3531d067bb238",
+      "identity": "4ffece006f2eed00",
       "runtimeVersion": "0.163.0"
     },
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "d102bf6a093a409d",
+      "identity": "9ce68108cee6ca1a",
       "runtimeVersion": "1.0.92"
     },
     {
