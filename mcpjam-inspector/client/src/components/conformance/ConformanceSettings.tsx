@@ -1,6 +1,7 @@
 /**
- * A server's Conformance Settings: the checks its runs pick by default. Each
- * change saves right away; Run's setup steps and one-click Run start from it.
+ * A server's Conformance Settings: the checks its runs pick by default, and
+ * how long a run may take. Each change saves right away; Run's setup steps
+ * and one-click Run start from it.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import type { ConformanceConnectServer } from "./ConformancePanel";
 import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
 import { ConformanceSettingsConnection } from "./ConformanceSettingsConnection";
+import { ConformanceTimeoutSetting } from "./ConformanceTimeout";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
 import {
@@ -26,8 +28,10 @@ export function ConformanceSettings({
   onEditServer,
   defaults,
   onSave,
+  timeoutSeconds,
+  onSaveTimeout,
   onBack,
-  backDisabled = false,
+  backDisabled: backHeld = false,
 }: {
   serverName: string;
   server?: ServerWithName;
@@ -40,9 +44,17 @@ export function ConformanceSettings({
     selection: ConformanceSelection,
     inputs: ConformanceProbes,
   ) => Promise<void>;
+  /** The saved run timeout override; absent means the default. */
+  timeoutSeconds?: number;
+  /** Saves the run timeout; null goes back to the default. No section without it. */
+  onSaveTimeout?: (seconds: number | null) => Promise<void>;
   onBack: () => void;
   backDisabled?: boolean;
 }) {
+  // A timeout that is not valid holds Back, as an invalid input does. Its
+  // save in flight does not (see `ConformanceTimeoutSetting`).
+  const [timeoutInvalid, setTimeoutInvalid] = useState(false);
+  const backDisabled = backHeld || timeoutInvalid;
   const storedKey = stableStringifyJson({
     selection: defaults ?? {},
     inputs: inputs ?? {},
@@ -112,6 +124,18 @@ export function ConformanceSettings({
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         <div className="mx-auto w-full max-w-240">
+          {onSaveTimeout ? (
+            <section className="mb-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+              <h3 className="mb-4 text-base font-medium tracking-tight">
+                Run Timeout
+              </h3>
+              <ConformanceTimeoutSetting
+                seconds={timeoutSeconds}
+                onSave={onSaveTimeout}
+                onInvalidChange={setTimeoutInvalid}
+              />
+            </section>
+          ) : null}
           <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
             <h3 className="mb-4 text-base font-medium tracking-tight">
               Default Checks
