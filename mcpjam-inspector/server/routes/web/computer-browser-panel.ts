@@ -84,6 +84,7 @@ import {
 } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { registerBrowserInputPing } from "./computer-browser-input-ping.js";
 import { browserProfileArchiveResponse } from "../../../shared/browser-session-header.js";
 
 /** How long a panel's lease lives without a heartbeat. The panel beats every
@@ -360,6 +361,13 @@ export function createComputerBrowserPanelRoutes(
   }
 
   const app = new Hono();
+  registerBrowserInputPing(app, {
+    authorize,
+    currentSession: (claims) =>
+      currentSession(browserTarget(claims), claims.sessionId),
+    touchSession,
+    touchActivity,
+  });
 
   app.get("/session", async (c) => {
     const auth = await authorize(c);
@@ -461,6 +469,7 @@ export function createComputerBrowserPanelRoutes(
         contextMode: session.contextMode,
         lease,
         yours: heldByCaller(lease, userId),
+        ...(session.idleMs !== undefined ? { idleMs: session.idleMs } : {}),
       });
     } catch (error) {
       reportRouteFailure("browser panel session lookup failed", error, {

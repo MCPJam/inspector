@@ -17,6 +17,7 @@
  * be able to read or write one.
  */
 import { logger } from "../../utils/logger.js";
+import { readIdleMs } from "../../utils/computers/control-plane-client.js";
 import { getServiceCredential } from "../service-credential.js";
 
 /** Why the backend refused to hand back an otherwise-existing session. */
@@ -81,6 +82,8 @@ interface BrowserSessionRecordCommon {
    * store the column yet — both of which mean "unknown", never "compatible".
    */
   protocolVersion?: number;
+  /** The box's idle window, when the control plane sends it. */
+  idleMs?: number;
 }
 
 /**
@@ -89,8 +92,7 @@ interface BrowserSessionRecordCommon {
  * only in memory and this row is the only durable copy any replica can recover
  * it from.
  */
-export interface ComputerBrowserSessionRecord
-  extends BrowserSessionRecordCommon {
+export interface ComputerBrowserSessionRecord extends BrowserSessionRecordCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -103,8 +105,7 @@ export interface ComputerBrowserSessionRecord
  * to cache. A UNION member rather than optional fields, so a `streamUrl: ""`
  * placeholder that some future panel renders into an iframe cannot exist.
  */
-export interface SandboxBrowserSessionRecord
-  extends BrowserSessionRecordCommon {
+export interface SandboxBrowserSessionRecord extends BrowserSessionRecordCommon {
   target: "sandbox";
   sandboxRowId: string;
   /** Present only for a watched Playground sandbox. */
@@ -113,8 +114,7 @@ export interface SandboxBrowserSessionRecord
 }
 
 export type BrowserSessionRecord =
-  | ComputerBrowserSessionRecord
-  | SandboxBrowserSessionRecord;
+  ComputerBrowserSessionRecord | SandboxBrowserSessionRecord;
 
 interface BrowserSessionLookupCommon {
   /**
@@ -168,19 +168,16 @@ interface BrowserSessionLookupCommon {
   };
 }
 
-export interface ComputerBrowserSessionLookup
-  extends BrowserSessionLookupCommon {
+export interface ComputerBrowserSessionLookup extends BrowserSessionLookupCommon {
   session: ComputerBrowserSessionRecord | null;
 }
 
-export interface SandboxBrowserSessionLookup
-  extends BrowserSessionLookupCommon {
+export interface SandboxBrowserSessionLookup extends BrowserSessionLookupCommon {
   session: SandboxBrowserSessionRecord | null;
 }
 
 export type BrowserSessionLookup =
-  | ComputerBrowserSessionLookup
-  | SandboxBrowserSessionLookup;
+  ComputerBrowserSessionLookup | SandboxBrowserSessionLookup;
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
 const RECORD_PATH = "/browser-runtime/session/record";
@@ -336,6 +333,7 @@ function parseSession(
     bundleHash,
     contextMode,
     protocolVersion,
+    idleMs,
   } = raw;
   if (
     typeof sessionId !== "string" ||
@@ -356,6 +354,7 @@ function parseSession(
     // is load-bearing for reaching the right daemon with the right credential.
     return null;
   }
+  const idleWindow = readIdleMs(idleMs);
   const common = {
     sessionId,
     ...(typeof logicalSessionId === "string" && logicalSessionId.length > 0
@@ -378,6 +377,7 @@ function parseSession(
     protocolVersion >= 1
       ? { protocolVersion }
       : {}),
+    ...(idleWindow !== undefined ? { idleMs: idleWindow } : {}),
   } as const;
   if (typeof sandboxRowId === "string" && sandboxRowId.length > 0) {
     if (expectedTarget !== "sandbox") return null;
@@ -720,8 +720,7 @@ export async function touchBrowserSession(args: {
  * backend that has not deployed yet, or let a real conflict through.
  */
 export type BrowserRelaunchClaim =
-  | { ok: true }
-  | { ok: false; reason: "claimed" | "unavailable" };
+  { ok: true } | { ok: false; reason: "claimed" | "unavailable" };
 
 /**
  * Take the exclusive right to relaunch this computer's browser.
