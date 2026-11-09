@@ -227,13 +227,6 @@ describe("executePersistedConformanceRun with saved settings", () => {
   it("records a suite that reports after the budget as timed out, not with its cut-off report", async () => {
     vi.useFakeTimers();
     const { calls } = convexClient();
-    suiteConfigsForRunMock.mockResolvedValue({
-      protocolVersion: "2025-11-25",
-      selection: SAVED.selection,
-      protocol: {},
-      apps: {},
-      tasks: {},
-    });
     // A suite whose requests the deadline aborted still reports, with every
     // check failed on the aborted request.
     runConformanceMock.mockImplementation(
@@ -287,6 +280,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       ...BASE,
       suites: ["protocol"],
       settings: SAVED,
+      suiteConfigs: RESOLVED,
       runTimeoutSeconds: 5,
     });
     await vi.advanceTimersByTimeAsync(5_000);
@@ -313,13 +307,6 @@ describe("executePersistedConformanceRun with saved settings", () => {
         }
       },
     );
-    suiteConfigsForRunMock.mockResolvedValue({
-      protocolVersion: "2025-11-25",
-      selection: SAVED.selection,
-      protocol: {},
-      apps: {},
-      tasks: {},
-    });
     runConformanceMock.mockImplementation(
       (config: { onProgress: (event: unknown) => Promise<void> | void }) => {
         void config.onProgress({
@@ -344,6 +331,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       ...BASE,
       suites: ["protocol", "tasks"],
       settings: SAVED,
+      suiteConfigs: RESOLVED,
       runTimeoutSeconds: 2,
     });
     await vi.advanceTimersByTimeAsync(3_000);
