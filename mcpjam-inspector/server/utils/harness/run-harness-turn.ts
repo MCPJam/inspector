@@ -1695,6 +1695,7 @@ export async function runHarnessTurn(
         manager: mcpClientManager, serverIds: selectedServers ?? [], hostCapabilities: options.harnessHostCapabilities,
         scenarioParticipant, modelId, sourceType, plane: harnessMcpProxy?.plane,
         localExecution: !!harnessExecutionTarget, brokeredEndpoint: org.brokeredEndpoint,
+        upstreamProfile: org.upstreamProfile,
       });
       // Enrolled client profiles keep their existing delivery unless this exact
       // server/profile combination qualifies for the forwarding adapter.

@@ -216,7 +216,7 @@ export function BehaviorTab({
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
   // Under the organization's key policy that is only organization models on
-  // the harness's own vendor that a pick can save with their selection.
+  // connections that serve the harness's API, saved with their selection.
   const availableModels = useMemo(
     () =>
       orgKeysSavableRows(

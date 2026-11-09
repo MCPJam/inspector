@@ -22,9 +22,17 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   harnessDisplayName,
   harnessNoRunnableModelReason,
-  harnessRunsOnOrgProvider,
 } from "@/shared/harness-model-support";
-import { harnessTakesOrgKeys } from "@/shared/harness-connection-api";
+import {
+  harnessRunsOnConnection,
+  harnessTakesOrgKeys,
+} from "@/shared/harness-connection-api";
+import {
+  gatewayHarnessModel,
+  gatewayModelFor,
+  gatewayModelName,
+  type HarnessGatewayConnection,
+} from "@/shared/harness-gateway-model";
 import type { EvalSuite } from "../evals/types";
 
 export type PreflightModel = {
@@ -45,6 +53,7 @@ export type PreflightSelection = {
   modelId?: string;
   source?: string;
   connectionRef?: { kind?: string; id?: string } | null;
+  nativeModelId?: string;
 };
 
 export type PreflightHost = {
@@ -75,7 +84,17 @@ export function hostsForPreflight(
 export type PreflightOrgConfig = {
   providers: Array<
     Pick<OrgModelProvider, "providerKey" | "enabled"> &
-      Partial<Pick<OrgModelProvider, "id" | "hasSecret" | "policyEligibility">>
+      Partial<
+        Pick<
+          OrgModelProvider,
+          | "id"
+          | "hasSecret"
+          | "policyEligibility"
+          | "apis"
+          | "models"
+          | "runtimeLocation"
+        >
+      >
   >;
   aiKeyPolicy?: OrgVisibleConfig["aiKeyPolicy"];
   aiReadiness?: OrgVisibleConfig["aiReadiness"];
@@ -157,28 +176,29 @@ function orgKeyModelProblem(
 }
 
 /**
- * The provider of the organization connection a model runs on, or undefined
- * when it is not an organization model (MCPJam-provided, personal or local).
- * A legacy id with no selection reads as the provider it names; whether it
- * can run is `orgKeyModelProblem`'s to say.
+ * The organization connection a model runs on (the org config's row, with a
+ * gateway's APIs and models), or undefined when it is not an organization
+ * model (MCPJam-provided, personal or local). A legacy id with no selection
+ * reads as the provider it names; whether it can run is
+ * `orgKeyModelProblem`'s to say.
  */
-function orgModelVendor(
+function orgModelConnection(
   orgConfig: PreflightOrgConfig,
   model: PreflightModel,
-): string | undefined {
+): HarnessGatewayConnection | undefined {
   const source = model.selection?.source;
   if (source === "org") {
     const id = model.selection?.connectionRef?.id;
     const connection = id
       ? orgConfig.providers.find((provider) => provider.id === id)
       : undefined;
-    return connection?.providerKey ?? model.provider;
+    return connection ?? { providerKey: model.provider };
   }
-  if (source === "legacy") return model.provider;
+  if (source === "legacy") return { providerKey: model.provider };
   if (source) return undefined;
   return isMCPJamProvidedModel(model.model, model.provider)
     ? undefined
-    : model.provider;
+    : { providerKey: model.provider };
 }
 
 /**
@@ -195,13 +215,14 @@ function orgKeyRuntimeProblem(model: PreflightModel): string | null {
 }
 
 /**
- * A harness that runs on an organization's key (Claude Code, Codex) runs
- * under the policy only on an organization connection to its own vendor
- * (Claude Code: Anthropic, Codex: OpenAI). A model on such a client that is
- * not one gets this problem, which names the vendor the harness needs. A
- * matching organization model gets none here: whether its connection can
- * run is `orgKeyModelProblem`'s to say. An emulated client never gets one,
- * and a harness on its own account (Cursor) gets `orgKeyRuntimeProblem`'s.
+ * A harness that runs on an organization's key runs under the policy only on
+ * an organization connection that serves its API: its vendor's own, or a
+ * gateway that serves it, on a gateway model mapped to one the harness runs
+ * (`gatewayHarnessModel`). A model on such a client that is not one gets this
+ * problem, which names what the harness needs. A matching organization model
+ * gets none here: whether its connection can run is `orgKeyModelProblem`'s to
+ * say. An emulated client never gets one, and a harness on its own account
+ * (Cursor) gets `orgKeyRuntimeProblem`'s.
  */
 function orgKeyHarnessProblem(
   orgConfig: PreflightOrgConfig,
@@ -211,13 +232,29 @@ function orgKeyHarnessProblem(
   if (model.selectionKnown === false) return null;
   const harnessId = model.harness;
   if (!harnessId || !harnessTakesOrgKeys(harnessId)) return null;
-  if (harnessRunsOnOrgProvider(harnessId, orgModelVendor(orgConfig, model))) {
+  const connection = orgModelConnection(orgConfig, model);
+  const prefix = `${label} can't run on ${harnessDisplayName(harnessId)}.`;
+  if (
+    model.selection?.source === "org" &&
+    connection?.providerKey.startsWith("custom:")
+  ) {
+    const name = gatewayModelName(connection.providerKey, {
+      modelId: model.selection?.modelId ?? model.model,
+      nativeModelId: model.selection?.nativeModelId,
+    });
+    const gateway = gatewayHarnessModel(
+      harnessId,
+      gatewayModelFor(connection, name),
+    );
+    return "refusal" in gateway ? `${prefix} ${gateway.refusal}` : null;
+  }
+  if (connection && harnessRunsOnConnection(harnessId, connection)) {
     return null;
   }
   const reason = harnessNoRunnableModelReason(harnessId, {
     requireOrgKeys: true,
   });
-  return `${label} can't run on ${harnessDisplayName(harnessId)}. ${reason}`;
+  return `${prefix} ${reason}`;
 }
 
 function orgKeyJudgeProblem(

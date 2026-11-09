@@ -1,9 +1,15 @@
 /**
  * Hosted OpenCode adapter: published `@ai-sdk/harness-opencode` with MCPJam
- * host-executed tools and a platform-brokered Anthropic lease.
+ * host-executed tools and a brokered Anthropic Messages lease, paid by MCPJam
+ * or by the organization (its Anthropic key, or a gateway that serves
+ * Anthropic Messages).
  *
- * Title and compaction agents are pinned to the same model the turn leases, so
- * OpenCode cannot reach for a second Anthropic model the broker will refuse.
+ * The provider is `anthropic` on every lease: it names the wire API, pointed
+ * at MCPJam's model proxy, which holds whichever key pays. An org lease runs
+ * the id it admits (`toOpenCodeNativeModel`: the vendor's native id, or the
+ * gateway's own name as is). Title and compaction agents are pinned to the
+ * same model the turn leases, so OpenCode cannot reach for a second model the
+ * broker will refuse.
  *
  * OpenCode stays on 1.0.119 (image input is a later pin). That adapter's
  * `doStart` still resolves `.harness-bootstrap/opencode` against the session
