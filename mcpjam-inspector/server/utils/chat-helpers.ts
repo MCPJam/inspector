@@ -1,4 +1,5 @@
 import { listBaseServers } from "./mcp-connections.js";
+import { createGuardedFetch } from "./hosted-egress-guard.js";
 import { ModelDefinition } from "@/shared/types";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -63,7 +64,10 @@ export const createLlmModel = (
       const normalized = /\/api\/?$/.test(raw)
         ? raw
         : `${raw.replace(/\/+$/, "")}/api`;
-      return createOllama({ baseURL: normalized })(modelDefinition.id);
+      return createOllama({
+        baseURL: normalized,
+        fetch: createGuardedFetch({ label: "Ollama URL" }),
+      })(modelDefinition.id);
     }
     case "mistral":
       return createMistral({ apiKey })(modelDefinition.id);
@@ -82,7 +86,10 @@ export const createLlmModel = (
       // when set; otherwise the provider derives it from AWS_REGION.
       return createAmazonBedrock({
         apiKey,
-        ...(baseUrls?.bedrock && { baseURL: baseUrls.bedrock }),
+        ...(baseUrls?.bedrock && {
+          baseURL: baseUrls.bedrock,
+          fetch: createGuardedFetch({ label: "Amazon Bedrock URL" }),
+        }),
       })(modelDefinition.id);
     case "azure": {
       const azureBaseUrl = baseUrls?.azure ?? "";
@@ -102,7 +109,12 @@ export const createLlmModel = (
         modelDefinition.nativeModelId?.trim() || String(modelDefinition.id);
       return createAzure({
         apiKey,
-        ...(resourceName ? { resourceName } : { baseURL: azureBaseUrl }),
+        ...(resourceName
+          ? { resourceName }
+          : {
+              baseURL: azureBaseUrl,
+              fetch: createGuardedFetch({ label: "Azure OpenAI URL" }),
+            }),
       })(deployment);
     }
     case "custom": {
@@ -123,10 +135,17 @@ export const createLlmModel = (
         : String(modelDefinition.id);
       // Use the custom provider's apiKey, falling back to the runtime apiKey
       const resolvedApiKey = cp.apiKey || apiKey || "";
+      // Hosted, the base URL is an organization's setting and this process
+      // dials it from a shared network, so every hop, redirects included,
+      // passes the hosted egress guard. Locally this is plain fetch.
+      const guardedFetch = createGuardedFetch({
+        label: `Custom provider "${providerName}" URL`,
+      });
       if (cp.protocol === "anthropic-compatible") {
         return createAnthropic({
           apiKey: resolvedApiKey,
           baseURL: cp.baseUrl,
+          fetch: guardedFetch,
         })(rawModelId);
       }
       // Default: openai-compatible
@@ -135,6 +154,7 @@ export const createLlmModel = (
       return createOpenAI({
         apiKey: resolvedApiKey,
         baseURL: cp.baseUrl,
+        fetch: guardedFetch,
       }).chat(rawModelId);
     }
     default:
