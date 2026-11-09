@@ -107,7 +107,7 @@ export function readConnectionDiagnostics(input: unknown): NormalizedError {
     rawMessage: [
       message,
       wire.slug && wire.slug !== entry.slug
-        ? `Reported slug: ${clean(wire.slug, 120)}`
+        ? `Error category: ${clean(wire.slug, 120)}`
         : "",
     ]
       .filter(Boolean)
@@ -152,7 +152,7 @@ export function presentConnectionError(
 ): ConnectionErrorPresentation {
   const diagnostics = readConnectionDiagnostics(input);
   if (context.oauthStage)
-    diagnostics.rawMessage += `\nOAuth stage: ${clean(context.oauthStage, 160)}`;
+    diagnostics.rawMessage += `\nOAuth step: ${clean(context.oauthStage, 160)}`;
   const entry = ERROR_CATALOG[diagnostics.slug];
   const facts = readConnectionFailureFacts(context.facts ?? input);
   const name =
@@ -174,7 +174,7 @@ export function presentConnectionError(
     recovery = "sign-in";
   } else if (facts.credentialRefusal?.kind === "export_denied") {
     explanation =
-      "Your organization keeps these saved credentials in MCPJam-hosted connections. Connect from MCPJam in the browser, or ask an organization admin to change the credential export policy.";
+      "Your organization doesn't allow exporting these saved credentials. Connect from MCPJam in the browser, or ask an admin to review the credential export policy.";
   } else if (facts.credentialRefusal?.kind === "origin_mismatch") {
     explanation =
       "The server address changed after its credentials were saved. Open the server settings and re-enter the credentials for the new address.";

@@ -22,7 +22,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
-import { withTechnicalDetails } from "@/lib/error-technical-details";
+import {
+  withTechnicalDetails,
+  formatErrorDetailsForCopy,
+} from "@/lib/error-technical-details";
 import { useFeedbackReporter } from "@/components/support/FeedbackReporterContext";
 import type { ConnectionErrorPresentation } from "@/lib/connection-error-presentation";
 import { ReviewedErrorSummary } from "./reviewed-error-summary";
@@ -173,55 +176,6 @@ export function severityStyles(severity: NormalizedError["severity"]) {
         iconClass: "text-destructive",
       };
   }
-}
-
-/**
- * The card as plain text, for pasting into an agent or a bug report. Includes
- * the collapsed details: needing to expand them first would defeat the point.
- *
- * Deliberately NOT filtered the way the rendered panel is. The panel drops a
- * raw message that only repeats the headline because it is noise to a reader
- * who just read the headline; a bug report wants the literal string that came
- * off the wire regardless, so this keeps every field.
- */
-function copyText(normalized: NormalizedError): string {
-  const lines = [normalized.title, normalized.oneLine];
-  if (normalized.likelyCauses.length > 0) {
-    lines.push(
-      "",
-      "Likely causes:",
-      ...normalized.likelyCauses.map((cause) => `- ${cause}`),
-    );
-  }
-  if (normalized.nextSteps.length > 0) {
-    lines.push(
-      "",
-      "Next steps:",
-      ...normalized.nextSteps.map((step) => `- ${step}`),
-    );
-  }
-  lines.push(
-    "",
-    `Raw error: ${normalized.rawMessage}${
-      normalized.rawCode !== undefined ? ` (code: ${normalized.rawCode})` : ""
-    }`,
-  );
-  if (normalized.cause) {
-    lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
-  }
-  // The technical block goes last: it is the longest and the least readable,
-  // and a human skimming a pasted report wants the prose first. Every field
-  // here was redacted by the describer before it reached the card.
-  if (normalized.errorType) {
-    lines.push(`Type: ${normalized.errorType}`);
-  }
-  if (normalized.requestId) {
-    lines.push(`Request ID: ${normalized.requestId}`);
-  }
-  if (normalized.stack) {
-    lines.push("", "Stack trace:", normalized.stack);
-  }
-  return lines.join("\n");
 }
 
 /**
@@ -412,7 +366,9 @@ export function ErrorCard({
   );
   const handleCopy = async () => {
     // `copyToClipboard` reports failure by returning false, not by throwing.
-    const copied = await copyToClipboard(copyText(normalized));
+    const copied = await copyToClipboard(
+      formatErrorDetailsForCopy(normalized, Boolean(presentation)),
+    );
     setCopyState(copied ? "copied" : "failed");
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
     copyResetTimer.current = setTimeout(() => setCopyState("idle"), 2000);
@@ -753,7 +709,7 @@ export function ErrorCard({
 
           {/* Collapsed face carries what FIXES the error, the way in to the
               evidence, and Copy.
-              Copy stays out here deliberately: `copyText` serializes the whole
+              Copy stays out here deliberately: it serializes the whole
               card including the collapsed rows, precisely so someone pasting
               into an agent never has to expand anything first. Putting it
               behind the disclosure would undo that. "Learn more" is reading,

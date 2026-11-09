@@ -86,3 +86,61 @@ export function withTechnicalDetails(
     ...(stack ? { stack } : {}),
   };
 }
+
+/**
+ * The card as plain text, for pasting into an agent or a bug report. Includes
+ * the collapsed details: needing to expand them first would defeat the point.
+ *
+ * Deliberately NOT filtered the way the rendered panel is. The panel drops a
+ * raw message that only repeats the headline because it is noise to a reader
+ * who just read the headline; a bug report wants the literal string that came
+ * off the wire regardless, so this keeps every field.
+ */
+export function formatErrorDetailsForCopy(
+  normalized: NormalizedError,
+  includeMetadata = false,
+): string {
+  const lines = [normalized.title, normalized.oneLine];
+  if (includeMetadata) {
+    lines.push(
+      `Error category: ${normalized.slug}`,
+      `Source: ${normalized.origin ?? "ambiguous"}`,
+    );
+  }
+  if (normalized.likelyCauses.length > 0) {
+    lines.push(
+      "",
+      "Likely causes:",
+      ...normalized.likelyCauses.map((cause) => `- ${cause}`),
+    );
+  }
+  if (normalized.nextSteps.length > 0) {
+    lines.push(
+      "",
+      "Next steps:",
+      ...normalized.nextSteps.map((step) => `- ${step}`),
+    );
+  }
+  lines.push(
+    "",
+    `Raw error: ${normalized.rawMessage}${
+      normalized.rawCode !== undefined ? ` (code: ${normalized.rawCode})` : ""
+    }`,
+  );
+  if (normalized.cause) {
+    lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
+  }
+  // The technical block goes last: it is the longest and the least readable,
+  // and a human skimming a pasted report wants the prose first. Every field
+  // here was redacted by the describer before it reached the card.
+  if (normalized.errorType) {
+    lines.push(`Type: ${normalized.errorType}`);
+  }
+  if (normalized.requestId) {
+    lines.push(`Request ID: ${normalized.requestId}`);
+  }
+  if (normalized.stack) {
+    lines.push("", "Stack trace:", normalized.stack);
+  }
+  return lines.join("\n");
+}

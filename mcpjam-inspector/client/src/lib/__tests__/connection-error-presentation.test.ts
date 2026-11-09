@@ -113,10 +113,10 @@ describe("connection error presentation", () => {
     expect(result.diagnostics.requestId).toBe("request-123");
     expect(result.diagnostics.origin).toBe("user_server");
     expect(result.diagnostics.rawMessage).toContain(
-      "Reported slug: future/diagnosis",
+      "Error category: future/diagnosis",
     );
     expect(result.diagnostics.rawMessage).toContain(
-      "OAuth stage: Metadata received",
+      "OAuth step: Metadata received",
     );
     expect(JSON.stringify(result)).not.toContain("supersecret");
   });

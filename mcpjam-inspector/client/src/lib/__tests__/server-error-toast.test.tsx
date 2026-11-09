@@ -12,6 +12,7 @@ import { toast as appToast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toastServerConnectionFailure } from "../server-error-toast";
 import { presentConnectionError } from "../connection-error-presentation";
+import { formatErrorDetailsForCopy } from "../error-technical-details";
 
 vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: vi.fn(async () => true),
@@ -71,7 +72,7 @@ describe("toastServerConnectionFailure", () => {
       expect(copyMock).toHaveBeenCalledWith(
         (() => {
           const result = presentConnectionError("Request failed (500)", { serverName: "Excalidraw (App)" });
-          return `${result.title}: ${result.explanation}`;
+          return formatErrorDetailsForCopy({ ...result.diagnostics, title: result.title, oneLine: result.explanation }, true);
         })(),
       ),
     );
@@ -89,6 +90,26 @@ describe("toastServerConnectionFailure", () => {
       await screen.findByRole("button", { name: "Change protocol version" }),
     );
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps diagnostic metadata copyable without showing wire text", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("Asana", { code: "SIGN_IN_REQUIRED", requestId: "request-123", error: "client_secret=supersecret" });
+    expect(await screen.findByText("Sign in to MCPJam to continue.")).toBeVisible();
+    expect(screen.queryByText(/supersecret/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy error message" }));
+    await waitFor(() => expect(copyMock).toHaveBeenCalledOnce());
+    const copied = copyMock.mock.calls[0][0];
+    expect(copied).toContain("SIGN_IN_REQUIRED");
+    expect(copied).toContain("request-123");
+    expect(copied).toContain("internal/unknown");
+    expect(copied).not.toContain("supersecret");
+  });
+
+  it("keeps protocol-pin fallback recovery when the visible title is reviewed", async () => {
+    render(<Toaster />);
+    toastServerConnectionFailure("champions", 'MCP server "champions" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.');
+    expect(await screen.findByRole("button", { name: "Change protocol version" })).toBeVisible();
   });
 });
 
