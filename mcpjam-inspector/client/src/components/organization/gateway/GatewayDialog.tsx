@@ -97,9 +97,13 @@ export function GatewayDialog({
   const [keyRequested, setKeyRequested] = useState(false);
   const [dirty, setDirty] = useState(false);
   const focusRequest = useRef<GatewayField | null>(null);
+  // The latest Test run; a reset or a newer run makes an earlier answer stale.
+  const testRun = useRef(0);
 
   useEffect(() => {
     if (!open) return;
+    testRun.current += 1;
+    setTesting(false);
     setBaseUrl(editProvider?.baseUrl ?? "");
     setSecret("");
     setName(
@@ -140,15 +144,22 @@ export function GatewayDialog({
 
   const runTest = async (runtimeLocation: GatewayRuntimeLocation = runtime) => {
     if (!baseUrl.trim() || testing) return;
+    const run = ++testRun.current;
     setTesting(true);
     setOutcome(null);
-    const response = await testConnection({
-      runtimeLocation,
-      baseUrl: baseUrl.trim(),
-      ...(secret.trim() ? { secret: secret.trim() } : {}),
-      ...(editProvider ? { providerKey: editProvider.providerKey } : {}),
-    });
-    setTesting(false);
+    let response: Awaited<ReturnType<typeof testConnection>>;
+    try {
+      response = await testConnection({
+        runtimeLocation,
+        baseUrl: baseUrl.trim(),
+        ...(secret.trim() ? { secret: secret.trim() } : {}),
+        ...(editProvider ? { providerKey: editProvider.providerKey } : {}),
+      });
+    } finally {
+      if (run === testRun.current) setTesting(false);
+    }
+    // The dialog was reset or reopened for another connection meanwhile.
+    if (run !== testRun.current) return;
     const next = gatewayTestOutcome(response);
     if (!("error" in response)) {
       setResults(

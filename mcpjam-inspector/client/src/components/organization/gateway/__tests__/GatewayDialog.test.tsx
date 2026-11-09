@@ -162,4 +162,42 @@ describe("GatewayDialog", () => {
     expect(screen.getByText('A gateway named "Taken" already exists. Choose another name.')).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add gateway" })).toBeDisabled();
   });
+  it("ignores a Test answer that arrives after the dialog moved to another connection", async () => {
+    let answer: (result: GatewayConnectionTestResult) => void = () => {};
+    testConnection.mockImplementation(
+      () => new Promise((resolve) => { answer = resolve; }),
+    );
+    const view = renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    expect(testConnection).toHaveBeenCalledTimes(1);
+
+    const other: OrgModelProvider = {
+      providerKey: "custom:other",
+      displayName: "Other",
+      baseUrl: "https://other.example/v1",
+      hasSecret: true,
+      runtimeLocation: "cloud",
+      apis: ["chatCompletions"],
+      models: [{ nativeModelId: "other-model" }],
+    } as OrgModelProvider;
+    view.rerender(
+      <GatewayDialog
+        open
+        onOpenChange={vi.fn()}
+        organizationId="org_1"
+        editProvider={other}
+        existingProviderKeys={["custom:taken"]}
+        requireOrgKeys={false}
+        isSaving={false}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+    answer(PASSED);
+
+    await waitFor(() => expect(field("gateway-base-url").value).toBe("https://other.example/v1"));
+    expect(screen.queryByText("Responses didn't answer")).not.toBeInTheDocument();
+    expect(screen.queryByText("claude-sonnet-4.5")).not.toBeInTheDocument();
+  });
 });
