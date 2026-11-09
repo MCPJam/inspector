@@ -303,12 +303,14 @@ export function externalAccountHostModelRefusalReason(args: {
   harnessId: HarnessId;
   /** The model id to hold to the rule. See the note above on which one. */
   modelId: string;
+  requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
   if (adapter.modelAccess !== "external-account") return undefined;
-  if (isRuntimeAccountModel(args.modelId)) return undefined;
+  const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
+  if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (
-    `The ${adapter.displayName} client cannot use "${args.modelId}". ` +
+    `The ${adapter.displayName} client cannot use "${modelId}". ` +
     "Choose a model from your organization's Cursor account."
   );
 }

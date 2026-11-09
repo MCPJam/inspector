@@ -449,6 +449,7 @@ export async function resolveManagedTurnSetup(args: {
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      requestedModelId: String(modelDefinition.id),
     });
     if (hostModelRefusal) {
       throw new WebRouteError(

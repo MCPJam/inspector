@@ -156,20 +156,18 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables the MODEL selector for a cursor harness host, and says who chooses", () => {
+  it("enables account model selection while keeping unsupported controls disabled", () => {
     // The one harness whose model is not MCPJam's to choose: it authenticates
     // with the customer's own Cursor account and that account picks the model.
     // Left enabled, a selection persists onto the host and reaches nothing —
     // the host then displays a model that never ran.
     const { container } = renderBehaviorTab({ harness: "cursor" });
 
-    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+    expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
       "true",
     );
-    expect(
-      screen.getByText(/Cursor account, which chooses the model itself/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Cursor account, which chooses the model itself/i)).not.toBeInTheDocument();
 
     // Temperature goes with it, for the same reason.
     expect(sliderRoot(container)).toHaveAttribute("data-disabled");
