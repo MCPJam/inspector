@@ -58,8 +58,12 @@ import {
   type OrgModelUsageAggregate,
   type OrgModelUsageSummary,
   type OrgModelProvider,
+  type UpsertOrgProviderArgs,
 } from "@/hooks/use-org-model-config";
 import { OrganizationAiCards } from "./OrganizationAiCards";
+import { ProviderKeyField } from "./ProviderKeyField";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { GatewayDialog } from "./gateway/GatewayDialog";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
@@ -257,8 +261,15 @@ function OrganizationProviderSettings({
   organizationId,
   isAdmin,
 }: OrganizationModelsSectionProps) {
-  const { providers, isLoading, upsertProvider, deleteProvider, isSaving } =
-    useOrgModelConfig(organizationId);
+  const {
+    providers,
+    requireOrgKeys,
+    isLoading,
+    upsertProvider,
+    deleteProvider,
+    isSaving,
+  } = useOrgModelConfig(organizationId);
+  const gatewaysEnabled = useFeatureFlagEnabled("org-model-gateways") === true;
   const navigate = useAppNavigate();
 
   const [showAllProviders, setShowAllProviders] = useState(false);
@@ -341,6 +352,34 @@ function OrganizationProviderSettings({
   const knownProviderKeys = new Set(PROVIDER_CATALOG.map((c) => c.key));
   const customProviders =
     providers?.filter((p) => !knownProviderKeys.has(p.providerKey)) ?? [];
+  const customDialogProps = {
+    open: customDialogOpen,
+    onOpenChange: setCustomDialogOpen,
+    editProvider: editingCustom,
+    isSaving,
+    onSave: async (args: UpsertOrgProviderArgs) => {
+      try {
+        await upsertProvider(args);
+        toast.success(
+          gatewaysEnabled
+            ? "Gateway saved"
+            : editingCustom
+              ? "Custom provider updated"
+              : "Custom provider added",
+        );
+        setCustomDialogOpen(false);
+        setEditingCustom(null);
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to save custom provider",
+        );
+      }
+    },
+    onCancel: () => {
+      setCustomDialogOpen(false);
+      setEditingCustom(null);
+    },
+  };
 
   // -----------------------------------------------------------------------
   // Render
@@ -417,7 +456,7 @@ function OrganizationProviderSettings({
                   </Button>
                   <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
-                    Add Custom Provider
+                    {gatewaysEnabled ? "Add a gateway" : "Add Custom Provider"}
                   </Button>
                   <Button
                     variant="outline"
@@ -472,35 +511,17 @@ function OrganizationProviderSettings({
         />
       ) : null}
 
-      {/* Custom provider dialog */}
-      <OrgCustomProviderDialog
-        open={customDialogOpen}
-        onOpenChange={setCustomDialogOpen}
-        editProvider={editingCustom}
-        isSaving={isSaving}
-        onSave={async (args) => {
-          try {
-            await upsertProvider(args);
-            toast.success(
-              editingCustom
-                ? "Custom provider updated"
-                : "Custom provider added",
-            );
-            setCustomDialogOpen(false);
-            setEditingCustom(null);
-          } catch (err) {
-            toast.error(
-              err instanceof Error
-                ? err.message
-                : "Failed to save custom provider",
-            );
-          }
-        }}
-        onCancel={() => {
-          setCustomDialogOpen(false);
-          setEditingCustom(null);
-        }}
-      />
+      {/* Custom provider dialog; the gateway editor behind its flag */}
+      {gatewaysEnabled ? (
+        <GatewayDialog
+          {...customDialogProps}
+          organizationId={organizationId}
+          existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
+          requireOrgKeys={requireOrgKeys}
+        />
+      ) : (
+        <OrgCustomProviderDialog {...customDialogProps} />
+      )}
 
       {/* Delete confirmation */}
       <AlertDialog
@@ -1413,70 +1434,5 @@ function OrgCustomProviderDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function ProviderKeyField({
-  id,
-  configured,
-  value,
-  onChange,
-  placeholder = "sk-...",
-  optional = false,
-}: {
-  id: string;
-  configured: boolean;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  optional?: boolean;
-}) {
-  const [replacing, setReplacing] = useState(false);
-  if (configured && !replacing) {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-md border p-3">
-        <span className="flex items-center gap-2 text-sm">
-          <CheckCircle2 aria-hidden="true" className="size-4" />
-          API key configured
-        </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setReplacing(true)}
-        >
-          Replace key
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-2">
-      <label htmlFor={id} className="text-sm font-medium">
-        {configured ? "New API key" : "API Key"}
-        {optional && !configured ? " (optional)" : ""}
-      </label>
-      <Input
-        id={id}
-        type="password"
-        autoComplete="new-password"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-      />
-      {configured && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            onChange("");
-            setReplacing(false);
-          }}
-        >
-          Keep existing key
-        </Button>
-      )}
-    </div>
   );
 }
