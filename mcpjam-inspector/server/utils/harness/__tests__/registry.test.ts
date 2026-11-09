@@ -3,6 +3,11 @@ import { qualifiedForwardingRuntime } from "../forwarding/runtime-contract.js";
 import { describe, expect, it, vi } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
+import { createCursor } from "@ai-sdk/harness-cursor";
+vi.mock("@ai-sdk/harness-cursor", async (original) => {
+  const actual = await original<typeof import("@ai-sdk/harness-cursor")>();
+  return { ...actual, createCursor: vi.fn(actual.createCursor) };
+});
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -44,6 +49,29 @@ const lastClaudeCodeSettings = () =>
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandbox-policy.js";
 
 describe("harness registry", () => {
+  it("authenticates the registered Cursor adapter through its restricted sandbox", async () => {
+    const spawn = vi.fn(async () => ({} as never));
+    vi.mocked(createCursor).mockReturnValueOnce({
+      specificationVersion: "harness-v1", harnessId: "cursor", builtinTools: {},
+      doStart: async (options) => {
+        const sandbox = options.sandboxSession;
+        const restricted = "restricted" in sandbox ? sandbox.restricted() : sandbox;
+        await restricted.spawn({ command: "bridge", env: { AI_SDK_ACP_BRIDGE_CONFIGURATION: "{}" } });
+        return {} as never;
+      },
+    } as ReturnType<typeof createCursor>);
+    const harness = getHarnessAdapter("cursor").createHarness({ auth: { CURSOR_API_KEY: "" }, mcpJson: { mcpServers: {} } });
+    await harness.doStart({ sessionId: "cursor-auth", sessionWorkDir: "/workspace", sandboxSession: { restricted: () => ({ spawn }) } as never });
+    expect(spawn).toHaveBeenCalledWith({ command: "bridge", env: { AI_SDK_ACP_BRIDGE_CONFIGURATION: JSON.stringify({ authentication: { methodId: "cursor_login" } }) } });
+  });
+
+  it("keeps the Cursor CLI on its installed login instead of a framework placeholder", async () => {
+    getHarnessAdapter("cursor").createHarness({ auth: { CURSOR_API_KEY: "" }, mcpJson: { mcpServers: {} } });
+    const settings = vi.mocked(createCursor).mock.lastCall?.[0];
+    expect(settings?.auth).toEqual({ CURSOR_API_KEY: "" });
+    expect(await settings?.credentialForwarding?.({ credential: "framework-placeholder", environmentVariableName: "CURSOR_API_KEY" })).toBe("");
+  });
+
   it("returns the claude-code adapter", () => {
     expect(getHarnessAdapter("claude-code").id).toBe("claude-code");
   });
