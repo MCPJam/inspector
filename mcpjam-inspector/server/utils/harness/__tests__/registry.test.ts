@@ -68,9 +68,11 @@ describe("harness registry", () => {
     expect(a.promptImageInput).toBe(true);
   });
 
-  it("only Codex advertises native prompt images", () => {
+  it("Codex and Claude Code advertise native prompt images", () => {
     for (const id of registeredHarnessIds()) {
-      expect(getHarnessAdapter(id).promptImageInput).toBe(id === "codex");
+      expect(getHarnessAdapter(id).promptImageInput).toBe(
+        id === "codex" || id === "claude-code",
+      );
     }
   });
 

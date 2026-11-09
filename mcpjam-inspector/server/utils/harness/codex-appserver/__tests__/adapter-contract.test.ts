@@ -25,9 +25,8 @@ import {
 } from "../bridge/index.js";
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../shared/sandbox-policy.js";
 import { startMessageSchema } from "../codex-appserver-bridge-protocol.js";
-import { toCodexPromptContent } from "../codex-prompt-content.js";
 import { toCodexTurnStartInput } from "../bridge/turn-start-input.js";
-import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
+import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
 
 describe("harness declaration", () => {
   const harness = createCodexAppServer();
@@ -269,42 +268,66 @@ describe("permission mapping", () => {
 
 describe("native image prompt", () => {
   it("keeps a text-only prompt as joined text", () => {
-    expect(toCodexPromptContent("hello")).toBe("hello");
+    expect(extractHarnessPromptContent({ prompt: "hello" })).toBe("hello");
     expect(
-      toCodexPromptContent({
-        content: [
-          { type: "text", text: "one" },
-          { type: "text", text: "two" },
-        ],
-      } as never),
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "text", text: "one" },
+            { type: "text", text: "two" },
+          ],
+        },
+      }),
     ).toBe("one\n\ntwo");
   });
 
   it("passes raw base64 image parts through", () => {
     expect(
-      toCodexPromptContent({
-        content: [
-          { type: "text", text: "see" },
-          { type: "image", image: "abc", mediaType: "image/png" },
-        ],
-      } as never),
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "text", text: "see" },
+            { type: "image", image: "abc", mediaType: "image/png" },
+          ],
+        },
+      }),
     ).toEqual([
       { type: "text", text: "see" },
       { type: "image", data: "abc", mediaType: "image/png" },
     ]);
   });
 
-  it("refuses a data URL or non-image part", () => {
+  it("unwraps a data URL and refuses a non-image part", () => {
+    expect(
+      extractHarnessPromptContent({
+        prompt: {
+          content: [{ type: "image", image: "data:image/png;base64,abc" }],
+        },
+      }),
+    ).toEqual([{ type: "image", data: "abc", mediaType: "image/png" }]);
     expect(() =>
-      toCodexPromptContent({
-        content: [{ type: "image", image: "data:image/png;base64,abc" }],
-      } as never),
-    ).toThrow(HarnessCapabilityUnsupportedError);
-    expect(() =>
-      toCodexPromptContent({
-        content: [{ type: "file", data: "abc" }],
-      } as never),
-    ).toThrow(HarnessCapabilityUnsupportedError);
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "file", data: "abc", mediaType: "application/pdf" },
+          ],
+        },
+      }),
+    ).toThrow(/files of media type 'application\/pdf'/);
+  });
+
+  it("accepts the upstream helper's image parts on the start-message schema", () => {
+    const prompt = extractHarnessPromptContent({
+      prompt: {
+        content: [
+          { type: "text", text: "see" },
+          { type: "image", image: "abc", mediaType: "image/png" },
+        ],
+      },
+    });
+    expect(startMessageSchema.safeParse({ type: "start", prompt }).success).toBe(
+      true,
+    );
   });
 
   it("wraps turn/start image URLs with one data prefix", () => {

@@ -15,7 +15,7 @@
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "2.1.290",
-      "promptImageInput": false,
+      "promptImageInput": true,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.claude/skills",
       "skillsWriteOptions": {
