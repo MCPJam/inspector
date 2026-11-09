@@ -552,7 +552,8 @@ Runs Protocol, Apps and Tasks (the default) together and gives one score. OAuth 
 | `--check-id <id>` | No | all | Check to run. Repeatable. Each ID goes to the suite that owns it, and a suite with no ID runs all its checks |
 | `--advice-id <id>` | No | all | Advice to run. Repeatable. Each ID goes to the `protocol`, `tasks` or `oauth` suite that owns it |
 | `--check-timeout <ms>` | No | `30000` | Per-check timeout for the protocol suite |
-| `--oauth-strategy <strategy>` | With `--suite oauth` | | `client_credentials`, with `--client-id` and `--client-secret` |
+| `--oauth-strategy <strategy>` | No | `interactive` | How the OAuth suite signs in: `interactive` (opens a browser), `headless` or `client_credentials` |
+| `--registration <strategy>` | No | `auto` | How the OAuth suite registers its client: `auto`, `dcr`, `cimd` or `preregistered`. `auto` uses `--client-id` when you give one, else what the server supports at the run's protocol version (CIMD, then DCR) |
 | `--upload` | No | | Upload results to MCPJam run history |
 | `--require-upload` | No | | Fail if reporting is configured but the result cannot be uploaded |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
@@ -561,8 +562,20 @@ It also takes the tool flags of the single-suite commands, with the same meaning
 
 - Protocol: `--fixtures-file`, `--fixture-tool`, `--fixture-prompt`, `--log-probe-tool` / `-args` / `-level`, `--log-filter-tool` / `-args` / `-level` and `--input-required-tool` / `-args`. See [`protocol conformance`](#protocol-conformance).
 - Tasks: `--tool-name`, `--tool-args`, `--check-overrides`, `--input-responses` and `--poll-timeout`. See [Tasks conformance](/cli/tasks-conformance).
+- OAuth: `--client-metadata-url`, `--redirect-url`, `--scopes`, `--step-timeout` and `--print-url`. See [`oauth conformance`](#oauth-conformance). With `--suite oauth` and no `--refresh-token`, `--client-id` and `--client-secret` are the OAuth suite's pre-registered client.
 
 An unknown ID, or an ID or flag for a suite the run leaves out, is a usage error (exit code `2`) before anything runs.
+
+The OAuth suite signs in on its own. When the server needs a sign-in for the other suites too, give them a token, for example from `oauth login --credentials-out`:
+
+```bash
+mcpjam oauth login --url https://mcp.example.com/mcp --credentials-out creds.json
+mcpjam conformance run --url https://mcp.example.com/mcp \
+  --suite protocol --suite apps --suite tasks --suite oauth \
+  --credentials-file creds.json --step-timeout 300000
+```
+
+`--step-timeout` is also how long the OAuth suite waits for you to finish signing in.
 
 ---
 

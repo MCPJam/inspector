@@ -20,8 +20,8 @@ import {
   type MCPAppsCheckId,
   type MCPOAuthReadinessId,
   type MCPServerConfig,
-  type OAuthConformanceConfig,
   type RunConformanceConfig,
+  type RunConformanceOAuthConfig,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import packageJson from "../../package.json" with { type: "json" };
@@ -30,6 +30,16 @@ import {
   buildProtocolRunConfig,
   type ProtocolRunOptions,
 } from "./conformance.js";
+import {
+  addOAuthFlowOptions,
+  buildOAuthFlowConfig,
+  type OAuthCommandOptions,
+} from "./oauth.js";
+import {
+  VALID_AUTH_MODES,
+  VALID_PROTOCOL_VERSIONS,
+  VALID_REGISTRATION_STRATEGIES,
+} from "../lib/oauth-enums.js";
 import {
   addTasksToolOptions,
   buildTasksConformanceConfig,
@@ -73,6 +83,12 @@ export interface CompositeConformanceOptions
   requireUpload?: boolean;
   upload?: boolean;
   oauthStrategy?: string;
+  registration?: string;
+  clientMetadataUrl?: string;
+  redirectUrl?: string;
+  scopes?: string;
+  stepTimeout?: number;
+  printUrl?: boolean;
 }
 
 /**
@@ -145,6 +161,7 @@ export function registerConformanceRunCommand(program: Command): void {
     );
   addProtocolToolOptions(run);
   addTasksToolOptions(run);
+  addOAuthFlowOptions(run);
   addSharedServerOptions(
     run
       .option(
@@ -157,7 +174,11 @@ export function registerConformanceRunCommand(program: Command): void {
       )
       .option(
         "--oauth-strategy <strategy>",
-        "Required when --suite oauth is set: client_credentials",
+        "How the OAuth suite signs in: interactive (default), headless, or client_credentials",
+      )
+      .option(
+        "--registration <strategy>",
+        "How the OAuth suite registers its client: auto (default), dcr, cimd, or preregistered. Auto uses --client-id when given, else what the server supports",
       )
       .option("--reporter <reporter>", "json-summary or junit-xml"),
   ).action(async (options: CompositeConformanceOptions, command) => {
@@ -196,7 +217,7 @@ export function registerConformanceRunCommand(program: Command): void {
       command,
     );
 
-    let oauth: OAuthConformanceConfig | undefined;
+    let oauth: RunConformanceOAuthConfig | undefined;
     if (suites.includes("oauth")) {
       oauth = {
         ...buildOAuthConfig(server, options),
@@ -439,6 +460,14 @@ function assertSuiteFlagsRun(
       ],
     ],
     ["tasks", flagsAddedBy(addTasksToolOptions)],
+    [
+      "oauth",
+      [
+        { key: "oauthStrategy", flag: "--oauth-strategy" },
+        { key: "registration", flag: "--registration" },
+        ...flagsAddedBy(addOAuthFlowOptions),
+      ],
+    ],
   ];
   for (const [suite, flags] of suiteOnlyFlags) {
     if (suites.includes(suite)) continue;
@@ -454,8 +483,8 @@ function assertSuiteFlagsRun(
 /**
  * The options `parseServerConfig` should see. With `--suite oauth` and no
  * `--refresh-token`, `--client-id` and `--client-secret` are the OAuth suite's
- * client_credentials client, not a refresh-token login, so they stay out of
- * the server config, which would otherwise reject them.
+ * pre-registered client, not a refresh-token login, so they stay out of the
+ * server config, which would otherwise reject them.
  */
 export function serverTargetOptions(
   options: CompositeConformanceOptions,
@@ -465,43 +494,53 @@ export function serverTargetOptions(
   return { ...options, clientId: undefined, clientSecret: undefined };
 }
 
+/**
+ * The OAuth suite's config, built the way `oauth conformance` builds it, so a
+ * run of every suite signs in the way that command does alone. Registration
+ * defaults to `"auto"`, which the SDK settles once the run has its version.
+ */
 export function buildOAuthConfig(
   server: MCPServerConfig,
   options: CompositeConformanceOptions,
-): OAuthConformanceConfig {
-  const strategy = options.oauthStrategy?.trim();
-  if (strategy !== "client_credentials") {
-    throw usageError(
-      "OAuth on `conformance run` requires --oauth-strategy client_credentials and noninteractive credentials",
-    );
-  }
+): RunConformanceOAuthConfig {
   if (!("url" in server) || typeof server.url !== "string") {
     throw usageError("OAuth conformance requires an HTTP --url");
   }
-  const clientId = options.clientId?.trim();
-  const clientSecret = options.clientSecret?.trim();
-  if (!clientId || !clientSecret) {
+  const strategy = options.oauthStrategy?.trim() || "interactive";
+  if (!VALID_AUTH_MODES.has(strategy)) {
     throw usageError(
-      "OAuth client_credentials requires --client-id and --client-secret",
+      `Unknown --oauth-strategy "${strategy}". Use interactive, headless, or client_credentials.`,
     );
   }
-  return {
-    serverUrl: server.url,
-    protocolVersion: "2025-11-25",
-    registrationStrategy: "preregistered",
-    auth: {
-      mode: "client_credentials",
-      clientId,
-      clientSecret,
+  const registration = options.registration?.trim() || "auto";
+  if (registration !== "auto" && !VALID_REGISTRATION_STRATEGIES.has(registration)) {
+    throw usageError(
+      `Unknown --registration "${registration}". Use auto, dcr, cimd, or preregistered.`,
+    );
+  }
+  // A pinned version is the run's (see `runConformance`), so the OAuth checks
+  // below see it now. Unpinned, the version the run negotiates replaces this.
+  const pin = options.protocolVersion?.trim();
+  const protocolVersion =
+    pin && VALID_PROTOCOL_VERSIONS.has(pin) ? pin : "2025-11-25";
+  return buildOAuthFlowConfig(
+    {
+      url: server.url,
+      protocolVersion: protocolVersion as OAuthCommandOptions["protocolVersion"],
+      authMode: strategy as OAuthCommandOptions["authMode"],
+      // With --refresh-token they are that login's client, not this suite's;
+      // see `serverTargetOptions`.
+      ...(options.refreshToken
+        ? {}
+        : { clientId: options.clientId, clientSecret: options.clientSecret }),
+      clientMetadataUrl: options.clientMetadataUrl,
+      redirectUrl: options.redirectUrl,
+      scopes: options.scopes,
+      stepTimeout: options.stepTimeout,
+      header: options.header,
+      printUrl: options.printUrl,
     },
-    // The SDK reads a preregistered client from here, not from `auth`, and
-    // rejects the config without it.
-    client: { preregistered: { clientId, clientSecret } },
-    // Same as `oauth conformance`: the CLI runs on the user's machine, where
-    // the server under test is routinely on loopback or a LAN address.
-    allowPrivateNetwork: true,
-    // On by default, as in `oauth conformance`. The redirect checks skip as
-    // not applicable to client_credentials.
-    oauthConformanceChecks: true,
-  };
+    registration as RunConformanceOAuthConfig["registrationStrategy"],
+    { authModeFlag: "--oauth-strategy" },
+  );
 }
