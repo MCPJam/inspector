@@ -298,6 +298,7 @@ import {
   promoteLeadPane,
   type ComparePaneTarget,
 } from "@/lib/compare-panes";
+import { useComparePaneSkillsSection } from "./compare-pane-skills";
 import { useComparePaneControls } from "./use-compare-pane-controls";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
@@ -2433,6 +2434,7 @@ export function PlaygroundMain({
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
+  const skillsSection = useComparePaneSkillsSection(paneMember ? convexProjectId : null, environmentsEnabled);
   // A pane on a new target starts a new conversation.
   const handlePaneTarget = useCallback(
     (paneId: string, target: ComparePaneTarget) => {
@@ -2444,6 +2446,7 @@ export function PlaygroundMain({
     [activeProjectId, multiModelSessionGeneration, setPaneTarget],
   );
   const paneControls = useComparePaneControls({
+    sections: skillsSection,
     active: isMultiHostMode,
     panes: comparePanes,
     resolutions: clientResolutions,

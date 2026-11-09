@@ -42,7 +42,7 @@ export function ComparePaneSettingsSection({
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-1.5">
+    <section aria-label={title} className="space-y-1.5">
       <h3 className="text-xs font-medium text-foreground">{title}</h3>
       {children}
     </section>
@@ -116,7 +116,7 @@ export function ComparePaneSettings({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-80 space-y-4"
+        className="max-h-[var(--radix-popover-content-available-height)] w-80 space-y-4 overflow-y-auto"
         aria-label={`Pane settings for ${label}`}
         data-testid="compare-pane-settings"
       >
