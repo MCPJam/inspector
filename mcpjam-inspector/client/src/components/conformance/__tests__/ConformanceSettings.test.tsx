@@ -53,11 +53,13 @@ const initial: ConformanceDefaults = {
 function Harness({
   saved,
   onSave,
+  selection = initial.selection,
 }: {
   saved: boolean;
   onSave: ReturnType<typeof vi.fn>;
+  selection?: ConformanceDefaults["selection"];
 }) {
-  const [value, setValue] = useState(initial);
+  const [value, setValue] = useState({ ...initial, selection });
   const save = async (
     selection: ConformanceDefaults["selection"],
     inputs: ConformanceDefaults["inputs"],
@@ -220,6 +222,52 @@ describe("Settings inputs", () => {
       expect(screen.getByRole("textbox", { name: "Arguments" })).toBe(args);
     },
   );
+  it("shows an off check's tool field while its row is open, without blocking on it", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        saved={false}
+        onSave={vi.fn(async () => {})}
+        selection={{ protocol: [], tasks: [] }}
+      />,
+    );
+    const taskField = () =>
+      screen.queryByRole("combobox", {
+        name: "Tool that creates a task for Result Type Discipline",
+      });
+    const outputField = () =>
+      screen.queryByRole("combobox", { name: "Tool to check output" });
+    expect(taskField()).toBeNull();
+    expect(outputField()).toBeNull();
+    // The badge stays with the suite off.
+    const taskRow = screen.getByRole("button", {
+      name: /^Result Type Discipline/,
+    });
+    expect(within(taskRow).getByText("Input set")).toBeInTheDocument();
+
+    await user.click(taskRow);
+    expect(taskField()).toHaveTextContent("echo");
+    await user.click(taskRow);
+    expect(taskField()).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: /^Tool Output Schema Honored/ }),
+    );
+    const field = outputField()!.parentElement!.closest("div.space-y-2")!;
+    fireEvent.click(within(field).getByRole("switch"));
+    fireEvent.change(within(field).getByRole("textbox", { name: "Arguments" }), {
+      target: { value: "[1]" },
+    });
+    // The check is off, so its tool is not called yet.
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Run Tool Output Schema Honored" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeDisabled(),
+    );
+  });
+
   it("updates untouched inputs from shared defaults", () => {
     const props = {
       serverName: "alpha",

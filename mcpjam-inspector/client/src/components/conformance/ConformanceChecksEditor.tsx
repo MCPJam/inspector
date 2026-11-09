@@ -10,6 +10,7 @@ import {
 import {
   LOG_LEVEL_ADVICE,
   probeInputStatus,
+  PROBE_CHECKS,
   PROBE_KEYS,
   probeKeyFor,
   probesApply,
@@ -47,7 +48,9 @@ export function ConformanceChecksEditor({
     server && isHttpServer(server) && (defaultsMode || probesApply(versionPin)),
   );
   const tasksProbe = tasksProbeRuns(selection.tasks);
-  const probeServer = server && (protocolProbes || tasksProbe) ? server : null;
+  // A Tasks row shows its tool field when opened even with the suite off, so
+  // the tools load either way.
+  const probeServer = server ?? null;
   const probeTools = useProbeTools(probeServer);
   const invalidProbeArguments = useMemo(
     () =>
@@ -112,9 +115,26 @@ export function ConformanceChecksEditor({
     noOutputSchemas &&
     !probes.toolCallProbe &&
     probeKeyFor(checkId) === "toolCallProbe";
+  const protocolPicked = (id: string) => {
+    const { protocol, protocolAdvice } = selection;
+    if (id !== LOG_LEVEL_ADVICE)
+      return !protocol || (protocol as string[]).includes(id);
+    // The advice runs only with at least one protocol check.
+    return (
+      (!protocol || protocol.length > 0) &&
+      (!protocolAdvice || (protocolAdvice as string[]).includes(id))
+    );
+  };
+  // An off row's field, shown while it is open, blocks nothing: its tool is
+  // not called until a picked check calls it.
+  const partIsPicked = (part: string) =>
+    part === LOG_LEVEL_ADVICE
+      ? protocolPicked(part)
+      : part !== "tasksProbe" && (PROBE_KEYS as readonly string[]).includes(part)
+        ? PROBE_CHECKS[part as keyof typeof PROBE_CHECKS].some(protocolPicked)
+        : taskProbePartIsSelected(part, probes, selection.tasks);
   const valid = !Object.entries(probeValid).some(
-    ([part, valid]) =>
-      !valid && taskProbePartIsSelected(part, probes, selection.tasks),
+    ([part, valid]) => !valid && partIsPicked(part),
   );
   useEffect(() => {
     onValidChange(valid);
@@ -141,12 +161,15 @@ export function ConformanceChecksEditor({
       }
       renderCheckExtra={
         probeServer
-          ? (suite, checkId, isPicked, checkTitle) =>
-              suite === "tasks" && tasksProbe ? (
+          ? (suite, checkId, isPicked, checkTitle, opened) => {
+              // An off row shows its field while open, as if picked.
+              const shown = (id: string) =>
+                isPicked(id) || (opened && id === checkId);
+              return suite === "tasks" ? (
                 <TasksCheckOverride
                   checkId={checkId}
                   checkTitle={checkTitle(checkId)}
-                  picked={isPicked(checkId)}
+                  picked={shown(checkId)}
                   tools={probeTools}
                   probes={probes}
                   onChange={onProbesChange}
@@ -160,7 +183,7 @@ export function ConformanceChecksEditor({
                 <ProbeCheckExtra
                   checkId={checkId}
                   checkTitle={checkTitle}
-                  isPicked={isPicked}
+                  isPicked={shown}
                   tools={probeTools}
                   probes={probes}
                   onProbesChange={onProbesChange}
@@ -171,7 +194,8 @@ export function ConformanceChecksEditor({
                     }))
                   }
                 />
-              ) : null
+              ) : null;
+            }
           : undefined
       }
       checkInputStatus={(suite, checkId) => {
@@ -180,7 +204,8 @@ export function ConformanceChecksEditor({
             ? undefined
             : inputStatusFor(checkId);
         }
-        if (suite === "tasks" && tasksProbe) {
+        // With the suite off too, so an off row still says it needs a tool.
+        if (suite === "tasks") {
           // Metadata belongs to the existing connection, so a 2026 pin still
           // requires an explicit tool even when a legacy task tool is listed.
           const canPickTaskTool =
