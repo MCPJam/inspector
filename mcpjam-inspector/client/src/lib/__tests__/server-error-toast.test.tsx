@@ -13,6 +13,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { toastServerConnectionFailure } from "../server-error-toast";
 import { presentConnectionError } from "../connection-error-presentation";
 import { formatErrorDetailsForCopy } from "../error-technical-details";
+import { WebApiError } from "../apis/web/base";
 
 vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: vi.fn(async () => true),
@@ -94,7 +95,7 @@ describe("toastServerConnectionFailure", () => {
 
   it("keeps diagnostic metadata copyable without showing wire text", async () => {
     render(<Toaster />);
-    toastServerConnectionFailure("Asana", { code: "SIGN_IN_REQUIRED", requestId: "request-123", error: "client_secret=supersecret" });
+    toastServerConnectionFailure("Asana", new WebApiError(401, "SIGN_IN_REQUIRED", "client_secret=supersecret", undefined, undefined, "request-123"));
     expect(await screen.findByText("Sign in to MCPJam to continue.")).toBeVisible();
     expect(screen.queryByText(/supersecret/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Copy error message" }));

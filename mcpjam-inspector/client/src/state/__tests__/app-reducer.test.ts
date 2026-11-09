@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { appReducer } from "../app-reducer.js";
 import type { AppState, ServerWithName, Project } from "../app-types.js";
+import { describeError } from "@mcpjam/sdk/browser";
 
 // Helper to create minimal valid state
 function createInitialState(overrides: Partial<AppState> = {}): AppState {
@@ -41,6 +42,17 @@ function createServer(
 }
 
 describe("appReducer", () => {
+  it.each([
+    {}, { rawMessage: [] }, { rawMessage: 5 }, { rawMessage: "", cause: null },
+  ])("keeps the original network/consent diagnosis when the wire block is malformed: %j", (normalized) => {
+    const initial = createInitialState({ servers: { Asana: createServer("Asana") } });
+    for (const error of ["connect ECONNREFUSED 127.0.0.1:9999", "OAuth consent is required before connecting"]) {
+      const failed = appReducer(initial, { type: "CONNECT_FAILURE", name: "Asana", error, normalized });
+      expect(failed.servers.Asana.lastNormalizedError?.slug).toBe(describeError(error).slug);
+      expect(failed.servers.Asana.lastNormalizedError?.rawMessage).toBe(error);
+    }
+  });
+
   it("retains validated refusal facts alongside diagnostics and clears them on a new attempt", () => {
     const initial = createInitialState({ servers: { Asana: createServer("Asana", { hasClientSecret: true }) } });
     const failed = appReducer(initial, { type: "CONNECT_FAILURE", name: "Asana", error: "wire",

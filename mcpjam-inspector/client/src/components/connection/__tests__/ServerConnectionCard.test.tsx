@@ -10,6 +10,8 @@ import {
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { describeAsSlug } from "@mcpjam/sdk/browser";
+import { appReducer } from "@/state/app-reducer";
+import type { AppState } from "@/state/app-types";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -142,6 +144,29 @@ describe("ServerConnectionCard", () => {
     render(<ServerConnectionCard server={server} {...defaultProps} />);
     fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
     await waitFor(() => expect(defaultProps.onReconnect).toHaveBeenCalledWith("test-server", { allowInteractiveOAuthFlow: true }));
+  });
+
+  it.each(["auth/consent_required", "sdk/protocol_version_pin_unsupported"] as const)("does not let upstream auth codes replace recovery for %s", (slug) => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire",
+      lastNormalizedError: { ...describeAsSlug(slug, new Error("wire")), origin: "user_server", rawCode: "SIGN_IN_REQUIRED" },
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} onOpenDetailModal={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: slug === "auth/consent_required" ? "Reconnect" : "Change protocol version" })).toBeVisible();
+  });
+
+  it.each([{}, { rawMessage: [] }, { rawMessage: 5 }])("keeps consent recovery through reducer reconstruction of malformed diagnostics: %j", (normalized) => {
+    const server = createServer();
+    const state: AppState = {
+      servers: { [server.name]: server }, projects: {}, activeProjectId: "project",
+      selectedServer: server.name, selectedMultipleServers: [], isMultiSelectMode: false,
+    };
+    const failed = appReducer(state, { type: "CONNECT_FAILURE", name: server.name,
+      error: "OAuth consent is required before connecting", normalized,
+    });
+    render(<ServerConnectionCard server={failed.servers[server.name]} {...defaultProps} />);
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeVisible();
+    expect(failed.servers[server.name].lastNormalizedError?.rawMessage).toContain("consent is required");
   });
 
   it("opens saved settings while diagnostics stay collapsed", () => {

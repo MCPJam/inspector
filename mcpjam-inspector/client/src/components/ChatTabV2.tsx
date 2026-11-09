@@ -166,6 +166,7 @@ import {
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
+import type { ServerConnectionSubmit } from "@/lib/server-connection-submission";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -179,7 +180,7 @@ interface ChatTabProps {
   /** Disconnect a connected server (toggle off = unplug). */
   onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens add-server modal). */
-  onAddServer?: (formData: import("@/shared/types").ServerFormData) => void;
+  onAddServer?: ServerConnectionSubmit;
   onSelectedServerNamesChange?: (names: string[]) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;

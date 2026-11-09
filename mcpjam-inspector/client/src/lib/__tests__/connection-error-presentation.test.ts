@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { describeAsSlug } from "@mcpjam/sdk/browser";
+import { WebApiError } from "../apis/web/base";
 import {
   presentConnectionError,
   readConnectionFailureFacts,
@@ -26,6 +27,11 @@ describe("connection error presentation", () => {
     { code: "UNAUTHORIZED", details: { reason: "access_token_expired" } },
     { code: 401, error: "Sign in required" },
     { details: { reason: ["SIGN_IN_REQUIRED"] } },
+    { code: "SIGN_IN_REQUIRED" },
+    { code: "SESSION_REVOKED" },
+    { code: "UNAUTHORIZED", details: { reason: "SIGN_IN_REQUIRED" } },
+    { rawCode: "SIGN_IN_REQUIRED", origin: "user_server" },
+    { normalized: { rawCode: "SIGN_IN_REQUIRED", origin: "user_server" } },
   ])(
     "does not turn prose or a generic 401 into a MCPJam sign-in requirement: %j",
     (input) => {
@@ -36,10 +42,10 @@ describe("connection error presentation", () => {
   );
 
   it.each([
-    { code: "SIGN_IN_REQUIRED" },
-    { code: "UNAUTHORIZED", details: { reason: "SIGN_IN_REQUIRED" } },
-    { normalized: { rawCode: "SIGN_IN_REQUIRED" } },
-    { rawCode: "SIGN_IN_REQUIRED" },
+    new WebApiError(401, "SIGN_IN_REQUIRED", "wire"),
+    new WebApiError(401, "UNAUTHORIZED", "wire", undefined, {
+      reason: "SIGN_IN_REQUIRED",
+    }),
     { failureFacts: { code: "SIGN_IN_REQUIRED" } },
   ])("uses explicit structured sign-in facts: %j", (input) => {
     const result = presentConnectionError(input, context);
@@ -48,8 +54,10 @@ describe("connection error presentation", () => {
   });
 
   it.each([
-    { code: "SESSION_REVOKED" },
-    { code: "UNAUTHORIZED", details: { reason: "SESSION_REVOKED" } },
+    new WebApiError(401, "SESSION_REVOKED", "wire"),
+    new WebApiError(401, "UNAUTHORIZED", "wire", undefined, {
+      reason: "SESSION_REVOKED",
+    }),
   ])("distinguishes revoked MCPJam sign-in from server OAuth: %j", (input) => {
     expect(presentConnectionError(input, context).explanation).toMatch(
       /^Your MCPJam sign-in expired/,
@@ -155,19 +163,30 @@ describe("connection error presentation", () => {
   });
 
   it("preserves structured metadata and sanitized diagnostics across the dispatch seam", () => {
-    const fields = connectionFailureFields({
-      code: "SIGN_IN_REQUIRED",
-      requestId: "request-123",
-      error: "client_secret=supersecret",
-      normalized: { slug: "future/diagnosis", origin: "user_server" },
-    });
+    const fields = connectionFailureFields(
+      new WebApiError(
+        401,
+        "SIGN_IN_REQUIRED",
+        "client_secret=supersecret",
+        {
+          ...describeAsSlug(
+            "internal/unknown",
+            new Error("client_secret=supersecret"),
+          ),
+          slug: "future/diagnosis",
+          origin: "mcpjam",
+        },
+        undefined,
+        "request-123",
+      ),
+    );
     const result = presentConnectionError(fields.normalized, {
       ...context,
       facts: fields.failureFacts,
     });
     expect(result.recovery).toBe("sign-in");
     expect(result.diagnostics.requestId).toBe("request-123");
-    expect(result.diagnostics.origin).toBe("user_server");
+    expect(result.diagnostics.origin).toBe("mcpjam");
     expect(result.diagnostics.rawMessage).toContain("future/diagnosis");
     expect(JSON.stringify(result)).not.toContain("supersecret");
   });

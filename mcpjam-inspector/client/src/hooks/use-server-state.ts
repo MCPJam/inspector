@@ -1316,6 +1316,7 @@ export function useServerState({
         // one next to a "disconnected" status.
         lastError: runtimeState?.lastError,
         lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastFailureFacts: runtimeState?.lastFailureFacts,
         lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,

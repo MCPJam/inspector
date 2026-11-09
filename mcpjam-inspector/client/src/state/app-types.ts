@@ -238,11 +238,9 @@ export type AppAction =
       error: string;
       failureFacts?: ConnectionFailureFacts;
       /**
-       * Optional rich describe-error block. Forwarded onto
-       * `ServerWithName.lastNormalizedError` so the ErrorCard renders
-       * without re-classifying from `error`.
+       * Wire diagnostics are reconstructed with the original error at the reducer boundary.
        */
-      normalized?: NormalizedError;
+      normalized?: unknown;
       oauthTrace?: OAuthTrace;
     }
   | {

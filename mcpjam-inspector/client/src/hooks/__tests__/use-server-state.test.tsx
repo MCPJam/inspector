@@ -4,6 +4,8 @@ import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
+import { appReducer } from "@/state/app-reducer";
+import { presentConnectionError } from "@/lib/connection-error-presentation";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
   buildElectronMcpCallbackUrl,
@@ -1370,6 +1372,27 @@ describe("useServerState effective server projection", () => {
     );
   });
 
+  it("projects reducer failure facts into the presentation and clears them after recovery starts", () => {
+    const initial = createAppState();
+    const failed = appReducer(initial, {
+      type: "CONNECT_FAILURE", name: "demo-server", error: "Forbidden",
+      failureFacts: { credentialRefusal: { kind: "export_denied" } },
+    });
+    const { result } = renderUseServerState(vi.fn(), failed, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+    });
+    const server = result.current.projectServers["demo-server"];
+    expect(server.lastFailureFacts).toEqual({ credentialRefusal: { kind: "export_denied" } });
+    expect(presentConnectionError(server.lastNormalizedError, {
+      serverName: server.name, facts: server.lastFailureFacts,
+    }).explanation).toContain("credential export policy");
+    const next = appReducer(failed, { type: "RECONNECT_REQUEST", name: server.name, config: server.config });
+    const retried = renderUseServerState(vi.fn(), next, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+    });
+    expect(retried.result.current.projectServers[server.name].lastFailureFacts).toBeUndefined();
+  });
+
   it("does not keep a failure reason once the runtime state is gone", () => {
     // The reason follows the runtime status: a reload leaves the row
     // "disconnected", and pairing that with a stale error would misreport a
@@ -1386,6 +1409,7 @@ describe("useServerState effective server projection", () => {
       retryCount: 0,
       enabled: true,
       lastError: "stale reason from a previous session",
+      lastFailureFacts: { code: "SESSION_REVOKED" },
       lastNormalizedError: {
         slug: "transport/enotfound",
         title: "stale normalized block",
@@ -1416,6 +1440,7 @@ describe("useServerState effective server projection", () => {
       expect.objectContaining({
         connectionStatus: "disconnected",
         lastError: undefined,
+        lastFailureFacts: undefined,
         lastNormalizedError: undefined,
         lastOAuthTrace: undefined,
       })

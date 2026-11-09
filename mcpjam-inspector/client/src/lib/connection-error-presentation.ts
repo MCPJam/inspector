@@ -1,7 +1,6 @@
 import {
   describeError,
   ERROR_CATALOG,
-  sanitizeTraceErrorMessage,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { isRecord } from "./host-capabilities";
@@ -14,6 +13,7 @@ import {
   withTechnicalDetails,
 } from "./error-technical-details";
 import { isSessionRevokedBody } from "./auth/session-revoked";
+import { WebApiError } from "./apis/web/base";
 
 export type ConnectionFailureFacts = {
   code?: "SIGN_IN_REQUIRED" | "SESSION_REVOKED";
@@ -31,21 +31,22 @@ const record = (value: unknown): Record<string, unknown> =>
   isRecord(value) ? value : {};
 const clean = (value: unknown, limit = 2_000): string =>
   typeof value === "string"
-    ? sanitizeTraceErrorMessage(value, { maxLength: limit }).replace(
-        /\u0000/g,
-        "",
-      )
+    ? redactStackLikeText(value)
+        .slice(0, limit)
+        .replace(/\u0000/g, "")
     : "";
 
 export function readConnectionFailureFacts(
   input: unknown,
 ): ConnectionFailureFacts {
   const source = record(input);
-  const facts = isRecord(source.failureFacts) ? source.failureFacts : source;
+  const facts = record(source.failureFacts);
   const details = record(source.details);
-  const code =
-    facts.code ?? source.rawCode ?? record(source.normalized).rawCode;
-  const revoked = isSessionRevokedBody({ code, details });
+  const code = input instanceof WebApiError ? input.code : facts.code;
+  const revoked =
+    input instanceof WebApiError
+      ? isSessionRevokedBody(input)
+      : code === "SESSION_REVOKED";
   const refusalFrom = (value: Record<string, unknown>) => {
     const kind = record(value.credentialRefusal).kind;
     return kind === "origin_mismatch" ||
@@ -55,9 +56,13 @@ export function readConnectionFailureFacts(
       ? readCredentialRefusal(value)
       : null;
   };
-  const refusal = refusalFrom(facts) ?? refusalFrom(details);
+  const refusal =
+    refusalFrom(facts) ?? refusalFrom(source) ?? refusalFrom(details);
   return {
-    ...(code === "SIGN_IN_REQUIRED" || details.reason === "SIGN_IN_REQUIRED"
+    ...(code === "SIGN_IN_REQUIRED" ||
+    (input instanceof WebApiError &&
+      code === "UNAUTHORIZED" &&
+      details.reason === "SIGN_IN_REQUIRED")
       ? { code: "SIGN_IN_REQUIRED" as const }
       : revoked
         ? { code: "SESSION_REVOKED" as const }
@@ -87,9 +92,11 @@ export function connectionFailureFields(input: unknown) {
 export function readConnectionDiagnostics(input: unknown): NormalizedError {
   const source = record(input);
   const wire = isRecord(source.normalized) ? source.normalized : source;
-  const message = clean(
-    wire.rawMessage ?? source.message ?? source.error ?? input,
-  );
+  const message =
+    clean(wire.rawMessage) ||
+    clean(source.message) ||
+    clean(source.error) ||
+    clean(input);
   const local = describeError({ message, code: wire.rawCode ?? source.code });
   const entry =
     Object.values(ERROR_CATALOG).find((item) => item.slug === wire.slug) ??
@@ -154,7 +161,9 @@ export function presentConnectionError(
   if (context.oauthStage)
     diagnostics.rawMessage += `\nOAuth step: ${clean(context.oauthStage, 160)}`;
   const entry = ERROR_CATALOG[diagnostics.slug];
-  const facts = readConnectionFailureFacts(context.facts ?? input);
+  const facts = readConnectionFailureFacts(
+    context.facts ? { failureFacts: context.facts } : input,
+  );
   const name =
     clean(context.serverName, 160)
       .replace(/[\r\n\t]+/g, " ")

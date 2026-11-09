@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ErrorCard } from "../error-card";
 import { presentConnectionError } from "@/lib/connection-error-presentation";
+import { WebApiError } from "@/lib/apis/web/base";
 
 it("shows reviewed copy, recovery and separate Copy details before opening diagnostics", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
@@ -10,11 +11,8 @@ it("shows reviewed copy, recovery and separate Copy details before opening diagn
     configurable: true,
   });
   const onClick = vi.fn();
-  const input = {
-    message: "Guest client secret reveal is not supported",
-    requestId: "request-123",
-    code: "SIGN_IN_REQUIRED",
-  };
+  const input = new WebApiError(401, "SIGN_IN_REQUIRED",
+    "Guest client secret reveal is not supported", undefined, undefined, "request-123");
   render(
     <ErrorCard
       error={input}

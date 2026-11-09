@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { track } from "@/lib/analytics";
-import type { ServerFormData } from "@/shared/types";
+import { submitServerDraft, type ServerConnectionSubmit } from "@/lib/server-connection-submission";
 import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
 
@@ -12,7 +12,7 @@ import { useComparePaneStore } from "@/stores/compare-pane-store";
  */
 
 const playgroundState = vi.hoisted(() => ({
-  onConnect: undefined as ((formData: ServerFormData) => void) | undefined,
+  onConnect: undefined as ServerConnectionSubmit | undefined,
   activeServerNames: [] as string[],
   paneServers: vi.fn(),
   builtinHostId: vi.fn(),
@@ -121,15 +121,21 @@ vi.mock("@/components/connection/AddServerModal", () => ({
   AddServerModal: ({
     isOpen,
     onSubmit,
+    onClose,
   }: {
     isOpen: boolean;
-    onSubmit: (formData: ServerFormData) => void;
+    onSubmit: ServerConnectionSubmit;
+    onClose: () => void;
   }) =>
     isOpen ? (
       <div role="dialog">
         <button
           type="button"
-          onClick={() => onSubmit({ name: "local" } as ServerFormData)}
+          onClick={() => {
+            void submitServerDraft(onSubmit, { name: "local", type: "http", url: "https://example.com/mcp" }).then((accepted) => {
+              if (accepted) onClose();
+            });
+          }}
         >
           Save server
         </button>
@@ -143,8 +149,8 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     vi.mocked(track).mockClear();
   });
 
-  it("connects from the empty state without leaving the Playground", () => {
-    const onConnect = vi.fn();
+  it("connects from the empty state without leaving the Playground", async () => {
+    const onConnect = vi.fn<ServerConnectionSubmit>((_data, options) => options?.onAccepted?.());
     playgroundState.onConnect = onConnect;
 
     render(<PlaygroundLeftRail />);
@@ -156,11 +162,13 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /save server/i }));
 
-    expect(onConnect).toHaveBeenCalledWith({ name: "local" });
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ name: "local" }), {
+      onAccepted: expect.any(Function), suppressErrorToast: true,
+    });
     expect(track).toHaveBeenCalledWith("connecting_server", {
       location: "playground_tools_rail",
     });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   // Names the handler, not the fallback: the mock button is disabled purely

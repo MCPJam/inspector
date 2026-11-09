@@ -252,7 +252,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             retryCount: existing.retryCount,
             lastError: action.error,
             lastFailureFacts: readConnectionFailureFacts(action),
-            lastNormalizedError: readConnectionDiagnostics(action.normalized ?? action.error),
+            lastNormalizedError: readConnectionDiagnostics({ normalized: action.normalized, error: action.error }),
             lastOAuthTrace: action.oauthTrace,
           }),
         },
