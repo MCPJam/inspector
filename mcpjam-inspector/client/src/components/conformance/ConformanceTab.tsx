@@ -219,18 +219,29 @@ export function ConformanceTab({
     if (changed) return changed.seconds ?? undefined;
     return savedTimeoutFor(name);
   };
-  // Settings offers the timeout only where it can be saved.
+  // Settings offers the timeout only where it can be saved. The change counts
+  // before its save lands, as `saveDefaults` does: Back works while the
+  // timeout saves, so Run again right after must already run with it. A save
+  // that fails takes its entry back, unless a later change owns it by then.
   const saveTimeout = onSaveServerTimeout
     ? async (name: string, seconds: number | null) => {
-        await onSaveServerTimeout(name, seconds);
-        setChangedTimeouts((previous) => ({
-          ...previous,
-          [timeoutKeyFor(name)]: {
-            projectId: persist?.projectId ?? null,
-            serverName: name,
-            seconds,
-          },
-        }));
+        const key = timeoutKeyFor(name);
+        const entry = {
+          projectId: persist?.projectId ?? null,
+          serverName: name,
+          seconds,
+        };
+        setChangedTimeouts((previous) => ({ ...previous, [key]: entry }));
+        try {
+          await onSaveServerTimeout(name, seconds);
+        } catch (error) {
+          setChangedTimeouts((previous) => {
+            if (previous[key] !== entry) return previous;
+            const { [key]: _failed, ...rest } = previous;
+            return rest;
+          });
+          throw error;
+        }
       }
     : undefined;
   const defaultsFor = (serverName: string) =>
