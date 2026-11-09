@@ -104,7 +104,7 @@ export function withAcpPermissionCallInput<T extends HarnessV1>(harness: T): T {
                   return;
                 }
               }
-            } else if (part.type === "tool-call" && part.input === "{}") {
+            } else if (part.type === "tool-call" && part.providerExecuted === true && part.input === "{}") {
               const rawInput = inputs.get(part.toolCallId);
               if (rawInput) {
                 const corrected = { ...part, input: JSON.stringify(rawInput) };
