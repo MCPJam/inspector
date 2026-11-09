@@ -553,22 +553,18 @@ export function createComputerBrowserFramesWsHandler(
         }
 
         /**
-         * A watching pane issues no COMMANDS, so nothing else keeps the session
-         * row fresh or the box awake — and the idle sweep would reap a browser
-         * somebody is looking at.
+         * A watching pane issues no COMMANDS, so this keeps the session row
+         * fresh. It does not keep the box awake: the backend decides that.
          */
         const touch = () => {
           watched = false;
           // THE BACKEND HAS THE LAST WORD, exactly as `/keepalive` lets it.
-          // `touchSession` answers `counted: false` once the browser has gone
-          // long enough without a real command, which is the ceiling that
-          // stops a pane left open over a weekend holding a metered box awake
-          // forever. Firing `touchActivity` regardless discarded that answer
-          // and bumped `lastActiveAt` anyway, so the idle sweep never came —
-          // the same class of bug as the connected-but-unwatched socket this
-          // route just fixed, one layer further in. Watching is evidence
-          // somebody is there; it is not evidence the machine is still doing
-          // anything worth paying for.
+          // Watching is not use, so `touchSession` answers `counted: false`
+          // and the desktop pauses five minutes after the last command or
+          // input. Firing `touchActivity` regardless would discard that answer
+          // and keep a watched box awake. Watching is evidence somebody is
+          // there; it is not evidence the machine is doing anything worth
+          // paying for. Input on this socket counts as a command, above.
           void touchSession({ sessionId: live.sessionId, kind: "panel" })
             .then(({ counted }) => {
               // `closed` FIRST: this continuation can land after the pane hung

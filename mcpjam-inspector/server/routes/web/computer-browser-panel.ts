@@ -527,11 +527,10 @@ export function createComputerBrowserPanelRoutes(
         action,
         took: outcome.took,
       });
-      // HOLDING THE BROWSER IS BEING HERE. The pane beats this every ~30s
-      // while visible, which is the only presence signal on the VNC tier (no
-      // frame socket, so no pings) and the strongest one anywhere: somebody
-      // mid-login or mid-2FA is typing into this machine. Reclaiming it under
-      // them is the failure this guards.
+      // Holding the browser keeps the session row fresh, but it is not use:
+      // the backend answers `counted: false`, so the desktop still pauses five
+      // minutes after the last input. Typing over VNC reaches the backend as
+      // `/input-ping`, which does count.
       if (outcome.took && shouldTouchSessionPanel(session.sessionId)) {
         void touchSession({ sessionId: session.sessionId, kind: "panel" })
           .then(({ counted }) => {
@@ -926,9 +925,9 @@ export function createComputerBrowserPanelRoutes(
       if (!session) {
         return c.json({ ok: false, error: "no_browser_session" }, 409);
       }
-      // The backend decides whether an open panel still counts — it stops
-      // counting once the browser has been idle of real commands for a while,
-      // so a tab left open over a weekend cannot hold a machine awake forever.
+      // The backend decides whether an open panel counts. Watching is not use,
+      // so it answers `counted: false` and the desktop pauses five minutes
+      // after the last command or input, however long the tab stays open.
       const { counted } = await touchSession({
         sessionId: session.sessionId,
         kind: "panel",
