@@ -155,12 +155,9 @@ function tunnelFor(sandbox: TunnelSandbox, state: TunnelState): WorkspaceTunnel 
   return {
     secret: state.secret,
     upstreamUrl: endpoint.url,
-    upstreamHeaders: {
-      ...(endpoint.headers ?? {}),
-      ...(sandbox.trafficAccessToken
-        ? { "e2b-traffic-access-token": sandbox.trafficAccessToken }
-        : {}),
-    },
+    // Carries a private workspace's traffic access token, so the edge lets the
+    // browser box's handshake through; the sidecar's own key still decides.
+    upstreamHeaders: endpoint.headers ?? {},
   };
 }
 
