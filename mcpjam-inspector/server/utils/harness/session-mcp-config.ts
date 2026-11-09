@@ -45,7 +45,13 @@ export function sessionPolicyDigest(
   policy: ToolPolicySnapshot,
   profile?: HarnessConnectionProfile,
 ): string {
-  return nativePolicyDigest({ [serverId]: policy }, { profile });
+  // Over the profile as every instance reads it from an envelope: the
+  // negotiation rides outside it, where instances that predate it never look.
+  const { versionNegotiation: _outside, ...shared } = profile ?? {};
+  return nativePolicyDigest(
+    { [serverId]: policy },
+    { profile: profile && shared },
+  );
 }
 
 /** Bind the turn to its lane's lease; returns each server's session handle. */

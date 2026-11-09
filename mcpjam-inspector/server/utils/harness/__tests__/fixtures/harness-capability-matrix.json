@@ -214,6 +214,7 @@
       "forwardingRuntime": {
         "boundApprovals": true,
         "configurationVersion": "acp-forward-v1",
+        "nativeVersionNegotiation": "legacy-first",
         "ownedInput": false,
         "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
