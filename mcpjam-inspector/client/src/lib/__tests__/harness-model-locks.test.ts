@@ -431,7 +431,21 @@ describe("a harness under the organization's key policy", () => {
     });
   });
 
-  it("keeps the policy's reason on a connection whose calls come from the Inspector", () => {
+  it("keeps the policy's reason on an Inspector-run connection the harness could run", () => {
+    const inspectorRun = {
+      ...ORG_ANTHROPIC,
+      disabled: true,
+      disabledReason: INSPECTOR_RUN_POLICY_REASON,
+    } as ModelDefinition;
+    const [kept] = harnessPickerModels(
+      [inspectorRun],
+      { harnessId: "claude-code" },
+      POLICY,
+    );
+    expect(kept).toBe(inspectorRun);
+  });
+
+  it("gives the harness's refusal to an Inspector-run connection it can't use", () => {
     const inspectorRun = {
       id: "custom:lan:lan-model",
       name: "LAN / lan-model",
@@ -442,12 +456,17 @@ describe("a harness under the organization's key policy", () => {
       disabled: true,
       disabledReason: INSPECTOR_RUN_POLICY_REASON,
     } as ModelDefinition;
-    const [kept] = harnessPickerModels(
+    const [refused] = harnessPickerModels(
       [inspectorRun, ORG_ANTHROPIC],
       { harnessId: "claude-code" },
       POLICY,
     );
-    expect(kept).toBe(inspectorRun);
+    expect(refused).toMatchObject({
+      disabled: true,
+      disabledReason: expect.stringMatching(
+        /requires your organization's Anthropic key/,
+      ),
+    });
   });
 
   it("an empty list says which organization provider the harness needs", () => {

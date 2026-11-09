@@ -286,8 +286,9 @@ export function harnessModelLockReasonsByRow(
  * the policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the
  * picker shows it only on its trigger, as a warning, so the saved choice is
  * never switched silently. A row from a connection whose calls come from the
- * Inspector (`INSPECTOR_RUN_POLICY_REASON`) is kept the same way, so it shows
- * the policy's explanation and fix rather than a harness refusal.
+ * Inspector (`INSPECTOR_RUN_POLICY_REASON`) keeps the policy's reason only
+ * when the harness could otherwise run it, so the fix it names would work;
+ * a connection the harness can't use gets the harness's refusal.
  */
 export function harnessPickerModels(
   models: ModelDefinition[],
@@ -300,8 +301,7 @@ export function harnessPickerModels(
     if (
       policy.requireOrgKeys &&
       model.disabled &&
-      (model.disabledReason === ORG_KEYS_MODEL_REASON ||
-        model.disabledReason === INSPECTOR_RUN_POLICY_REASON)
+      model.disabledReason === ORG_KEYS_MODEL_REASON
     ) {
       return model;
     }
@@ -324,6 +324,13 @@ export function harnessPickerModels(
     });
     if (!harnessModelVerdictAdmits(verdict, "chat")) {
       return refused(verdict.reason);
+    }
+    if (
+      policy.requireOrgKeys &&
+      model.disabled &&
+      model.disabledReason === INSPECTOR_RUN_POLICY_REASON
+    ) {
+      return model;
     }
     runnable += 1;
     return verdict.status === "unknown" && !model.warningReason
