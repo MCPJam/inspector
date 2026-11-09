@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
 import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
@@ -33,10 +34,7 @@ import {
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
-import {
-  checkAgentLoopGuard,
-  refuseAgentLoop,
-} from "../../utils/agent-loop-guard.js";
+import { checkAgentLoopGuard, refuseAgentLoop } from "../../utils/agent-loop-guard.js";
 import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   hostedChatSchema,
@@ -86,9 +84,7 @@ import {
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
-import {
-  resolveTurnBuiltInToolIds,
-} from "../../utils/built-in-tools/built-in-tool-policy.js";
+import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -463,7 +459,10 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-  if (turnMode === "recorded" && hostRuntimeConfig && resolvedExecution.modelId &&
+  if (
+    turnMode === "recorded" &&
+    hostRuntimeConfig &&
+    resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
   ) {
     const hostModelId = resolvedExecution.modelId;
@@ -595,6 +594,7 @@ export async function resolveManagedTurnSetup(args: {
   }
   if (resolvedExecution.harness) {
     const availability = checkHarnessRuntimeAvailable({
+      mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),

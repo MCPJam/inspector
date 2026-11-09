@@ -1,3 +1,4 @@
+import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
@@ -385,6 +386,7 @@ type HarnessRuntimeAdapterBase = {
   /** Can host-executed AI SDK tools (run on MCPJam's server) be approval-gated?
    *  Modeled separately; false for v1 (not wired/tested in MCPJam yet). */
   supportsHostExecutedToolApproval: boolean;
+  hostToolApprovalAtRuntime?: boolean;
   /** HOW this adapter gets the host's selected MCP servers to the model — see
    *  `HarnessMcpDelivery`. Every adapter delivers them one way or the other, so
    *  there is no "MCP unsupported" arm and no MCP pre-flight refusal. */
@@ -1170,8 +1172,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `requireToolApproval` and a selected MCP server is observed pausing on the
   // MCP call.
   supportsMcpToolApproval: false,
-  // Not wired or tested for this adapter; same posture as Codex.
-  supportsHostExecutedToolApproval: false,
+  // The ACP permission grant authorizes one host execution before dispatch.
+  supportsHostExecutedToolApproval: true,
+  hostToolApprovalAtRuntime: true,
   // NATIVE: the CLI's own MCP client dials MCPJam's signed per-server proxy, so
   // every `tools/call` crosses the seam where firsthand evidence is captured.
   // Read from the shared declaration, which the client's Behavior tab derives
@@ -1198,10 +1201,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // The ACP wrapper carries a static builtin catalog (31 tools), so the generic
   // `/v1/harness/:id/builtin-tools` route works with no per-harness edits.
   listBuiltinTools: memoizedBuiltinTools(() => createCursor()),
-  // AUTO. The adapter passes no model, so Cursor picks — which is the only
-  // honest thing to do while MCPJam has no view of the account's entitlements
-  // (a plan-gated model does not error; it answers "Upgrade your plan to
-  // continue" in a normal end_turn, which the turn runner detects separately).
+  // Auto delegates to the account default; explicit catalog IDs stay explicit.
   toNativeModel: (modelId) => isRuntimeAccountModel(modelId)
     ? modelId === "cursor/auto" ? "default" : modelId.slice("cursor/".length)
     : undefined,
@@ -1236,7 +1236,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return withCursorLoginAuthentication(pinCursorHarnessBootstrap(
+    return withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
       createCursor({
         // An explicit empty key prevents ambient credential lookup. The backend
         // installs the temporary login before the runtime process starts.
@@ -1249,7 +1249,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
         // silently tool-less turn. The type makes that unwritable.
         mcpServers: toAcpMcpServers(mcpJson),
       }) as unknown as HarnessAgentAdapter,
-    ));
+    )));
   },
 };
 
