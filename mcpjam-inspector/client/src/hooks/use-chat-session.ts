@@ -1855,6 +1855,7 @@ function buildLiveTraceEnvelope(
   }
 
   const envelope: LiveChatTraceEnvelope = {
+    projectedMessages: true,
     traceVersion: 1,
     messages: state.messages,
     spans: spans.length > 0 ? spans : undefined,
@@ -2599,6 +2600,7 @@ export function useChatSession(
   );
 
   const harnessStartupRequestRef = useRef<string | null>(null);
+  const harnessStopBlockedRef = useRef(false);
   const [turnAuthorizationRenewal] = useState(() => createTurnAuthorizationRenewal(() => ({
     chatSessionId: chatSessionIdRef.current,
     requestId: harnessStartupRequestRef.current,
@@ -4144,6 +4146,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
         savedClientSendGuard.assertCurrent();
         if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
@@ -5505,6 +5508,7 @@ export function useChatSession(
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
+      if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
         text,
         files,
@@ -6842,10 +6846,11 @@ export function useChatSession(
    * the rail is withdrawn with it. (Stream END is deliberately NOT a trigger —
    * a suspended operation's stream always ends while its round is pending.)
    */
-  const { canStopApproval, stopApproval } = useHarnessApprovalStop({
+  const { canStopApproval, stopApproval, stopActiveTurn, stopping: stoppingHarness, stopFailed } = useHarnessApprovalStop({
     owner: isHostedTransport && isAuthenticated && hostedProjectId && isHarness(harnessId) && !hostedScenarioId
       ? { projectId: hostedProjectId, harnessId, chatSessionId }
       : null,
+    dispatchBlocked: harnessStopBlockedRef,
     messages,
     setMessages,
   });
@@ -6853,6 +6858,10 @@ export function useChatSession(
     if (status === "ready" && canStopApproval) {
       void stopApproval();
       return;
+    }
+    const requestId = harnessStartupRequestRef.current;
+    if (requestId && (status === "submitted" || status === "streaming")) {
+      void stopActiveTurn(requestId);
     }
     turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
@@ -6862,9 +6871,10 @@ export function useChatSession(
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval, stopActiveTurn]);
 
   const submitBlocked =
+    stoppingHarness || stopFailed ||
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||

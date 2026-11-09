@@ -23,6 +23,7 @@ const harnessState = vi.hoisted(() => ({
     stop: vi.fn(async () => ({})),
     destroy: vi.fn(async () => {}),
     detach: vi.fn(async () => ({ type: "resume-session" })),
+    suspendTurn: vi.fn(async () => ({ type: "continue-turn" })),
   },
 }));
 
@@ -135,6 +136,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { getHarnessAdapter } from "../registry.js";
+import { commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 
 function options(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -213,6 +215,10 @@ describe("runHarnessTurn background drain", () => {
     harnessState.session.stop.mockClear();
     harnessState.session.destroy.mockClear();
     harnessState.session.detach.mockClear();
+    harnessState.session.suspendTurn.mockReset();
+    harnessState.session.suspendTurn.mockResolvedValue({ type: "continue-turn" });
+    vi.mocked(commitHarnessSessionState).mockClear();
+    vi.mocked(releaseHarnessSessionState).mockClear();
   });
 
   afterEach(() => {
@@ -365,6 +371,68 @@ describe("runHarnessTurn background drain", () => {
       chunks.some((chunk) => chunk.type === "data-harness-background-task"),
     ).toBe(false);
     expect(assistantTexts(result.messageHistory)).toEqual(["One answer."]);
+  });
+
+  it("destroys an approval turn when Stop ends its iterator without a final part", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+      () => stop.abort(),
+    ];
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(harnessState.session.destroy).toHaveBeenCalledTimes(1);
+    expect(harnessState.session.suspendTurn).not.toHaveBeenCalled();
+    expect(commitHarnessSessionState).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("does not commit an approval if Stop arrives while suspending the runtime", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    harnessState.session.suspendTurn.mockImplementationOnce(async () => {
+      stop.abort();
+      return { type: "continue-turn" };
+    });
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(harnessState.session.suspendTurn).toHaveBeenCalledTimes(1);
+    expect(commitHarnessSessionState).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("cancels the pause commit and skips persistence when Stop reaches that request", async () => {
+    const stop = new AbortController();
+    const persist = vi.fn();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    vi.mocked(commitHarnessSessionState).mockImplementationOnce(async ({ signal }) => {
+      stop.abort();
+      expect(signal?.aborted).toBe(true);
+      return false;
+    });
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal, onConversationComplete: persist }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(persist).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
   });
 
   it("a Stop while the bridge only waits keeps the answer and commits the turn", async () => {
