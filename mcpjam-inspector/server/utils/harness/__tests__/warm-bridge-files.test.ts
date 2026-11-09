@@ -1,10 +1,42 @@
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { patchWarmBridgeExpiry } from "../warm-bridge-files.js";
+import { patchWarmBridgeExpiry, warmBridgeCommand } from "../warm-bridge-files.js";
 import { WARM_BRIDGE_WINDOW_MS } from "../warm-bridge.js";
 
 const lifecycleFixture = `const writeBridgeMeta = async (state) => {};
 globalThis.lifecycle = writeBridgeMeta; void writeBridgeMeta("waiting");`;
+
+it.skipIf(process.platform !== "linux")("parks and verifies the real process under HOME with an encoded session id", () => {
+  const root = mkdtempSync(join(tmpdir(), "warm-private-home-"));
+  const home = join(root, "home");
+  const workspace = join(root, "workspace");
+  const directory = join(home, ".ai-sdk-harness/.agent-runs/..%2Fshared%2Fsession/bridge");
+  try {
+    mkdirSync(workspace);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "bridge-meta.json"), JSON.stringify({
+      pid: process.pid, port: 8080, state: "waiting",
+    }));
+    const args = { sessionId: "../shared/session", configuration: "configuration", token: "private-channel-token", port: 8080 };
+    const run = (park: boolean, token = args.token) => spawnSync("sh", ["-c", warmBridgeCommand({
+      ...args, token, park, includeHome: !park,
+    })], { cwd: workspace, env: { ...process.env, HOME: home }, encoding: "utf8" });
+    const parked = run(true);
+    expect(parked.status, parked.stderr).toBe(0);
+    expect(readFileSync(join(directory, "mcpjam-warm.json"), "utf8")).not.toContain(args.token);
+    const attached = run(false);
+    expect(attached.status, attached.stderr).toBe(0);
+    expect(JSON.parse(attached.stdout)).toEqual({ ready: true, home });
+    expect(run(false, "another-channel-token").status).toBe(1);
+    expect(existsSync(join(workspace, ".agent-runs"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 async function watchdog(hasStateDirectory = true, marker?: string) {
   let now = 1000;

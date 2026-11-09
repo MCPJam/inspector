@@ -19,6 +19,8 @@ import { translateConvexWriteError as translateConvexError } from "./convex-erro
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
+import { readLaunchContext } from "../../utils/launch-context.js";
+import { principalKey } from "../../utils/request-principal.js";
 import { findConformanceCheck } from "../shared/conformance-check.js";
 import {
   HOSTED_CONFORMANCE_SUITES,
@@ -183,6 +185,12 @@ conformanceRuns.post(
       protocolVersion: body.protocolVersion,
       engineVersion: body.engineVersion,
       settings: body.settings,
+      launcher: readLaunchContext(c)?.launcher,
+      // 30 starts per user per 10 minutes: every start dials a third-party
+      // server, and an agent in a loop would otherwise keep dialling.
+      startLimitKey: c.get("workosUserId")
+        ? `user:${c.get("workosUserId")}`
+        : principalKey(c),
       translateError: (error) =>
         translateConvexError(error, { resource: "Conformance run" }),
     });

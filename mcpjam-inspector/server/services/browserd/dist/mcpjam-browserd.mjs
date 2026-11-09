@@ -3332,6 +3332,7 @@ function createFrameStreamHost(handler, options = {}) {
     }
     let ended = false;
     let stallTimer;
+    let startupTimer;
     let beatTimer;
     let unsubscribe;
     let release;
@@ -3352,6 +3353,7 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -3370,6 +3372,7 @@ function createFrameStreamHost(handler, options = {}) {
         stallTimer = timers.setTimer(() => {
           if (ended) return;
           ended = true;
+          timers.clearTimer(startupTimer);
           timers.clearTimer(beatTimer);
           unsubscribe?.();
           release?.();
@@ -3388,6 +3391,7 @@ function createFrameStreamHost(handler, options = {}) {
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -3407,10 +3411,15 @@ function createFrameStreamHost(handler, options = {}) {
       return;
     }
     release = gate.release;
+    startupTimer = timers.setTimer(
+      () => end("video_unavailable"),
+      options.videoStartupMs ?? 1e4
+    );
     unsubscribe = encoder.subscribe((unit) => {
       if (ended) return;
       gate.revalidate();
       if (ended) return;
+      if (unit.key) timers.clearTimer(startupTimer);
       const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({

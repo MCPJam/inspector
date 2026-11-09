@@ -5,12 +5,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { createConvexClientMock, runConformanceMock, suiteConfigsForRunMock } =
-  vi.hoisted(() => ({
-    createConvexClientMock: vi.fn(),
-    runConformanceMock: vi.fn(),
-    suiteConfigsForRunMock: vi.fn(),
-  }));
+const { createConvexClientMock, runConformanceMock } = vi.hoisted(() => ({
+  createConvexClientMock: vi.fn(),
+  runConformanceMock: vi.fn(),
+}));
 
 vi.mock("../evals/route-helpers.js", () => ({
   createConvexClient: (...args: unknown[]) => createConvexClientMock(...args),
@@ -19,13 +17,12 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@mcpjam/sdk")>()),
   runConformance: (...args: unknown[]) => runConformanceMock(...args),
 }));
-vi.mock("../conformance-run-settings.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../conformance-run-settings.js")>()),
-  suiteConfigsForRun: (...args: unknown[]) => suiteConfigsForRunMock(...args),
-}));
 
 import { executePersistedConformanceRun } from "../conformance-run-executor.js";
-import type { ConformanceRunSettings } from "../conformance-run-settings.js";
+import type {
+  ConformanceRunSettings,
+  ConformanceSuiteConfigs,
+} from "../conformance-run-settings.js";
 
 const SERVER = { url: "https://connector.example.com/mcp" };
 const SAVED: ConformanceRunSettings = {
@@ -82,6 +79,15 @@ function reportErrors(calls: Call[]): Record<string, unknown> {
   );
 }
 
+/** Configs a start resolved at 2025-11-25, with every saved suite kept. */
+const RESOLVED = {
+  protocolVersion: "2025-11-25" as const,
+  selection: SAVED.selection,
+  protocol: {},
+  apps: {},
+  tasks: {},
+};
+
 const BASE = {
   convexToken: "tok",
   projectId: "p1",
@@ -99,7 +105,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
     vi.useRealTimers();
   });
 
-  it("starts the run with its budget and runs each suite with its settings", async () => {
+  it("starts the run with its budget and runs each suite with the configs the start resolved", async () => {
     const { calls } = convexClient();
     const configs = {
       protocolVersion: "2026-07-28",
@@ -107,8 +113,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       protocol: { checkIds: ["tools-list"] },
       apps: {},
       tasks: { checkIds: ["tasks-wire-resolvable"] },
-    };
-    suiteConfigsForRunMock.mockResolvedValue(configs);
+    } as ConformanceSuiteConfigs;
     runConformanceMock.mockResolvedValue({
       outcome: "passed",
       score: { score: 100 },
@@ -119,6 +124,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       suites: ["protocol", "tasks"],
       protocolVersion: "2026-07-28",
       settings: SAVED,
+      suiteConfigs: configs,
       runTimeoutSeconds: SAVED.runTimeoutSeconds,
     });
 
@@ -130,12 +136,6 @@ describe("executePersistedConformanceRun with saved settings", () => {
         actorLabel: "MCPJam API",
       },
     });
-    expect(suiteConfigsForRunMock).toHaveBeenCalledWith(
-      SAVED,
-      expect.objectContaining({ url: SERVER.url }),
-      "2026-07-28",
-      expect.any(AbortSignal),
-    );
     const config = runConformanceMock.mock.calls[0]![0];
     expect(config).toMatchObject({
       suites: ["protocol", "tasks"],
@@ -146,22 +146,48 @@ describe("executePersistedConformanceRun with saved settings", () => {
     expect(config.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("records the declared launcher and the settings the run used", async () => {
+    const { calls } = convexClient();
+    runConformanceMock.mockResolvedValue({
+      outcome: "passed",
+      score: { score: 100 },
+    });
+
+    await executePersistedConformanceRun({
+      ...BASE,
+      suites: ["protocol"],
+      settings: SAVED,
+      suiteConfigs: { protocolVersion: undefined },
+      runTimeoutSeconds: 300,
+      launcher: { kind: "mcp", client: "claude-code" },
+    });
+    expect(calls[0]!.args).toMatchObject({
+      launcher: { kind: "mcp", client: "claude-code" },
+      settingsSource: "saved",
+    });
+
+    // A worker start declares neither, and sends neither.
+    vi.clearAllMocks();
+    const worker = convexClient();
+    runConformanceMock.mockResolvedValue({
+      outcome: "passed",
+      score: { score: 100 },
+    });
+    await executePersistedConformanceRun({ ...BASE, suites: ["protocol"] });
+    expect(worker.calls[0]!.args).not.toHaveProperty("launcher");
+    expect(worker.calls[0]!.args).not.toHaveProperty("settingsSource");
+  });
+
   it("stops within one heartbeat of a cancel and writes no report after it", async () => {
     vi.useFakeTimers();
     const { calls } = convexClient(() => ({ ok: false, error: "terminal" }));
-    suiteConfigsForRunMock.mockResolvedValue({
-      protocolVersion: "2025-11-25",
-      selection: SAVED.selection,
-      protocol: {},
-      apps: {},
-      tasks: {},
-    });
     runUntilAborted();
 
     const run = executePersistedConformanceRun({
       ...BASE,
       suites: ["protocol"],
       settings: SAVED,
+      suiteConfigs: RESOLVED,
       runTimeoutSeconds: 300,
     });
     await vi.advanceTimersByTimeAsync(20_000);
@@ -178,13 +204,6 @@ describe("executePersistedConformanceRun with saved settings", () => {
   it("ends every unfinished suite incomplete at the run's budget", async () => {
     vi.useFakeTimers();
     const { calls } = convexClient();
-    suiteConfigsForRunMock.mockResolvedValue({
-      protocolVersion: "2025-11-25",
-      selection: SAVED.selection,
-      protocol: {},
-      apps: {},
-      tasks: {},
-    });
     // Suites that ignore the signal: the executor must not wait for them.
     runConformanceMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -192,6 +211,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       ...BASE,
       suites: ["protocol", "tasks"],
       settings: SAVED,
+      suiteConfigs: RESOLVED,
       runTimeoutSeconds: 5,
     });
     await vi.advanceTimersByTimeAsync(5_000);
@@ -200,6 +220,135 @@ describe("executePersistedConformanceRun with saved settings", () => {
     expect(reportErrors(calls)).toEqual({
       protocol: "Run timed out after 5 seconds",
       tasks: "Run timed out after 5 seconds",
+    });
+    expect(calls.at(-1)?.fn).toBe("conformanceRuns:finalizeRun");
+  });
+
+  it("records a suite that reports after the budget as timed out, not with its cut-off report", async () => {
+    vi.useFakeTimers();
+    const { calls } = convexClient();
+    // A suite whose requests the deadline aborted still reports, with every
+    // check failed on the aborted request.
+    runConformanceMock.mockImplementation(
+      (config: {
+        signal: AbortSignal;
+        onProgress: (event: unknown) => Promise<void> | void;
+      }) =>
+        new Promise((resolve) => {
+          config.signal.addEventListener(
+            "abort",
+            () => {
+              void config.onProgress({
+                suiteKind: "protocol",
+                status: "completed",
+                report: {
+                  schemaVersion: 1,
+                  kind: "protocol-conformance",
+                  name: "protocol",
+                  passed: false,
+                  outcome: "failed",
+                  durationMs: 5_000,
+                  groups: [
+                    {
+                      id: "core",
+                      title: "Core",
+                      target: "",
+                      passed: false,
+                      durationMs: 5_000,
+                      cases: [
+                        {
+                          id: "tools-list",
+                          title: "tools/list",
+                          status: "failed",
+                          durationMs: 5_000,
+                          category: "core",
+                          error: "This operation was aborted",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              });
+              resolve({ outcome: "failed", score: { score: 0 } });
+            },
+            { once: true },
+          );
+        }),
+    );
+
+    const run = executePersistedConformanceRun({
+      ...BASE,
+      suites: ["protocol"],
+      settings: SAVED,
+      suiteConfigs: RESOLVED,
+      runTimeoutSeconds: 5,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run;
+
+    expect(
+      calls.filter((call) => call.fn === "conformanceRuns:upsertReportAction"),
+    ).toHaveLength(1);
+    expect(reportErrors(calls)).toEqual({
+      protocol: "Run timed out after 5 seconds",
+    });
+    expect(calls.at(-1)?.fn).toBe("conformanceRuns:finalizeRun");
+  });
+
+  it("keeps a report whose write began before the budget ran out", async () => {
+    vi.useFakeTimers();
+    const { calls, action } = convexClient();
+    action.mockImplementation(
+      async (fn: string, args: Record<string, unknown>) => {
+        calls.push({ fn, args });
+        // The protocol report's write is still in flight at the deadline.
+        if (args.status === "completed") {
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
+        }
+      },
+    );
+    runConformanceMock.mockImplementation(
+      (config: { onProgress: (event: unknown) => Promise<void> | void }) => {
+        void config.onProgress({
+          suiteKind: "protocol",
+          status: "completed",
+          report: {
+            schemaVersion: 1,
+            kind: "protocol-conformance",
+            name: "protocol",
+            passed: true,
+            outcome: "passed",
+            durationMs: 1,
+            groups: [],
+          },
+        });
+        // Tasks never finishes.
+        return new Promise(() => undefined);
+      },
+    );
+
+    const run = executePersistedConformanceRun({
+      ...BASE,
+      suites: ["protocol", "tasks"],
+      settings: SAVED,
+      suiteConfigs: RESOLVED,
+      runTimeoutSeconds: 2,
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    await run;
+
+    const writes = calls.filter(
+      (call) => call.fn === "conformanceRuns:upsertReportAction",
+    );
+    expect(writes.map((call) => [call.args.suiteKind, call.args.status])).toEqual(
+      [
+        ["protocol", "completed"],
+        ["tasks", "failed"],
+      ],
+    );
+    expect(reportErrors(calls)).toEqual({
+      protocol: undefined,
+      tasks: "Run timed out after 2 seconds",
     });
     expect(calls.at(-1)?.fn).toBe("conformanceRuns:finalizeRun");
   });
@@ -244,33 +393,5 @@ describe("executePersistedConformanceRun with saved settings", () => {
     // The unsupported OAuth suite's report is not attempted once cancelled.
     expect(action).toHaveBeenCalledTimes(1);
     expect(calls.at(-1)?.fn).toBe("conformanceRuns:finalizeRun");
-  });
-
-  it("records a suite whose saved checks all fall outside the resolved version, without running it", async () => {
-    const { calls } = convexClient();
-    suiteConfigsForRunMock.mockResolvedValue({
-      protocolVersion: "2025-11-25",
-      selection: { protocol: [], apps: undefined },
-      protocol: { checkIds: [] },
-      apps: {},
-      tasks: {},
-    });
-    runConformanceMock.mockResolvedValue({
-      outcome: "passed",
-      score: { score: 100 },
-    });
-
-    await executePersistedConformanceRun({
-      ...BASE,
-      suites: ["protocol", "apps"],
-      settings: SAVED,
-      runTimeoutSeconds: 300,
-    });
-
-    expect(runConformanceMock.mock.calls[0]![0].suites).toEqual(["apps"]);
-    expect(reportErrors(calls)).toEqual({
-      protocol:
-        "None of this suite's saved checks apply to MCP protocol version 2025-11-25, so it did not run.",
-    });
   });
 });

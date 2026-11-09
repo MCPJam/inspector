@@ -149,6 +149,27 @@ describe("codex app-server doStart", () => {
     await session.doDestroy();
   });
 
+  it.each([
+    { home: "/home/from-live-probe", probes: 0, stateHome: "/home/from-live-probe" },
+    { home: "relative", probes: 1, stateHome: HOME },
+    { home: "/home/invalid\0", probes: 1, stateHome: HOME },
+    { home: undefined, probes: 1, stateHome: HOME },
+  ])("uses only a valid live HOME hint ($home)", async ({ home, probes, stateHome }) => {
+    const bridge = await fakeBridge();
+    const box = fakeSession({ port: bridge.port });
+    const session = await createCodexAppServer({ sandboxHomeDir: home }).doStart({
+      sessionId: "session-home",
+      sessionWorkDir: SESSION_WORK_DIR,
+      sandboxSession: box.session,
+      permissionMode: "allow-edits",
+    } as never);
+    expect(box.runs.filter(({ command }) => command.includes("$HOME"))).toHaveLength(probes);
+    expect(box.spawns[0]!.command).toContain(
+      ` --session-data-dir ${q(`${stateHome}/.ai-sdk-harness/.agent-runs/session-home`)}`,
+    );
+    await session.doDestroy();
+  });
+
   it("refuses an approval continuation whose bridge is gone instead of re-driving the thread", async () => {
     // A port nothing listens on: the attach rung fails, and there is no
     // replayable log. A rerun here would let a fresh Codex proposal inherit
