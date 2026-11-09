@@ -1,6 +1,9 @@
 import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1SandboxProvider,
+} from "@ai-sdk/harness";
 import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 import {
@@ -123,9 +126,11 @@ describe("the hosted Cursor adapter", () => {
 // against one sandbox and compares the directories they actually use.
 describe("the hosted Cursor bridge", () => {
   const STOP = "stop-at-bridge-spawn";
-  // Deliberately not HOME: an adapter that resolves its bridge against HOME
-  // must fail this check even on a box where the two happen to coincide.
-  const DEFAULT_DIR = "/home/user/work";
+  const HOME = "/home/user";
+  // Deliberately not HOME: a copy that resolves the bridge against the
+  // session workdir and one that resolves it against the framework's state
+  // directory under HOME must not agree by accident.
+  const DEFAULT_DIR = `${HOME}/work`;
 
   async function launchLayout() {
     const written: string[] = [];
@@ -145,7 +150,7 @@ describe("the hosted Cursor bridge", () => {
       writeFile: async () => {},
       run: async ({ command }: { command: string }) => ({
         exitCode: 0,
-        stdout: command.includes("$HOME") ? "/home/user" : "",
+        stdout: command.includes("$HOME") ? HOME : "",
         stderr: "",
       }),
       spawn: async ({ command }: { command: string }) => {
@@ -176,7 +181,12 @@ describe("the hosted Cursor bridge", () => {
     expect(installed).toBeDefined();
     expect(launched).toBeDefined();
     expect(launched).toBe(posix.dirname(installed!));
-    expect(launched).toBe(posix.join(DEFAULT_DIR, recipe.bootstrapDir));
+    expect(launched).toBe(
+      posix.join(
+        harnessStateDirectoryPath({ sandboxHomeDir: HOME }),
+        recipe.bootstrapDir,
+      ),
+    );
   });
 });
 
