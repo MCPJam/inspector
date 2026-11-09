@@ -336,22 +336,19 @@ describe("checkHarnessRuntimeAvailable", () => {
         expect(noDataPlane.kind).toBe("computers-unconfigured");
 
       setFullyAvailable();
-      // Approval: `supportsMcpToolApproval` is false pending a live check, so
-      // an approval host WITH servers is refused rather than run with some MCP
-      // calls unapproved.
-      const approvalWithServers = checkHarnessRuntimeAvailable(
-        args({
-          harnessId: "cursor" as HarnessId,
-          model: { id: "cursor/auto", provider: "cursor" },
-          requireToolApproval: true,
-          hasSelectedMcpServers: true,
-        }),
-      );
-      expect(approvalWithServers.ok).toBe(false);
-      if (!approvalWithServers.ok)
-        expect(approvalWithServers.kind).toBe("tool-approval");
+      // Approval: Cursor asks before every MCP call (measured), so an approval
+      // host WITH servers runs, as one without them does.
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+            requireToolApproval: true,
+            hasSelectedMcpServers: true,
+          }),
+        ),
+      ).toEqual({ ok: true });
 
-      // …but approval WITHOUT servers is fine: the native surface does pause.
       expect(
         checkHarnessRuntimeAvailable(
           args({

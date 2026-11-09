@@ -14,6 +14,7 @@ import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 
 const SECRET = "test-harness-proxy-secret-32-chars";
 const control = vi.hoisted(() => ({
+  revoked: false,
   owners: [] as unknown[],
   tokens: [] as unknown[],
   boundDigest: "",
@@ -37,7 +38,9 @@ vi.mock("../../../utils/harness/forwarding/execution-control.js", async (origina
       control.owners.push(args.owner);
       control.tokens.push(args.token);
       return {
-        authorize: async () => ({
+        authorize: async () => {
+          if (control.revoked) throw new actual.ExecutionControlError("control_403");
+          return {
           userId: "user_convex_1",
           externalId: "user_ext_1",
           organizationId: "org_1",
@@ -45,7 +48,8 @@ vi.mock("../../../utils/harness/forwarding/execution-control.js", async (origina
           expiresAt: Date.now() + 30 * 60_000,
           turnId: "grant-turn",
           policyDigest: control.boundDigest,
-        }),
+          };
+        },
         cancel: async (turnId: string, rpcId: string | number) => {
           control.cancels.push([turnId, rpcId]);
           control.cancelled.add(rpcId);
@@ -172,6 +176,7 @@ beforeEach(() => {
   control.cancels.length = 0;
   control.prepared.length = 0;
   control.cancelled.clear();
+  control.revoked = false;
   control.boundDigest = sessionPolicyDigest("srv-a", policy);
   upstream.bodies.length = 0;
   upstream.signals.length = 0;
@@ -250,5 +255,13 @@ describe("session envelopes on the native forwarding route", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect((await pending).status).toBe(200);
     expect(toolCalls()).toHaveLength(1);
+  });
+
+  it("runs nothing for a request held past its turn, whose grant is gone (P5)", async () => {
+    // The egress proxy injected turn 1's grant; turn 1 ended and revoked it.
+    control.revoked = true;
+    expect((await call(4)).status).toBe(409);
+    expect(control.prepared).toHaveLength(0);
+    expect(toolCalls()).toHaveLength(0);
   });
 });
