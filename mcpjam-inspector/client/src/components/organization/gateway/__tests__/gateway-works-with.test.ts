@@ -40,13 +40,17 @@ describe("gatewayWorksWith", () => {
     expect(list.at(-1)).toMatchObject({ ready: false, reason: expect.stringContaining("own account") });
   });
 
-  it("is ready for chat, evals, judges, Claude Code, Codex and Copilot CLI on a full gateway", () => {
+  it("is ready for chat, evals, judges and every harness with an org path on a full gateway", () => {
     const all = rows(ALL);
-    for (const id of ["chat", "evals", "judges", "claude-code", "codex", "copilot-cli"]) {
+    for (const id of ["chat", "evals", "judges", "claude-code", "codex", "copilot-cli", "opencode"]) {
       expect(all[id]).toMatchObject({ ready: true });
     }
-    // OpenCode doesn't take organization keys yet.
-    expect(all.opencode).toMatchObject({ ready: false, reason: "OpenCode doesn't run on organization connections yet." });
+  });
+
+  it("needs the one model OpenCode is verified on mapped", () => {
+    const sonnetOnly = rows(ALL, { models: [MAPPED[0]!] });
+    expect(sonnetOnly["claude-code"]).toMatchObject({ ready: true });
+    expect(sonnetOnly.opencode).toMatchObject({ ready: false, reason: expect.stringContaining("Map a gateway model") });
   });
 
   it("marks Codex and Copilot CLI unavailable without Responses", () => {
