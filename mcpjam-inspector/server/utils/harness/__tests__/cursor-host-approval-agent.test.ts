@@ -27,6 +27,7 @@ async function collect(stream: AsyncIterable<{ type: string }>) {
 describe("Cursor approved host relay in real HarnessAgent", () => {
   it.each([false, true])("executes once without a second approval, duplicate=%s", async (duplicate) => {
     let executions = 0;
+    const executedInputs: unknown[] = [];
     const harness: HarnessV1 = {
       specificationVersion: "harness-v1", harnessId: "cursor", supportsBuiltinToolApprovals: true,
       builtinTools: { native_mcp: { inputSchema: z.object({ text: z.string() }) } },
@@ -36,7 +37,7 @@ describe("Cursor approved host relay in real HarnessAgent", () => {
           let finish!: () => void;
           const done = new Promise<void>((resolve) => { finish = resolve; });
           if (!start.continueFrom) queueMicrotask(() => {
-            emit({ type: "tool-call", toolCallId: "native-1", toolName: "native_mcp", input: '{"text":"one"}', providerExecuted: true });
+            emit({ type: "tool-call", toolCallId: "native-1", toolName: "native_mcp", input: '{"providerIdentifier":"host-tools","toolName":"echo","args":{"text":"one"}}', providerExecuted: true });
             emit({ type: "tool-approval-request", approvalId: "allow-1", toolCallId: "native-1" });
             emit(boundary);
           });
@@ -69,7 +70,7 @@ describe("Cursor approved host relay in real HarnessAgent", () => {
       },
     };
     const agent = new HarnessAgent({ harness, permissionMode: "allow-reads", tools: {
-      echo: { inputSchema: z.object({ text: z.string() }), execute: async ({ text }) => { executions++; await new Promise<void>((resolve) => setImmediate(resolve)); return text; } },
+      echo: { inputSchema: z.object({ text: z.string() }), execute: async (input) => { const { text } = input; executedInputs.push(input); executions++; await new Promise<void>((resolve) => setImmediate(resolve)); return text; } },
     } });
     const first = await agent.createSession({ sessionId: "session", sandboxSession: sandbox });
     const firstStream = await agent.stream({ session: first, prompt: "echo" });
@@ -79,6 +80,7 @@ describe("Cursor approved host relay in real HarnessAgent", () => {
     const next = await agent.continueStream({ session: resumed, toolApprovalContinuations: [{ approvalId: "allow-1", approved: true }] });
     const parts = await collect(next.fullStream);
     expect(executions).toBe(1);
+    expect(executedInputs).toEqual([{ text: "one" }]);
     expect(parts.filter(p => p.type === "tool-approval-request")).toHaveLength(0);
     expect(parts.some(p => p.type === "tool-result")).toBe(true);
   }, 5000);
