@@ -147,7 +147,7 @@ async function classifyBatch(items, rubricText, call) {
   return call({
     model: MODELS.classify,
     effort: "low",
-    system: `${rubricText}\n\nYou are doing the Detect job on strings a pull request added to the UI. Report only strings that match a pattern from the table, using the pattern's exact name. A string that matches nothing is not reported.`,
+    system: `${rubricText}\n\nYou are doing the Detect job on strings a pull request added to the UI. Report only strings that match a pattern from the table, using the pattern's exact name. A string that matches nothing is not reported.\n\nCapability boundary: this CI classifier receives only id, path and text, not the surrounding controls or repository tools. Do not attempt the skill's source-inspection steps. Do not issue context-dependent verdicts about placement, preserved input, diagnostic accuracy, or absent recovery affordances. In particular, missing next-step text alone cannot establish no-next-step when a nearby action may provide recovery. Those checks belong to a repository-capable reviewer. Judge only defects established by the supplied text.`,
     user: JSON.stringify(items.map(({ id, path, text }) => ({ id, path, text }))),
     format: schema({ id: { type: "integer" }, pattern: { type: "string" }, note: { type: "string" } }),
   });

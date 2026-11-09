@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { checkErrorRules, errorsSection } from "../check-error-rules.mjs";
-import { rubric } from "../slop/copy-review.mjs";
+import { rubric, classify } from "../slop/copy-review.mjs";
 
 const design = `# Design
 ## Errors
@@ -90,6 +90,18 @@ test("the trusted AI rubric contains the canonical standard and decision order",
   assert.match(rubric(), /\*\*E1 — Plain language/);
   assert.match(rubric(), /## Order of decision/);
   assert.match(rubric(), /Validation never goes in a toast/);
+});
+
+test("string-only classification excludes verdicts requiring unavailable source context", async () => {
+  let request;
+  await classify([{ id: 1, path: "example.tsx", text: "Couldn't save the server." }], rubric(), async input => {
+    request = input;
+    return { items: [], usage: {} };
+  });
+  assert.match(request.system, /not the surrounding controls or repository tools/);
+  assert.match(request.system, /Do not issue context-dependent verdicts/);
+  assert.match(request.system, /missing next-step text alone cannot establish no-next-step/);
+  assert.deepEqual(JSON.parse(request.user), [{ id: 1, path: "example.tsx", text: "Couldn't save the server." }]);
 });
 
 test("the check resolves repository files independently of cwd", () => {
