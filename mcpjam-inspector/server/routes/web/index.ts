@@ -228,8 +228,8 @@ web.use(
   denyGuests("Browser profiles"),
 );
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-// Dials an admin-typed gateway URL and answers without calling Convex, so the
-// bearer is verified here rather than left for Convex to judge.
+// Dials an admin-typed gateway URL once Convex confirms the caller's admin
+// role, so the bearer is verified here before anything else runs.
 web.use(
   "/org-gateway-test",
   bearerAuthMiddleware,
