@@ -109,7 +109,7 @@ export async function suiteConfigsForRun(
   settings: ConformanceRunSettings,
   server: HttpServerConfig,
   protocolVersion: McpProtocolVersion | undefined,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ) {
   if (settings.source !== "saved") return { protocolVersion };
   const connection = await checkConformanceConnection(
@@ -133,3 +133,7 @@ export async function suiteConfigsForRun(
     tasks: configs.tasks,
   };
 }
+
+export type ConformanceSuiteConfigs = Awaited<
+  ReturnType<typeof suiteConfigsForRun>
+>;
