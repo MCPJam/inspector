@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
-import { harnessOrgUpstream } from "@/shared/harness-model-support";
+import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
 import { buildBrokerDummyAuth } from "../../registry";
 import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
 import { CASES, FOREIGN_MODEL, OWN_MODEL, assertFullMatrix } from "./support";
@@ -45,8 +45,14 @@ describe.each(CASES)(
       });
     });
 
-    it("reads its organization upstream from the descriptor", () => {
-      expect(harnessOrgUpstream(id)).toEqual(descriptor.orgUpstream);
+    it("reads its organization upstream from the API it speaks", () => {
+      expect(harnessOrgUpstreamProfile(id, OWN_MODEL[id])).toBe(
+        descriptor.protocol === "anthropic-messages"
+          ? "anthropic-native"
+          : descriptor.protocol === "openai-responses"
+            ? "openai-native"
+            : undefined,
+      );
     });
 
     it("runs its own model at the pin and refuses another vendor's", () => {
