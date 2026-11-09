@@ -1115,7 +1115,7 @@ import tls from "node:tls";
 import { randomBytes as randomBytes2 } from "node:crypto";
 import { PassThrough } from "node:stream";
 var WORKSPACE_PREVIEW_FEATURE = "workspace-preview-v1";
-var HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+var ROUTING_HEADERS = /* @__PURE__ */ new Set(["e2b-sandbox-id", "e2b-sandbox-port"]);
 var HEADER_VALUE = /^[\x20-\x7e]{0,4096}$/;
 function parsePreviewGrant(body) {
   if (typeof body !== "object" || body === null) return void 0;
@@ -1136,7 +1136,7 @@ function parsePreviewGrant(body) {
   if (upstreamHeaders !== void 0) {
     if (typeof upstreamHeaders !== "object" || upstreamHeaders === null) return void 0;
     for (const [name, value] of Object.entries(upstreamHeaders)) {
-      if (!HEADER_NAME.test(name) || typeof value !== "string" || !HEADER_VALUE.test(value))
+      if (!ROUTING_HEADERS.has(name.toLowerCase()) || typeof value !== "string" || !HEADER_VALUE.test(value))
         return void 0;
       headers[name] = value;
     }
