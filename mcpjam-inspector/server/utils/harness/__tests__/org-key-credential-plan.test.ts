@@ -19,7 +19,6 @@ vi.mock("../../computers/control-plane-client.js", () => ({
       return readinessState.answer;
     },
   ),
-  getBoxCredentialAvailability: vi.fn(),
 }));
 
 const loggerState = vi.hoisted(() => ({ warn: vi.fn() }));
