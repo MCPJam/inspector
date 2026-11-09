@@ -31,7 +31,7 @@ describe("orgKeys", () => {
       codex: true,
       "copilot-cli": true,
       cursor: false,
-      opencode: false,
+      opencode: true,
     });
   });
 
@@ -82,6 +82,26 @@ describe("connectionServesHarnessApi", () => {
     ).toBe(false);
   });
 
+  it("serves a gateway's APIs, whatever its provider key", () => {
+    const messages = { providerKey: "custom:litellm", apis: ["anthropicMessages" as const] };
+    expect(connectionServesHarnessApi(messages, "anthropicMessages")).toBe(true);
+    expect(connectionServesHarnessApi(messages, "responses")).toBe(false);
+    expect(connectionServesHarnessApi(messages, null)).toBe(false);
+    expect(
+      connectionServesHarnessApi(
+        { providerKey: "custom:litellm", apis: ["chatCompletions", "responses"] },
+        "responses",
+      ),
+    ).toBe(true);
+    // A vendor's key decides for it; `apis` is a gateway's alone.
+    expect(
+      connectionServesHarnessApi(
+        { providerKey: "anthropic", apis: ["responses"] },
+        "responses",
+      ),
+    ).toBe(false);
+  });
+
   it("serves nothing from any other provider, and nothing for no API", () => {
     for (const providerKey of PROVIDER_KEYS) {
       expect(connectionServesHarnessApi({ providerKey }, null)).toBe(false);
@@ -98,9 +118,16 @@ describe("connectionServesHarnessApi", () => {
 
 describe("harnessRunsOnConnection", () => {
   it.each(HARNESS_IDS)(
-    "%s runs on exactly the connections its native org upstream names",
+    "%s runs on exactly the vendor connections that serve its API",
     (id) => {
-      const nativeProvider = HARNESS_DESCRIPTORS[id].orgUpstream?.provider;
+      const api = harnessWireApi(id);
+      const nativeProvider = !HARNESS_DESCRIPTORS[id].orgKeys
+        ? undefined
+        : api === "anthropicMessages"
+          ? "anthropic"
+          : api === "responses"
+            ? "openai"
+            : undefined;
       for (const providerKey of PROVIDER_KEYS) {
         expect(harnessRunsOnConnection(id, { providerKey }), providerKey).toBe(
           providerKey === nativeProvider,
@@ -116,10 +143,21 @@ describe("harnessRunsOnConnection", () => {
     ).toBe(false);
   });
 
-  it("refuses OpenCode on Anthropic although it speaks Anthropic Messages", () => {
-    expect(harnessWireApi("opencode")).toBe("anthropicMessages");
+  it("runs OpenCode on Anthropic, and on a gateway that serves Anthropic Messages", () => {
     expect(
       harnessRunsOnConnection("opencode", { providerKey: "anthropic" }),
+    ).toBe(true);
+    expect(
+      harnessRunsOnConnection("opencode", {
+        providerKey: "custom:litellm",
+        apis: ["anthropicMessages"],
+      }),
+    ).toBe(true);
+    expect(
+      harnessRunsOnConnection("codex", {
+        providerKey: "custom:litellm",
+        apis: ["anthropicMessages"],
+      }),
     ).toBe(false);
   });
 });
