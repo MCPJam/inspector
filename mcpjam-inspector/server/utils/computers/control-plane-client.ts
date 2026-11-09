@@ -1179,26 +1179,6 @@ export async function prepareSandboxConnection(args: {
   );
 }
 
-/** The credential a private box's ports require; wakes nothing. */
-export async function getSandboxTrafficToken(args: {
-  providerComputerId: string;
-  signal?: AbortSignal;
-}): Promise<ControlPlaneResult<{ trafficAccessToken?: string }>> {
-  const headers = authHeaders();
-  if (!headers)
-    return {
-      ok: false,
-      status: 0,
-      error: "Computers service authentication is unavailable",
-    };
-  return postJson<{ trafficAccessToken?: string }>(
-    "/computers/traffic-token",
-    headers,
-    { providerComputerId: args.providerComputerId },
-    args.signal,
-  );
-}
-
 export type SandboxEgressStatus =
   | { ok: true }
   | { ok: false; reason: "egress_busy"; deadline: number }
