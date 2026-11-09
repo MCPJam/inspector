@@ -245,7 +245,7 @@ describe("buildAvailableModelsFromOrgConfig under the policy", () => {
     expect(lan).toMatchObject({
       disabled: true,
       disabledReason:
-        "This connection's calls come from each user's Inspector, which your organization's key policy doesn't allow. Set its calls to come from MCPJam's servers.",
+        "Your organization's key policy doesn't allow calls from each user's Inspector. Set this connection's calls to come from MCPJam's servers.",
     });
     expect(lan?.judgeEligible).toBeUndefined();
     expect(rows.find((row) => row.provider === "anthropic")?.disabled).toBeFalsy();

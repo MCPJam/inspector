@@ -312,7 +312,7 @@ export const ORG_POLICY_LOADING_REASON =
  * the policy makes ineligible. Listed, disabled, so the admin sees the fix.
  */
 export const INSPECTOR_RUN_POLICY_REASON =
-  "This connection's calls come from each user's Inspector, which your organization's key policy doesn't allow. Set its calls to come from MCPJam's servers.";
+  "Your organization's key policy doesn't allow calls from each user's Inspector. Set this connection's calls to come from MCPJam's servers.";
 
 /**
  * A row locked by the organization's AI key policy. A saved selection locked
