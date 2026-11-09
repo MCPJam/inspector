@@ -227,6 +227,62 @@ describe("acquireHarnessBox — ownership and release", () => {
     await acquired.box.release();
   });
 
+  it("a paired desktop is heartbeated and released with its pinned box", async () => {
+    // The desktop has its own row and idle clock: left out of either, it is
+    // reaped mid-run or kept alive after the run.
+    const release = vi.fn(async () => {});
+    const touch = vi.fn(async () => "touched" as const);
+    const acquired = await acquireHarnessBox({
+      surface: "eval",
+      provision: async () => ({
+        ok: true as const,
+        box: {
+          sandboxRowId: "row-1",
+          sandboxId: "sbx-1",
+          runtimeKind: "terminal" as const,
+          workdir: "/home/user",
+          browser: { sandboxRowId: "row-2", sandboxId: "sbx-2" },
+        },
+      }),
+      release,
+      touch,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    // The harness and shell stay on the pinned box; Browser gets the desktop.
+    expect(acquired.box.binding).toMatchObject({
+      sandboxRowId: "row-1",
+      runtimeKind: "terminal",
+    });
+    expect(acquired.box.browserBinding).toEqual({
+      sandboxRowId: "row-2",
+      sandboxId: "sbx-2",
+      runtimeKind: "desktop-browser",
+    });
+    await advance(harnessBoxHeartbeatIntervalMs("eval"));
+    expect(touch.mock.calls.map(([args]) => args.sandboxRowId).sort()).toEqual(
+      ["row-1", "row-2"],
+    );
+    await acquired.box.release();
+    expect(release.mock.calls.map(([row]) => row).sort()).toEqual([
+      "row-1",
+      "row-2",
+    ]);
+    touch.mockClear();
+    await advance(HARNESS_BOX_SCOPES.eval.idleTtlMs);
+    expect(touch).not.toHaveBeenCalled();
+  });
+
+  it("a box with no paired desktop has no browser binding", async () => {
+    const acquired = await acquireHarnessBox({
+      surface: "eval",
+      provision: provisioned(),
+      touch: vi.fn(async () => "touched" as const),
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    expect(acquired.box).not.toHaveProperty("browserBinding");
+    await acquired.box.release();
+  });
+
   it("a refusal comes back untouched, and no heartbeat starts", async () => {
     const touch = vi.fn(async () => "touched" as const);
     const refusal = { status: 409, code: "no_pin", error: "No image." };

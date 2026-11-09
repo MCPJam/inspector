@@ -306,6 +306,29 @@ describe("buildBrowserTools — unattended policy", () => {
     ]);
   });
 
+  it("judges a 0.0.0.0 address as the localhost the browser opens", async () => {
+    const policyFor = (origin: string) => ({
+      approvalDelivery: {
+        kind: "unattended" as const,
+        policy: { mode: "allowlist" as const, originAllowlist: [origin] },
+      },
+    });
+    const localhost = build(policyFor("http://localhost:5173"), echoingDaemon());
+    const allowed = await run(localhost.result!.tools, "browser_navigate", {
+      url: "http://0.0.0.0:5173/",
+    });
+    expect(allowed.error).toBeUndefined();
+    expect(localhost.sendCommand.mock.calls[0][0].action.url).toBe("http://localhost:5173/");
+
+    // A policy naming only the printed address never reaches localhost.
+    const printed = build(policyFor("http://0.0.0.0:5173"), echoingDaemon());
+    const denied = await run(printed.result!.tools, "browser_navigate", {
+      url: "http://0.0.0.0:5173/",
+    });
+    expect(denied.error).toContain("origin_not_allowed");
+    expect(printed.sendCommand).not.toHaveBeenCalled();
+  });
+
   it("returns nothing when the policy leaves no usable tools", () => {
     const suppressed: Array<{ id: string; reason: string }> = [];
     const built = buildBrowserTools({

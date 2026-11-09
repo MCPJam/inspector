@@ -95,6 +95,7 @@ import {
   type BrowserSessionHandle,
 } from "../../services/browserd/browser-session.js";
 import {
+  loopbackUrl,
   openPreviewForNavigation,
   type PreviewWorkspaceSource,
 } from "../../services/workspace-preview/workspace-tunnel.js";
@@ -314,7 +315,7 @@ export interface BrowserToolsOptions {
    * produce one.
    */
   sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
-  /** The conversation's workspace, opened at `http://localhost:<port>`. */
+  /** The shell's workspace, opened at `http://localhost:<port>`. */
   previewWorkspace?: PreviewWorkspaceSource;
   ensureSession?: (args: {
     bearer: string;
@@ -1674,7 +1675,7 @@ export function buildBrowserTools(
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
         "so you do not need to observe separately before acting." +
         (opts.previewWorkspace
-          ? " Apps running on this conversation's computer open at http://localhost:<port>."
+          ? " Apps running on the shell's computer open at http://localhost:<port>."
           : ""),
       inputSchema: z.object({
         url: z
@@ -1696,11 +1697,14 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async (
-        { url, action, tabId, newTab },
+        { url: rawUrl, action, tabId, newTab },
         { abortSignal, toolCallId },
       ) => {
         const verb = action ?? "goto";
-        if (verb === "goto" && !url) return { error: "navigate needs a url" };
+        if (verb === "goto" && !rawUrl) return { error: "navigate needs a url" };
+        // Judged as the address the browser will open, so a 0.0.0.0 a dev
+        // server printed is allowed or refused as the localhost it becomes.
+        const url = rawUrl === undefined ? undefined : loopbackUrl(rawUrl);
         if (url && policy && !isOriginAllowed(url, policy.originAllowlist)) {
           // Enforced BEFORE the command leaves this process: an unattended run
           // must not reach an origin its policy never named.
