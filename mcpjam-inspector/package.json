@@ -141,7 +141,7 @@
     "@ai-sdk/google": "^4.0.93",
     "@ai-sdk/harness": "1.0.117",
     "@ai-sdk/harness-claude-code": "1.0.121",
-    "@ai-sdk/harness-cursor": "^1.0.30",
+    "@ai-sdk/harness-cursor": "1.0.35",
     "@ai-sdk/harness-opencode": "1.0.119",
     "@ai-sdk/mistral": "^4.0.62",
     "@ai-sdk/openai": "^4.0.91",
