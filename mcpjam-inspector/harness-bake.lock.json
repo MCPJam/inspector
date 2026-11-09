@@ -14,7 +14,7 @@
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "c617c3d9c87a9767",
+      "identity": "21db1515aa6f972b",
       "runtimeVersion": "2.1.290"
     },
     {
