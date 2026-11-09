@@ -223,8 +223,7 @@
     "descriptor": {
       "controls": {
         "modelId": {
-          "enforced": false,
-          "note": "The Cursor CLI runs on your Cursor account, which chooses the model itself."
+          "enforced": true
         },
         "progressiveToolDiscovery": {
           "enforced": false,
