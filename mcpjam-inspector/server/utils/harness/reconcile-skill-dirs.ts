@@ -124,6 +124,15 @@ export async function reconcileSkillDirs(args: {
       next.skills[s.skillId] = { skillId: s.skillId, name: s.name };
     }
     result.managed = currentBySkillId.size;
+    if (
+      manifest.skillsHash === next.skillsHash &&
+      Object.keys(manifest.skills).length === currentBySkillId.size &&
+      [...currentBySkillId].every(
+        ([id, skill]) =>
+          manifest.skills[id]?.skillId === id &&
+          manifest.skills[id]?.name === skill.name,
+      )
+    ) return result;
 
     // Renamed: drop the old managed dir (the adapter writes the new name).
     for (const [skillId, prev] of Object.entries(manifest.skills)) {
