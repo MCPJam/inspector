@@ -3854,6 +3854,14 @@ export async function runHarnessTurn(
                 nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
               }),
             });
+            // Approval continuation can repeat a call already in saved history.
+            // Keep its original input and card; only the result is new.
+            const savedCall = toolCallLookupFor(() => messageHistory)(toolCallId);
+            if (savedCall) {
+              toolMeta.set(toolCallId, { ...toolMeta.get(toolCallId), ...savedCall });
+              drainOpenToolCalls.add(toolCallId);
+              continue;
+            }
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
