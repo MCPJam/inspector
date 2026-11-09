@@ -1,8 +1,8 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   isLegacySelection,
   isModelSelection,
   type RequestedModelSelection,
-  type ModelSelection,
 } from "@mcpjam/sdk/browser";
 import { z } from "zod";
 import { MAX_COMPARE_PANES } from "./compare-panes";
@@ -19,7 +19,7 @@ const pane = z.object({
     z.object({ kind: z.literal("host"), hostId: id }),
     z.object({ kind: z.literal("environment"), environmentId: id }),
   ]),
-  pickedSelection: z.custom<ModelSelection>(isModelSelection).optional(),
+  pickedSelection: z.custom<RequestedModelSelection>((value) => isModelSelection(value) || (isLegacySelection(value) && isRuntimeAccountModel(value.modelId))).optional(),
   serverIds: ids.nullish(),
   pluginVersionIds: ids.nullish(),
 });

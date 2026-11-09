@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
  * Harness runtime registry — the ONLY place that knows an adapter is "Claude
@@ -1201,13 +1202,11 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // honest thing to do while MCPJam has no view of the account's entitlements
   // (a plan-gated model does not error; it answers "Upgrade your plan to
   // continue" in a normal end_turn, which the turn runner detects separately).
-  toNativeModel: () => undefined,
-  // Never consulted by the gates: `runHarnessTurn` and the preflight skip every
-  // model gate for an external-account harness, because the model MCPJam knows
-  // about is not the model that runs (the sentinel rule replaces them). Read
-  // from the same table anyway — it says `cursor/auto` only — so a picker that
-  // asks gets the same answer. The CLI build is pinned (see
-  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
+  toNativeModel: (modelId) => isRuntimeAccountModel(modelId)
+    ? modelId === "cursor/auto" ? "default" : modelId.slice("cursor/".length)
+    : undefined,
+  // Namespace compatibility is checked here; current account membership is
+  // rechecked by the backend before installing the runtime login.
   pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
   modelSupport: modelSupportFor("cursor"),
   supportsModel: supportsModelFor("cursor"),

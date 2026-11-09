@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -35,7 +36,7 @@ import { getMcpServerDisplayName } from "@/lib/mcp-server-display-name";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -149,7 +150,7 @@ export function runPreflight(input: {
     if (
       !provider ||
       provider === "none" ||
-      isRuntimeChosenModelSentinel(model) ||
+      isRuntimeAccountModel(model) ||
       isMCPJamProvidedModel(model, provider) ||
       input.availableModelIds?.includes(model)
     )
@@ -452,6 +453,7 @@ export function useSuiteRunPreflight({
   const { hosts } = useHostList({ isAuthenticated, projectId });
   const { availableModels, outOfCreditsReason } = useAvailableModels({
     projectId,
+    harnessTargets: hosts.map((host) => ({ harnessId: effectiveHarnessId(host) ?? "" })),
   });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const harnessKeys = useOrgHarnessKeys(projectId, orgConfig, hosts);

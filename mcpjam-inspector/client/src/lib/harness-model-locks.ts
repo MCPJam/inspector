@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 /**
  * Picker-side reading of the harness × model evidence table
  * (`shared/harness-model-support.ts`) — the SAME table, at the SAME pinned
@@ -86,7 +87,7 @@ function harnessTakesOrgKeys(harnessId: string): boolean {
  * MCPJam brokers this harness's model credentials. A local key never pays,
  * and an empty picker stays empty rather than restoring refused rows.
  * Cursor (`modelAccess: "external-account"`) is the exception: its account
- * picks the model, so the turn's catalog is not what runs.
+ * uses its own account catalog instead of provider connections.
  */
 function harnessIsBrokered(harnessId: string): boolean {
   return (
@@ -107,8 +108,13 @@ export function harnessRowModelId(
   target: HarnessModelTarget,
   policy: HarnessKeyPolicy = {},
 ):
-  | { modelId: string; rail: "hosted" | "org" | "evidence" }
+  | { modelId: string; rail: "hosted" | "org" | "evidence" | "account" }
   | { refusal: string } {
+  if (target.harnessId === "cursor") {
+    return model.provider === "cursor" && isRuntimeAccountModel(String(model.id))
+      ? { modelId: String(model.id), rail: "account" }
+      : { refusal: "Choose a model from your organization's Cursor account." };
+  }
   if (!harnessTakesOrgKeys(target.harnessId)) {
     if (model.orgProvider) {
       return {
@@ -159,7 +165,7 @@ export function harnessRowModelId(
 
 /**
  * Why a picker ROW cannot run on `target` for `purpose`, or undefined when it
- * can. `null` / undefined target = an emulated host, which runs any model.
+ * can. An emulated host cannot run a vendor runtime-account model.
  */
 export function harnessRowRefusalReason(
   model: ModelDefinition,
@@ -167,6 +173,8 @@ export function harnessRowRefusalReason(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): string | undefined {
+  if (isRuntimeAccountModel(String(model.id)) && target?.harnessId !== "cursor")
+    return "Choose a Cursor client to use this model.";
   if (!target) return undefined;
   const row = harnessRowModelId(model, target, policy);
   if ("refusal" in row) return row.refusal;
@@ -189,6 +197,8 @@ export function harnessChoiceRefusalReason(
   target: HarnessModelTarget | null | undefined,
   purpose: HarnessModelPurpose,
 ): string | undefined {
+  if (isRuntimeAccountModel(choice.modelId) && target?.harnessId !== "cursor")
+    return "Choose a Cursor client to use this model.";
   if (!target) return undefined;
   const source = choice.selection?.source;
   if (source === "org") {
@@ -218,7 +228,7 @@ export function harnessModelLockReason(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): string | undefined {
-  if (targets.length === 0) return undefined;
+  if (targets.length === 0) return harnessRowRefusalReason(model, null, purpose, policy);
   let firstReason: string | undefined;
   for (const target of targets) {
     const reason = harnessRowRefusalReason(model, target, purpose, policy);
@@ -238,7 +248,7 @@ export function applyHarnessModelLocks(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
-  if (!targets.some(Boolean)) return models;
+  if (!targets.some(Boolean) && !models.some((model) => isRuntimeAccountModel(String(model.id)))) return models;
   return models.map((model) => {
     if (model.disabled) return model;
     const reason = harnessModelLockReason(model, targets, purpose, policy);
@@ -294,9 +304,14 @@ export function harnessPickerModels(
   target: HarnessModelTarget | null | undefined,
   policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
-  if (!target) return models;
+  if (!target) return models.some((model) => isRuntimeAccountModel(String(model.id)))
+    ? models.filter((model) => !isRuntimeAccountModel(String(model.id)))
+    : models;
+  if (target.harnessId === "cursor")
+    return models.filter((model) => model.provider === "cursor" && isRuntimeAccountModel(String(model.id)));
   const kept: ModelDefinition[] = [];
   for (const model of models) {
+    if (isRuntimeAccountModel(String(model.id))) continue;
     if (
       policy.requireOrgKeys &&
       model.disabled &&
@@ -323,7 +338,7 @@ export function harnessPickerModels(
     );
   }
   if (kept.length > 0 || harnessIsBrokered(target.harnessId)) return kept;
-  return models;
+  return models.filter((model) => !isRuntimeAccountModel(String(model.id)));
 }
 
 const NO_RUNNABLE_HARNESS_MODEL_ID = "mcpjam/no-runnable-harness-model";
@@ -366,11 +381,16 @@ export function harnessDefaultModel(
   target: HarnessModelTarget,
   preferredModelId?: string | null,
 ): ModelDefinition | undefined {
+  if (target.harnessId === "cursor" && preferredModelId) {
+    const saved = models.find((model) => String(model.id) === preferredModelId);
+    if (saved) return saved;
+  }
   const enabled = models.filter((model) => !model.disabled);
   const preferred = preferredModelId
     ? enabled.find((model) => String(model.id) === preferredModelId)
     : undefined;
   if (preferred) return preferred;
+  if (target.harnessId === "cursor") return enabled.find((model) => model.id === "cursor/auto");
   const supported = enabled.find((model) => {
     const row = harnessRowModelId(model, target);
     return (
