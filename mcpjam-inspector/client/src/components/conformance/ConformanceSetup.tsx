@@ -6,14 +6,6 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ConformanceTimeout } from "./ConformanceTimeout";
-import {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@mcpjam/design-system/breadcrumb";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -308,38 +300,11 @@ export function ConformanceSetup({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-2xl px-8 py-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <button type="button" onClick={onCancel}>Conformance</button>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              {step === 0 ? (
-                <BreadcrumbPage>Choose server and protocol</BreadcrumbPage>
-              ) : (
-                <BreadcrumbLink asChild>
-                  <button type="button" onClick={() => setStep(0)}>
-                    Choose server and protocol
-                  </button>
-                </BreadcrumbLink>
-              )}
-            </BreadcrumbItem>
-            {step === 1 && <>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem><BreadcrumbPage>Select what to test</BreadcrumbPage></BreadcrumbItem>
-            </>}
-          </BreadcrumbList>
-        </Breadcrumb>
-
         <ProgressStepper
           steps={STEPS}
           activeIndex={step}
           onStepSelect={setStep}
           ariaLabel="Conformance setup"
-          className="mt-6"
         />
 
         {step === 0 ? (

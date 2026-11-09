@@ -1341,9 +1341,8 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance", exact: true }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(save).not.toHaveBeenCalled();
     expect(mockRunProtocol).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
@@ -5025,7 +5024,7 @@ it("keeps an unsaved project server's timeout for the session without saving a m
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   expect(saveTimeout).not.toHaveBeenCalled();
   expect(screen.getByText("90s")).toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
   await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
