@@ -109,3 +109,26 @@ it("does not reuse approval IDs when the bridge restarts", async () => {
   expect(ids).toHaveLength(2);
   expect(ids[0]).not.toBe(ids[1]);
 });
+
+it("starts the first restored prompt before waiting for Cursor's lazy MCP connection", async () => {
+  const source = patchCursorHostToolApproval(await bridgeSource());
+  const index = region(source, "index");
+  const start = index.indexOf("async function ensureSession(");
+  const end = index.indexOf("\nfunction getNativeQuestionToolCallId", start);
+  const refreshes: unknown[] = [];
+  const ensureSession = runInNewContext(`${index.slice(start, end)}; ensureSession;`, {
+    sessionConfigurationFailure: undefined,
+    session: {}, catalogRefreshError: undefined,
+    bridgeConfiguration: {}, sessionConfigurationFingerprint: "{}",
+    restoredCatalogPending: true, hostToolRelay: {}, bridgeType: "cursor",
+    CATALOG_REFRESH_TIMEOUT_MS: 10000,
+    refreshHostToolCatalog: async (input: unknown) => { refreshes.push(input); },
+  }) as (input: { start: { tools: unknown[] }; turn: object }) => Promise<{ initialHostToolCatalogRefreshRequired: boolean }>;
+  const input = { start: { tools: [{ name: "echo" }] }, turn: {} };
+  // The caller's existing initial-refresh path starts the prompt, then requires
+  // a successful catalog read; later turns keep the normal pre-prompt check.
+  expect(await ensureSession(input)).toEqual({ initialHostToolCatalogRefreshRequired: true });
+  expect(refreshes).toHaveLength(0);
+  expect(await ensureSession(input)).toEqual({ initialHostToolCatalogRefreshRequired: false });
+  expect(refreshes).toHaveLength(1);
+});

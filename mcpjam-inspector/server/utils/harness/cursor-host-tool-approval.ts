@@ -63,6 +63,16 @@ export function patchCursorHostToolApproval(source: string): string {
   source = replaceInRegion(source, "src/v1/bridge/host-tool-relay-authorization.ts", `const permissionCall = toolCall.name == null && toolCall.rawInput === void 0 && toolCall._meta === void 0 ? previous?.permissionCall : void 0;`, `const currentCall = resolveHostToolCall({ toolCall: merged, serverName, toolNames });
 		const permissionCall = currentCall != null && previous?.permissionCall != null && callKey(currentCall) === callKey(previous.permissionCall) ? previous.permissionCall : void 0;`);
   source = replaceInRegion(source, "src/v1/bridge/permission-controller.ts", `const approvalId = \`acp-permission-\${++permissionRequestCounter}\`;`, `const approvalId = \`acp-permission-\${randomUUID()}\`;`);
+  // Cursor connects the restored session's MCP servers when its next prompt starts.
+  source = replaceInRegion(source, "src/v1/bridge/index.ts", `let coldRestorationMethod;`, `let coldRestorationMethod;
+let restoredCatalogPending = false;`);
+  source = replaceInRegion(source, "src/v1/bridge/index.ts", `coldRestorationMethod = restored.method;`, `coldRestorationMethod = restored.method;
+		restoredCatalogPending = true;`);
+  source = replaceInRegion(source, "src/v1/bridge/index.ts", `const relay = hostToolRelay;`, `if (restoredCatalogPending) {
+			restoredCatalogPending = false;
+			return { initialHostToolCatalogRefreshRequired: true };
+		}
+		const relay = hostToolRelay;`);
   return source;
 }
 
