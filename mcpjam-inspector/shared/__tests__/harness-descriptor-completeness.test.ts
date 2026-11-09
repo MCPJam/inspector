@@ -12,7 +12,6 @@ const DESCRIPTOR_KEYS = [
   "mcpClient",
   "modelAccess",
   "orgKeys",
-  "orgUpstream",
   "protocol",
   "reasoningEfforts",
   "runtimeVersion",
@@ -55,7 +54,7 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.protocol).not.toBeNull();
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
-      expect(descriptor.orgUpstream).toBeNull();
+      expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
       expect(descriptor.local).toBe(false);
       expect(descriptor.guest).toBe(false);
@@ -63,12 +62,6 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
   });
 
   it("only admits an organization key when that path is qualified", () => {
-    if (id === "codex" || id === "copilot-cli") {
-      expect(descriptor.orgUpstream).toEqual({ provider: "openai", profile: "openai-native" });
-    } else if (id === "claude-code") {
-      expect(descriptor.orgUpstream).not.toBeNull();
-    } else {
-      expect(descriptor.orgUpstream).toBeNull();
-    }
+    expect(descriptor.orgKeys).toBe(id !== "cursor");
   });
 });

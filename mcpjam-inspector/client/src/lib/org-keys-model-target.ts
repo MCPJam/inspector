@@ -114,7 +114,7 @@ export function orgSavableModels(
 /**
  * The rows an eval model picker offers: {@link orgSavableModels}, with a
  * harness's lock on each row it can't run (under the policy, a harness runs
- * only on an organization connection to its own vendor).
+ * only on an organization connection that serves its API).
  */
 export function evalModelRows(
   models: ModelDefinition[],
