@@ -197,11 +197,11 @@ export function reduceSwarmStreamEvent(
 
 /**
  * Delays before each reopen once a server has answered `run_remote`; a reopen
- * that fails spends one too. With no replica affinity the next request can
- * land on the server that owns the runner, and a runner that had not started
- * yet has usually registered by then. Bounded, so a run whose runner was lost
- * stops asking; the durable Convex view carries it until the backend settles
- * the run.
+ * that fails or closes before answering spends one too. With no replica
+ * affinity the next request can land on the server that owns the runner, and
+ * a runner that had not started yet has usually registered by then. Bounded,
+ * so a run whose runner was lost stops asking; the durable Convex view carries
+ * it until the backend settles the run.
  */
 const REMOTE_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000];
 

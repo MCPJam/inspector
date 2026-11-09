@@ -918,9 +918,11 @@ export type {
   ConformanceSuiteKind,
 } from "./conformance-run-types.js";
 export { runConformance } from "./conformance-run.js";
+export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,
+  RunConformanceOAuthConfig,
 } from "./conformance-run.js";
 export {
   detectCiMetadata,
@@ -1969,6 +1971,32 @@ export type {
   TasksPolicy,
   TaskMode,
   TaskSurface,
+} from "./host-config/index.js";
+
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the delivery modes a subscription may use.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./host-config/index.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
 } from "./host-config/index.js";
 
 // Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.

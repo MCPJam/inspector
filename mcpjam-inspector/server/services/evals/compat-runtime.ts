@@ -39,6 +39,16 @@ export async function loadSuiteHostConfig(
   convexClient: ConvexHttpClient,
   suiteId?: string,
   namedHostId?: string,
+  options?: {
+    /**
+     * Refuse, rather than fall back to the default host, when the suite's
+     * config cannot be read. For a caller that enforces the host's
+     * authorization policy from this config: the default host has none, so a
+     * failed read would connect without it. A suite with no config on record
+     * still gets the default host.
+     */
+    failClosed?: boolean;
+  },
 ): Promise<Record<string, unknown>> {
   if (namedHostId) {
     let host: { config?: unknown } | null;
@@ -70,7 +80,16 @@ export async function loadSuiteHostConfig(
         { suiteId },
       );
       if (isRecord(config)) return config;
-    } catch {
+    } catch (error) {
+      if (options?.failClosed) {
+        const refusal = new WebRouteError(
+          502,
+          ErrorCode.INTERNAL_ERROR,
+          "Couldn't load this suite's host settings, so the run was stopped to avoid connecting with the wrong authorization policy.",
+        );
+        refusal.cause = error;
+        throw refusal;
+      }
       // Fall through to the default host below.
     }
   }

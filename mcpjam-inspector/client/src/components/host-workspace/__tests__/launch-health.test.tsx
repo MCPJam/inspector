@@ -108,6 +108,25 @@ describe("App launch health", () => {
     ]);
   });
 
+  it("keeps an opening failure's outcome across a successful retry", async () => {
+    f.open.mockRejectedValueOnce(new ThreadAppError("INSTANCE_UNAVAILABLE"))
+      .mockResolvedValue(handle);
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => { await result.current.launch(servers[0], declaration); });
+    await act(async () => { await result.current.launch(servers[0], declaration); });
+    act(() => result.current.appPorts!.renderOutcome!(result.current.apps[0].key, "ready"));
+    expect(outcomes().map((outcome) => outcome.failure_stage)).toEqual(["execution"]);
+  });
+
+  it("counts a new opening failure after the failed App was explicitly closed", async () => {
+    f.open.mockRejectedValue(new ThreadAppError("INSTANCE_UNAVAILABLE"));
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => { await result.current.launch(servers[0], declaration); });
+    await act(async () => { await result.current.close(result.current.apps[0]); });
+    await act(async () => { await result.current.launch(servers[0], declaration); });
+    expect(outcomes().map((outcome) => outcome.failure_stage)).toEqual(["execution", "execution"]);
+  });
+
   it("counts a render failure, and leaves denials and deliberate closes out", async () => {
     const render = renderHook(() => useThreadAppWorkspace(scope, servers));
     await act(async () => {

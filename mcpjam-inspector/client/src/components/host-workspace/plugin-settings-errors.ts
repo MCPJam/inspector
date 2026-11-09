@@ -44,7 +44,8 @@ const SETTINGS_ERROR_DESCRIPTIONS: Record<string, string> = {
     "Settings aren't available right now. Check that the server is connected and plugin extensions are on for this client.",
   SETTINGS_REQUEST_INVALID: "MCPJam sent a settings request the server route rejected.",
   SETTINGS_RESPONSE_INVALID: "The settings reply couldn't be read.",
-  SETTINGS_RESPONSE_LIMIT: "The settings reply was too large (over 1 MB).",
+  SETTINGS_RESPONSE_LIMIT:
+    "The plugin settings are too large to display. Ask the server owner to reduce their size.",
   SETTINGS_CONTINUATION_UNSUPPORTED:
     "The settings tool asked for more input, which settings can't provide.",
 };

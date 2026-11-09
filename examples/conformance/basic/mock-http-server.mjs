@@ -2,9 +2,19 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  ErrorCode,
+  McpError,
+  PingRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 const PORT = Number(process.env.PORT ?? "3101");
+// `FAIL_PING=1` gives a run one scored failure that does not depend on the
+// address the server is reached at: `ping` answers with an error, so the Ping
+// check fails and nothing else does. The fixture's other failure, the
+// localhost Host-header check, applies only when it is reached on loopback.
+const FAIL_PING = process.env.FAIL_PING === "1";
 const UI_RESOURCE_URI = "ui://widgets/status-dashboard.html";
 const UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -148,6 +158,12 @@ function createMcpServer() {
       ],
     }),
   );
+
+  if (FAIL_PING) {
+    server.server.setRequestHandler(PingRequestSchema, () => {
+      throw new McpError(ErrorCode.InternalError, "Ping is turned off (FAIL_PING=1)");
+    });
+  }
 
   return server;
 }

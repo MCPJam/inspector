@@ -65,8 +65,10 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: {
       // Unpack native modules so they can be properly signed
-      // This prevents the "different Team IDs" error on macOS
-      unpack: "*.node",
+      // This prevents the "different Team IDs" error on macOS.
+      // sharp 0.35 also loads libvips from @img; leaving those inside asar
+      // makes the dynamic import fail and every local Codex turn skip native images.
+      unpack: "{*.node,**/node_modules/@img/**}",
     },
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",

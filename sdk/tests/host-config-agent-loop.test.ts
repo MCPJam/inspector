@@ -25,7 +25,7 @@ describe("agent loop contract", () => {
     );
   });
 
-  it.each(["claude-code", "codex", "cursor"] as const)(
+  it.each(["claude-code", "codex", "cursor", "opencode"] as const)(
     "round-trips %s through a Host snapshot",
     async (agentLoop) => {
       const input = {

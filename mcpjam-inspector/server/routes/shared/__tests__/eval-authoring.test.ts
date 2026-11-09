@@ -112,6 +112,7 @@ describe("authoring adapter", () => {
     await post(JSON.stringify(start));
     expect(mocks.createAuthorizedManager).toHaveBeenCalledTimes(1);
     expect(mocks.createAuthorizedManager.mock.calls[0]?.[7]).toMatchObject({
+      pluginComputerRuntime: false,
       xaaIssuer: expect.stringMatching(/^https?:\/\/.+/),
     });
   });

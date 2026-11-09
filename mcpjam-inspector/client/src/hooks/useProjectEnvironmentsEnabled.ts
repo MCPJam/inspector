@@ -22,3 +22,9 @@ export function useProjectEnvironmentsEnabled(): boolean {
 export function useProjectEnvironmentsEnabledState(): boolean | undefined {
   return useFeatureFlagEnabled(PROJECT_ENVIRONMENTS_FEATURE_FLAG);
 }
+
+/** Named Playground setups are visible to the same members as the sidebar tab. */
+export function useProjectEnvironmentsVisible(isMember: boolean | undefined): boolean {
+  const enabled = useProjectEnvironmentsEnabled();
+  return enabled && isMember === true;
+}

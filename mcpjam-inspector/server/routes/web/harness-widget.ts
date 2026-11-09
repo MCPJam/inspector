@@ -118,6 +118,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
       undefined,
       capabilities,
       {
+        pluginComputerRuntime: !!scope.hostConfig.computer,
         lazyConnect: true,
         ...(input ? { elicitationCallback: input.host.callback } : {}),
         initializePins,

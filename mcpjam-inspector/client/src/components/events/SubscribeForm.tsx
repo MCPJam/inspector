@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
@@ -12,11 +12,9 @@ import {
   type FormField,
 } from "@/lib/tool-form";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
-import { getEventsProfile, usableDeliveryModes } from "@/lib/events-profiles";
 import type {
   EventDescriptorView,
   EventsDeliveryModeView,
-  EventsProfileIdView,
 } from "@/shared/events-api";
 
 export interface SubscribeFormValue {
@@ -57,18 +55,21 @@ function parseOptionalMs(
 /**
  * Subscribe to one event type. Arguments come from the event's
  * `inputSchema` as a generated form (raw JSON when the schema has no
- * describable properties); the delivery mode is limited to what both the
- * event advertises and the selected profile's host uses.
+ * describable properties); the delivery mode is limited to `modes`, where
+ * the client, the event and the runtime all agree. With none, the form stays
+ * readable but Subscribe is disabled and `blockedReason` says why.
  */
 export function SubscribeForm({
   event,
-  profileId,
+  modes,
+  blockedReason,
   hosted,
   busy,
   onSubscribe,
 }: {
   event: EventDescriptorView;
-  profileId: EventsProfileIdView;
+  modes: EventsDeliveryModeView[];
+  blockedReason: string | null;
   hosted: boolean;
   busy: boolean;
   onSubscribe: (value: SubscribeFormValue) => void | Promise<void>;
@@ -99,19 +100,17 @@ export function SubscribeForm({
     setFormError(null);
   }, [event.name]);
 
-  const modes = useMemo(
-    () => usableDeliveryModes(event.delivery, profileId),
-    [event.delivery, profileId],
-  );
-
   useEffect(() => {
     if (mode === null || !modes.includes(mode)) setMode(modes[0] ?? null);
   }, [modes, mode]);
 
-  const profile = getEventsProfile(profileId);
   const needsAcknowledgement = !hosted && mode === "webhook";
   const canSubmit =
-    mode !== null && !busy && (!needsAcknowledgement || acknowledged);
+    mode !== null &&
+    modes.includes(mode) &&
+    blockedReason === null &&
+    !busy &&
+    (!needsAcknowledgement || acknowledged);
 
   const onFieldChange = (name: string, value: unknown) => {
     setFields((previous) =>
@@ -216,10 +215,12 @@ export function SubscribeForm({
           Delivery mode
         </legend>
         {modes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            This event advertises no delivery mode the {profile.label} profile
-            uses. It advertises {event.delivery.join(", ") || "none"}; the
-            profile uses {profile.deliveryModes.join(", ")}.
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="subscribe-blocked"
+          >
+            {blockedReason ??
+              "No delivery mode is available for this event. Pick another client."}
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">

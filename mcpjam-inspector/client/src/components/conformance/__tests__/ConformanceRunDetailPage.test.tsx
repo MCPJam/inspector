@@ -18,6 +18,7 @@ const { navigateMock, useArtifactQueryMock, fetchArtifactMock } = vi.hoisted(
 );
 
 vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: vi.fn(),
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
@@ -183,13 +184,48 @@ describe("ConformanceRunDetailPage", () => {
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
 
-  it("opens the share dialog for this run from Share", () => {
+  it("opens the run's share card, with its access settings one click away", async () => {
     useArtifactQueryMock.mockReturnValue(run([report()]));
     render(<ConformanceRunDetailPage runId="run_1" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByTestId("stub-share-panel")).toHaveTextContent(
+    expect(screen.getByText("Share conformance run")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("conformance-share-edit-access"));
+    expect(await screen.findByTestId("stub-share-panel")).toHaveTextContent(
       "conformanceRun:run_1",
+    );
+  });
+
+  it("keeps a run's address off its share card when no saved server names it", async () => {
+    useArtifactQueryMock.mockReturnValue(
+      run([report()], {
+        targetKey: "url:https://internal.example/mcp",
+        serverId: undefined,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const card = await screen.findByRole("img", { name: /^Scored / });
+    expect(card.getAttribute("alt")).not.toContain("internal.example");
+    expect(decodeURIComponent(card.getAttribute("src")!)).not.toContain(
+      "internal.example",
+    );
+  });
+
+  it("names a saved server on its share card", async () => {
+    useArtifactQueryMock.mockReturnValue(run([report()]));
+    render(
+      <ConformanceRunDetailPage
+        runId="run_1"
+        serverNames={new Map([["srv_1", "Weather"]])}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const card = await screen.findByRole("img", { name: /^Weather scored / });
+    expect(decodeURIComponent(card.getAttribute("src")!)).toContain(
+      ">Weather</text>",
     );
   });
 
@@ -213,7 +249,7 @@ describe("ConformanceRunDetailPage", () => {
 
     expect(screen.queryByRole("button", { name: /Shareable/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
-    expect(screen.getByTestId("stub-share-panel")).toBeInTheDocument();
+    expect(screen.getByText("Share conformance run")).toBeInTheDocument();
   });
 
   it("names the server from the project's saved servers", () => {
@@ -288,6 +324,37 @@ describe("ConformanceRunDetailPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("button", { name: "Run again" })).toBeDefined();
   });
+
+  it.each([
+    { from: "overview", label: "Conformance", path: "/conformance" },
+    {
+      from: "history",
+      label: "Conformance History",
+      path: "/conformance?view=history",
+    },
+    {
+      from: undefined,
+      label: "Conformance History",
+      path: "/conformance?view=history",
+    },
+  ])(
+    "sends Back to the tab the run was opened from ($from)",
+    ({ from, label, path }) => {
+      navigateMock.mockReset();
+      window.history.replaceState(
+        from ? { conformanceRunFrom: from } : {},
+        "",
+        "/conformance/runs/run_1",
+      );
+      useArtifactQueryMock.mockReturnValue(run([report()]));
+      render(<ConformanceRunDetailPage runId="run_1" />);
+
+      const back = screen.getByTestId("conformance-saved-run-back");
+      expect(back).toHaveTextContent(label);
+      fireEvent.click(back);
+      expect(navigateMock).toHaveBeenCalledWith(path);
+    },
+  );
 
   it("waits for server lookup before Run again, including a deleted server", () => {
     navigateMock.mockReset();
@@ -566,7 +633,7 @@ describe("ConformanceRunDetailPage", () => {
       expect(screen.getByText(hint).closest("[inert]")).toBeNull();
       expect(screen.getByText("Not run")).toHaveAttribute(
         "title",
-        "This check needs an input before it can run.",
+        "This check needs a setup change before it can run.",
       );
       expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
       expect(screen.queryByText(raw)).not.toBeInTheDocument();

@@ -5,6 +5,11 @@
  * Mocking either boundary would test the parts the shim does not own.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { z } from "zod";
+import { mkdtemp, writeFile, rm, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { PLUGIN_SHIM_SOURCE } from "../shim/PluginShim.bundled.js";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { dirname, join } from "node:path";
@@ -34,6 +39,7 @@ interface ShimHandle {
 }
 
 interface StartOptions {
+  scriptPath?: string;
   /** Extra/overriding `MCPJAM_SHIM_*` variables. */
   env?: Record<string, string>;
   /** Extra environment for the stdio child the shim launches. */
@@ -50,7 +56,7 @@ async function startShim(options: StartOptions = {}): Promise<ShimHandle> {
     args: options.command === undefined ? [FIXTURE_PATH] : [],
     env: options.childEnv ?? {},
   };
-  const child = spawn(process.execPath, [SHIM_PATH], {
+  const child = spawn(process.execPath, [options.scriptPath ?? SHIM_PATH], {
     env: {
       ...process.env,
       MCPJAM_SHIM_PORT: "0",
@@ -163,6 +169,30 @@ function post(shim: ShimHandle, body: unknown, options: PostOptions = {}) {
   });
 }
 
+async function openInputStream(shim: ShimHandle, sessionId: string) {
+  const abort = new AbortController();
+  const response = await fetch(`${shim.url}/mcp`, { signal: abort.signal, headers: { authorization: `Bearer ${TOKEN}`, accept: "text/event-stream", "mcp-session-id": sessionId } });
+  expect(response.status).toBe(200);
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  return {
+    close: () => abort.abort(),
+    read: async (): Promise<{ id: string | number }> => {
+      while (!text.includes("\n\n")) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("Input stream ended before its request");
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      const end = text.indexOf("\n\n");
+      const frame = text.slice(0, end); text = text.slice(end + 2);
+      const data = frame.split("\n").find(line => line.startsWith("data: "));
+      if (!data) throw new Error("Input event has no JSON payload");
+      return JSON.parse(data.slice(6));
+    },
+  };
+}
+
 let nextId = 1;
 function initializeRequest() {
   return {
@@ -244,10 +274,9 @@ describe("plugin vm shim: message classification", () => {
         method: "notifications/initialized",
       })
     ).toBe("notification");
-    // A response has no method: it could only answer a server-initiated
-    // request, which this transport never delivers.
+    // Responses are admitted only when the session correlates them.
     expect(classifyClientMessage({ jsonrpc: "2.0", id: 1, result: {} })).toBe(
-      "unsupported"
+      "response"
     );
     expect(classifyClientMessage({ id: 1, method: "tools/list" })).toBe(
       "invalid"
@@ -363,6 +392,12 @@ describe("plugin vm shim: token comparison", () => {
 });
 
 describe("plugin vm shim: handshake and calls", () => {
+  it("does not advertise a routable session after initialize is refused", async () => {
+    const shim = await startShim({ childEnv: { FAKE_INIT_ERROR: "true" } });
+    const response = await post(shim, initializeRequest());
+    expect((await response.json()).error.message).toBe("Initialization refused");
+    expect(response.headers.get("mcp-session-id")).toBeNull();
+  });
   it("mints a session on initialize and round-trips a tool call", async () => {
     const shim = await startShim();
     const { sessionId } = await openSession(shim);
@@ -441,16 +476,93 @@ describe("plugin vm shim: handshake and calls", () => {
     }
   });
 
-  it("refuses a server-initiated request instead of parking the call forever", async () => {
+  it("routes actual SDK extension request replies with the negotiated session", async () => {
+    const folder = await realpath(await mkdtemp(join(tmpdir(), "plugin-shim-standalone-")));
+    const scriptPath = join(folder, "shim.mjs");
+    await writeFile(scriptPath, PLUGIN_SHIM_SOURCE);
+    const shim = await startShim({ scriptPath });
+    const client = new Client({ name: "shim-host", version: "test" }, { capabilities: { extensions: { "openai/elicitation": { form: {} } } } });
+    const replies: string[] = [];
+    const transport = new StreamableHTTPClientTransport(new URL(`${shim.url}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+      fetch: async (url, init) => {
+        if (typeof init?.body === "string") {
+          const message = JSON.parse(init.body);
+          if (message.result && message.id?.toString().startsWith("srv-")) replies.push(new Headers(init.headers).get("mcp-session-id") ?? "");
+        }
+        return fetch(url, init);
+      },
+    });
+    client.setRequestHandler("openai/elicitation/create", { params: z.record(z.string(), z.unknown()), result: z.object({ action: z.literal("accept"), content: z.record(z.string(), z.unknown()) }) }, async () => ({ action: "accept" as const, content: {} }));
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({ name: "provoke", arguments: { method: "openai/elicitation/create" } });
+      expect(JSON.stringify(result)).toContain("host answered with a result");
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).not.toBe("");
+    } finally { await client.close(); await shim.stop(); await rm(folder, { recursive: true, force: true }); }
+  });
+  it("relays input and keeps its sole parent alive beyond the ordinary deadline", async () => {
+    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "100" } });
+    const { sessionId } = await openSession(shim);
+    const stream = await openInputStream(shim, sessionId);
+    const parent = post(shim, toolCall("provoke"), { sessionId });
+    const request = await stream.read();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    const reply = { jsonrpc: "2.0", id: request.id, result: {} };
+    expect((await post(shim, reply, { sessionId })).status).toBe(202);
+    expect(await (await parent).text()).toContain("host answered with a result");
+    expect((await post(shim, reply, { sessionId })).status).toBe(400);
+    stream.close();
+  });
+  it("queues overlapping form calls without assigning an input to the wrong parent", async () => {
+    const shim = await startShim({ env: { MCPJAM_SHIM_REQUEST_TIMEOUT_MS: "100" } });
+    const { sessionId } = await openSession(shim);
+    const stream = await openInputStream(shim, sessionId);
+    const firstCall = toolCall("provoke");
+    const first = post(shim, firstCall, { sessionId });
+    const firstInput = await stream.read();
+    const secondCall = toolCall("provoke");
+    const second = post(shim, secondCall, { sessionId });
+    await new Promise(resolve => setTimeout(resolve, 180));
+    expect((await post(shim, { jsonrpc: "2.0", id: firstInput.id, result: {} }, { sessionId })).status).toBe(202);
+    const firstReply = await (await first).json();
+    expect(firstReply.id).toBe(firstCall.id);
+    expect(JSON.stringify(firstReply)).toContain("host answered with a result");
+    const secondInput = await stream.read();
+    expect(secondInput.id).not.toBe(firstInput.id);
+    expect((await post(shim, { jsonrpc: "2.0", id: secondInput.id, result: {} }, { sessionId })).status).toBe(202);
+    const secondReply = await (await second).json();
+    expect(secondReply.id).toBe(secondCall.id);
+    expect(JSON.stringify(secondReply)).toContain("host answered with a result");
+    stream.close();
+  });
+  it("isolates replies by session and refuses late replies after stream loss", async () => {
+    const shim = await startShim();
+    const first = await openSession(shim);
+    const second = await openSession(shim);
+    const stream = await openInputStream(shim, first.sessionId);
+    const parent = post(shim, toolCall("provoke"), { sessionId: first.sessionId });
+    const request = await stream.read();
+    const reply = { jsonrpc: "2.0", id: request.id, result: {} };
+    expect((await post(shim, reply, { sessionId: second.sessionId })).status).toBe(400);
+    stream.close();
+    expect(await (await parent).text()).toContain("host answered with -32000");
+    expect((await post(shim, reply, { sessionId: first.sessionId })).status).toBe(400);
+  });
+  it("holds input until its stream connects and rejects a competing stream", async () => {
     const shim = await startShim();
     const { sessionId } = await openSession(shim);
-
-    const response = await post(shim, toolCall("provoke"), { sessionId });
-    const body = (await response.json()) as {
-      result: { content: Array<{ text: string }> };
-    };
-    expect(body.result.content[0]!.text).toBe("host answered with -32601");
+    const parent = post(shim, toolCall("provoke"), { sessionId });
+    const stream = await openInputStream(shim, sessionId);
+    const request = await stream.read();
+    expect((await post(shim, { jsonrpc: "2.0", id: request.id, result: {} }, { sessionId })).status).toBe(202);
+    expect(await (await parent).text()).toContain("host answered with a result");
+    const duplicate = await fetch(`${shim.url}/mcp`, { headers: { authorization: `Bearer ${TOKEN}`, accept: "text/event-stream", "mcp-session-id": sessionId } });
+    expect(duplicate.status).toBe(409);
+    stream.close();
   });
+
 });
 
 describe("plugin vm shim: authentication", () => {
@@ -811,7 +923,7 @@ describe("plugin vm shim: failure handling", () => {
 });
 
 describe("plugin vm shim: http surface", () => {
-  it("answers GET /mcp with 405 rather than an error the client cannot classify", async () => {
+  it("refuses GET /mcp without an initialized session", async () => {
     const shim = await startShim();
     const response = await fetch(`${shim.url}/mcp`, {
       method: "GET",
@@ -820,8 +932,7 @@ describe("plugin vm shim: http surface", () => {
         accept: "text/event-stream",
       },
     });
-    expect(response.status).toBe(405);
-    expect(response.headers.get("allow")).toContain("POST");
+    expect(response.status).toBe(400);
   });
 
   it("404s any other path", async () => {

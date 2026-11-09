@@ -4,6 +4,7 @@ import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
 import { registerBrowserController } from "./services/browserd/local/security-policy.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -175,6 +176,7 @@ import {
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
+import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
 import internalServerConnections from "./routes/internal/server-connections.js";
 import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
@@ -204,6 +206,7 @@ import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
+import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
@@ -226,6 +229,11 @@ import {
   getCaniuseMetaTagsHtml,
   getCaniuseTitleTag,
 } from "./utils/caniuse-meta-tags";
+import {
+  conformanceShareTokenFromPath,
+  injectConformanceShareMetaTags,
+  requestOrigin,
+} from "./utils/conformance-share-meta-tags";
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
@@ -323,7 +331,7 @@ try {
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
-if (!HOSTED_MODE) void startPluginFormFileJanitor();
+void startPluginFormFileJanitor(!HOSTED_MODE);
 // One line, after the env is loaded: which grading-engine mode this process
 // could reach. Mirror of the call in server/app.ts.
 logGradingEngineModeOnce();
@@ -412,6 +420,7 @@ const app = new Hono().onError((err, c) => {
 // registered on this app below; `injectWebSocket` is called on the node
 // server after `serve()` at the bottom of this file.
 const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
 const strictModeResponse = (c: any, path: string) =>
   c.json(
     {
@@ -498,6 +507,9 @@ if (HOSTED_MODE) {
   // mid-turn, one turn at a time, with the reason buried in a per-request
   // error. This says it once, names the variable, and stops.
   assertHostedFirstPartyMcpUrls();
+  // Parsed now rather than on the first private dial, so an invalid
+  // MCPJAM_PRIVATE_EGRESS_ALLOWLIST is reported at boot, not mid-request.
+  loadPrivateEgressAllowlist();
 }
 
 // 5. Session authentication (blocks unauthorized API requests)
@@ -637,6 +649,7 @@ if (!HOSTED_MODE) {
 // stream. Auth is the ordinary session token on `Sec-WebSocket-Protocol` —
 // see routes/web/webmcp-frames.
 if (!HOSTED_MODE) {
+  app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
   app.get(
     "/api/web/webmcp/sessions/:id/frames",
     createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -676,6 +689,10 @@ resolveWorkosApiBaseUrl(process.env);
 // that is not one header name fails here, not in every request that asks for a
 // client address. Unset, this is a no-op.
 resolveTrustedClientIpHeader(process.env);
+// And `MCPJAM_FEATURE_FLAGS_FILE` (mirror of server/app.ts): a missing or
+// malformed file is reported on stderr now, not at the first flag evaluation.
+// Unset, this is a no-op.
+loadFeatureFlagFileAtBoot();
 
 // Mounted in EVERY runtime, hosted included. AuthKit's `initialize()` makes no
 // network call at all unless the page's own cookies carry `workos-has-session`
@@ -852,6 +869,24 @@ if (process.env.NODE_ENV === "production") {
           "</head>",
           `${getCaniuseMetaTagsHtml()}</head>`,
         );
+      }
+
+      // A shared conformance run's link unfurls as its score card. The image
+      // route answers only for links anyone may open; for any other link the
+      // crawler finds no image and shows the title alone.
+      const sharedRunToken = conformanceShareTokenFromPath(reqPath);
+      const sharedRunOrigin = sharedRunToken
+        ? requestOrigin({
+            host: c.req.header("Host"),
+            forwardedHost: c.req.header("X-Forwarded-Host"),
+            forwardedProto: c.req.header("X-Forwarded-Proto"),
+          })
+        : null;
+      if (sharedRunToken && sharedRunOrigin) {
+        htmlContent = injectConformanceShareMetaTags(htmlContent, {
+          origin: sharedRunOrigin,
+          token: sharedRunToken,
+        });
       }
 
       const host = c.req.header("Host");
@@ -1080,6 +1115,7 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    localMrtrStream.shutdown();
     // Same again for the agent browser's own viewport sockets.
     shutdownLocalBrowserFrameSockets();
     // Hosted panes too: an established WS survives `server.close()`.

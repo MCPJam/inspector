@@ -6,6 +6,7 @@ import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerFeedbackCommand } from "./feedback.js";
 import { registerClientsCommands } from "./clients.js";
+import { registerCloudConformanceCommands } from "./conformance-cloud.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
@@ -51,6 +52,9 @@ export function registerCloudCommands(program: Command): Command {
   registerSecretsCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
+
+  cloud.commandsGroup("Conformance:");
+  registerCloudConformanceCommands(cloud);
 
   cloud.commandsGroup("Observability:");
   // Organization-scoped, not project-scoped: a destination is a vendor binding

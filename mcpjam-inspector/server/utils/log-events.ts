@@ -3,6 +3,7 @@ import type { ErrorOrigin } from "@mcpjam/sdk";
 import type { RouteFailureHop } from "./route-error-report.js";
 import type { ChatOrigin } from "./chat-origin.js";
 import type { LogConvexId } from "./log-convex-id.js";
+import type { OnboardingPhaseTimings, OnboardingTraceLastPhase } from "../../shared/onboarding-trace.js";
 import type { PluginContextRefusedEvent } from "./context-refused-event.js";
 
 export type Environment =
@@ -426,10 +427,9 @@ export type RequestEventMap = {
   /** An App context update refused before anything was stored. */
   "plugin.instance.context.refused": PluginContextRefusedEvent;
   /**
-   * One plugin onboarding turn (the Playground's Run onboarding or Set up),
-   * from its request to its terminal result. `phases` holds the ms since the
-   * request at which each phase was first reached. IDs, codes, counts and
-   * timings only; never skill text, credentials or tool arguments.
+   * One onboarding turn from request to terminal result. `phases` holds ms
+   * since the request. The strict boundary hashes correlation IDs and keeps
+   * known phase timings, never skill text, credentials or tool arguments.
    */
   "plugin.onboarding.turn": {
     attemptId: string;
@@ -438,16 +438,16 @@ export type RequestEventMap = {
     code?: string;
     statusCode: number;
     totalMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
     unavailableServers: number;
   };
   /** The same turn, unfinished when its watchdog fired: where it stopped. */
   "plugin.onboarding.turn.stalled": {
     attemptId: string;
     pluginVersionId: string;
-    lastPhase: string;
+    lastPhase: OnboardingTraceLastPhase;
     elapsedMs: number;
-    phases: Record<string, number>;
+    phases: OnboardingPhaseTimings;
   };
   "mcp.tool.execution.failed": {
     toolName: string;
@@ -461,6 +461,7 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  "computer.terminal.input_failed": { errorCode: string };
   // Saved browser profile download (routes/web/browser-profile-download.ts,
   // MJ-005): the archive could not be served. `stage` is the hop that failed,
   // `lookup` (the backend's owner check) or `archive` (reading the archive).
@@ -547,11 +548,21 @@ export type SystemEventMap = {
     reason: "fetch_failed" | "invalid_catalog";
   };
   "harness.timing": {
-    harnessId?: "claude-code" | "codex" | "cursor";
+    harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
     harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
     harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
     harnessTurn?: "failed";
+    /**
+     * `TurnTiming` (`turn-timing.ts`), in whole milliseconds: each route stage
+     * before the model stream, and the request's time to its first text.
+     */
+    setupMs?: number;
+    turnAuthorizationMs?: number;
+    connectionsMs?: number;
+    toolsMs?: number;
+    streamPreparationMs?: number;
+    firstTextMs?: number;
   };
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;

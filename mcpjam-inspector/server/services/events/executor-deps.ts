@@ -23,6 +23,11 @@ import type {
 import type { EventRunClaim, EventRunInput, EventsBackendClient } from "./backend-client.js";
 import type { TranscriptPort } from "./run-transcript.js";
 import { shortError } from "./run-turn.js";
+import {
+  HostResolutionError,
+  hostManagerArgs,
+  loadSubscriptionHostConfig,
+} from "./host-connection.js";
 
 /**
  * Model for a trigger that names none and whose environment names none: the
@@ -52,12 +57,15 @@ export interface EventExecutorDeps {
     "claimRun" | "checkpointRun" | "beginCall" | "finishCall" | "finishRun"
   >;
   getBearer?: (ownerExternalId: string, organizationId: string) => Promise<string>;
-  /** Which servers the run connects (C6). Default: environment → subscription. */
+  /**
+   * Which servers the run connects (C6), and the host it acts as. Default:
+   * environment → subscription, with the subscription's host.
+   */
   resolveServers?: (args: {
     claim: EventRunClaim;
     input: EventRunInput;
     bearer: string;
-  }) => Promise<{ serverIds: string[]; serverNames?: string[]; environmentModelId?: string }>;
+  }) => Promise<EventRunScope>;
   connect?: (args: {
     projectId: string;
     bearer: string;
@@ -65,6 +73,8 @@ export interface EventExecutorDeps {
     serverNames?: string[];
     /** The subscription's pinned OAuth connection, by server id. */
     connectionIds?: Record<string, string>;
+    /** The host config to act as; absent or null is MCPJam (built-in). */
+    hostConfig?: Record<string, unknown> | null;
   }) => Promise<EventRunConnection>;
   resolveModel?: (args: {
     modelId: string;
@@ -94,14 +104,32 @@ export interface EventExecutorDeps {
   prepareChat?: (options: PrepareChatV2Options) => Promise<EventPreparedChat>;
 }
 
+/** What a run connects to, and as which host. */
+export interface EventRunScope {
+  serverIds: string[];
+  serverNames?: string[];
+  environmentModelId?: string;
+  /** The host config the run acts as; absent or null is MCPJam (built-in). */
+  hostConfig?: Record<string, unknown> | null;
+}
+
 export async function defaultResolveServers(args: {
   claim: EventRunClaim;
   input: EventRunInput;
   bearer: string;
-}): Promise<{ serverIds: string[]; serverNames?: string[]; environmentModelId?: string }> {
+}): Promise<EventRunScope> {
   const environmentId =
     args.input.trigger.environmentId ?? args.input.subscription.environmentId ?? null;
-  if (!environmentId) return { serverIds: [args.input.subscription.serverId] };
+  // A run scheduled before the backend recorded the host names none: it acts
+  // as it always did, as MCPJam (built-in).
+  const recordsHost = args.input.subscription.hostId !== undefined;
+  const hostId = args.input.subscription.hostId ?? null;
+  if (!environmentId) {
+    return {
+      serverIds: [args.input.subscription.serverId],
+      hostConfig: await loadSubscriptionHostConfig({ hostId, bearer: args.bearer }),
+    };
+  }
   const [
     { createConvexClient },
     {
@@ -122,10 +150,21 @@ export async function defaultResolveServers(args: {
     environmentId,
     serverSource: EVAL_LAUNCH_SERVER_SOURCE,
   });
+  // The run acts as the subscription's host, which was checked against its
+  // delivery mode. An environment repinned to another host since then would
+  // make it act as a host nobody checked.
+  if (recordsHost && resolved.hostId !== hostId) {
+    throw new HostResolutionError("environment_host_changed");
+  }
   return {
     serverIds: environmentServerIds(resolved),
     serverNames: environmentServerNames(resolved),
     ...(resolved.effectiveModelId ? { environmentModelId: resolved.effectiveModelId } : {}),
+    hostConfig: await loadSubscriptionHostConfig({
+      hostId,
+      bearer: args.bearer,
+      ...(resolved.hostConfigId ? { expectedHostConfigId: resolved.hostConfigId } : {}),
+    }),
   };
 }
 
@@ -135,22 +174,25 @@ export async function defaultConnect(args: {
   serverIds: string[];
   serverNames?: string[];
   connectionIds?: Record<string, string>;
+  hostConfig?: Record<string, unknown> | null;
 }): Promise<EventRunConnection> {
   const { createAuthorizedManager } = await import("../../routes/web/auth.js");
+  const host = args.hostConfig ? hostManagerArgs(args.hostConfig) : undefined;
   const options = {
     ...(args.serverNames && args.serverNames.length > 0
       ? { serverNames: args.serverNames }
       : {}),
     ...(args.connectionIds ? { connectionIds: args.connectionIds } : {}),
+    ...(host?.options ?? {}),
   };
   const { manager } = await createAuthorizedManager(
     {},
     args.bearer,
     args.projectId,
     args.serverIds,
-    WEB_CALL_TIMEOUT_MS,
+    host?.timeoutMs ?? WEB_CALL_TIMEOUT_MS,
     undefined,
-    undefined,
+    host?.clientCapabilities,
     Object.keys(options).length > 0 ? options : undefined,
   );
   return {

@@ -134,3 +134,28 @@ export function claudeCodeNativeModelPins(native: string): Record<string, string
     CLAUDE_CODE_SUBAGENT_MODEL: native,
   };
 }
+
+/** Map a host model id to OpenCode's Anthropic `provider/model` spelling.
+ *  OpenCode wants hyphens in the version (`claude-haiku-4-5`), not dots. */
+export function toOpenCodeModel(modelId: string): string | undefined {
+  const m = modelId.toLowerCase();
+  if (!m.startsWith("anthropic/")) return undefined;
+  const rest = m.slice("anthropic/".length).replace(/(\d)\.(\d)/g, "$1-$2");
+  return `anthropic/${rest}`;
+}
+
+/**
+ * The model OpenCode runs: on the organization's own Anthropic key the leased
+ * native id (prefixed `anthropic/` when the lease omitted the vendor); otherwise
+ * the Gateway spelling with OpenCode's hyphenated version.
+ */
+export function toOpenCodeNativeModel(
+  modelId: string,
+  upstream?: HarnessNativeUpstream,
+): string | undefined {
+  if (upstream?.profile === "anthropic-native") {
+    const id = upstream.nativeModelId.replace(/(\d)\.(\d)/g, "$1-$2");
+    return id.includes("/") ? id : `anthropic/${id}`;
+  }
+  return toOpenCodeModel(modelId);
+}

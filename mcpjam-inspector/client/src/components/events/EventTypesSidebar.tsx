@@ -2,9 +2,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { cn } from "@mcpjam/design-system/cn";
 import { PanelLeftClose, RefreshCw } from "lucide-react";
+import type { SubscribableModes } from "@mcpjam/sdk/browser";
 import type {
+  EventDescriptorView,
   EventsListResponse,
-  EventsProfileIdView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./CapabilityPanel";
 import { DeliveryChips } from "./EventsTabSections";
@@ -12,7 +13,8 @@ import { DeliveryChips } from "./EventsTabSections";
 /** The Events tab sidebar: the server's capability and its event types. */
 export function EventTypesSidebar({
   catalog,
-  profileId,
+  availabilityFor,
+  hostName,
   selectedEventName,
   loadingMore,
   onSelectEvent,
@@ -21,7 +23,11 @@ export function EventTypesSidebar({
   onHide,
 }: {
   catalog: EventsListResponse;
-  profileId: EventsProfileIdView;
+  /** The modes the chosen client can subscribe to this event by. */
+  availabilityFor: (
+    event: EventDescriptorView,
+  ) => SubscribableModes | undefined;
+  hostName: string;
   selectedEventName: string | null;
   loadingMore: boolean;
   onSelectEvent: (eventName: string) => void;
@@ -89,7 +95,8 @@ export function EventTypesSidebar({
                     ) : null}
                     <DeliveryChips
                       delivery={event.delivery}
-                      profileId={profileId}
+                      availability={availabilityFor(event)}
+                      hostName={hostName}
                     />
                   </button>
                 </li>

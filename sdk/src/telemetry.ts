@@ -2,10 +2,34 @@ import { randomUUID } from "node:crypto";
 import { PostHog, type PostHogOptions } from "posthog-node";
 import { sdkTelemetryDisabled } from "./internal/sentry-boundary.js";
 import { telemetryRecord } from "./internal/telemetry.js";
+import type { ConformanceRunSource } from "./report-conformance-run.js";
 
 const HOST = "https://us.i.posthog.com";
 const TOKEN = "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
+const CONFORMANCE_SEND_TIMEOUT_MS = 3_000;
 let client: PostHog | undefined;
+
+/**
+ * The only `run_source` labels the SDK sends: `sdk` for direct use (also in
+ * CI), the rest for the Inspector's hosted runs. The CLI and the app send
+ * their own labels from their own clients.
+ */
+const SDK_CONFORMANCE_RUN_SOURCES = [
+  "sdk",
+  "api",
+  "github_app",
+  "benchmark",
+] as const satisfies readonly ConformanceRunSource[];
+export type SdkConformanceRunSource =
+  (typeof SDK_CONFORMANCE_RUN_SOURCES)[number];
+
+function conformanceRunProperties(value: unknown) {
+  const { run_source } = telemetryRecord(value);
+  return typeof run_source === "string" &&
+    (SDK_CONFORMANCE_RUN_SOURCES as readonly string[]).includes(run_source)
+    ? { run_source }
+    : null;
+}
 
 function runProperties(value: unknown) {
   const { iterations, concurrency } = telemetryRecord(value);
@@ -44,12 +68,18 @@ export const sdkAnalyticsTransport: NonNullable<
   if (!Array.isArray(body.batch)) return dropped();
   const batch = body.batch.flatMap((raw) => {
     const event = telemetryRecord(raw);
-    const properties = runProperties(event.properties);
-    if (event.event !== "eval_test_run_triggered" || !properties) return [];
+    const name = event.event;
+    const properties =
+      name === "eval_test_run_triggered"
+        ? runProperties(event.properties)
+        : name === "conformance_run_triggered"
+          ? conformanceRunProperties(event.properties)
+          : null;
+    if (!properties) return [];
     const insertId = telemetryRecord(event.properties).$insert_id;
     return [
       {
-        event: "eval_test_run_triggered",
+        event: name,
         distinct_id: "anonymous",
         timestamp: new Date().toISOString(),
         properties: {
@@ -89,6 +119,45 @@ export function captureSdkRun(iterations: unknown, concurrency: unknown): void {
     event: "eval_test_run_triggered",
     properties: { iterations, concurrency, $insert_id: randomUUID() },
   });
+}
+
+/**
+ * One anonymous `conformance_run_triggered` ping per top-level run. Every
+ * entry point (the four Test classes, the three Suites, `runConformance`)
+ * sends one unless its config sets `__suppressTelemetry`. Suites and
+ * `runConformance` set it on their inner runs, so one run is one event.
+ * Hosts that count the run themselves set it too: the CLI honors
+ * `--no-telemetry` and a persisted opt-out, neither of which this module's
+ * env check can see, and the Inspector counts UI runs in the browser.
+ *
+ * It goes straight through the transport in ONE bounded attempt: the queued
+ * client loses an event when a short script exits before its 10s flush, and
+ * its immediate send retries on plain timers that hold an offline process
+ * open. Never throws, never rejects: usage telemetry must not affect a run.
+ */
+export async function captureConformanceRun(
+  runSource: SdkConformanceRunSource
+): Promise<void> {
+  try {
+    if (sdkTelemetryDisabled()) return;
+    await sdkAnalyticsTransport(`${HOST}/batch/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: TOKEN,
+        batch: [
+          {
+            event: "conformance_run_triggered",
+            distinct_id: "anonymous",
+            properties: { run_source: runSource, $insert_id: randomUUID() },
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(CONFORMANCE_SEND_TIMEOUT_MS),
+    });
+  } catch {
+    // Offline, blocked or timed out: the run goes on without the ping.
+  }
 }
 
 export async function flushSdkTelemetry(): Promise<void> {

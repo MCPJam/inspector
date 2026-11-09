@@ -26,6 +26,29 @@ describe("E2B bridge endpoints", () => {
     });
   });
 
+  it.each(["", "https://sandboxes.example.test"])(
+    "refuses private endpoints before resolving a route (%s)",
+    (proxy) => {
+      vi.stubEnv("E2B_SANDBOX_URL", proxy);
+      const getHost = vi.fn();
+      for (const privateState of [
+        { privateAppPorts: true },
+        { trafficAccessToken: "traffic-token" },
+      ]) {
+        for (const protocol of ["https", "ws"]) {
+          expect(() =>
+            resolveE2BPortEndpoint(
+              { ...sandbox, ...privateState, getHost },
+              8080,
+              protocol,
+            ),
+          ).toThrow("cannot connect to ports on a private workspace");
+        }
+      }
+      expect(getHost).not.toHaveBeenCalled();
+    },
+  );
+
   it("retains HTTP proxy transport for HTTP requests", () => {
     vi.stubEnv("E2B_SANDBOX_URL", "http://10.0.0.2:3002");
     expect(resolveE2BPortEndpoint(sandbox, 8080).url).toBe(

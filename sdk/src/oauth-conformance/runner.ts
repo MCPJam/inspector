@@ -1,4 +1,5 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -487,6 +488,7 @@ function mergeConformanceDynamicRegistration(
 export class OAuthConformanceTest {
   private readonly config: NormalizedOAuthConformanceConfig;
   private readonly deps: OAuthConformanceRunnerDependencies;
+  private readonly suppressTelemetry: boolean;
 
   constructor(
     config: OAuthConformanceConfig,
@@ -494,9 +496,12 @@ export class OAuthConformanceTest {
   ) {
     this.config = normalizeOAuthConformanceConfig(config);
     this.deps = deps;
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<ConformanceResult> {
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();

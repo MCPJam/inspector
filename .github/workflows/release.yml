@@ -770,6 +770,29 @@ jobs:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
+  byoc-candidate:
+    needs: [preflight, finalize]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.build_inspector_artifacts == 'true' &&
+      needs.finalize.result == 'success'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Request the matching private BYOC candidate
+        uses: actions/github-script@v9
+        env:
+          BACKEND_REPO: ${{ vars.MCPJAM_BACKEND_REPO || 'MCPJam/mcpjam-backend' }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+        with:
+          github-token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
+          script: |
+            await require('./.github/scripts/byoc-release.cjs')({ github, context, core });
+
   deploy-backend-prod:
     needs:
       - preflight
@@ -1181,7 +1204,7 @@ jobs:
   # push, the hosted template roll-out and the evals action can each still be
   # running, or fail, after `finalize` succeeds.
   announce-finish:
-    needs: [preflight, announce-start, finalize, docker-release, roll-out-hosted-template, publish-evals-action]
+    needs: [preflight, announce-start, finalize, docker-release, roll-out-hosted-template, publish-evals-action, byoc-candidate]
     if: always() && needs.announce-start.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:

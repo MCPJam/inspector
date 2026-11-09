@@ -200,6 +200,52 @@ describe("stream answered by a server without the run's runner", () => {
     expect(result.current.runComplete).toBe(true);
   });
 
+  it("stops reopening once a reopen answers run_complete", async () => {
+    streams.mockImplementationOnce(async (_id, onEvent) => {
+      onEvent({ ...runLevel, type: "run_remote" } as SwarmStreamEvent);
+    });
+    // The reopen reaches a server that saw the run finish.
+    streams.mockImplementation(async (_id, onEvent) => {
+      onEvent({ ...runLevel, type: "run_complete" } as SwarmStreamEvent);
+    });
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(streams).toHaveBeenCalledTimes(2);
+    expect(result.current.runComplete).toBe(true);
+  });
+
+  // Reopens are earned by a run_remote answer, the one sign that another
+  // replica owns the runner. A first open that ends before answering never
+  // gave that sign, so it is not retried; the durable view still carries the
+  // run.
+  it("does not reopen a first open that fails, and shows its error", async () => {
+    streams.mockRejectedValue(new Error("Bad Gateway"));
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(streams).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe("Bad Gateway");
+  });
+
+  it("does not reopen a first open that closes before answering", async () => {
+    streams.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useJourneyRunStream("run-1", true));
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(streams).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBeNull();
+  });
+
   it("is never live on a stream that only answers run_complete", async () => {
     streams.mockImplementation((_id, onEvent) => {
       onEvent({ ...runLevel, type: "run_complete" } as SwarmStreamEvent);

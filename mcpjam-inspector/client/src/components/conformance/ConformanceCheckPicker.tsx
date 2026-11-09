@@ -6,6 +6,11 @@
  * suite later is picked without anyone opting in. OAuth runs as one sign-in
  * flow, so its checks follow the suite's checkbox. The protocol suite's
  * advice (no points) can be listed under its checks and picked the same way.
+ *
+ * A check still missing its input shows unchecked, locked while picked. The
+ * pick is kept: the run still sends it, so the result says it was not run for
+ * want of input, and it runs once the input is set. A suite's box is checked
+ * only with every check picked.
  */
 
 import { useState, type ReactNode } from "react";
@@ -153,11 +158,6 @@ function isOAuthStepScored(selection: ConformanceSelection, id: string) {
   );
 }
 
-function oauthScoredCount(selection: ConformanceSelection): number {
-  return OAUTH_CATALOG.filter((entry) => isOAuthStepScored(selection, entry.id))
-    .length;
-}
-
 /** The suite's box: run the flow with every check counting, or not at all. */
 export function withOAuthSuite(
   selection: ConformanceSelection,
@@ -197,7 +197,7 @@ export function ConformanceCheckPicker({
   versionPin,
   selection,
   onChange,
-  countLabel = (picked) => `${picked} checks selected`,
+  countLabel = (picked, total) => `${picked}/${total} checks selected`,
   defaultOpen = false,
   showAdvice = false,
   renderCheckExtra,
@@ -218,13 +218,14 @@ export function ConformanceCheckPicker({
   /**
    * What a check or advice shows under it: the tool it calls, for the ones
    * that must call one. Given its suite, whether each in that suite is
-   * picked, and their titles.
+   * picked, their titles, and whether the row is open.
    */
   renderCheckExtra?: (
     suite: CheckSuite,
     checkId: string,
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
+    opened: boolean,
   ) => ReactNode;
   renderSuiteExtra?: (suite: CheckSuite) => ReactNode;
   /** Whether a check that needs an input (a tool to call) has it. */
@@ -260,7 +261,6 @@ export function ConformanceCheckPicker({
         catalog.length > 0
           ? {
               catalog,
-              pickedCount: picked.size,
               isPicked: (id: string) => picked.has(id),
               onChange: suiteRuns
                 ? (id: string, value: boolean) =>
@@ -308,8 +308,8 @@ export function ConformanceCheckPicker({
             suiteAdvice?.catalog.find((item) => item.id === id)
           )?.title;
         const renderExtra = renderCheckExtra
-          ? (entry: CatalogEntry) =>
-              renderCheckExtra(suite, entry.id, isPicked, titleOf)
+          ? (entry: CatalogEntry, opened: boolean) =>
+              renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
           : undefined;
         const renderTag = (entry: CatalogEntry) => {
           const status = inputStatus?.(entry.id);
@@ -332,7 +332,6 @@ export function ConformanceCheckPicker({
             title={SUITE_COPY[suite].title}
             description={SUITE_COPY[suite].description}
             catalog={catalog}
-            pickedCount={picked.size}
             countLabel={countLabel}
             defaultOpen={defaultOpen}
             onSuiteChange={(value) => {
@@ -348,6 +347,7 @@ export function ConformanceCheckPicker({
               );
             }}
             isPicked={(id) => picked.has(id)}
+            needsInput={(id) => inputStatus?.(id) === "missing"}
             onCheckChange={(id, value) =>
               onChange(withPicked(selection, suite, catalog, [id], value))
             }
@@ -369,7 +369,6 @@ export function ConformanceCheckPicker({
         title={SUITE_COPY.oauth.title}
         description={SUITE_COPY.oauth.description}
         catalog={OAUTH_CATALOG}
-        pickedCount={oauthScoredCount(selection)}
         countLabel={countLabel}
         defaultOpen={defaultOpen}
         onSuiteChange={(value) =>
@@ -397,11 +396,11 @@ function SuiteChecks({
   title,
   description,
   catalog,
-  pickedCount,
   countLabel,
   defaultOpen,
   onSuiteChange,
   isPicked,
+  needsInput,
   onCheckChange,
   listNote = ".",
   suiteExtra,
@@ -414,15 +413,16 @@ function SuiteChecks({
   title: string;
   description: string;
   catalog: CatalogEntry[];
-  pickedCount: number;
   countLabel: (picked: number, total: number) => string;
   defaultOpen: boolean;
   onSuiteChange: (picked: boolean) => void;
   isPicked?: (id: string) => boolean;
+  /** A check or advice still missing its input, so it will not run. */
+  needsInput?: (id: string) => boolean;
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
   suiteExtra?: ReactNode;
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
   notApplicableReason?: (entry: CatalogEntry) => string | undefined;
   /**
@@ -433,16 +433,30 @@ function SuiteChecks({
   /** The suite's advice, listed under its checks; the suite's box covers it. */
   advice?: {
     catalog: CatalogEntry[];
-    pickedCount: number;
     isPicked: (id: string) => boolean;
     onChange?: (id: string, picked: boolean) => void;
   };
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const total = catalog.length + (advice?.catalog.length ?? 0);
-  const pickedTotal = pickedCount + (advice?.pickedCount ?? 0);
-  const checked =
-    pickedTotal === 0 ? false : pickedTotal === total ? true : "indeterminate";
+  const missing = (id: string) => Boolean(needsInput?.(id));
+  const picked = (id: string) => Boolean(isPicked?.(id));
+  // A picked check missing its input shows unchecked and is locked until the
+  // input is set. Unpicked, its box still works, so it can be opted in; its
+  // tool field shows once picked, or while its row is open.
+  const shownPicked = (isRowPicked?: (id: string) => boolean) =>
+    isRowPicked && ((id: string) => isRowPicked(id) && !missing(id));
+  const lockedIn = (isRowPicked?: (id: string) => boolean) => (id: string) =>
+    Boolean(isRowPicked?.(id)) && missing(id);
+  const pickedCount = catalog.filter(
+    (entry) => picked(entry.id) && !missing(entry.id),
+  ).length;
+  // The box follows the count, so the two never disagree. Once every check
+  // that can run is picked, a click leaves the suite out, so it is never a
+  // dead click while some checks still need input.
+  const checked = pickedCount === catalog.length;
+  const turnsOff =
+    catalog.some((entry) => picked(entry.id)) &&
+    catalog.every((entry) => missing(entry.id) || picked(entry.id));
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-start gap-3 p-4 transition-colors hover:bg-muted/30">
@@ -450,7 +464,7 @@ function SuiteChecks({
         <label className="-m-1 flex size-6 shrink-0 cursor-pointer items-center justify-center">
           <Checkbox
             checked={checked}
-            onCheckedChange={() => onSuiteChange(checked !== true)}
+            onCheckedChange={() => onSuiteChange(!turnsOff)}
             aria-label={`Run ${title}`}
           />
         </label>
@@ -491,7 +505,8 @@ function SuiteChecks({
           <CatalogList
             catalog={catalog}
             note={listNote}
-            isSelected={isPicked}
+            isSelected={shownPicked(isPicked)}
+            isLocked={lockedIn(isPicked)}
             onSelectedChange={onCheckChange}
             renderExtra={renderExtra}
             renderTag={renderTag}
@@ -504,7 +519,8 @@ function SuiteChecks({
                 heading={`Advice: ${advice.catalog.length} ${
                   advice.catalog.length === 1 ? "tip" : "tips"
                 }, run with the checks above.`}
-                isSelected={advice.isPicked}
+                isSelected={shownPicked(advice.isPicked)}
+                isLocked={lockedIn(advice.isPicked)}
                 onSelectedChange={advice.onChange}
                 renderExtra={renderExtra}
                 renderTag={renderTag}

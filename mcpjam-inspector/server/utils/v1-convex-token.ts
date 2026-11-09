@@ -1,4 +1,6 @@
+import { getRequestLocal } from "../middleware/request-local.js";
 import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger.js";
 /**
  * Convex bearer resolution for the public /api/v1 surface.
  *
@@ -236,6 +238,8 @@ export function getDelegatedOrganizationId(c: Context): string | undefined {
  * TTL (hours) comfortably covers a capped eval run.
  */
 export async function getConvexBearerForRequest(c: Context): Promise<string> {
+  const activeTurn = getRequestLocal(c, "turnAuthorizationBearer");
+  if (activeTurn) return activeTurn();
   // Both non-JWT auth methods need a minted token. Dispatching on
   // `authMethod` rather than on the presence of the delegation context vars
   // is deliberate: a JWT caller can carry those vars too, and minting for
@@ -292,6 +296,7 @@ export function getConvexBearerThunkForRequest(
 export async function getBackgroundRunBearerForRequest(
   c: Context,
   projectId: string,
+  options: { requireFreshSessionOnUse?: boolean; allowOriginalBearerOnMintFailure?: boolean } = {},
 ): Promise<() => Promise<string>> {
   if (usesDelegatedToken(c) || c.get("guestId")) {
     return getConvexBearerThunkForRequest(c);
@@ -332,26 +337,47 @@ export async function getBackgroundRunBearerForRequest(
       "Server missing CONVEX_URL configuration",
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(bearer);
+  const authorized = getRequestLocal(c, "authorizedProject");
+  let organizationId =
+    authorized?.projectId === projectId && authorized.bearer === bearer
+      ? authorized.organizationId
+      : undefined;
   // Resolve the organization from the project authorized by the ORIGINAL
   // credential, not from a client header or the browser's active organization.
-  const projects = (await client.query(
-    "projects:getMyProjects" as never,
-    {} as never,
-  )) as Array<{ _id: string; organizationId?: string }>;
-  const project = projects.find((row) => row._id === projectId);
-  if (!project?.organizationId) {
+  if (!organizationId) {
+    const client = new ConvexHttpClient(convexUrl);
+    client.setAuth(bearer);
+    const projects = (await client.query(
+      "projects:getMyProjects" as never,
+      {} as never,
+    )) as Array<{ _id: string; organizationId?: string }>;
+    organizationId = projects.find((row) => row._id === projectId)?.organizationId;
+  }
+  if (!organizationId) {
     throw new WebRouteError(
       403,
       ErrorCode.FORBIDDEN,
       "Cannot authorize background execution for this project",
     );
   }
-  const organizationId = project.organizationId;
   const attribution = stableAgentAttribution(c);
-  const getBearer = () =>
-    getConvexBearerForDelegation(session.sub, organizationId, attribution);
+  const path = c.req.path;
+  const getBearer = async () => {
+    if (options.requireFreshSessionOnUse)
+      assertSessionServable(session.sid, { requireFresh: true, path });
+    try {
+      return await getConvexBearerForDelegation(session.sub, organizationId, attribution);
+    } catch (error) {
+      if (!options.allowOriginalBearerOnMintFailure || !(error instanceof WebRouteError) ||
+          (error.status !== 502 && error.status !== 504)) throw error;
+      // Only a transient mint failure can use the original bearer. It remains
+      // subject to signature, expiry, revocation and downstream project checks.
+      await verifyMcpSession(bearer);
+      assertSessionServable(session.sid, { requireFresh: true, path });
+      logger.warn("Persistence delegation unavailable; using verified request credentials", { status: error.status });
+      return bearer;
+    }
+  };
   // Fail before creating a durable run if delegation is unavailable. The
   // backend rechecks membership on each mint; the token stays server-side.
   await getBearer();

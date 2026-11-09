@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   getRuntimeConvexSiteUrl,
   getRuntimeConvexUrl,
+  getRuntimeDoNotTrack,
 } from "../runtime-config";
 
 describe("runtime-config", () => {
@@ -22,5 +23,14 @@ describe("runtime-config", () => {
 
     expect(getRuntimeConvexUrl()).toBe("https://runtime.convex.cloud");
     expect(getRuntimeConvexSiteUrl()).toBe("https://runtime.convex.site");
+  });
+
+  it("reads DO_NOT_TRACK only as the literal true the server serves", () => {
+    expect(getRuntimeDoNotTrack()).toBe(false);
+    // A document can carry anything; only the boolean the server writes counts.
+    Object.assign(window, { __MCP_RUNTIME_CONFIG__: { doNotTrack: "true" } });
+    expect(getRuntimeDoNotTrack()).toBe(false);
+    window.__MCP_RUNTIME_CONFIG__ = { doNotTrack: true };
+    expect(getRuntimeDoNotTrack()).toBe(true);
   });
 });

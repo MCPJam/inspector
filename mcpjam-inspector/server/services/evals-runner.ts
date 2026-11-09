@@ -78,6 +78,7 @@ import {
 
 import {
   applyVisibilityPolicyAndCountSignals,
+  type HarnessMcpAtTurn,
   type HostExecutionPolicy,
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
@@ -6614,12 +6615,18 @@ const runHostedIterationWithBrowser = async (
   // This used to run here, unconditionally, which is why it is a thunk rather
   // than a value: the one call site below is inside the try that turns a
   // provisioning failure into a cleanly recorded failed iteration.
-  const buildBuiltInTools = async (sandboxBinding?: {
+  type EvalBoxBinding = {
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
     workdir?: string;
-  }) => {
+  };
+  const buildBuiltInTools = async (
+    sandboxBinding?: EvalBoxBinding,
+    // The desktop paired with a pinned shell box; Browser alone runs there.
+    browserSandboxBinding?: EvalBoxBinding,
+  ) => {
+    const browserBox = browserSandboxBinding ?? sandboxBinding;
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
     // disposable desktop nothing else can reach, and asking about the project's
@@ -6629,8 +6636,7 @@ const runHostedIterationWithBrowser = async (
     // unless the run declared a browser policy — an eval with no browser must
     // not pay a daemon round trip to discover it has no browser.
     const pageToolsSnapshot = pageToolsSnapshotFrom(
-      sandboxBinding?.runtimeKind === "desktop-browser" &&
-        browserApprovalDelivery
+      browserBox?.runtimeKind === "desktop-browser" && browserApprovalDelivery
         ? await peekPageToolsForChatTurn({
             builtInToolIds: resolvedExecution.builtInToolIds,
             browserToolId: BROWSER_BUILT_IN_TOOL_ID,
@@ -6645,7 +6651,7 @@ const runHostedIterationWithBrowser = async (
               ? { projectId: builtInTarget.projectId }
               : { projectId: undefined }),
             bearer: convexAuthToken,
-            sandboxRowId: sandboxBinding.sandboxRowId,
+            sandboxRowId: browserBox.sandboxRowId,
             // A cancelled run must not sit out the peek's full deadline before
             // its cancellation takes effect.
             ...(abortSignal ? { signal: abortSignal } : {}),
@@ -6709,6 +6715,7 @@ const runHostedIterationWithBrowser = async (
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.
             ...(sandboxBinding ? { sandboxBinding } : {}),
+            ...(browserSandboxBinding ? { browserSandboxBinding } : {}),
             ...(pageToolsSnapshot
               ? { browserPageTools: pageToolsSnapshot }
               : {}),
@@ -6880,9 +6887,13 @@ const runHostedIterationWithBrowser = async (
                   runId: String(runId),
                   ...(iterationId ? { iterationId: String(iterationId) } : {}),
                   // Absent for a terminal box, so every request that predates
-                  // desktops is byte-identical on the wire.
+                  // desktops is byte-identical on the wire. `pairBrowser` lets
+                  // a pinned image keep its own box beside the desktop.
                   ...(sandboxNeed.runtimeKind === "desktop-browser"
-                    ? { runtimeKind: "desktop-browser" as const }
+                    ? {
+                        runtimeKind: "desktop-browser" as const,
+                        pairBrowser: true,
+                      }
                     : {}),
                 }
               : { iterationId: String(iterationId) }),
@@ -6901,6 +6912,14 @@ const runHostedIterationWithBrowser = async (
                     : {}),
                   ...(result.value.workdir
                     ? { workdir: result.value.workdir }
+                    : {}),
+                  ...(result.value.browser
+                    ? {
+                        browser: {
+                          sandboxRowId: result.value.browser.sandboxRowId,
+                          sandboxId: result.value.browser.sandboxId,
+                        },
+                      }
                     : {}),
                 },
               }
@@ -6954,6 +6973,11 @@ const runHostedIterationWithBrowser = async (
               : {}),
           }
         : undefined;
+    // A pinned image with a browser boots two boxes: shell, files and harness
+    // stay on `sandboxBinding`, and Browser gets this desktop.
+    const browserSandboxBinding = sandboxBinding
+      ? evalBox?.browserBinding
+      : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
     // terminal binding, so a desktop request answered with a terminal box
     // would run the iteration with no browser tools at all and score it as an
@@ -6963,7 +6987,8 @@ const runHostedIterationWithBrowser = async (
     // failed iteration rather than a misleading passing one.
     if (
       sandboxNeed.runtimeKind === "desktop-browser" &&
-      sandboxBinding?.runtimeKind !== "desktop-browser"
+      (browserSandboxBinding ?? sandboxBinding)?.runtimeKind !==
+        "desktop-browser"
     ) {
       throw new Error(
         "This eval declares a browser tool policy, which needs a desktop " +
@@ -6972,7 +6997,10 @@ const runHostedIterationWithBrowser = async (
           "tool from this host config, or update the deployment.",
       );
     }
-    builtInTools = await buildBuiltInTools(sandboxBinding);
+    builtInTools = await buildBuiltInTools(
+      sandboxBinding,
+      browserSandboxBinding,
+    );
 
     prepared = await prepareChatV2({
       connectionsByServerId: {},
@@ -7194,6 +7222,8 @@ const runHostedIterationWithBrowser = async (
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
   const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
+  /** Each harness turn's MCP route, by promptIndex; empty on emulated runs. */
+  const harnessMcpByPromptIndex = new Map<number, HarnessMcpAtTurn>();
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -7300,9 +7330,10 @@ const runHostedIterationWithBrowser = async (
     // the emulated path, which is why they are all conditional).
     //
     // THE SAME BOX the tool resolver already exposes as `bash`, handed to the
-    // harness as well: one box per iteration, never two. It rides the handler
-    // options rather than the host config because the run's config snapshot is
-    // member-readable, so a binding writable there would be forgeable.
+    // harness as well; a paired desktop holds Browser alone. It rides the
+    // handler options rather than the host config because the run's config
+    // snapshot is member-readable, so a binding writable there would be
+    // forgeable.
     //
     // The whole binding, `workdir` included: dropping it rooted every eval
     // harness Shell at whatever the turn fell back to instead of the box's.
@@ -7417,6 +7448,7 @@ const runHostedIterationWithBrowser = async (
       traceMessageHistory,
       capturedSpans,
       requestPayloads,
+      harnessMcpByPromptIndex,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -7664,6 +7696,7 @@ const runHostedIterationWithBrowser = async (
       : {}),
     spans: capturedSpans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:

@@ -4,16 +4,16 @@ description: "Inspect a server's MCP Events, subscribe to them, and run an agent
 icon: "bell-ring"
 ---
 
-MCP Events let a server tell a client that something happened, so an agent can react without anyone typing. MCPJam supports the working-group draft, pinned at `28ec35e`, and a ChatGPT profile describing what ChatGPT supports today. Both are labelled **Draft** in the app.
+MCP Events let a server tell a client that something happened, so an agent can react without anyone typing. MCPJam supports the working-group draft, pinned at `28ec35e`, labelled **Draft** in the app.
 
 ## Events tab (Inspect)
 
 Select a server and open **Events**:
 
 - **Capability.** Shows whether the server declares top-level `capabilities.events`, which handshake said so, and the raw capabilities it sent.
-- **Profile.** *Draft* allows poll, push and webhook. *ChatGPT* allows webhook only, the one mode ChatGPT uses.
-- **Event types.** Each type's delivery modes, with its input and payload schemas.
-- **Subscribe.** A form built from the event's `inputSchema`, and a delivery mode.
+- **Client.** The client you subscribe as. Its saved **Event delivery** setting (in the client's Protocol settings) decides which delivery modes it receives: unsaved, ChatGPT receives webhooks, MCPJam receives every mode, and other clients receive none. In the hosted app you pick the client, defaulting to the active one or **MCPJam (built-in)**; in the local app it's the active client.
+- **Event types.** Every type the server declares, with its input and payload schemas. Delivery modes the client or this app can't use are struck through, with the reason on hover. Hosted subscriptions can't use push yet.
+- **Subscribe.** A form built from the event's `inputSchema`, and a delivery mode the client, the event and the app all support. When there is none, Subscribe is disabled and the form says why.
   - In the hosted app, webhooks deliver to MCPJam's public inbox at `hooks.mcpjam.com`. Every subscription gets its own callback URL and signing secret, and the secret is never shown or logged.
   - In the local app, webhooks can use a plain-http development receiver on the inspector's own port. It is labelled as a non-conformant development override.
 - **Subscriptions.** State, refresh deadline, cursor, delivery status, conflicts and errors, with pause, resume, remove and rotate-secret actions.
@@ -29,6 +29,7 @@ A trigger pairs a subscription with a standing instruction ("when someone commen
 
 - **Approval policy.** *Read-only tools only* (the default) lets the agent call only tools the server marks `readOnlyHint`. *Allow writes* also runs tools that change data, and still denies any tool that would need a person to approve it, because nobody is watching.
 - **Limits.** Each trigger has a rate limit (runs per hour) and a daily spending cap, checked before a run starts.
+- **Which client a run acts as.** A run connects as the subscription's client, with its identity, protocol settings, capabilities and tool visibility. The trigger still decides the model, approvals and instructions. A trigger's environment must use the subscription's client. If that client stops receiving the subscription's delivery mode, or is deleted, refreshes stop, no new runs start, and a running trigger stops before its next tool call. Removing the subscription still unsubscribes.
 - **Who can change a trigger.** A trigger's runs use the credentials of the person who created the subscription, so only that person can add or edit its triggers, turn them on, or simulate its events. A project admin can turn a trigger off or delete it.
 - **Untrusted events.** The event is passed to the model as untrusted data, and the instruction is the only thing it follows.
 - **Parked runs.** If a tool call's outcome is unknown, for example because the runner stopped mid-call, the run is **parked** rather than retried. MCPJam never repeats a write it can't confirm.
