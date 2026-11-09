@@ -182,7 +182,7 @@ export function GatewayDialog({
     ? "Use a name without slashes or colons."
     : !editProvider &&
         existingProviderKeys.includes(providerKeyFor(trimmedName))
-      ? `A connection named "${trimmedName}" already exists. Choose another name.`
+      ? `A gateway named "${trimmedName}" already exists. Choose another name.`
       : null;
   const canSave =
     showDetails &&

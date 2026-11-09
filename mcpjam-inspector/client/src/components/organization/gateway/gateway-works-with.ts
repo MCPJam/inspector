@@ -41,7 +41,7 @@ const CHAT_APIS: readonly GatewayApi[] = [
 ];
 
 const SERVERS_ONLY =
-  "Runs on MCPJam's servers, which never call a gateway whose calls come from each user's Inspector.";
+  "Runs on MCPJam's servers. Set calls to come from MCPJam's servers to use it.";
 const POLICY_BLOCKS =
   "Your organization's key policy doesn't allow calls from each user's Inspector.";
 

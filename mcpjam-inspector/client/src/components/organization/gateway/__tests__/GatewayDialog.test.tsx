@@ -159,7 +159,7 @@ describe("GatewayDialog", () => {
     submitTest();
     await screen.findByText("Responses didn't answer");
     type("gateway-name", "Taken");
-    expect(screen.getByText('A connection named "Taken" already exists. Choose another name.')).toBeInTheDocument();
+    expect(screen.getByText('A gateway named "Taken" already exists. Choose another name.')).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add gateway" })).toBeDisabled();
   });
 });
