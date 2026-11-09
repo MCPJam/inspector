@@ -3713,6 +3713,12 @@ export function PlaygroundMain({
     chatSessionId,
     projectId: convexProjectId,
   };
+  const isCurrentHistoryTarget = useCallback(
+    (target: { chatSessionId: string; projectId: typeof convexProjectId }) =>
+      currentHistoryTargetRef.current.chatSessionId === target.chatSessionId &&
+      currentHistoryTargetRef.current.projectId === target.projectId,
+    [],
+  );
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
@@ -3804,6 +3810,7 @@ export function PlaygroundMain({
       return true;
     }
 
+    const target = { chatSessionId, projectId: convexProjectId };
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
       detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
@@ -3816,6 +3823,9 @@ export function PlaygroundMain({
       return false;
     }
     if (detail) return true;
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) return false;
 
     detachHistorySession(
       "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
@@ -3824,7 +3834,9 @@ export function PlaygroundMain({
   }, [
     activeHistorySessionId,
     chatSessionId,
+    convexProjectId,
     detachHistorySession,
+    isCurrentHistoryTarget,
     pendingDirectVisibility,
     reactiveHistorySession,
     refreshCurrentHistorySession,
@@ -4171,8 +4183,11 @@ export function PlaygroundMain({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: convexProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
@@ -4187,7 +4202,10 @@ export function PlaygroundMain({
     },
     [
       activeHistorySessionId,
+      chatSessionId,
+      convexProjectId,
       detachHistorySession,
+      isCurrentHistoryTarget,
       refreshCurrentHistorySession,
       releaseExtensionChat,
       extensionIdentity,

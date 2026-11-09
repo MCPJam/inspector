@@ -873,10 +873,13 @@ export function ChatTabV2({
     chatSessionId,
     projectId: effectiveHostedProjectId,
   });
-  currentHistoryTargetRef.current = {
-    chatSessionId,
-    projectId: effectiveHostedProjectId,
-  };
+  // Set after commit: a render React discards must not move the target.
+  useLayoutEffect(() => {
+    currentHistoryTargetRef.current = {
+      chatSessionId,
+      projectId: effectiveHostedProjectId,
+    };
+  }, [chatSessionId, effectiveHostedProjectId]);
   const isCurrentHistoryTarget = useCallback(
     (target: { chatSessionId: string; projectId: typeof effectiveHostedProjectId }) =>
       currentHistoryTargetRef.current.chatSessionId === target.chatSessionId &&
@@ -1235,8 +1238,11 @@ export function ChatTabV2({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: effectiveHostedProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread."
             );
@@ -1246,7 +1252,14 @@ export function ChatTabV2({
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      detachHistorySession,
+      effectiveHostedProjectId,
+      isCurrentHistoryTarget,
+      refreshCurrentHistorySession,
+    ]
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);

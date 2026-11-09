@@ -723,6 +723,35 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("keeps the open thread when a share refresh lands after another thread opened", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    const view = render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    const late = createDeferred<unknown>();
+    mockReadHistory.mockReturnValue(late.promise);
+    mockGetChatHistoryState.mockClear();
+    mockToastError.mockClear();
+    mockUseChatSession.detachToLocalFork.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Share active thread" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+    // Another conversation is now the open one.
+    mockUseChatSession.chatSessionId = "chat-session-2";
+    view.rerender(<ChatTabV2 {...defaultProps} />);
+    late.resolve({ ok: true, session: {
+      _id: "history-1", chatSessionId: "chat-session-1",
+      directVisibility: "project", version: 99,
+    } });
+    await flushMicrotasks();
+    // The thread that is open now was not detached or forked away.
+    expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
   it("asks before discarding a draft when switching threads", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
