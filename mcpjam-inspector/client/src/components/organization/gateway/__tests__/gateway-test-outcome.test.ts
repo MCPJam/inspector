@@ -98,19 +98,19 @@ describe("gatewayTestOutcome", () => {
   it("moves focus to the base URL when the gateway is unreachable", () => {
     expect(
       gatewayTestOutcome(result({ reachable: false, status: undefined, message: "MCPJam's servers couldn't connect to gw.example.com. Check the base URL and that the gateway is running.", apis: {}, models: [] })),
-    ).toMatchObject({ tone: "destructive", title: "Couldn't reach the gateway", focus: "baseUrl" });
+    ).toMatchObject({ tone: "destructive", title: "Couldn't reach the gateway. Check the base URL, then test again.", focus: "baseUrl" });
   });
 
   it("says when no API answered, focusing the key on a 401", () => {
     expect(
       gatewayTestOutcome(result({ apis: { chatCompletions: { result: "failed", status: 401, message: "The gateway asked for an API key. Enter the key, then test again." } } })),
-    ).toMatchObject({ tone: "destructive", title: "No API answered", focus: "secret" });
+    ).toMatchObject({ tone: "destructive", title: "No API answered. Check the base URL and key, then test again.", focus: "secret" });
   });
 
   it("reports a test that couldn't run", () => {
     expect(gatewayTestOutcome({ error: "Too many connection tests for this organization. Wait a minute, then test again." })).toEqual({
       tone: "destructive",
-      title: "The test didn't run",
+      title: "The test didn't run. Try again.",
       message: "Too many connection tests for this organization. Wait a minute, then test again.",
     });
   });

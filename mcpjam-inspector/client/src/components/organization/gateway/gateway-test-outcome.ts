@@ -41,7 +41,7 @@ export function testedFromLabel(origin: "backend" | "inspector"): string {
 function statusTitle(status: number | undefined): string {
   if (status === 401) return "The gateway needs a valid API key";
   if (status === 403) return "The gateway refused the request";
-  return "The gateway returned an error";
+  return "The gateway test failed. Check the base URL and key, then test again.";
 }
 
 /** A 401 is the key; a 404 is the address. A 403 is the gateway's own policy. */
@@ -60,7 +60,7 @@ export function gatewayTestOutcome(
   if ("error" in response) {
     return {
       tone: "destructive",
-      title: "The test didn't run",
+      title: "The test didn't run. Try again.",
       message: response.error,
     };
   }
@@ -83,7 +83,7 @@ export function gatewayTestOutcome(
   if (!response.reachable) {
     return {
       tone: "destructive",
-      title: "Couldn't reach the gateway",
+      title: "Couldn't reach the gateway. Check the base URL, then test again.",
       message: response.message,
       focus: "baseUrl",
       testedFrom,
@@ -114,7 +114,7 @@ export function gatewayTestOutcome(
   if (failed.length > 0 && answered.length === 0) {
     return {
       tone: "destructive",
-      title: "No API answered",
+      title: "No API answered. Check the base URL and key, then test again.",
       message: firstFailure?.message,
       focus: statusFocus(firstFailure?.status),
       testedFrom,
