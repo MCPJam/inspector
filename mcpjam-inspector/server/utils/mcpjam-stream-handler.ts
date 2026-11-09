@@ -36,7 +36,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -416,10 +416,12 @@ async function clientAcceptsBackendChunk(
   chunk: unknown,
   reported: Set<string>,
 ): Promise<boolean> {
-  const result = await safeValidateTypes({
-    value: chunk,
-    schema: uiMessageChunkSchema,
-  });
+  // Call the lazy schema's own validate. `safeValidateTypes` from the
+  // inspector's `@ai-sdk/provider-utils` cannot accept this schema: the
+  // harness pin brings a newer copy whose Schema brand does not overlap.
+  const validate = uiMessageChunkSchema().validate;
+  if (!validate) return true;
+  const result = await validate(chunk);
   if (result.success) return true;
 
   const record =

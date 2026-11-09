@@ -115,8 +115,8 @@ describe("codex app-server doStart", () => {
       permissionMode: "allow-edits",
     } as never);
 
-    const bootstrapDir = `${DEFAULT_DIR}/${CODEX_APPSERVER_BOOTSTRAP_DIR}`;
-    const sessionDataDir = `${DEFAULT_DIR}/.agent-runs/session-1`;
+    const bootstrapDir = `${HOME}/.ai-sdk-harness/${CODEX_APPSERVER_BOOTSTRAP_DIR}`;
+    const sessionDataDir = `${HOME}/.ai-sdk-harness/.agent-runs/session-1`;
     const bridgeStateDir = `${sessionDataDir}/bridge`;
 
     expect(box.spawns).toHaveLength(1);

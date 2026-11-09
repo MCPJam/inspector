@@ -51,7 +51,7 @@ Per harness:
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.121` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
+| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.162` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
 | codex       | Eligible (darwin-arm64, linux-x64), dark until conformance is recorded | Only on MCPJam's app-server adapter (`codex-appserver/`), never `@ai-sdk/harness-codex` (which refuses every mode but `allow-all`). Attended: `allow-reads`/`allow-edits` → Codex `untrusted`, real approval requests. Unattended: `allow-all` only inside Codex's own command sandbox with the explicit D2 policy, and only on targets in `unattendedSandboxTargets` (none yet). |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
@@ -119,9 +119,9 @@ the framework moved two of its own `mkdir`s onto environment-variable
 indirection. The manifest's exact-version pin is what surfaced it.
 
 It also **remaps** the adapters' `.harness-bootstrap/<id>` directory — which
-the framework resolves against the session's working directory, i.e. inside the
-user's granted workspace — onto the digest-verified managed bundle. A vendor
-CLI's whole dependency graph does not belong in somebody's checkout, and the
+the framework resolves against `$HOME/.ai-sdk-harness`, i.e. the session's
+synthetic home — onto the digest-verified managed bundle. A vendor CLI's
+whole dependency graph does not belong in somebody's checkout, and the
 `pnpm install` that would put it there is exactly the runtime bootstrapping the
 design forbids. Both become no-ops against a bundle built in CI.
 

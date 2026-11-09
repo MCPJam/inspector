@@ -135,7 +135,15 @@ async function fixture() {
   });
   const session = await provider.createSession({ sessionId: "s1" });
   const workRoot = join(root, "session", "work");
-  const command = `node '${workRoot}/.harness-bootstrap/claude-code/bridge.mjs' --workdir '${workRoot}/project' --bridge-state-dir '${workRoot}/.agent-runs/s1/bridge'`;
+  const bootstrapDir = join(
+    root,
+    "session",
+    "home",
+    ".ai-sdk-harness",
+    ".harness-bootstrap",
+    "claude-code",
+  );
+  const command = `node '${bootstrapDir}/bridge.mjs' --workdir '${workRoot}/project' --bridge-state-dir '${workRoot}/.agent-runs/s1/bridge'`;
   await session.spawn({
     command,
     env: {

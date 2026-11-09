@@ -626,7 +626,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             container,
             "sh",
             "-c",
-            "ls -a /home/user/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
+            "ls -a /home/user/.ai-sdk-harness/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
           ]).trim();
           const { chunks } = await turn("COUNT");
           expect(terminalParts(chunks)).toEqual([
@@ -638,7 +638,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
             container,
             "sh",
             "-c",
-            'for f in /home/user/.harness-bootstrap/*/.bootstrap-*.ok; do head -c 200 "$f"; echo; done',
+            'for f in /home/user/.ai-sdk-harness/.harness-bootstrap/*/.bootstrap-*.ok; do head -c 200 "$f"; echo; done',
           ]);
           expect(markers).toContain('"bakedBy":"mcpjam-harness-bake"');
           expect(
@@ -647,7 +647,7 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
               container,
               "sh",
               "-c",
-              "ls -a /home/user/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
+              "ls -a /home/user/.ai-sdk-harness/.harness-bootstrap/*/ | grep -c '^.bootstrap-.*\\.ok$'",
             ]).trim(),
           ).toBe(before);
           // And it is the version the inspector pins.
