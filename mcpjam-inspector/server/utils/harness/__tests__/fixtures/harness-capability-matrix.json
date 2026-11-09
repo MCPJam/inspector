@@ -218,6 +218,7 @@
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "promptImageInput": true,
       "requiresComputer": true,
+      "sessionStableMcpConfig": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {
         "trailingNewline": false
