@@ -288,9 +288,16 @@ export class OrgLeaseTurn {
    * `claimed` reverses it.
    */
   commitState(resumeState: unknown): unknown {
-    return sanitizeForConvexTransport(
+    const state = sanitizeForConvexTransport(
       resumeStateToCommit(resumeState, this.upstream),
     );
+    // The commit request and stored lane also contain ownership metadata.
+    const serialized = JSON.stringify(state);
+    if (serialized && Buffer.byteLength(serialized) > 512 * 1024)
+      throw new Error(
+        "The agent could not save this turn because its conversation state is too large. Start a new chat.",
+      );
+    return state;
   }
 
   /**

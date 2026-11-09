@@ -12,8 +12,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HarnessV1, HarnessV1StreamPart } from "@ai-sdk/harness";
 import { withAcpPermissionCallInput } from "../acp-permission-input";
+import { safeValidateTypes } from "@ai-sdk/provider-utils";
+import { z } from "zod";
+import { convexToJson } from "convex/values";
 
-const CALL = "tool_1a6267b0-6e38-4177-8159-3c60093864e";
+const CALL = "tool_1a6267b0-6e38-4177-8159-3c60093864e\nfc_2";
 const RAW_INPUT = {
   providerIdentifier: "probe",
   toolName: "probe_echo",
@@ -24,20 +27,31 @@ const RAW_INPUT = {
 async function emitted(parts: HarnessV1StreamPart[]) {
   const runtime = {
     doStart: async () => ({
-      doPromptTurn: async ({ emit }: { emit: (part: HarnessV1StreamPart) => void }) => {
+      doPromptTurn: async ({
+        emit,
+      }: {
+        emit: (part: HarnessV1StreamPart) => void;
+      }) => {
         for (const part of parts) emit(part);
         return { done: Promise.resolve() };
       },
     }),
   } as unknown as HarnessV1;
   const seen: HarnessV1StreamPart[] = [];
-  const session = await withAcpPermissionCallInput(runtime).doStart({} as never);
-  await session.doPromptTurn({ emit: (part: HarnessV1StreamPart) => seen.push(part) } as never);
+  const session = await withAcpPermissionCallInput(runtime).doStart(
+    {} as never,
+  );
+  await session.doPromptTurn({
+    emit: (part: HarnessV1StreamPart) => seen.push(part),
+  } as never);
   return seen;
 }
 
 const raw = (update: Record<string, unknown>) =>
-  ({ type: "raw", rawValue: { toolCallId: CALL, ...update } }) as HarnessV1StreamPart;
+  ({
+    type: "raw",
+    rawValue: { toolCallId: CALL, ...update },
+  }) as HarnessV1StreamPart;
 const call = (input: string) =>
   ({
     type: "tool-call",
@@ -56,18 +70,32 @@ describe("a Cursor MCP call that asks permission, as acp 1.0.60 delivers it", ()
   it("names its server, tool and arguments by the time its approval request arrives", async () => {
     const seen = await emitted([
       raw({ sessionUpdate: "tool_call", status: "pending", rawInput: {} }),
-      raw({ sessionUpdate: "tool_call_update", title: "probe: probe_echo", rawInput: RAW_INPUT }),
+      raw({
+        sessionUpdate: "tool_call_update",
+        title: "probe: probe_echo",
+        rawInput: RAW_INPUT,
+      }),
       raw({ sessionUpdate: "tool_call_update", status: "in_progress" }),
       call("{}"),
       approval,
     ]);
     const types = seen.map((part) => part.type);
     // The call still precedes its approval request.
-    expect(types.indexOf("tool-call")).toBeLessThan(types.indexOf("tool-approval-request"));
+    expect(types.indexOf("tool-call")).toBeLessThan(
+      types.indexOf("tool-approval-request"),
+    );
     const restored = seen.find((part) => part.type === "tool-call");
-    expect(JSON.parse((restored as { input: string }).input)).toEqual(RAW_INPUT);
+    expect(JSON.parse((restored as { input: string }).input)).toEqual(
+      RAW_INPUT,
+    );
     // Nothing else is touched: the raw updates still reach the runner.
-    expect(types).toEqual(["raw", "raw", "raw", "tool-call", "tool-approval-request"]);
+    expect(types).toEqual([
+      "raw",
+      "raw",
+      "raw",
+      "tool-call",
+      "tool-approval-request",
+    ]);
   });
 
   it("leaves a call that already carries its input alone", async () => {
@@ -82,30 +110,77 @@ describe("a Cursor MCP call that asks permission, as acp 1.0.60 delivers it", ()
   it("cannot invent an input no update carried, so that approval stays unbound", async () => {
     const seen = await emitted([
       raw({ sessionUpdate: "tool_call", status: "pending", rawInput: {} }),
-      { type: "raw", rawValue: { type: "mcpjam:elicitation", phase: "cancel" } } as HarnessV1StreamPart,
+      {
+        type: "raw",
+        rawValue: { type: "mcpjam:elicitation", phase: "cancel" },
+      } as HarnessV1StreamPart,
       call("{}"),
       approval,
     ]);
     expect((seen[2] as { input: string }).input).toBe("{}");
   });
 
-  it("keeps each turn's calls to that turn", async () => {
+  it("preserves exact inputs across a fresh continuation wrapper, but not a new prompt", async () => {
     const parts = vi.fn();
+    let prompted = false;
     const runtime = {
+      lifecycleStateSchema: z.object({}),
       doStart: async () => ({
-        doPromptTurn: async ({ emit }: { emit: (part: HarnessV1StreamPart) => void }) => {
-          emit(raw({ sessionUpdate: "tool_call_update", rawInput: RAW_INPUT }));
+        doPromptTurn: async ({
+          emit,
+        }: {
+          emit: (part: HarnessV1StreamPart) => void;
+        }) => {
+          if (!prompted)
+            emit(
+              raw({ sessionUpdate: "tool_call_update", rawInput: RAW_INPUT }),
+            );
+          else emit(call("{}"));
+          prompted = true;
           return { done: Promise.resolve() };
         },
-        doContinueTurn: async ({ emit }: { emit: (part: HarnessV1StreamPart) => void }) => {
+        doContinueTurn: async ({
+          emit,
+        }: {
+          emit: (part: HarnessV1StreamPart) => void;
+        }) => {
           emit(call("{}"));
           return { done: Promise.resolve() };
         },
+        doSuspendTurn: async () => ({
+          type: "continue-turn",
+          harnessId: "cursor",
+          specificationVersion: "harness-v1",
+          data: {},
+        }),
       }),
     } as unknown as HarnessV1;
-    const session = await withAcpPermissionCallInput(runtime).doStart({} as never);
+    const wrapped = withAcpPermissionCallInput(runtime);
+    const session = await wrapped.doStart({} as never);
     await session.doPromptTurn({ emit: parts } as never);
-    await session.doContinueTurn({ emit: parts } as never);
+    const snapshot = await session.doSuspendTurn();
+    expect(() => convexToJson(snapshot)).not.toThrow();
+    expect(
+      await safeValidateTypes({
+        value: snapshot.data,
+        schema: wrapped.lifecycleStateSchema!,
+      }),
+    ).toMatchObject({
+      success: true,
+      value: {
+        mcpjamAcpApprovalInputs: [
+          { toolCallId: CALL, input: JSON.stringify(RAW_INPUT) },
+        ],
+      },
+    });
+    const resumed = await withAcpPermissionCallInput(runtime).doStart({
+      continueFrom: snapshot,
+    } as never);
+    await resumed.doContinueTurn({ emit: parts } as never);
+    expect(parts.mock.calls.at(-1)?.[0]).toMatchObject({
+      input: JSON.stringify(RAW_INPUT),
+    });
+    await resumed.doPromptTurn({ emit: parts } as never);
     expect(parts.mock.calls.at(-1)?.[0]).toMatchObject({ input: "{}" });
   });
 });

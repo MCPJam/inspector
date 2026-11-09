@@ -42,7 +42,8 @@
     ".env.production",
     "package.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/patch-harness-approvals.mjs"
   ],
   "scripts": {
     "predev": "node scripts/check-dev-env.mjs --task=dev && npm run sdk:build && npm run bundle:all",
@@ -131,7 +132,8 @@
     "dev:app:processes:default": "concurrently \"npm run telemetry:watch\" \"npm run dev:server\" \"npm run dev:client\"",
     "dev:app:processes:win32": "concurrently --raw \"npm run telemetry:watch\" \"npm run dev:server\" \"npm run dev:client\"",
     "test:visual:app": "node scripts/visual/build.mjs && playwright test --config playwright.visual.config.ts && node scripts/visual/check-app-archives.mjs",
-    "visual:app:upload": "node scripts/visual/check-app-archives.mjs && CHROMATIC_ARCHIVE_LOCATION=.playwright/visual-results chromatic --playwright --exit-zero-on-changes"
+    "visual:app:upload": "node scripts/visual/check-app-archives.mjs && CHROMATIC_ARCHIVE_LOCATION=.playwright/visual-results chromatic --playwright --exit-zero-on-changes",
+    "postinstall": "node scripts/patch-harness-approvals.mjs"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.113",
@@ -140,6 +142,7 @@
     "@ai-sdk/deepseek": "^3.0.63",
     "@ai-sdk/google": "^4.0.93",
     "@ai-sdk/harness": "1.0.158",
+    "@ai-sdk/harness-acp": "1.0.97",
     "@ai-sdk/harness-claude-code": "1.0.162",
     "@ai-sdk/harness-cursor": "1.0.72",
     "@ai-sdk/harness-opencode": "1.0.119",
