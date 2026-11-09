@@ -22,9 +22,9 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   harnessDisplayName,
   harnessNoRunnableModelReason,
-  harnessOrgUpstream,
   harnessRunsOnOrgProvider,
 } from "@/shared/harness-model-support";
+import { harnessTakesOrgKeys } from "@/shared/harness-connection-api";
 import type { EvalSuite } from "../evals/types";
 
 export type PreflightModel = {
@@ -190,7 +190,7 @@ function orgModelVendor(
  */
 function orgKeyRuntimeProblem(model: PreflightModel): string | null {
   const harnessId = model.harness;
-  if (!harnessId || harnessOrgUpstream(harnessId)) return null;
+  if (!harnessId || harnessTakesOrgKeys(harnessId)) return null;
   return `${harnessDisplayName(harnessId)} can't run on an organization's providers, so it is unavailable while the organization requires its own keys. Choose another client for this run.`;
 }
 
@@ -210,7 +210,7 @@ function orgKeyHarnessProblem(
 ): string | null {
   if (model.selectionKnown === false) return null;
   const harnessId = model.harness;
-  if (!harnessId || !harnessOrgUpstream(harnessId)) return null;
+  if (!harnessId || !harnessTakesOrgKeys(harnessId)) return null;
   if (harnessRunsOnOrgProvider(harnessId, orgModelVendor(orgConfig, model))) {
     return null;
   }
