@@ -462,6 +462,35 @@ describe("Settings run timeout", () => {
     );
   });
 
+  it("leaves on the first Back click straight from an edited timeout", async () => {
+    // Pressing Back blurs the field, which starts the save; Back must not
+    // turn off under the click.
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    let finish: () => void = () => {};
+    const onSaveTimeout = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    render(
+      <ConformanceSettings
+        serverName="alpha"
+        server={server}
+        defaults={{}}
+        inputs={{}}
+        onSave={vi.fn(async () => {})}
+        onSaveTimeout={onSaveTimeout}
+        onBack={onBack}
+      />,
+    );
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    await user.clear(field);
+    await user.type(field, "90");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(onSaveTimeout).toHaveBeenCalledWith(90);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
   it("has no timeout section where the timeout cannot be saved", () => {
     render(<Harness saved={false} onSave={vi.fn(async () => {})} />);
     expect(screen.queryByRole("heading", { name: "Run Timeout" })).toBeNull();

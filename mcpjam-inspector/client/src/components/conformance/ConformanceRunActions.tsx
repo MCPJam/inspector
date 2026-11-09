@@ -196,7 +196,13 @@ export function SavedRunSettings({
       onSave={(selection, inputs) =>
         settings.save(serverName, selection, inputs)
       }
-      timeoutSeconds={settings.timeouts?.[serverName]}
+      timeoutSeconds={
+        // `Object.hasOwn`, as the Conformance page reads the same map: a
+        // server named like a built-in ("constructor") must not get one.
+        settings.timeouts && Object.hasOwn(settings.timeouts, serverName)
+          ? settings.timeouts[serverName]
+          : undefined
+      }
       onSaveTimeout={
         settings.saveTimeout
           ? (seconds) => settings.saveTimeout!(serverName, seconds)

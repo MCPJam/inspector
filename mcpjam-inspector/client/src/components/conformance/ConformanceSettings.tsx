@@ -52,10 +52,10 @@ export function ConformanceSettings({
   onBack: () => void;
   backDisabled?: boolean;
 }) {
-  // A timeout change still saving, or not valid yet, holds Back like the
-  // checks do.
-  const [timeoutBusy, setTimeoutBusy] = useState(false);
-  const backDisabled = backHeld || timeoutBusy;
+  // A timeout that is not valid holds Back, as an invalid input does. Its
+  // save in flight does not (see `ConformanceTimeoutSetting`).
+  const [timeoutInvalid, setTimeoutInvalid] = useState(false);
+  const backDisabled = backHeld || timeoutInvalid;
   const storedKey = stableStringifyJson({
     selection: defaults ?? {},
     inputs: inputs ?? {},
@@ -136,7 +136,7 @@ export function ConformanceSettings({
               <ConformanceTimeoutSetting
                 seconds={timeoutSeconds}
                 onSave={onSaveTimeout}
-                onBusyChange={setTimeoutBusy}
+                onInvalidChange={setTimeoutInvalid}
               />
             </section>
           ) : null}

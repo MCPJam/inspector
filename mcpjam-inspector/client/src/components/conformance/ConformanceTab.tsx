@@ -219,19 +219,20 @@ export function ConformanceTab({
     if (changed) return changed.seconds ?? undefined;
     return savedTimeoutFor(name);
   };
-  const saveTimeout = async (name: string, seconds: number | null) => {
-    if (!onSaveServerTimeout)
-      throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
-    await onSaveServerTimeout(name, seconds);
-    setChangedTimeouts((previous) => ({
-      ...previous,
-      [timeoutKeyFor(name)]: {
-        projectId: persist?.projectId ?? null,
-        serverName: name,
-        seconds,
-      },
-    }));
-  };
+  // Settings offers the timeout only where it can be saved.
+  const saveTimeout = onSaveServerTimeout
+    ? async (name: string, seconds: number | null) => {
+        await onSaveServerTimeout(name, seconds);
+        setChangedTimeouts((previous) => ({
+          ...previous,
+          [timeoutKeyFor(name)]: {
+            projectId: persist?.projectId ?? null,
+            serverName: name,
+            seconds,
+          },
+        }));
+      }
+    : undefined;
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
       ? changedDefaults[serverName]
@@ -678,7 +679,7 @@ export function ConformanceTab({
             }
             timeoutSeconds={timeoutFor(settingsServer)}
             onSaveTimeout={
-              onSaveServerTimeout
+              saveTimeout
                 ? (seconds) => saveTimeout(settingsServer, seconds)
                 : undefined
             }

@@ -11,6 +11,7 @@ import {
 } from "@/shared/conformance-timeout";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { toast } from "@/lib/toast";
 
 const INVALID = `Enter a whole number from 1 to ${MAX_CONFORMANCE_RUN_TIMEOUT_SECONDS} seconds.`;
 
@@ -28,16 +29,19 @@ function parseTimeout(draft: string): number | null {
 export function ConformanceTimeoutSetting({
   seconds,
   onSave,
-  onBusyChange,
+  onInvalidChange,
 }: {
   /** The saved override; absent means the default. */
   seconds?: number;
   onSave: (seconds: number | null) => Promise<void>;
   /**
-   * True while a change is saving or the field holds an invalid value, so
-   * Settings can hold Back until the change is saved or fixed.
+   * True while the field holds a value that cannot be saved, so Settings can
+   * hold Back until it is fixed. A save in flight does not hold Back:
+   * pressing Back is what blurs the field and starts that save, so holding it
+   * would swallow the click. The save finishes, and reports a failure, after
+   * Settings closes.
    */
-  onBusyChange?: (busy: boolean) => void;
+  onInvalidChange?: (invalid: boolean) => void;
 }) {
   const id = useId();
   // What this field last knows is saved: the prop, or its own save that
@@ -47,31 +51,37 @@ export function ConformanceTimeoutSetting({
   useEffect(() => setSaved(seconds), [seconds]);
   const effectiveSeconds = saved ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS;
   const [draft, setDraft] = useState(String(effectiveSeconds));
-  const [error, setError] = useState<string>();
+  const [invalid, setInvalid] = useState(false);
   const [saving, setSaving] = useState(false);
   const editing = useRef(false);
+  // A number field reports text it cannot parse (e.g. "3e" or "-") as "",
+  // the same as a cleared field; only its validity tells them apart.
+  const badInput = useRef(false);
 
   // A saved value that changes (a teammate's save, or this one landing) shows
-  // here, unless the field is being edited. Only on a change: a failed save
-  // keeps what was typed so it can be retried.
+  // here, unless the field is being edited. It replaces whatever the field
+  // held, an invalid value included, so that error goes with it. Only on a
+  // change: a failed save keeps what was typed so it can be retried.
   useEffect(() => {
-    if (!editing.current) setDraft(String(effectiveSeconds));
+    if (editing.current) return;
+    setDraft(String(effectiveSeconds));
+    badInput.current = false;
+    setInvalid(false);
   }, [effectiveSeconds]);
 
-  const invalid = error === INVALID;
   useEffect(() => {
-    onBusyChange?.(saving || invalid);
-  }, [saving, invalid, onBusyChange]);
+    onInvalidChange?.(invalid);
+  }, [invalid, onInvalidChange]);
 
   const commit = async () => {
     editing.current = false;
     if (saving) return;
-    const value = parseTimeout(draft);
+    const value = badInput.current ? Number.NaN : parseTimeout(draft);
     if (Number.isNaN(value)) {
-      setError(INVALID);
+      setInvalid(true);
       return;
     }
-    setError(undefined);
+    setInvalid(false);
     // A cleared field reads as the default again.
     setDraft(String(value ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS));
     const unchanged =
@@ -83,7 +93,9 @@ export function ConformanceTimeoutSetting({
       await onSave(value);
       setSaved(value ?? undefined);
     } catch {
-      setError("Could not save the timeout. Try again.");
+      // Like the checks and inputs on this page: a toast, which still shows
+      // when Back already closed Settings.
+      toast.error("Could not save the run timeout. Try again.");
     } finally {
       setSaving(false);
     }
@@ -111,21 +123,22 @@ export function ConformanceTimeoutSetting({
         className="max-w-40"
         onChange={(event) => {
           editing.current = true;
+          badInput.current = event.target.validity.badInput;
           setDraft(event.target.value);
-          if (error) setError(undefined);
+          if (invalid) setInvalid(false);
         }}
         onBlur={() => void commit()}
-        aria-invalid={Boolean(error)}
-        aria-describedby={`${id}-help${error ? ` ${id}-error` : ""}`}
+        aria-invalid={invalid}
+        aria-describedby={`${id}-help${invalid ? ` ${id}-error` : ""}`}
       />
       <p id={`${id}-help`} className="text-sm text-muted-foreground">
         {saving
           ? "Saving..."
           : "Maximum time for the whole run. Defaults to 300 seconds (5 minutes)."}
       </p>
-      {error && (
+      {invalid && (
         <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
-          {error}
+          {INVALID}
         </p>
       )}
     </form>
