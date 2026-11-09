@@ -36,10 +36,14 @@ function withoutSpawn<T extends object>(target: T): T {
   });
 }
 
-/** A warm attempt cannot dispatch a prompt or spawn a replacement process. */
+/**
+ * A warm attempt cannot dispatch a prompt or spawn a replacement process.
+ * `windowMs` is the box's idle window: how long a parked bridge stays reusable.
+ */
 export function withWarmBridgeRuntime<T extends HarnessV1>(
   factory: (startupTimeoutMs?: number, sandboxHomeDir?: string) => T,
   configuration: string,
+  windowMs: number,
 ): T {
   const ordinary = factory();
 
@@ -77,6 +81,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                 configuration: fingerprint,
                 ...saved.data.data.bridge,
                 park: false,
+                windowMs,
                 includeHome: true,
               }),
               abortSignal: signal,
@@ -156,6 +161,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                         configuration: fingerprint,
                         ...bridge.data.data.bridge,
                         park: true,
+                        windowMs,
                       }),
                       abortSignal: abort.signal,
                     });

@@ -30,31 +30,29 @@ describe("touchSandbox", () => {
     }) as unknown as typeof fetch;
     await expect(
       touchSandbox({ sandboxRowId: "row-1", sandboxId: "sbx-1" }),
-    ).resolves.toBe("failed");
+    ).resolves.toEqual({ outcome: "failed" });
     expect(errorMock).not.toHaveBeenCalled();
     expect(warnMock).toHaveBeenCalledTimes(1);
   });
 
-  it("maps 404/409 to gone and 2xx to touched", async () => {
-    const reply = (status: number) =>
+  it("maps 404/409 to gone and 2xx to touched, with the window the backend sent", async () => {
+    const reply = (status: number, body: unknown = {}) =>
       (global.fetch = vi.fn(
-        async () => new Response("{}", { status }),
+        async () => new Response(JSON.stringify(body), { status }),
       ) as unknown as typeof fetch);
+    const touch = () => touchSandbox({ sandboxRowId: "r", sandboxId: "s" });
+    reply(200, { ok: true, lastUsedAt: 1, idleMs: 300_000 });
+    expect(await touch()).toEqual({ outcome: "touched", idleMs: 300_000 });
+    // An older control plane sends no window: still a touch.
     reply(200);
-    expect(await touchSandbox({ sandboxRowId: "r", sandboxId: "s" })).toBe(
-      "touched",
-    );
+    expect(await touch()).toEqual({ outcome: "touched" });
+    reply(200, { idleMs: "soon" });
+    expect(await touch()).toEqual({ outcome: "touched" });
     reply(404);
-    expect(await touchSandbox({ sandboxRowId: "r", sandboxId: "s" })).toBe(
-      "gone",
-    );
+    expect(await touch()).toEqual({ outcome: "gone" });
     reply(409);
-    expect(await touchSandbox({ sandboxRowId: "r", sandboxId: "s" })).toBe(
-      "gone",
-    );
+    expect(await touch()).toEqual({ outcome: "gone" });
     reply(500);
-    expect(await touchSandbox({ sandboxRowId: "r", sandboxId: "s" })).toBe(
-      "failed",
-    );
+    expect(await touch()).toEqual({ outcome: "failed" });
   });
 });

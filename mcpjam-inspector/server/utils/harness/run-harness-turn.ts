@@ -920,8 +920,11 @@ export async function runHarnessTurn(
   ) {
     throw new Error("Open GitHub Copilot CLI in the signed-in hosted Playground.");
   }
+  // A warm agent exits after its box's idle window, so it runs only on a box
+  // whose window the backend sent.
+  const warmWindowMs = harnessSandboxBinding?.idleMs;
   const warmAgentPilot = isWarmChatManager(mcpClientManager) && (copilotCli || !!qualifiedForwardingRuntime(harnessAdapter)) &&
-    sourceType === "direct" && !harnessExecutionTarget && !!harnessSandboxBinding && !!chatSessionId &&
+    sourceType === "direct" && !harnessExecutionTarget && warmWindowMs !== undefined && !!chatSessionId &&
     harnessMcpProxy?.plane === "web-authorized" &&
     (copilotCli || harness === "claude-code" || harness === "codex");
   // The effort this turn asked for: the typed field, else the saved selection it
@@ -2863,9 +2866,9 @@ export async function runHarnessTurn(
                 ? { sandboxPolicy: commandSandboxPolicy }
                 : {}),
             });
-      let harnessRuntime = warmAgentPilot
-        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home)),
-            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]))
+      let harnessRuntime = warmAgentPilot && warmWindowMs !== undefined
+        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home), warmWindowMs),
+            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmWindowMs)
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
         harnessRuntime = withHarnessElicitation(harnessRuntime, {
