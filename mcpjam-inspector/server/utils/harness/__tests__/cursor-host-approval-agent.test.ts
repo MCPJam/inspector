@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { harnessV1StreamPartSchema } from "@ai-sdk/harness";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { HarnessV1, HarnessV1NetworkSandboxSession, HarnessV1PromptControl, HarnessV1StreamPart } from "@ai-sdk/harness";
 
@@ -30,7 +31,8 @@ describe("Cursor approved host relay in real HarnessAgent", () => {
       specificationVersion: "harness-v1", harnessId: "cursor", supportsBuiltinToolApprovals: true,
       builtinTools: { native_mcp: { inputSchema: z.object({ text: z.string() }) } },
       doStart: async (start) => {
-        const begin = async ({ emit }: { emit(part: HarnessV1StreamPart): void }): Promise<HarnessV1PromptControl> => {
+        const begin = async ({ emit: emitRaw }: { emit(part: HarnessV1StreamPart): void }): Promise<HarnessV1PromptControl> => {
+          const emit = (part: HarnessV1StreamPart) => emitRaw(harnessV1StreamPartSchema.parse(JSON.parse(JSON.stringify(part))));
           let finish!: () => void;
           const done = new Promise<void>((resolve) => { finish = resolve; });
           if (!start.continueFrom) queueMicrotask(() => {
@@ -44,8 +46,8 @@ describe("Cursor approved host relay in real HarnessAgent", () => {
               if (!approved) throw new Error("Expected allow in this scenario");
               queueMicrotask(() => {
                 emit({ type: "tool-call", toolCallId: "native-1", toolName: "echo", input: '{"text":"one"}', providerExecuted: false,
-                  harnessMetadata: { mcpjam: { approvedHostToolCallId: "native-1" } } });
-                if (duplicate) emit({ type: "tool-call", toolCallId: "native-1", toolName: "echo", input: '{"text":"one"}', providerExecuted: false, harnessMetadata: { mcpjam: { approvedHostToolCallId: "native-1" } } });
+                  providerMetadata: { mcpjam: { approvedHostToolCallId: "native-1" } } });
+                if (duplicate) emit({ type: "tool-call", toolCallId: "native-1", toolName: "echo", input: '{"text":"one"}', providerExecuted: false, providerMetadata: { mcpjam: { approvedHostToolCallId: "native-1" } } });
                 emit(boundary);
               });
             },

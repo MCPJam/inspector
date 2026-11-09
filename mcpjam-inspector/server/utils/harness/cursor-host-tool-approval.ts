@@ -58,7 +58,7 @@ export function patchCursorHostToolApproval(source: string): string {
   source = replaceInRegion(source, "src/v1/bridge/stream-translator.ts", `const hostToolCall = ({ toolCallId, toolName, input }) => {`, `const hostToolCall = ({ toolCallId, toolName, input, approvedHostToolCallId }) => {`);
   source = replaceInRegion(source, "src/v1/bridge/stream-translator.ts", `providerExecuted: false
 		});`, `providerExecuted: false,
-			...(approvedHostToolCallId ? { harnessMetadata: { mcpjam: { approvedHostToolCallId } } } : {})
+			...(approvedHostToolCallId ? { providerMetadata: { mcpjam: { approvedHostToolCallId } } } : {})
 		});`);
   source = replaceInRegion(source, "src/v1/bridge/host-tool-relay-authorization.ts", `const permissionCall = toolCall.name == null && toolCall.rawInput === void 0 && toolCall._meta === void 0 ? previous?.permissionCall : void 0;`, `const currentCall = resolveHostToolCall({ toolCall: merged, serverName, toolNames });
 		const permissionCall = currentCall != null && previous?.permissionCall != null && callKey(currentCall) === callKey(previous.permissionCall) ? previous.permissionCall : void 0;`);
