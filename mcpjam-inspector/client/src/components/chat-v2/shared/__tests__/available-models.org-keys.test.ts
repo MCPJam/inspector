@@ -251,6 +251,27 @@ describe("buildAvailableModelsFromOrgConfig under the policy", () => {
     expect(rows.find((row) => row.provider === "anthropic")?.disabled).toBeFalsy();
   });
 
+  it("leaves a keyless connection out rather than blame the policy for it", () => {
+    // The policy allows this connection; only its key is missing. The static
+    // OpenAI rows come from the keyed connection after it and stay runnable.
+    const keyless: OrgModelProvider = {
+      ...openAi,
+      id: "orgprov_openai_keyless",
+      hasSecret: false,
+      runtimeLocation: "local",
+    };
+    const rows = buildAvailableModelsFromOrgConfig(
+      policyConfig([keyless, openAi]),
+      [hostedHaiku],
+    );
+    const openAiRows = rows.filter((row) => row.provider === "openai");
+    expect(openAiRows.length).toBeGreaterThan(0);
+    for (const row of openAiRows) {
+      expect(row.disabled).toBeFalsy();
+      expect(row.orgProvider?.id).toBe("orgprov_openai");
+    }
+  });
+
   it("leaves an Inspector-run connection enabled while the policy is off", () => {
     const rows = buildAvailableModelsFromOrgConfig(
       { providers: [inspectorRun] },

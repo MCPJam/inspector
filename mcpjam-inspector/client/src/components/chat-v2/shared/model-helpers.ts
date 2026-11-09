@@ -9,7 +9,10 @@ import {
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  connectionPolicyEligibility,
+  orgRequiresOwnKeys,
+} from "@/shared/org-ai-key-policy";
 import { INSPECTOR_RUN_POLICY_REASON } from "@/lib/org-keys-refusal";
 import {
   isUsableOrgConnection,
@@ -209,13 +212,15 @@ export function buildAvailableModelsFromOrgConfig(
   for (const p of orgConfig.providers) {
     if (p.id) eligibleByConnectionId.set(p.id, backendCallsEligible(p));
   }
-  // A connection whose calls come from each user's Inspector is ineligible
-  // under the policy; its rows stay listed, disabled, so the admin sees why.
+  // A connection whose calls come from each user's Inspector and that the
+  // policy's verdict on it refuses: its rows stay listed, disabled, so the
+  // admin sees why. One missing its key is left out like any other keyless
+  // connection; the policy's fix would not make it runnable.
   const policyBlocked = (p: OrgModelProvider): boolean =>
     requireOrgKeys &&
-    p.enabled &&
     p.runtimeLocation === "local" &&
-    !backendCallsEligible(p);
+    isUsableOrgConnection(p, false) &&
+    !connectionPolicyEligibility(p, requireOrgKeys).eligible;
   const blockedConnections = new Set(
     orgConfig.providers.filter(policyBlocked).map((p) => p.id ?? p.providerKey)
   );
