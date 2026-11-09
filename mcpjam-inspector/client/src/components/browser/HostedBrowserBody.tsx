@@ -60,10 +60,16 @@ import {
   fetchHostedBrowserProfileArchive,
   HostedBrowserError,
   openHostedBrowserFrameStream,
+  pingHostedBrowserInput,
   sendHostedBrowserInput,
   type HostedBrowserLease,
   type MintBrowserToken,
 } from "@/lib/hosted-browser/client";
+import { PausedPaneOverlay } from "@/components/browser/PausedPaneOverlay";
+import {
+  usePausedPane,
+  useThrottledInputPing,
+} from "@/components/browser/usePausedPane";
 
 /**
  * The agent's HOSTED browser, in the Playground rail.
@@ -87,13 +93,12 @@ const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
 const CLOSE_LEASE_HELD = 4409;
 /**
- * The box is asleep. Wake it, but only if somebody is actually looking.
+ * The box paused for lack of use. The pane says so and wakes it only on a
+ * person's input (`usePausedPane`).
  *
  * Its own code because reconnecting cannot help: the socket does not wake
  * anything (`ensure=1` on the session route does), so a plain retry would
- * hammer a paused machine every 3 seconds forever. A hosted browser is
- * reclaimed within a couple of minutes of nobody watching, so this is the
- * ordinary way a hidden pane's socket ends — not a fault.
+ * hammer a paused machine every 3 seconds forever.
  */
 const CLOSE_ASLEEP = 4410;
 /**
@@ -182,6 +187,8 @@ export function HostedBrowserBody({
   const [unavailable, setUnavailable] = useState<string | null>(null);
   /** Bumped to re-open the frame socket after it was refused. */
   const [streamAttempt, setStreamAttempt] = useState(0);
+  /** The desktop's idle window, for the paused overlay's copy. */
+  const [idleMs, setIdleMs] = useState<number | undefined>(undefined);
   /**
    * CONSECUTIVE 4401s, not 4401s ever — and a REF, deliberately.
    *
@@ -350,6 +357,7 @@ export function HostedBrowserBody({
             : { bootId: next.bootId, contextMode: next.contextMode },
         );
         setLease(next.lease);
+        setIdleMs(next.idleMs);
         // The SERVER says whether the lease is this viewer's. Tracking "I
         // acquired it" here instead would forget across a reload and then lock
         // this pane out of a parked lease it still holds, since only the
@@ -375,6 +383,25 @@ export function HostedBrowserBody({
       }
     },
     [tokens],
+  );
+
+  // A paused desktop wakes on input in this pane, then the picture reopens.
+  const {
+    state: pausedState,
+    pause: pausePane,
+    resume: resumePane,
+  } = usePausedPane({
+    // A wake that did not land leaves the box paused for the next input,
+    // not behind the unavailable message, whose retry wakes nothing.
+    wake: async () => {
+      const woke = await refresh({ ensure: true });
+      if (!woke) setUnavailable(null);
+      return woke;
+    },
+    onAwake: () => setStreamAttempt((n) => n + 1),
+  });
+  const noteVncInput = useThrottledInputPing(() =>
+    tokens ? pingHostedBrowserInput(tokens) : Promise.resolve(false),
   );
 
   useEffect(() => {
@@ -1179,45 +1206,10 @@ export function HostedBrowserBody({
           return;
         }
         if (event.code === CLOSE_ASLEEP) {
-          // NO PLAIN SOCKET RETRY. This socket cannot wake anything: reopening
-          // it just refuses again. `ensure` is what asks the control plane to
-          // resume the box, so the recovery is a session read WITH it — a bare
-          // `refresh()` omits the flag and reads a row nobody has woken.
-          //
-          // And only while somebody is looking: a pane behind another tab is
-          // exactly what let the box be reclaimed, so waking it from here
-          // would undo the reclaim on behalf of nobody — and every hidden pane
-          // in every open tab would do it at once. A hidden pane leaves the
-          // box asleep; the visibility-gated poll re-ensures when it is shown
-          // again, which is the moment a person is actually there.
-          if (
-            activeRef.current &&
-            document.visibilityState === "visible" &&
-            !closed
-          ) {
-            void refresh({ ensure: true }).then((woke) => {
-              // A wake that did not land (the box is still coming up, or it
-              // refused) must NOT reopen the socket: it would be refused again
-              // and ask again, forever. The visibility-gated poll retries.
-              if (!woke) return;
-              // THEN REOPEN, explicitly. A resumed box comes back on the SAME
-              // boot, and `refresh` keeps the session object by identity when
-              // the boot is unchanged — deliberately, so a 4409 re-read cannot
-              // hot-loop the socket. That means waking alone would leave the
-              // pane blank until something else changed: the picture has to be
-              // asked for.
-              //
-              // Re-checked after the await, because the wake takes a moment and
-              // the person may have looked away inside it.
-              if (
-                !closed &&
-                activeRef.current &&
-                document.visibilityState === "visible"
-              ) {
-                setStreamAttempt((n) => n + 1);
-              }
-            });
-          }
+          // No retry and no wake: watching is not use. The pane shows the
+          // desktop paused, and only input in it wakes the box; a hidden pane
+          // never does.
+          pausePane();
           return;
         }
         if (event.code === CLOSE_VIDEO_UNAVAILABLE) {
@@ -1281,6 +1273,7 @@ export function HostedBrowserBody({
     session,
     tokens,
     refresh,
+    pausePane,
     streamAttempt,
     shell.state.activeTabId,
     selectionReady,
@@ -1344,7 +1337,11 @@ export function HostedBrowserBody({
             setStreamAttempt((n) => n + 1);
           }}
         />
-        <div className="min-h-0 flex-1 px-3 pb-3">
+        <div
+          className="min-h-0 flex-1 px-3 pb-3"
+          onPointerDownCapture={noteVncInput}
+          onKeyDownCapture={noteVncInput}
+        >
           <BrowserPanel projectId={projectId} sessionId={sessionId} />
         </div>
       </>
@@ -1433,30 +1430,47 @@ export function HostedBrowserBody({
         </>
       }
     >
-      <BrowserPaneSurface
-        frame={frame}
-        authority={{ kind: "lease", holding }}
-        control={control}
-        // NO take-control button. Using the browser is what takes it now, and
-        // the shell's second row already says who is driving.
-        chrome="none"
-        // The shell's menu owns this now; the surface draws it.
-        statsOpen={statsOpen}
-        onInput={send}
-        onTakeoverInput={takeover}
-        onTakeControl={
-          !workspaceEnabled && session && !holding && lease.state === "free"
-            ? () => void setLeaseAction("acquire")
-            : undefined
-        }
-        onHandBack={
-          !workspaceEnabled && session && holding
-            ? () => void setLeaseAction("resume")
-            : undefined
-        }
-        active={active}
-        engine="hosted"
-      />
+      <div
+        className="relative h-full w-full"
+        // Paused or resuming, a key press goes to the wake, not the desktop.
+        onKeyDownCapture={(event) => {
+          if (pausedState === "awake") return;
+          event.stopPropagation();
+          resumePane();
+        }}
+      >
+        <BrowserPaneSurface
+          frame={frame}
+          authority={{ kind: "lease", holding }}
+          control={control}
+          // NO take-control button. Using the browser is what takes it now, and
+          // the shell's second row already says who is driving.
+          chrome="none"
+          // The shell's menu owns this now; the surface draws it.
+          statsOpen={statsOpen}
+          onInput={send}
+          onTakeoverInput={takeover}
+          onTakeControl={
+            !workspaceEnabled && session && !holding && lease.state === "free"
+              ? () => void setLeaseAction("acquire")
+              : undefined
+          }
+          onHandBack={
+            !workspaceEnabled && session && holding
+              ? () => void setLeaseAction("resume")
+              : undefined
+          }
+          active={active}
+          engine="hosted"
+        />
+        {pausedState !== "awake" ? (
+          <PausedPaneOverlay
+            resuming={pausedState === "resuming"}
+            idleMs={idleMs}
+            onResume={resumePane}
+          />
+        ) : null}
+      </div>
     </BrowserShell>
   );
 }

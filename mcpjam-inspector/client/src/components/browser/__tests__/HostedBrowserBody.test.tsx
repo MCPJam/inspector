@@ -358,52 +358,88 @@ describe("the hosted pane — the socket", () => {
     vi.useRealTimers();
   });
 
-  it("wakes the box and brings the picture back when it has been reclaimed", async () => {
-    // 4410 says the machine is asleep. This socket cannot wake it — only
-    // `ensure=1` on the session route does — and a bare re-read would not
-    // either: it reads a row nobody has resumed. Then the stream has to be
-    // asked for again, because a resumed box comes back on the SAME boot and
-    // the session object is deliberately kept by identity, so nothing else
-    // would reopen the socket and the pane would sit blank.
+  it("shows a reclaimed box paused and never wakes it on its own", async () => {
+    // 4410 says the desktop paused. Watching is not use, so the pane keeps the
+    // last picture under the paused state and asks nothing of the control
+    // plane until a person clicks or types.
     vi.useFakeTimers();
     renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
 
     act(() => socket().onclose?.({ code: 4410 }));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(60_000);
     });
 
-    // Asked the control plane to resume it, not merely re-read the row.
-    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
-    // And got the picture back.
-    expect(api.sockets.length).toBe(2);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(1);
     vi.useRealTimers();
   });
 
-  it("does not reopen the socket when the wake did not land", async () => {
-    // A box that refuses to come back would otherwise be refused, re-asked,
-    // and refused again forever. The visibility-gated poll owns the retry.
+  it("wakes the box on input and brings the picture back", async () => {
+    // Resume (or any click on the paused picture) asks the control plane to
+    // resume it. The stream is then asked for again: a resumed box comes back
+    // on the SAME boot, so nothing else would reopen the socket.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(2);
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("wakes the box on a key press in the pane, and the key goes nowhere else", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    const inputsBefore = api.inputs.length;
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resume" }), {
+      key: "a",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(api.inputs.length).toBe(inputsBefore);
+    view.unmount();
+    vi.useRealTimers();
+  });
+
+  it("stays paused when the wake did not land", async () => {
+    // A box that refuses to come back would otherwise be refused and re-asked
+    // forever. The next input asks again.
     vi.useFakeTimers();
     renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     api.sessionError = { status: 503 };
-
     act(() => socket().onclose?.({ code: 4410 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
 
     expect(api.sessionReadOptions).toContainEqual({ ensure: true });
     expect(api.sockets.length).toBe(1);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
     vi.useRealTimers();
   });
 
   it("leaves a reclaimed box asleep when nobody is looking at the pane", async () => {
-    // A hidden pane is WHY the box was reclaimed. Waking it from here would
-    // undo that on behalf of nobody — and every hidden pane in every open tab
-    // would do it at once. The visibility-gated poll re-ensures when the pane
-    // is shown again, which is when somebody is actually there.
+    // A hidden pane is never a person's input: it wakes nothing, now or when
+    // it is shown again, until somebody clicks or types in it.
     vi.useFakeTimers();
     const view = renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
@@ -414,16 +450,29 @@ describe("the hosted pane — the socket", () => {
         active={false}
       />,
     );
-    const before = api.sessionReads;
-
     act(() => socket().onclose?.({ code: 4410 }));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(60_000);
     });
-
-    expect(api.sessionReads).toBe(before);
     expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
-    expect(api.sockets.length).toBe(1);
+
+    // Shown again, the reopened stream finds the box asleep: it says so, and
+    // showing the pane is still not input.
+    view.rerender(
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={true}
+      />,
+    );
+    await vi.waitFor(() => expect(api.sockets.length).toBe(2));
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(2);
     vi.useRealTimers();
   });
 
