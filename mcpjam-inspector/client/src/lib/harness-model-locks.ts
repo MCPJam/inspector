@@ -46,7 +46,10 @@ import {
   modelRowKey,
   providerKeyForModelDefinition,
 } from "@/components/chat-v2/shared/model-selection";
-import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
+import {
+  INSPECTOR_RUN_POLICY_REASON,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
 
 export type { HarnessKeyPolicy };
 
@@ -282,7 +285,9 @@ export function harnessModelLockReasonsByRow(
  * Under the organization's key policy (`policy.requireOrgKeys`) a saved model
  * the policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the
  * picker shows it only on its trigger, as a warning, so the saved choice is
- * never switched silently.
+ * never switched silently. A row from a connection whose calls come from the
+ * Inspector (`INSPECTOR_RUN_POLICY_REASON`) is kept the same way, so it shows
+ * the policy's explanation and fix rather than a harness refusal.
  */
 export function harnessPickerModels(
   models: ModelDefinition[],
@@ -295,7 +300,8 @@ export function harnessPickerModels(
     if (
       policy.requireOrgKeys &&
       model.disabled &&
-      model.disabledReason === ORG_KEYS_MODEL_REASON
+      (model.disabledReason === ORG_KEYS_MODEL_REASON ||
+        model.disabledReason === INSPECTOR_RUN_POLICY_REASON)
     ) {
       return model;
     }

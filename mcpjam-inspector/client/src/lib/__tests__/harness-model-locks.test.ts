@@ -10,7 +10,10 @@ import {
   isNoRunnableHarnessModel,
   noRunnableHarnessModel,
 } from "../harness-model-locks";
-import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
+import {
+  INSPECTOR_RUN_POLICY_REASON,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -426,6 +429,25 @@ describe("a harness under the organization's key policy", () => {
       disabled: true,
       disabledReason: expect.stringMatching(/requires your organization's Anthropic key/),
     });
+  });
+
+  it("keeps the policy's reason on a connection whose calls come from the Inspector", () => {
+    const inspectorRun = {
+      id: "custom:lan:lan-model",
+      name: "LAN / lan-model",
+      provider: "custom",
+      customProviderName: "lan",
+      orgProvider: { providerKey: "custom:lan", id: "orgprov_lan" },
+      hosted: false,
+      disabled: true,
+      disabledReason: INSPECTOR_RUN_POLICY_REASON,
+    } as ModelDefinition;
+    const [kept] = harnessPickerModels(
+      [inspectorRun, ORG_ANTHROPIC],
+      { harnessId: "claude-code" },
+      POLICY,
+    );
+    expect(kept).toBe(inspectorRun);
   });
 
   it("an empty list says which organization provider the harness needs", () => {
