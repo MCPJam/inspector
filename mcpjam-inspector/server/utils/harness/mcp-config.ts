@@ -326,6 +326,11 @@ export function attributeCursorToolCall(args: {
   if (typeof provider !== "string" || typeof inner !== "string" || !inner) {
     return parseHarnessToolName(rawToolName, keyToServerId);
   }
+  // The reserved host-tool channel wraps an already namespaced MCP name.
+  if (provider === "ai-sdk-harness-tools") {
+    const hosted = parseHarnessToolName(inner, keyToServerId);
+    if (hosted.serverId) return hosted;
+  }
   // Exact key first, THEN the `user-`-stripped form. Never the other way round.
   const serverId =
     keyToServerId[provider] ??
