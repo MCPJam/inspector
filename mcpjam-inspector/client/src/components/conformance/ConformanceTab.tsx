@@ -345,6 +345,8 @@ export function ConformanceTab({
     changeView("overview");
   };
   const [loadingDefaults, setLoadingDefaults] = useState(false);
+  /** The server whose run is waiting on its defaults, for its card. */
+  const [startingServer, setStartingServer] = useState<string | null>(null);
   const [failedRequest, setFailedRequest] = useState<{
     name: string;
     pin?: ProtocolVersionPin;
@@ -380,6 +382,7 @@ export function ConformanceTab({
   ) => {
     const id = ++requestId.current;
     setLoadingDefaults(true);
+    setStartingServer(pin ? name : null);
     setFailedRequest(null);
     try {
       const defaults = await readDefaults(name);
@@ -396,8 +399,10 @@ export function ConformanceTab({
       if (mounted.current && id === requestId.current)
         setFailedRequest({ name, pin });
     } finally {
-      if (mounted.current && id === requestId.current)
+      if (mounted.current && id === requestId.current) {
         setLoadingDefaults(false);
+        setStartingServer(null);
+      }
     }
   };
   // A saved run's Run again lands here with `?run=<server>`: start that
@@ -464,6 +469,9 @@ export function ConformanceTab({
         onViewRun={onViewRun}
         disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
+        startingServerName={
+          loadingDefaults ? (startingServer ?? undefined) : undefined
+        }
         onRun={runServer}
       />
     ) : undefined;
