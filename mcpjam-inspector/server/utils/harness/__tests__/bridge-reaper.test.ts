@@ -153,10 +153,10 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
     const childFile = join(dir, "child-pid");
     const target = await bridge(own, "running", {
       script: `
-      const fs = require("node:fs");
-      const { spawn } = require("node:child_process");
+      import { writeFileSync } from "node:fs";
+      import { spawn } from "node:child_process";
       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
-      fs.writeFileSync(${JSON.stringify(childFile)}, String(child.pid));
+      writeFileSync(${JSON.stringify(childFile)}, String(child.pid));
     `,
     });
     const sibling = await bridge(join(dir, "chat-b", "bridge"), "waiting");
