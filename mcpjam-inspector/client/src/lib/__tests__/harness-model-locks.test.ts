@@ -132,9 +132,19 @@ describe("harnessPickerModels", () => {
     expect(harnessPickerModels(CATALOG, null)).toBe(CATALOG);
   });
 
-  it("leaves an external-account catalog alone when nothing in it is runnable", () => {
+  it("keeps Cursor account models out of emulated and other harness targets", () => {
+    const cursor: ModelDefinition = { id: "cursor/auto", name: "Cursor Auto", provider: "cursor" };
+    expect(harnessPickerModels([...CATALOG, cursor], null)).toEqual(CATALOG);
+    expect(harnessPickerModels([...CATALOG, cursor], { harnessId: "codex" })).not.toContain(cursor);
+    expect(applyHarnessModelLocks([cursor], [null], "eval")[0]?.disabled).toBe(true);
+    expect(applyHarnessModelLocks([cursor], [], "eval")[0]?.disabled).toBe(true);
+    expect(harnessRowRefusalReason(cursor, null, "chat")).toMatch(/Cursor client/);
+    expect(harnessChoiceRefusalReason({ modelId: cursor.id }, null, "chat")).toMatch(/Cursor client/);
+  });
+
+  it("does not offer ordinary provider models to an external-account runtime", () => {
     // Cursor runs on the user's Cursor account, which picks its own model.
-    expect(harnessPickerModels(CATALOG, { harnessId: "cursor" })).toBe(CATALOG);
+    expect(harnessPickerModels(CATALOG, { harnessId: "cursor" })).toEqual([]);
   });
 });
 

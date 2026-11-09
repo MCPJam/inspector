@@ -51,7 +51,9 @@ import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandb
 describe("harness registry", () => {
   it("authenticates the registered Cursor adapter through its restricted sandbox", async () => {
     const spawn = vi.fn(async () => ({} as never));
+    const real = await vi.importActual<typeof import("@ai-sdk/harness-cursor")>("@ai-sdk/harness-cursor");
     vi.mocked(createCursor).mockReturnValueOnce({
+      getBootstrap: real.createCursor().getBootstrap,
       specificationVersion: "harness-v1", harnessId: "cursor", builtinTools: {},
       doStart: async (options) => {
         const sandbox = options.sandboxSession;
@@ -1280,11 +1282,12 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     );
   });
 
-  it("passes NO native model (Cursor Auto picks on the customer's account)", () => {
+  it("sets Auto and explicit Cursor native model IDs", () => {
     expect(
       cursor.toNativeModel?.("anthropic/claude-sonnet-4.5"),
     ).toBeUndefined();
-    expect(cursor.toNativeModel?.("cursor/auto")).toBeUndefined();
+    expect(cursor.toNativeModel?.("cursor/auto")).toBe("default");
+    expect(cursor.toNativeModel?.("cursor/mini")).toBe("mini");
   });
 
   it("declares the approval posture it can actually keep", () => {
@@ -1297,7 +1300,8 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // run with some MCP calls unapproved — the conservative direction, and the
     // one this flag exists to protect.
     expect(cursor.supportsMcpToolApproval).toBe(false);
-    expect(cursor.supportsHostExecutedToolApproval).toBe(false);
+    expect(cursor.supportsHostExecutedToolApproval).toBe(true);
+    expect(cursor.hostToolApprovalAtRuntime).toBe(true);
   });
 
   it("constructs a harness from the MCP json it is handed", () => {

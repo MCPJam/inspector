@@ -16,7 +16,7 @@ import { CHOOSE_ORG_JUDGE_MODEL } from "@/components/evals/judge-model-picker";
 import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -289,7 +289,7 @@ export function orgKeyProblemsOf(
     if (
       !model.provider ||
       model.provider === "none" ||
-      isRuntimeChosenModelSentinel(model.model)
+      isRuntimeAccountModel(model.model)
     )
       continue;
     const problem =

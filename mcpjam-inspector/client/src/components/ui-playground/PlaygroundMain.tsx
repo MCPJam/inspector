@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
   markComparisonColumnSettled,
@@ -6767,7 +6768,7 @@ export function PlaygroundMain({
           once — each owning its own would race one approval. */}
       <LocalHarnessAutoApproveDialog
         open={localAutoApprove.open}
-        name={(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness) === "codex" ? "Codex" : "Claude Code"}
+        name={HARNESS_DESCRIPTORS[previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness ?? "claude-code"].displayName}
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />
