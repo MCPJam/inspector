@@ -807,7 +807,7 @@ export async function provisionPlaygroundTerminalSandbox(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     },
   );
-  if (outcome.kind === "settled") return outcome.result;
+  if (outcome.kind === "settled") return keepSaneIdleWindow(outcome.result);
   if (outcome.reason === "aborted") {
     return { ok: false, status: 499, error: "cancelled" };
   }
@@ -945,17 +945,19 @@ export async function provisionScenarioSandbox(args: {
   chatSessionId: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ScenarioSandbox>> {
-  return postJson<ScenarioSandbox>(
-    "/scenarios/sandbox/provision",
-    bearerHeader(args.bearer),
-    {
-      scenarioId: args.scenarioId,
-      chatSessionId: args.chatSessionId,
-      // Opt into peek/ack delivery. Without this the backend consumes the
-      // notice here, before any SSE writer exists to carry it.
-      noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
-    },
-    args.signal,
+  return keepSaneIdleWindow(
+    await postJson<ScenarioSandbox>(
+      "/scenarios/sandbox/provision",
+      bearerHeader(args.bearer),
+      {
+        scenarioId: args.scenarioId,
+        chatSessionId: args.chatSessionId,
+        // Opt into peek/ack delivery. Without this the backend consumes the
+        // notice here, before any SSE writer exists to carry it.
+        noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
+      },
+      args.signal,
+    ),
   );
 }
 
@@ -1045,6 +1047,35 @@ export async function releaseSandbox(args: {
  */
 export type TouchSandboxOutcome = "touched" | "gone" | "failed";
 
+/** The idle windows a reply may carry; anything outside is malformed. */
+const MIN_IDLE_WINDOW_MS = 60_000;
+const MAX_IDLE_WINDOW_MS = 24 * 60 * 60_000;
+
+/**
+ * A backend idle window, if `value` is a sane one: whole milliseconds between
+ * a minute and a day. Read once here, because it becomes a heartbeat delay
+ * and the warm bridge's window, and a malformed one would turn every held box
+ * into a stream of touches.
+ */
+export function readIdleMs(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_IDLE_WINDOW_MS &&
+    value <= MAX_IDLE_WINDOW_MS
+    ? value
+    : undefined;
+}
+
+/** Drops a reply's idle window unless it is a sane one. */
+function keepSaneIdleWindow<T extends { idleMs?: number }>(
+  result: ControlPlaneResult<T>,
+): ControlPlaneResult<T> {
+  if (result.ok && readIdleMs(result.value.idleMs) === undefined) {
+    delete result.value.idleMs;
+  }
+  return result;
+}
+
 /** A touch's outcome, with the box's idle window when the backend sent one. */
 export type TouchSandboxResult = {
   outcome: TouchSandboxOutcome;
@@ -1083,13 +1114,14 @@ export async function touchSandbox(args: {
     { quietNetworkErrors: true },
   );
   if (result.ok) {
-    const { idleMs } = result.value;
+    const idleMs = readIdleMs(result.value.idleMs);
     return {
       outcome: "touched",
-      ...(typeof idleMs === "number" && idleMs > 0 ? { idleMs } : {}),
+      ...(idleMs !== undefined ? { idleMs } : {}),
     };
   }
-  if (result.status === 404 || result.status === 409) return { outcome: "gone" };
+  if (result.status === 404 || result.status === 409)
+    return { outcome: "gone" };
   return { outcome: "failed" };
 }
 
