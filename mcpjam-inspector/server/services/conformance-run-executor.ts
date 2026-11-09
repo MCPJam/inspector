@@ -16,6 +16,7 @@ import {
   redactConformanceReportForSharing,
   runConformance,
   type ConformanceReport,
+  type ConformanceRunProgress,
   type ConformanceSuiteKind,
   type MCPServerConfig,
   type OAuthConformanceConfig,
@@ -555,6 +556,61 @@ export async function executePersistedConformanceRun(
     );
     return upsertReport(suiteKind, body, "failed", body.durationMs);
   };
+  const persistProgress = async (
+    event: ConformanceRunProgress
+  ): Promise<void> => {
+    const body = prepareReportForPersistence(
+      event.suiteKind,
+      event.report ??
+        syntheticIncompleteReport(
+          event.suiteKind,
+          event.error ?? "suite did not produce a report"
+        ),
+      args.oauthHeadlessCheckIds
+    );
+    const status = event.status === "completed" ? "completed" : "failed";
+    try {
+      await upsertReport(
+        event.suiteKind,
+        jsonSafeReport(body),
+        status,
+        body.durationMs
+      );
+    } catch (persistError) {
+      // A persistence failure must not rewrite a FINISHED suite as
+      // could-not-run: throwing here would bubble into the SDK's suite catch,
+      // which reports the suite failed with the serialization complaint as
+      // its error. Keep the verdict and degrade only the detail.
+      if (event.status !== "completed" || !event.report) {
+        throw persistError;
+      }
+      const message =
+        persistError instanceof Error
+          ? persistError.message
+          : String(persistError);
+      logger.warn(
+        "[conformance-run] report body could not be persisted; keeping suite summary",
+        {
+          runId: started.runId,
+          suiteKind: event.suiteKind,
+          error: message,
+        }
+      );
+      // Degraded from the PREPARED body, never the raw report: the fallback
+      // carries the verdict and the score forward, and the raw ones describe
+      // a scope this exam does not grade.
+      const fallback = summaryFallbackReport(body, event.suiteKind, message);
+      await upsertReport(
+        event.suiteKind,
+        jsonSafeReport(fallback),
+        status,
+        fallback.durationMs
+      );
+    }
+  };
+  // Writes the suites began before the run stopped, awaited before the run
+  // records what they left unfinished.
+  const progressWrites: Promise<void>[] = [];
 
   try {
     const refusal = await persistedConformanceTargetRefusal(args.server);
@@ -598,62 +654,15 @@ export async function executePersistedConformanceRun(
               ...(configs?.tasks ? { tasks: configs.tasks } : {}),
               ...(guarded.oauth ? { oauth: guarded.oauth } : {}),
               ...conformanceRunTelemetry(args.source),
-              onProgress: async (event) => {
+              onProgress: (event) => {
                 if (event.status === "running") return;
-                const body = prepareReportForPersistence(
-                  event.suiteKind,
-                  event.report ??
-                    syntheticIncompleteReport(
-                      event.suiteKind,
-                      event.error ?? "suite did not produce a report"
-                    ),
-                  args.oauthHeadlessCheckIds
-                );
-                const status =
-                  event.status === "completed" ? "completed" : "failed";
-                try {
-                  await upsertReport(
-                    event.suiteKind,
-                    jsonSafeReport(body),
-                    status,
-                    body.durationMs
-                  );
-                } catch (persistError) {
-                  // A persistence failure must not rewrite a FINISHED suite as
-                  // could-not-run: throwing here would bubble into the SDK's
-                  // suite catch, which reports the suite failed with the
-                  // serialization complaint as its error. Keep the verdict and
-                  // degrade only the detail.
-                  if (event.status !== "completed" || !event.report) {
-                    throw persistError;
-                  }
-                  const message =
-                    persistError instanceof Error
-                      ? persistError.message
-                      : String(persistError);
-                  logger.warn(
-                    "[conformance-run] report body could not be persisted; keeping suite summary",
-                    {
-                      runId: started.runId,
-                      suiteKind: event.suiteKind,
-                      error: message,
-                    }
-                  );
-                  // Degraded from the PREPARED body, never the raw report: the
-                  // fallback carries the verdict and the score forward, and the
-                  // raw ones describe a scope this exam does not grade.
-                  const fallback = summaryFallbackReport(
-                    body,
-                    event.suiteKind,
-                    message
-                  );
-                  await upsertReport(
-                    event.suiteKind,
-                    jsonSafeReport(fallback),
-                    status,
-                    fallback.durationMs
-                  );
-                }
+                // Past the deadline or a cancel, a suite still unwinding
+                // reports the requests the run cut off, not the server. The
+                // run records it as timed out instead.
+                if (lifecycle.signal.aborted) return;
+                const write = persistProgress(event);
+                progressWrites.push(write);
+                return write;
               },
             })
           ).catch((error: unknown) => {
@@ -663,6 +672,7 @@ export async function executePersistedConformanceRun(
             throw error;
           })
         : null;
+    await Promise.allSettled(progressWrites);
 
     if (refusal !== null) {
       // Nothing was dialled, so every suite that would have run records the
