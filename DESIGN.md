@@ -405,6 +405,90 @@ restyling it at the call site.
 Docs equivalents follow the product: buttons match the app's Add Server button,
 tables are bottom-hairline only, callouts are left-rail editorial marks.
 
+
+## Errors
+
+An error message owes the reader three things, and they come straight from
+Nielsen's ninth heuristic: **plain language, a precise statement of the problem,
+and a way out.** NN/g's dedicated error guidance (Neusesser & Sunwall, 2023)
+sharpens the same three into rules we can actually check.
+
+We already do this well in one place. `sdk/src/error-describer/catalog.ts` gives
+every known failure a title, a one-line explanation, its likely causes, its next
+steps, and a docs anchor. That schema **is** the checks below, in code. When a new
+error has a real diagnosis, it belongs in the catalog and renders through
+`ErrorCard`, not as a fresh string at the call site.
+
+### The four checks
+
+**E1 — Plain language.** Words the reader already knows. No error code as the
+message, no jargon they did not type, and never a raw `error.message`, response
+body or stack fragment. Raw text is unbounded, unreviewed and occasionally carries
+a token. It belongs in `ErrorCard`'s collapsed detail, which is redacted and
+copyable, never in the message itself.
+
+**E2 — Precisely indicates the problem.** Name what failed and which thing it
+failed on, and state the cause when we know it. "Copy failed" names neither.
+"Something went wrong" as an entire message names nothing, and is the example NN/g
+calls out by name. The same words are fine when they open a message that goes on
+to say something: "Something went wrong while saving. Your draft is still here."
+
+State the cause once, and only when it is real. The catalog's own rule: never pad
+a known cause out to a list, because it makes the product read as unsure of its
+own state.
+
+**E3 — Offers a way out.** A next step in words, or an affordance in reach: a
+Retry button, a link to the exact setting. When the reader genuinely can do
+nothing, say what will happen instead ("Retrying automatically"). Silence is not
+an option. Preserve what they typed, too. Never make someone re-enter a form to
+recover from our failure.
+
+**E4 — Consistent.** One failure verb: **"Couldn't"**. Not "Failed to", "Could
+not" or "Unable to". "Failed to" is a log verb, correct in `console.*` and thrown
+errors and wrong in front of a reader. One name per thing, too: pick *server* or
+*connection* and use it in every message about that thing.
+
+### Where the message goes
+
+Half of weak error copy is a placement problem. The message is thin because a
+toast cannot hold what it needed to say: no room for a cause, no room for a step,
+it disappears, and it cannot be copied.
+
+| The situation | The surface |
+| --- | --- |
+| The reader's own input is wrong or missing | **Inline**, beside the control |
+| A failure with a real cause and a real next step | **`ErrorCard`** |
+| A background failure, complete in one line | **Toast** |
+| The view cannot render at all | **Error boundary** |
+
+**Validation never goes in a toast.** NN/g is unambiguous (Flaherty, 2024): a
+dismissible toast for a validation error risks the reader missing the correction
+entirely, and errors belong adjacent to where they occurred. A message asking
+someone to select, enter or fix something belongs beside the control they are
+looking at.
+
+### Tone
+
+Don't blame the reader, and don't use "invalid" or "illegal" — NN/g names both.
+Frame the message around what the system needs rather than what the person got
+wrong.
+
+Don't minimize. "Simply reconnect" tells someone whose connection just died that
+their problem is trivial and they are slow. Cut "simply", "just", "easily" and
+"quickly" from error copy.
+
+Don't clear your throat. "Looks like", "It seems", "Unfortunately" and "Oops"
+delay the sentence the reader needs. Start at the problem. Skip humor as well: a
+joke goes stale the third time someone hits the same error.
+
+Keep short copy plain. No em dashes, no emoji, and no "not X, it's Y" contrasts —
+the false half costs a sentence someone reads while blocked.
+
+Color follows **Colors** above: `destructive` for failures, `warning` for state
+that needs attention, and `text-destructive` rather than `destructive-foreground`
+on a tinted surface. Match severity to impact; not every failure is `destructive`.
+
+
 ## Do's and Don'ts
 
 **Do**

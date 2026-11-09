@@ -34,6 +34,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WORKTREE, changedPaths } from "./ratchet.mjs";
 import { addedCopy, isUiFile } from "./ui-strings.mjs";
+import { errorsSection } from "../check-error-rules.mjs";
 
 export const MODELS = {
   classify: { id: "claude-haiku-5-5", input: 0.1, output: 0.5 },
@@ -74,7 +75,13 @@ export function collectAdded(base) {
 
 /** The skill body without its front matter: the same text the editors load. */
 export function rubric(path = RUBRIC_PATH) {
-  return readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, "");
+  const root = resolve(dirname(RUBRIC_PATH), "../../..");
+  const read = file => readFileSync(resolve(root, file), "utf8");
+  return [
+    readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, ""),
+    errorsSection(read("DESIGN.md")),
+    read(".agents/skills/error-message-review/SKILL.md"),
+  ].join("\n\n");
 }
 
 const schema = (properties) => ({
