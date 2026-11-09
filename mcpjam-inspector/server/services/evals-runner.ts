@@ -11,10 +11,8 @@ import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, as
 import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
-import {
-  assertOrgModelAllowed,
-  buildOrgModelFromResolvedConfig,
-} from "@mcpjam/sdk/model-factory";
+import { assertOrgModelAllowed } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "../utils/guarded-org-model.js";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -5654,7 +5652,7 @@ const runLocalIteration = async ({
               // turn's later steps and retries each ask again first.
               assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
               return admitEachLocalOrgAttempt(
-                buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id)),
+                buildGuardedOrgModel(admitted.provider, String(modelDefinition.id)),
                 admitted.admission,
                 String(modelDefinition.id),
               );

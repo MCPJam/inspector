@@ -182,7 +182,7 @@ describe("an Azure resource URL, hosted", () => {
     );
     const fetchMock = vi.fn(async () => Response.json(RESPONSES_REPLY));
     vi.stubGlobal("fetch", fetchMock);
-    await generateText({
+    const result = await generateText({
       model: createLlmModel(
         { id: "deployment-1", name: "d", provider: "azure" },
         "sk-test",
@@ -193,10 +193,40 @@ describe("an Azure resource URL, hosted", () => {
       ),
       prompt: "hi",
       maxRetries: 0,
-    }).catch((thrown: unknown) => thrown);
-    expect(fetchMock).toHaveBeenCalled();
+    });
+    expect(result.text).toBe("ok");
     for (const call of fetchMock.mock.calls) {
       expect(new URL(String(call[0])).hostname).toBe("good.example.test");
     }
+  });
+});
+
+describe("a hosted local-runtime organization connection", () => {
+  it("re-checks a redirect, which cannot reach cloud metadata", async () => {
+    const { buildGuardedOrgModel } = await import("../guarded-org-model.js");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: "http://169.254.169.254/latest/meta-data/" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await generateText({
+      model: buildGuardedOrgModel(
+        {
+          providerKey: "custom:gateway",
+          baseUrl: "https://gateway.example.test/v1",
+          protocol: "openai-compatible",
+          modelIds: ["gpt-x"],
+          apiKey: "sk-test",
+        },
+        "custom:gateway:gpt-x",
+      ),
+      prompt: "hi",
+      maxRetries: 0,
+    }).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(BlockedEgressTargetError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

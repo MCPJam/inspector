@@ -671,9 +671,18 @@ function resolveOrgModelId(
  */
 export function buildOrgModelFromResolvedConfig(
   config: OrgProviderResolvedConfig,
-  modelId: string
+  modelId: string,
+  options: {
+    /**
+     * Sent with every request to a base URL the organization typed (Azure,
+     * Bedrock, Ollama, custom). A hosted caller passes its egress guard here,
+     * so a redirect from that URL is judged before it is followed.
+     */
+    fetch?: typeof fetch;
+  } = {}
 ): LanguageModel {
   const { providerKey } = config;
+  const endpointFetch = options.fetch ? { fetch: options.fetch } : {};
   // Strip the "providerKey/" prefix that UI model IDs include for built-in
   // providers (e.g. "openai/gpt-5-mini" → "gpt-5-mini" for the OpenAI SDK).
   const builtinPfx = `${providerKey}/`;
@@ -729,6 +738,7 @@ export function buildOrgModelFromResolvedConfig(
       )?.[1];
     return createAzure({
       apiKey,
+      ...endpointFetch,
       ...(resourceName ? { resourceName } : { baseURL: baseUrl }),
     })(m) as unknown as LanguageModel;
   }
@@ -745,6 +755,7 @@ export function buildOrgModelFromResolvedConfig(
     return createAmazonBedrock({
       apiKey: requireOrgSecret(config, "Amazon Bedrock"),
       baseURL: requireOrgBaseUrl(config, "Amazon Bedrock"),
+      ...endpointFetch,
     })(m) as unknown as LanguageModel;
   }
   if (providerKey === "ollama") {
@@ -754,6 +765,7 @@ export function buildOrgModelFromResolvedConfig(
       : `${raw.replace(/\/+$/, "")}/api`;
     return createOllama({
       baseURL: normalized,
+      ...endpointFetch,
     })(m) as unknown as LanguageModel;
   }
   if (providerKey.startsWith("custom:")) {
@@ -764,9 +776,10 @@ export function buildOrgModelFromResolvedConfig(
       return createAnthropic({
         apiKey,
         baseURL: baseUrl,
+        ...endpointFetch,
       })(resolvedModelId) as unknown as LanguageModel;
     }
-    const openai = createOpenAI({ apiKey, baseURL: baseUrl });
+    const openai = createOpenAI({ apiKey, baseURL: baseUrl, ...endpointFetch });
     return openai.chat(resolvedModelId);
   }
 
