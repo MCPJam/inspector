@@ -556,7 +556,6 @@ export type HarnessCreateArgs = {
 type BrokeredModelAccessArm = {
   modelAccess: "broker";
   externalAccountCredentialEnv?: never;
-  externalAccountBrokerBinding?: never;
 };
 
 /** External-account model access: the runtime authenticates with the
@@ -564,57 +563,21 @@ type BrokeredModelAccessArm = {
 type ExternalAccountModelAccessArm = {
   modelAccess: "external-account";
   /**
-   * The environment variable names this runtime needs from the project's
-   * secrets, e.g. `["CURSOR_API_KEY"]` (which is exactly what
-   * `@ai-sdk/harness-cursor` declares as its own `credentialEnv`).
+   * The environment variable names the runtime authenticates with, e.g.
+   * `["CURSOR_API_KEY"]` (which is exactly what `@ai-sdk/harness-cursor`
+   * declares as its own `credentialEnv`).
    *
    * REQUIRED on this arm, and that is the point: an external-account harness
    * that did not name its credential would have the turn runner silently start
    * it with no auth at all, and the failure would surface as an opaque error
-   * from inside the box. A missing secret is refused up front instead, with
-   * copy that names the variable and where to set it.
+   * from inside the box. A turn whose organization has no ready key is refused
+   * up front instead.
    *
-   * The turn runner treats every name here as required, pulls them OUT of the
-   * box's session env (so they are not also handed to every other command that
-   * runs there) and passes them to the adapter as its auth environment.
+   * The turn runner hands the adapter a placeholder under each name (the
+   * backend's egress injects the organization's key on the vendor's hosts)
+   * and keeps a project secret of the same name out of the box's session env.
    */
   externalAccountCredentialEnv: readonly [string, ...string[]];
-  /**
-   * How each credential above can be satisfied by a BROKERED project secret
-   * instead of a materialized one — the binding the row has to carry for the
-   * backend's egress transform to actually deliver it.
-   *
-   * Keyed by the same env-var name. A name with no entry here can only ever be
-   * satisfied materialized, which is the honest default: brokering works only
-   * when the runtime authenticates by putting the credential in a HEADER, on a
-   * host we can name up front.
-   *
-   * These values are not a guess. They are read off the adapter's own
-   * `credentialBrokering` declaration — the request it says carries the key —
-   * so a runtime that changes where it authenticates changes this too, rather
-   * than silently brokering nothing.
-   */
-  externalAccountBrokerBinding?: Readonly<
-    Record<string, HarnessExternalAccountBrokerBinding>
-  >;
-};
-
-/**
- * The project-secret binding that makes one external-account credential
- * deliverable by MCPJam's egress proxy rather than as a value in the box.
- *
- * Mirrors the backend's `projectSecrets` broker triple exactly
- * (`brokerHosts` / `brokerHeader` / `brokerTemplate`), because that is what a
- * user has to type into Project Settings → Secrets and what the refusal copy
- * has to be able to quote back at them.
- */
-export type HarnessExternalAccountBrokerBinding = {
-  /** Exact hostnames the credential header must be injected on. */
-  hosts: readonly [string, ...string[]];
-  /** HTTP header name, LOWERCASE — the backend canonicalizes rows that way. */
-  header: string;
-  /** Header value template; `{}` is where the plaintext is substituted. */
-  template: string;
 };
 
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
@@ -1175,32 +1138,6 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // the backend's egress injects the key. No ready key ⇒ the turn is refused
   // up front, never defaulted.
   externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
-  // …and it can be BROKERED, which is the preferred delivery and the only
-  // one hosted evals and swarms accept at all (they refuse an environment that
-  // selects materialized secrets — `evalSandboxes.ts`'s
-  // `materialized_secrets_unsupported`, `journeyRuns.ts`'s
-  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` — because only the chat path
-  // resolves and injects a materialized value, so on a runner-claimed attempt
-  // it would be silently absent).
-  //
-  // The triple is READ OFF THE ADAPTER, not invented: `@ai-sdk/harness-cursor`
-  // declares its own `credentialBrokering` against
-  // `POST https://api2.cursor.sh/auth/exchange_user_api_key` carrying
-  // `Authorization: Bearer <CURSOR_API_KEY>`. MCPJam's egress transform is
-  // host-scoped rather than path-scoped, so brokering the host covers that
-  // exchange and any sibling call that authenticates the same way.
-  //
-  // Declared in `shared/external-credential-selection.ts` so the composer and
-  // the setup step that creates the secret use the SAME binding. (Lowercase
-  // header: `validateBrokerBinding` canonicalizes stored rows that way, so this
-  // is what a saved secret compares equal to.)
-  externalAccountBrokerBinding: {
-    [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env]: {
-      hosts: [...EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.hosts],
-      header: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.header,
-      template: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.template,
-    },
-  },
   defaultPermissionMode: "allow-all",
   // The ACP bridge routes every tool call through `session/request_permission`
   // and emits `tool-approval-request` for anything it does not auto-approve,
