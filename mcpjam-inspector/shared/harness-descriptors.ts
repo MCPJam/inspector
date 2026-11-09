@@ -97,33 +97,37 @@ const LOOP_CONTROLS: Record<
   },
 };
 
-/** Runtime facts shared by the adapters, admission gates and client controls. */
+/**
+ * Runtime facts shared by the adapters, admission gates and client controls.
+ * `protocol` is the wire API the harness speaks to its model; `orgKeys` says
+ * whether it may run on an organization connection that serves that API.
+ */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
     displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
     modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "anthropic", profile: "anthropic-native" },
+    orgUpstream: { provider: "anthropic", profile: "anthropic-native" }, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS["claude-code"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   },
   codex: {
     displayName: "Codex", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
     modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "openai", profile: "openai-native" },
+    orgUpstream: { provider: "openai", profile: "openai-native" }, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
     displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
     modelAccess: "broker", local: false, guest: false,
-    orgUpstream: { provider: "openai", profile: "openai-native" },
+    orgUpstream: { provider: "openai", profile: "openai-native" }, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
-    orgUpstream: null, protocol: null,
+    orgUpstream: null, orgKeys: false, protocol: null,
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
@@ -131,7 +135,7 @@ export const HARNESS_DESCRIPTORS = {
   opencode: {
     displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
     modelAccess: "broker", local: false, guest: false,
-    orgUpstream: null,
+    orgUpstream: null, orgKeys: false,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },

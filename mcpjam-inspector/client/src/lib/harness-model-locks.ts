@@ -9,21 +9,25 @@ import { isRuntimeAccountModel } from "@/shared/model-provider";
  *
  * Whose key pays is decided first, per ROW: a harness with a qualified
  * org-key path (Claude Code, Codex) runs an MCPJam-provided row on MCPJam's
- * key, or a row from an organization connection on its own vendor (Claude
- * Code → Anthropic, Codex → OpenAI) on the organization's key, read on the
- * canonical id that row's saved selection names. OpenCode is platform-funded
- * only. Any other row (a key on this machine, an org connection a harness
- * cannot run on) is refused, exactly as the server refuses it.
+ * key, or a row from an organization connection that serves the API the
+ * harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI Responses)
+ * on the organization's key, read on the canonical id that row's saved
+ * selection names. OpenCode is platform-funded only. Any other row (a key on
+ * this machine, an org connection a harness cannot run on) is refused, exactly
+ * as the server refuses it.
  *
  * While the organization requires its own provider keys (`HarnessKeyPolicy`),
  * MCPJam-provided models are off: a brokered harness runs only on an
- * organization connection to its own vendor, and the copy says so.
+ * organization connection that serves its API, and the copy says so.
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
-  harnessOrgUpstream,
+  harnessRunsOnConnection,
+  harnessTakesOrgKeys,
+} from "@/shared/harness-connection-api";
+import {
   harnessModelSupport,
   harnessModelVerdictAdmits,
   harnessNoRunnableModelReason,
@@ -76,11 +80,6 @@ function harnessModelRefusalReason(
   return harnessModelVerdictAdmits(verdict, purpose)
     ? undefined
     : verdict.reason;
-}
-
-/** Does this harness run on an organization's own provider key at all? */
-function harnessTakesOrgKeys(harnessId: string): boolean {
-  return harnessOrgUpstream(harnessId) !== null;
 }
 
 /**
@@ -140,10 +139,9 @@ export function harnessRowModelId(
   }
   if (
     model.orgProvider &&
-    harnessRunsOnOrgProvider(
-      target.harnessId,
-      providerKeyForModelDefinition(model),
-    )
+    harnessRunsOnConnection(target.harnessId, {
+      providerKey: providerKeyForModelDefinition(model),
+    })
   ) {
     // The canonical id its saved selection names — the id the server reads
     // the table on. A row that cannot form one cannot be routed to the org
@@ -185,9 +183,9 @@ export function harnessRowRefusalReason(
  * Why a SAVED choice (an id and, when it has one, its selection) cannot run on
  * `target` — for a surface that holds choices rather than picker rows (the
  * composer's resolve, `expandModelChoices`). A local selection never runs on a
- * brokered harness; an org selection runs only on the harness's own vendor,
- * read from its canonical id's prefix (the server, which knows the
- * connection's provider, re-checks at admission).
+ * brokered harness; an org selection runs only where the provider its
+ * canonical id's prefix names serves the harness's API (the server, which
+ * knows the connection's provider, re-checks at admission).
  */
 export function harnessChoiceRefusalReason(
   choice: {
