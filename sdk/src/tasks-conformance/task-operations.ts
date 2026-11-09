@@ -16,6 +16,7 @@ import {
   errorCode,
 } from "./metadata.js";
 import { ShapeVerdict, validateCompletionAck } from "./shapes.js";
+import { checkToolArgs } from "../conformance-tool-args.js";
 import {
   TERMINAL_STATUSES,
   PARKED_INPUT_REQUIRED_POLLS,
@@ -252,12 +253,17 @@ export class TaskOperations {
       // ZodError for a frame that is not a valid JSON-RPC message, and the
       // extension guard throws for a result that is not an object.
       if (!isMalformedResponseError(error)) {
+        const answersProblem = describeAnswersGap(
+          task.inputRequests,
+          responses
+        );
         return {
           outcome: "update-rejected",
           requested,
           answered,
           message: errorMessage(error),
           code: errorCode(error),
+          ...(answersProblem ? { answersProblem } : {}),
         };
       }
       ackVerdict = {
@@ -378,6 +384,8 @@ export class TaskOperations {
     detail: Record<string, unknown>;
     /** Set when the probe never produced a server verdict to grade. */
     unavailable?: string;
+    /** The task was already finished and forgotten: nothing left to cancel. */
+    taskGone?: true;
   }> {
     const problems: string[] = [];
     const warnings: string[] = [];
@@ -413,6 +421,7 @@ export class TaskOperations {
           detail: { taskId, cancelCode: code },
           unavailable:
             "The task was no longer available when cancellation was sent, so its acknowledgment could not be checked.",
+          taskGone: true,
         };
       }
       problems.push(
@@ -516,4 +525,46 @@ export class TaskOperations {
 
     return { task: last };
   }
+}
+
+/**
+ * Why the configured answers cannot satisfy what the task asked for, when we
+ * can tell: a request left unanswered, an answer to a request the task never
+ * made, or accepted elicitation content its `requestedSchema` rejects. A
+ * rejection of such answers is the caller's setup to fix, not a server fault.
+ */
+export function describeAnswersGap(
+  inputRequests: unknown,
+  responses: Record<string, unknown>
+): string | undefined {
+  if (!isRecord(inputRequests)) return undefined;
+  const missing = Object.keys(inputRequests).filter(
+    (key) => !Object.hasOwn(responses, key)
+  );
+  if (missing.length > 0) {
+    return `no answer for ${missing.map((key) => JSON.stringify(key)).join(", ")}`;
+  }
+  const extra = Object.keys(responses).filter(
+    (key) => !Object.hasOwn(inputRequests, key)
+  );
+  if (extra.length > 0) {
+    return `answers for requests the task did not make: ${extra
+      .map((key) => JSON.stringify(key))
+      .join(", ")}`;
+  }
+  for (const [key, request] of Object.entries(inputRequests)) {
+    if (!isRecord(request) || request.method !== "elicitation/create") continue;
+    const params = isRecord(request.params) ? request.params : undefined;
+    const response = responses[key];
+    if (!params?.requestedSchema || !isRecord(response)) continue;
+    if (response.action !== "accept") continue;
+    const verdict = checkToolArgs(
+      params.requestedSchema,
+      response.content ?? {}
+    );
+    if (verdict.verdict === "invalid") {
+      return `the answer to ${JSON.stringify(key)} doesn't match what it asked for (${verdict.message})`;
+    }
+  }
+  return undefined;
 }

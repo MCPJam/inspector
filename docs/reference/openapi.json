@@ -32399,6 +32399,15 @@
               "reason": {
                 "type": "string"
               },
+              "refusal": {
+                "type": "string",
+                "enum": [
+                  "cloud_browser_unavailable",
+                  "cloud_browser_not_configured",
+                  "cloud_browser_unavailable_installation"
+                ],
+                "description": "Why a requested browser did not attach, when it can be named. `cloud_browser_unavailable`: Cloud Browser cannot start right now; retry in a few minutes. `cloud_browser_not_configured`: Cloud Browser is not available on this deployment yet. `cloud_browser_unavailable_installation`: this self-hosted installation has no working Cloud Browser setup. `reason` carries the human-readable detail."
+              },
               "screenshots": {
                 "type": "array",
                 "items": {

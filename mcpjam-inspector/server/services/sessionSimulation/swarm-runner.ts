@@ -1543,6 +1543,10 @@ async function runJourneyFanOut(
               ...(attemptSandbox
                 ? { sandboxBinding: attemptSandbox.binding }
                 : {}),
+              // Browser's own desktop, when the shell's box is a pinned image.
+              ...(attemptSandbox?.browserBinding
+                ? { browserSandboxBinding: attemptSandbox.browserBinding }
+                : {}),
               // The SAME box, handed to the harness — which takes it on the
               // handler options rather than through `resolveHostTools`, because
               // `runHarnessTurn` does not use the tool resolver at all. Only
@@ -2057,7 +2061,8 @@ async function runJourneyFanOut(
             // reaps it, and no video is ever worth that.
             try {
               const recording = await collectHostedRecordingBeforeRelease(
-                attemptSandbox.sandboxRowId,
+                attemptSandbox.browserBinding?.sandboxRowId ??
+                  attemptSandbox.sandboxRowId,
               );
               if (recording) {
                 // Through the SAME outbox the local harness's replay uses:

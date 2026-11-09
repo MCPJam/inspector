@@ -24,6 +24,8 @@
  */
 import {
   HarnessCapabilityUnsupportedError,
+  harnessSessionDataDirectoryPath,
+  harnessStateDirectoryPath,
   harnessV1DiagnosticFromBridgeFrame,
   type HarnessV1,
   type HarnessV1ContinueTurnState,
@@ -44,6 +46,7 @@ import {
   createBridgeStartupError,
   createBridgeToken,
   drainBridgeProcessStream,
+  extractHarnessPromptContent,
   forwardBridgeProcessStream,
   getRestrictedSandboxSession,
   markBridgeStarting,
@@ -278,18 +281,6 @@ function fingerprintTurnConfiguration(input: {
   return hash.digest("hex").slice(0, 16);
 }
 
-function extractUserText(prompt: HarnessV1Prompt | undefined): string {
-  if (prompt == null) return "";
-  if (typeof prompt === "string") return prompt;
-  const content = prompt.content;
-  if (typeof content === "string") return content;
-  const parts: string[] = [];
-  for (const part of content) {
-    if (part.type === "text") parts.push(part.text);
-  }
-  return parts.join("\n\n");
-}
-
 export function createCodexAppServer(
   settings: CodexAppServerSettings = {},
 ): HarnessV1<typeof CODEX_APPSERVER_BUILTIN_TOOLS> {
@@ -345,10 +336,10 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
        * WHERE THINGS LIVE — mirroring the published adapter, because the
        * framework and the local provider both assume this layout:
        *
-       *  - the bootstrap recipe is applied by the FRAMEWORK under the session's
-       *    DEFAULT working directory, so that is where `bridge.mjs` is;
+       *  - the bootstrap recipe is applied by the FRAMEWORK under
+       *    `$HOME/.ai-sdk-harness`, so that is where `bridge.mjs` is;
        *  - bridge and Codex state go under
-       *    `<defaultWorkingDirectory>/.agent-runs/<sessionId>`, which on a
+       *    `$HOME/.ai-sdk-harness/.agent-runs/<sessionId>`, which on a
        *    cloud box is the box and on a user's machine is session-owned state;
        *  - only the agent's cwd is `sessionWorkDir` — which locally is the
        *    user's checkout, and must never receive Codex's state or rollouts.
@@ -367,11 +358,15 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
       const sandboxHomeDir = await resolveSandboxHomeDir({
         sandbox: toolSafeSandboxSession,
       });
+      const stateDirectory = harnessStateDirectoryPath({ sandboxHomeDir });
       const bootstrapDir = posix.resolve(
-        defaultWorkingDirectory,
+        stateDirectory,
         runtime.bootstrapDir,
       );
-      const sessionDataDir = `${defaultWorkingDirectory}/.agent-runs/${startOpts.sessionId}`;
+      const sessionDataDir = harnessSessionDataDirectoryPath({
+        stateDirectory,
+        sessionId: startOpts.sessionId,
+      });
       const bridgeStateDir = `${sessionDataDir}/bridge`;
       const timeoutMs = settings.startupTimeoutMs ?? 120_000;
 
@@ -895,7 +890,7 @@ function createRetainedBridgeSession(input: {
   ): StartMessage => {
     const message = {
       type: "start" as const,
-      prompt: extractUserText(turnInput.prompt),
+      prompt: extractHarnessPromptContent({ prompt: turnInput.prompt }),
       ...(input.settings.warmAgent ? { warmWorkDir: input.workDir, nativeMcpServers: input.settings.nativeMcpServers ?? {} } : {}),
       tools: turnInput.tools.map((tool) => ({
         name: tool.name,

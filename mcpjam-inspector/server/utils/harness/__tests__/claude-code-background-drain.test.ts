@@ -1064,14 +1064,22 @@ describe("background drain patch", () => {
     const vendor = await createClaudeCode({ auth: AUTH }).getBootstrap!();
     const source = vendor!.files.find((file) =>
       file.path.endsWith("/bridge.mjs"),
-    )!.content;
+    )!.content.replaceAll("\t", "  ");
     // Group D runs after Group B in the real patcher; here the Group B anchor
     // is supplied so the drain applies to the vendor bridge on its own.
     const withGroupB = source.replace(
       `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }`,
       `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }
     if (type === "result" && msg.subtype === "success") {

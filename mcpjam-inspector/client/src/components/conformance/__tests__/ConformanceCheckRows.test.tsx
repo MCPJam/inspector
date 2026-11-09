@@ -89,7 +89,7 @@ describe("CheckRow", () => {
       render(<CheckRow check={taskCheck} />);
       expect(screen.getByText("Not run")).toHaveAttribute(
         "title",
-        "This check needs an input before it can run.",
+        "This check needs a setup change before it can run.",
       );
       expect(screen.queryByText(message)).toBeNull();
       expect(

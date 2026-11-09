@@ -56,6 +56,7 @@ const { historyDetail } = vi.hoisted(() => ({ historyDetail: vi.fn() }));
 vi.mock("@/components/chat-v2/history/chat-history-prefetch", () => ({
   getCachedChatHistoryDetail: historyDetail,
 }));
+let sessionModel: { id: string; name: string; provider: string; hosted?: boolean } | undefined;
 const mockUseChatSession = {
   loadChatSession: vi.fn().mockResolvedValue(undefined),
   // Elicitation surface (hosted). These suites never elicit, but the shape
@@ -67,6 +68,16 @@ const mockUseChatSession = {
   dismissUrlElicitationRequired: vi.fn(),
   hiddenEnvironmentActive: false,
   isSessionBootstrapComplete: true,
+  // The hook resolves the card's own row; a lazy read because `model` is
+  // declared below this mock.
+  get selectedModel() {
+    return sessionModel ?? model;
+  },
+  // Tests restore the mock with `Object.assign`; writing the card's own row
+  // back clears the per-test override.
+  set selectedModel(value: typeof sessionModel) {
+    sessionModel = value === model ? undefined : value;
+  },
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
@@ -156,15 +167,25 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
     model,
     showComparisonChrome = true,
     showTraceTabs,
+    identityActions,
+    identitySummary,
   }: {
     model: { name: string };
     showComparisonChrome?: boolean;
     showTraceTabs: boolean;
+    identityActions?: React.ReactNode;
+    identitySummary?: React.ReactNode;
   }) => {
     if (!showComparisonChrome && !showTraceTabs) {
       return null;
     }
-    return <div data-testid="compare-card-header">{model.name}</div>;
+    return (
+      <div data-testid="compare-card-header">
+        {model.name}
+        {identityActions}
+        {identitySummary}
+      </div>
+    );
   },
 }));
 
@@ -235,7 +256,11 @@ function Harness({
   claimBroadcastDelivery,
   hostCapsResolver,
   pluginComputerAttached,
+  renderPaneHeader,
 }: {
+  renderPaneHeader?: Parameters<
+    typeof MultiModelPlaygroundCard
+  >[0]["renderPaneHeader"];
   hostCapsResolver?: Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"];
   pluginComputerAttached?: boolean;
   active?: boolean;
@@ -278,6 +303,8 @@ function Harness({
       </div>
       <MultiModelPlaygroundCard
         active={active}
+        renderPaneHeader={renderPaneHeader}
+        showIdentityHeader={!!renderPaneHeader}
         hostCapsResolver={hostCapsResolver}
         pluginComputerAttached={pluginComputerAttached}
         readinessNotice={readinessNotice}
@@ -333,6 +360,36 @@ describe("MultiModelPlaygroundCard", () => {
     } satisfies NonNullable<Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"]>;
     render(<Harness compareKind="host" pluginComputerAttached hostCapsResolver={saved} />);
     expect(composition.inputs).toHaveBeenLastCalledWith(expect.objectContaining({ computerAttached: false }));
+  });
+
+  it("passes the host column's harness to its session and holds Send on a drifted row", () => {
+    const saved = {
+      id: "codex_client", schemaVersion: 2, hostStyle: "chatgpt", modelId: String(model.id),
+      systemPrompt: "", temperature: 0.7, requireToolApproval: false, harness: "codex",
+      serverIds: [], optionalServerIds: [], connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {}, hostContext: {},
+    } satisfies NonNullable<Parameters<typeof MultiModelPlaygroundCard>[0]["hostCapsResolver"]>;
+    const readiness = vi.fn();
+    const { rerender } = render(
+      <Harness compareKind="host" hostCapsResolver={saved} onSendReadinessChange={readiness} />,
+    );
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({
+      harnessModelTarget: { harnessId: "codex" },
+    });
+    expect(readiness).toHaveBeenLastCalledWith(expect.any(String), true, undefined);
+    sessionModel = { ...model, id: "openai/gpt-5.5", name: "GPT-5.5" };
+    try {
+      rerender(<Harness compareKind="host" hostCapsResolver={{ ...saved }} onSendReadinessChange={readiness} />);
+      expect(readiness).toHaveBeenLastCalledWith(
+        expect.any(String),
+        false,
+        "GPT-5 Mini's model or connection changed. Send again to use the current one.",
+      );
+    } finally {
+      sessionModel = undefined;
+    }
+    rerender(<Harness compareKind="model" onSendReadinessChange={readiness} />);
+    expect(lane.chatOptions.mock.calls.at(-1)![0]).toMatchObject({ harnessModelTarget: null });
   });
 
   it("passes a model card's selection while host cards explicitly inherit", () => {
@@ -421,6 +478,34 @@ describe("MultiModelPlaygroundCard", () => {
       serverId: "plugin_server",
       name: "Plugin",
     });
+  });
+
+  it("gives a pane's header the hidden environment its lane composed", () => {
+    composition.wanted = true;
+    const renderPaneHeader = vi.fn(() => ({
+      actions: <button type="button">Pane settings</button>,
+      summary: <p>Pane summary</p>,
+    }));
+    const { rerender } = render(
+      <Harness compareKind="host" renderPaneHeader={renderPaneHeader} />,
+    );
+    // The lane does not run the hidden environment for this model yet.
+    expect(renderPaneHeader).toHaveBeenLastCalledWith({
+      environmentId: null,
+      pending: false,
+    });
+    mockUseChatSession.hiddenEnvironmentActive = true;
+    rerender(
+      <Harness compareKind="host" renderPaneHeader={renderPaneHeader} />,
+    );
+    expect(renderPaneHeader).toHaveBeenLastCalledWith({
+      environmentId: "env_column",
+      pending: false,
+    });
+    expect(
+      screen.getByRole("button", { name: "Pane settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pane summary")).toBeInTheDocument();
   });
 
   it("omits plugin Apps when this model does not run the hidden environment", () => {

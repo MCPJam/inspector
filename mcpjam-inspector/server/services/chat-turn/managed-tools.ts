@@ -5,7 +5,7 @@ import {
   pageToolsSnapshotFrom,
 } from "../browserd/page-tools-peek.js";
 import { type MintedDeclaredTool } from "@/shared/declared-tools";
-import { webmcpPageToolsMode } from "../../config.js";
+import { HOSTED_MODE, webmcpPageToolsMode } from "../../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type Context } from "hono";
 import { ErrorCode, WebRouteError } from "../../routes/web/auth.js";
@@ -25,6 +25,12 @@ import {
   resolveHostTools,
   type TrustedSandboxBinding,
 } from "../../utils/built-in-tools/registry.js";
+import {
+  advertisesBrowser,
+  appendBrowserRefusalContext,
+  classifyBrowserRefusal,
+  recordBrowserSuppression,
+} from "../../utils/built-in-tools/browser-refusal.js";
 import {
   ackScenarioSandboxNotices,
   isScenarioSandboxNotice,
@@ -612,6 +618,7 @@ export async function prepareManagedTools(args: {
         currentPageToolsBinding: () => BrowserPageToolsSnapshot | undefined;
       }
     | undefined;
+  const browserSuppression = recordBrowserSuppression();
   const builtInTools = resolveHostTools(
     {
       builtInToolIds: turnBuiltInToolIds,
@@ -649,6 +656,7 @@ export async function prepareManagedTools(args: {
         : {}),
       isGuest: Boolean(c.get("guestId")),
       isScenarioSession: turnMode === "recorded",
+      onToolSuppressed: browserSuppression.onToolSuppressed,
       // Lets a spend inside a shared scenario bill the scenario OWNER instead
       // of the visitor, who has no wallet to charge. Only web search reads
       // it today; the model turn and voice already send their own.
@@ -715,14 +723,23 @@ export async function prepareManagedTools(args: {
     ...(executionScope ? { executionScope } : {}),
   });
 
+  // Browser is on for this client and missing from this turn. The model is
+  // told why every turn it applies; nobody gets a toast for an ordinary turn.
+  const browserRefusal = classifyBrowserRefusal({
+    configured: (turnBuiltInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID),
+    advertised: advertisesBrowser(builtInTools),
+    suppression: browserSuppression.code,
+    hostedMode: HOSTED_MODE,
+  });
+
   // The sandbox notices must reach the MODEL, not only the user's toast.
   //
   // The SSE part warns the human; the model still receives the old transcript
   // and, without this, reasons about files that are gone. Turn-injected and
   // never persisted, like the blueprint block above.
-  const effectiveSystemPrompt = appendSandboxNoticeContext(
-    withEnvironmentContext,
-    sandboxNotices,
+  const effectiveSystemPrompt = appendBrowserRefusalContext(
+    appendSandboxNoticeContext(withEnvironmentContext, sandboxNotices),
+    browserRefusal,
   );
 
   return {

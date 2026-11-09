@@ -1753,6 +1753,22 @@ describe("browser turn integration", () => {
     expect(body.browser.effectivePolicy.tools).toContain("browser_observe");
     expect(body.browser.effectivePolicy.tools).not.toContain("browser_navigate");
   });
+  it.each([
+    ["hosted_transient", "cloud_browser_unavailable", "Cloud Browser is unavailable for this turn."],
+    ["hosted_not_configured", "cloud_browser_unavailable_installation", "Cloud Browser is unavailable on this installation."],
+  ] as const)("returns a %s refusal to the caller and tells the model", async (code, refusal, modelText) => {
+    const input = browserFixture();
+    vi.mocked(browserRegistry.resolveHostTools).mockImplementation((_config, ctx) => {
+      ctx?.onToolSuppressed?.({ id: "browser", reason: "browser is not available", code });
+      return undefined;
+    });
+    const response = await turn(input);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.browser).toMatchObject({ attached: false, refusal, reason: "browser is not available" });
+    expect(sessionBrowser.openConversationBrowser).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock.mock.calls[0][0].systemPrompt).toContain(`system\n\n## Browser\n\n${modelText}`);
+  });
   it("retries failed evidence at terminal cleanup without failing the turn", async () => {
     const input = browserFixture();
     const flush = vi.fn().mockRejectedValueOnce(new Error("storage unavailable")).mockResolvedValue({ written: 1, pending: 0, videoAttached: false });

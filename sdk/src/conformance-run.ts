@@ -21,6 +21,7 @@ import { MCPConformanceTest } from "./mcp-conformance/runner.js";
 import type { MCPConformanceConfig } from "./mcp-conformance/types.js";
 import { OAuthConformanceTest } from "./oauth-conformance/runner.js";
 import type { OAuthConformanceConfig } from "./oauth-conformance/types.js";
+import { resolveOAuthLoginAuthorizationPlan } from "./oauth-login.js";
 import { MCPTasksConformanceTest } from "./tasks-conformance/runner.js";
 import {
   captureConformanceRun,
@@ -32,6 +33,7 @@ import {
   serverConfigFetch,
   unresolvedVersionReport,
 } from "./conformance-run-version.js";
+import { credentialsFromServerConfig } from "./conformance-login.js";
 import type { MCPTasksConformanceConfig } from "./tasks-conformance/types.js";
 import {
   buildConformanceRunReport,
@@ -59,6 +61,18 @@ export type ConformanceRunProgress = {
   error?: string;
 };
 
+/**
+ * The OAuth suite's config in a run. `registrationStrategy: "auto"` chooses as
+ * `oauth login` does, once the run has its protocol version: CIMD exists only
+ * from 2025-11-25, so the choice cannot be made before the run pins one.
+ */
+export type RunConformanceOAuthConfig = Omit<
+  OAuthConformanceConfig,
+  "registrationStrategy"
+> & {
+  registrationStrategy: OAuthConformanceConfig["registrationStrategy"] | "auto";
+};
+
 export type RunConformanceConfig = {
   /**
    * The target, and the transport every suite dials it through.
@@ -78,7 +92,7 @@ export type RunConformanceConfig = {
   protocol?: Partial<Omit<MCPConformanceConfig, "url" | "command" | "args">>;
   apps?: Partial<Omit<MCPAppsConformanceConfig, "url" | "command" | "args">>;
   tasks?: Partial<Omit<MCPTasksConformanceConfig, "url" | "command" | "args">>;
-  oauth?: OAuthConformanceConfig;
+  oauth?: RunConformanceOAuthConfig;
   /**
    * Stops the run. Every suite receives it beside its own signal, so aborting
    * it ends the suites still running.
@@ -189,11 +203,14 @@ async function runSuite(
           "OAuth is opt-in: pass an oauth config with an explicit auth strategy",
         );
       }
-      const result = await new OAuthConformanceTest({
+      const oauth = await resolveOAuthRegistration({
         ...config.oauth,
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }
           : {}),
+      });
+      const result = await new OAuthConformanceTest({
+        ...oauth,
         __suppressTelemetry: true,
       }).run();
       const report = toConformanceReport(result);
@@ -216,6 +233,39 @@ function withRunSignal(config: RunConformanceConfig): RunConformanceConfig {
     ...(config.oauth
       ? { oauth: { ...config.oauth, signal: join(config.oauth.signal) } }
       : {}),
+  };
+}
+
+/**
+ * Settle `"auto"` with `oauth login`'s plan at the version the suite will run:
+ * pre-registered credentials when the caller gave them, else what the
+ * authorization server advertises (CIMD, then DCR). A blocked plan throws, and
+ * the run reports the suite as one that could not run.
+ */
+async function resolveOAuthRegistration(
+  oauth: RunConformanceOAuthConfig
+): Promise<OAuthConformanceConfig> {
+  const { registrationStrategy } = oauth;
+  if (registrationStrategy !== "auto") {
+    return { ...oauth, registrationStrategy };
+  }
+  const plan = await resolveOAuthLoginAuthorizationPlan({
+    ...oauth,
+    registrationStrategy: undefined,
+    registrationMode: "auto",
+  });
+  if (plan.status !== "ready" || !plan.registrationStrategy) {
+    throw new Error(plan.blockers[0] ?? plan.summary);
+  }
+  return {
+    ...oauth,
+    registrationStrategy: plan.registrationStrategy,
+    client: {
+      ...oauth.client,
+      ...(plan.clientIdMetadataUrl
+        ? { clientIdMetadataUrl: plan.clientIdMetadataUrl }
+        : {}),
+    },
   };
 }
 
@@ -255,7 +305,11 @@ export async function runConformance(
     for (const kind of requestedSuites.filter(
       (kind) => kind !== "oauth" || !canRunOAuth
     )) {
-      const report = unresolvedVersionReport(kind, error);
+      const report = unresolvedVersionReport(
+        kind,
+        error,
+        credentialsFromServerConfig(config.server)
+      );
       reports[kind] = report;
       await config.onProgress?.({
         suiteKind: kind,

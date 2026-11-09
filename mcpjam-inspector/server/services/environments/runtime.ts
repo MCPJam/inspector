@@ -28,6 +28,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
+import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
@@ -651,6 +652,12 @@ export function toEnvironmentPreview(
 ): EnvironmentPreview {
   const runtimeConfig = spec.host.runtimeConfig;
   const harness = readString(runtimeConfig, "harness");
+  // Delivery follows the loop the turn runs: `agentLoop ?? harness`, as in
+  // `resolveAgentLoop`. Reading `harness` alone mislabels an agent-loop client.
+  const loop = effectiveHarnessId({
+    agentLoop: readString(runtimeConfig, "agentLoop"),
+    harness,
+  });
   const builtInToolIds = Array.isArray(runtimeConfig.builtInToolIds)
     ? runtimeConfig.builtInToolIds.filter(
         (id): id is string => typeof id === "string"
@@ -658,9 +665,9 @@ export function toEnvironmentPreview(
     : [];
   const skills = spec.skills ?? [];
   const capturedServerSkills = spec.serverSkills ?? [];
-  const skillDelivery: EnvironmentSkillDelivery = !harness
+  const skillDelivery: EnvironmentSkillDelivery = !loop
     ? "emulated"
-    : options.harnessSupportsSkills(harness)
+    : options.harnessSupportsSkills(loop)
     ? "harness"
     : "unsupported";
 

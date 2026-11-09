@@ -101,21 +101,6 @@ export type HarnessId = Harness;
  *  `createCodexAppServer`. */
 export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 
-/** Escape a value for safe interpolation INSIDE a single-quoted shell word.
- *
- *  A single quote is the only character with meaning there, and the standard
- *  close-escape-reopen dance is the replacement: `'` becomes `'\''` — end the
- *  quoted word, an escaped literal quote, start a new quoted word.
- *
- *  A REGULAR string, not a template literal. In a template literal `\'` is just
- *  `'` (JS drops the backslash), so the obvious-looking `` `'\''` `` silently
- *  produces three quotes — which CLOSES the quoted word and leaves the rest of
- *  the path unquoted, restoring the very `$(…)` execution this exists to
- *  prevent. `__tests__/registry.test.ts` pins the emitted bytes. */
-function shellSingleQuote(value: string): string {
-  return value.replaceAll("'", "'\\''");
-}
-
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
  *  It is never used for auth (the proxy ignores VM-supplied Authorization/
  *  x-api-key and trusts only E2B's injected `x-mcpjam-harness-lease`); it just
@@ -333,6 +318,11 @@ export type HarnessModelAccess = "broker" | "external-account";
 
 type HarnessRuntimeAdapterBase = {
   id: HarnessId;
+  /**
+   * True only after a live check at the pinned version. An adapter that
+   * declares this must accept AI SDK image parts on the prompt.
+   */
+  promptImageInput: boolean;
   /**
    * WHICH TRANSPORT this arm speaks, when a harness has more than one.
    *
@@ -867,6 +857,7 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
+  promptImageInput: true,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
   // `createHarness` below already maps an effort (`effort` option + adaptive
@@ -921,7 +912,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // …through the SDK session configuration, without writing into the workspace.
   mcpNativeDelivery: "session-config",
   forwardingRuntime: {
-    runtimeVersion: "2.1.245",
+    runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
     refresh: withClaudeForwardingResume,
@@ -1002,7 +993,11 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
       // env, so unlike `??=` it is now authoritative rather than a default —
       // deliberate: the sandbox env is ours, and the adapter's own `effort`
       // option is the supported way to ask for a value.
-      ...(reasoningEffort
+      ...(reasoningEffort === "low" ||
+      reasoningEffort === "medium" ||
+      reasoningEffort === "high" ||
+      reasoningEffort === "xhigh" ||
+      reasoningEffort === "max"
         ? {
             effort: reasoningEffort,
             thinking: { type: "adaptive" as const },
@@ -1043,6 +1038,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
+  promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
   // exec transport forks (with a visible "runtime-changed" reset) instead of
   // resuming onto a different protocol.
@@ -1134,7 +1130,13 @@ const codexAdapter: HarnessRuntimeAdapter = {
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as
       // `turn/start` `effort`.
-      ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(reasoningEffort === "low" ||
+      reasoningEffort === "medium" ||
+      reasoningEffort === "high" ||
+      reasoningEffort === "xhigh" ||
+      reasoningEffort === "max"
+        ? { reasoningEffort }
+        : {}),
       auth,
       ...(sandboxPolicy ? { sandboxPolicy } : {}),
       ...(forwardingMcpJson ? { nativeMcpServers: forwardingMcpJson.mcpServers } : {}),
@@ -1144,6 +1146,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
 
 const cursorAdapter: HarnessRuntimeAdapter = {
   id: "cursor",
+  promptImageInput: true,
   // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
   // chat panel) keeps that name, and the two are different products with
   // different surfaces. Every preflight/refusal message a user reads comes from
@@ -1282,20 +1285,15 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // .cursor`. Recording the version per session still earns its place: it is
   // what makes a box that somehow runs another build — a stale template, a
   // custom image — attributable instead of a mystery regression.
-  runtimeVersionCommand: (sessionWorkDir) =>
+  runtimeVersionCommand: () =>
     // Layout taken from the adapter's own bootstrap: `bootstrapDir` is
-    // `.harness-bootstrap/<harnessId>` under the session workdir, and
+    // `.harness-bootstrap/<harnessId>` under `$HOME/.ai-sdk-harness`, and
     // `implementation.json` puts the executable at
     // `implementation/home/.local/bin/agent` (privateHome: true).
     //
-    // SINGLE-quoted with embedded quotes escaped, not double-quoted: the
-    // workdir is host-configured, and `$(…)`/backticks inside double quotes
-    // are still expanded by the shell. `resolveWorkingDirectory` confines the
-    // value to /home/user but does not reject shell metacharacters, so a path
-    // like `/home/user/$(id)` would otherwise run `id` during session setup.
-    `'${shellSingleQuote(
-      sessionWorkDir,
-    )}/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version`,
+    // The path is the framework's, not the session workdir: interpolating a
+    // host-configured workdir here used to be an injection surface.
+    '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
     return pinCursorHarnessBootstrap(
@@ -1318,6 +1316,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
 
 const copilotCliAdapter: HarnessRuntimeAdapter = {
   id: "copilot-cli",
+  promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   modelAccess: "broker",
   requiresComputer: true,
@@ -1351,6 +1350,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
 
 const opencodeAdapter: HarnessRuntimeAdapter = {
   id: "opencode",
+  promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS.opencode.displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   requiresComputer: true,
@@ -1374,10 +1374,8 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("opencode"),
   supportsModel: supportsModelFor("opencode"),
   parseToolName: parseHarnessToolName,
-  runtimeVersionCommand: (sessionWorkDir) =>
-    `'${shellSingleQuote(
-      sessionWorkDir,
-    )}/.harness-bootstrap/opencode/node_modules/.bin/opencode' --version`,
+  runtimeVersionCommand: () =>
+    '"$HOME/.ai-sdk-harness/.harness-bootstrap/opencode/node_modules/.bin/opencode" --version',
   createHarness({ modelId, auth, upstream, startupTimeoutMs }) {
     return createOpenCodeHarness({
       modelId,
