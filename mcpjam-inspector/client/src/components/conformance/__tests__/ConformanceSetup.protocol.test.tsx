@@ -178,6 +178,64 @@ describe("setup protocol connection gate", () => {
     );
   });
 
+  describe("connect toast", () => {
+    // Opens on bart while it is offline, so the steps connect it, then the
+    // session reports it connected and the protocol check starts.
+    async function connectAndLand() {
+      const loading = vi.spyOn(toast, "loading");
+      const success = vi.spyOn(toast, "success");
+      const error = vi.spyOn(toast, "error");
+      let resolve: (value: ConformanceConnectionResult) => void = () => {
+        throw new Error("Promise not initialized");
+      };
+      check.mockImplementation(
+        () =>
+          new Promise<ConformanceConnectionResult>((done) => {
+            resolve = done;
+          }),
+      );
+      const offline = { ...server, connectionStatus: "disconnected" as const };
+      const onConnectServer = vi.fn(async () => "ready" as const);
+      const props = {
+        initialServerName: "bart",
+        initialVersionPin: "2026-07-28" as const,
+        onRun: vi.fn(),
+        onCancel: vi.fn(),
+        onConnectServer,
+      };
+      const { rerender } = render(
+        <ConformanceSetup {...props} servers={[offline]} />,
+      );
+      await waitFor(() => expect(onConnectServer).toHaveBeenCalled());
+      await act(async () => {});
+      rerender(<ConformanceSetup {...props} servers={[server]} />);
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      return {
+        id: loading.mock.results[0]!.value,
+        success,
+        error,
+        resolve: (result: ConformanceConnectionResult) =>
+          act(async () => resolve(result)),
+      };
+    }
+
+    it("says connected only once the protocol check passes", async () => {
+      const { id, success, resolve } = await connectAndLand();
+      expect(success).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+      await resolve({ status: "ready", protocolVersion: "2026-07-28" });
+      expect(success).toHaveBeenCalledWith("bart connected", { id });
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    });
+
+    it("turns the same toast into the check's failure", async () => {
+      const { id, success, error, resolve } = await connectAndLand();
+      await resolve({ status: "failed", message: "Handshake timed out." });
+      expect(error).toHaveBeenCalledWith("Handshake timed out.", { id });
+      expect(success).not.toHaveBeenCalled();
+    });
+  });
+
   it("blocks Run if the main server disconnects after validation", async () => {
     check.mockResolvedValue({ status: "ready", protocolVersion: "2026-07-28" });
     const { rerender, props } = setup();

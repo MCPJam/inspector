@@ -3,7 +3,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@mcpjam/design-system/tooltip";
@@ -15,7 +14,7 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 }));
 
 describe("conformance setup timeout", () => {
-  it("keeps the saved timeout when returning through breadcrumbs", async () => {
+  it("keeps the saved timeout when going back to step 1", async () => {
     const server = createConnectedServer({ name: "alpha" });
     const onSaveTimeout = vi.fn(
       async (_name: string, _seconds: number | null) => {},
@@ -35,12 +34,7 @@ describe("conformance setup timeout", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByText("300s")).toBeInTheDocument();
-    const crumbs = screen.getByRole("navigation", { name: "breadcrumb" });
-    fireEvent.click(
-      within(crumbs).getByRole("button", {
-        name: "Choose server and protocol",
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
     expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(

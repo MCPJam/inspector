@@ -863,6 +863,7 @@ export async function runHarnessTurn(
     secretsUnavailable,
     onSecretEnvDelivered,
     createHarnessScopeStepUpContinuation,
+    turnTiming,
   } = options;
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
@@ -2757,11 +2758,12 @@ export async function runHarnessTurn(
             })
           : [],
       );
-      const buildRuntime = (startupTimeoutMs?: number) =>
+      const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2777,6 +2779,7 @@ export async function runHarnessTurn(
             })
           : harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2792,7 +2795,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       let harnessRuntime = warmAgentPilot
-        ? withWarmBridgeRuntime((ms) => withWarmBridgeBootstrap(buildRuntime(ms)),
+        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home)),
             JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]))
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
@@ -3546,6 +3549,7 @@ export async function runHarnessTurn(
           const finalTextId = crypto.randomUUID();
           emitTextStart(writer, finalTextId);
           emitTextDelta(writer, finalTextId, text);
+          turnTiming?.markFirstText();
           emitTextEnd(writer, finalTextId);
           emittedAnyText = true;
           // Whitespace-only text renders as a blank message to the user, so it
@@ -3774,6 +3778,7 @@ export async function runHarnessTurn(
             }
             splitNextText = false;
             emitTextDelta(writer, textId, delta);
+            turnTiming?.markFirstText();
             emittedAnyText = true;
             // See the whitespace-only note on projectAssistantText above.
             if (delta.trim().length > 0) {
@@ -4556,10 +4561,15 @@ export async function runHarnessTurn(
             tConnect - tBroker
           }ms dispatchSetup=${tDispatch - tStart}ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}${bootstrapLog.text}`,
+          }ms resumed=${resumedSession}${turnTiming?.text() ?? ""}${bootstrapLog.text}`,
           // `harnessId` rides both outcome lines so the feature-health monitor
-          // can compare failed against completed turns per harness.
-          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
+          // can compare failed against completed turns per harness. The route's
+          // stages and `firstTextMs` are measured from the start of the request.
+          {
+            ...bootstrapLog.context,
+            ...turnTiming?.fields(),
+            harnessId: harnessAdapter.id,
+          },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.

@@ -10,7 +10,6 @@
  */
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { logger } from "../logger.js";
-import { harnessNativeImagesEnabled } from "./harness-flags.js";
 import type { HarnessPromptAttachment } from "./harness-attachments.js";
 
 export const HARNESS_PROMPT_IMAGE_MAX_EDGE = 2576;
@@ -149,7 +148,6 @@ export function shouldPrepareHarnessPromptImages(args: {
   return (
     !args.isApprovalResume &&
     args.promptImageInput &&
-    harnessNativeImagesEnabled() &&
     args.attachmentCount > 0
   );
 }
@@ -223,7 +221,8 @@ function historyPartImageData(part: Record<string, unknown>): unknown {
 /**
  * Sum of earlier user image/file parts, each capped at the per-image max.
  * History keeps the original inbound parts, including ones that were skipped
- * or sent with native images off, because persist does not mark attached parts.
+ * or sent to a harness without native image input, because persist does not
+ * mark attached parts.
  */
 export function conversationImageBase64Bytes(history: ModelMessage[]): number {
   let total = 0;

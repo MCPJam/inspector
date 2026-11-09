@@ -113,6 +113,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -194,6 +195,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   // The suite's settings HISTORY. In-product because it answers the first

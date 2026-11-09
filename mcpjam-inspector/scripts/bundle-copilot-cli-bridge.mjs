@@ -10,6 +10,8 @@ const bundle = await build({
   format: "esm",
   target: "node20",
   bundle: true,
+  // Keep recipe bytes stable when a worktree shares dependency directories.
+  preserveSymlinks: true,
   write: false,
   external: ["ws", "@github/copilot-sdk"],
 });

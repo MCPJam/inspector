@@ -100,6 +100,8 @@ export const DEFAULT_CODEX_APPSERVER_MODEL = "gpt-5.5";
 const CODEX_SKILLS_SUBDIR = ".agents/skills";
 
 export type CodexAppServerSettings = {
+  /** HOME observed by the current successful warm sandbox probe. */
+  sandboxHomeDir?: string;
   warmAgent?: boolean;
   nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Native model id. Omitted ⇒ Codex's own default. */
@@ -355,9 +357,10 @@ export function createRetainedBridgeHarness<T extends NonNullable<HarnessV1["bui
             : {}),
         });
       const workDir = startOpts.sessionWorkDir ?? defaultWorkingDirectory;
-      const sandboxHomeDir = await resolveSandboxHomeDir({
-        sandbox: toolSafeSandboxSession,
-      });
+      const sandboxHomeDir = settings.sandboxHomeDir?.startsWith("/") &&
+        !settings.sandboxHomeDir.includes("\0")
+        ? settings.sandboxHomeDir
+        : await resolveSandboxHomeDir({ sandbox: toolSafeSandboxSession });
       const stateDirectory = harnessStateDirectoryPath({ sandboxHomeDir });
       const bootstrapDir = posix.resolve(
         stateDirectory,
