@@ -108,7 +108,6 @@ const readinessState = vi.hoisted(() => ({
 
 vi.mock("../../computers/control-plane-client.js", () => ({
   getHarnessCredentialReadiness: vi.fn(async () => readinessState.answer),
-  getBoxCredentialAvailability: vi.fn(),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
