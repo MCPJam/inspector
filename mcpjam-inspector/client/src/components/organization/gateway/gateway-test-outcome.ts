@@ -60,7 +60,7 @@ export function gatewayTestOutcome(
   if ("error" in response) {
     return {
       tone: "destructive",
-      title: "The test didn't run. Try again.",
+      title: "Could not start the gateway test. Try again.",
       message: response.error,
     };
   }

@@ -50,7 +50,7 @@ export function useGatewayConnectionTest(
             });
       } catch (error) {
         return {
-          error: convexErrMessage(error, "The test couldn't run. Try again."),
+          error: convexErrMessage(error, "Could not start the gateway test. Try again."),
         };
       }
     },

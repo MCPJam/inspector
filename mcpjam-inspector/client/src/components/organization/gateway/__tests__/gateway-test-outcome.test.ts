@@ -110,7 +110,7 @@ describe("gatewayTestOutcome", () => {
   it("reports a test that couldn't run", () => {
     expect(gatewayTestOutcome({ error: "Too many connection tests for this organization. Wait a minute, then test again." })).toEqual({
       tone: "destructive",
-      title: "The test didn't run. Try again.",
+      title: "Could not start the gateway test. Try again.",
       message: "Too many connection tests for this organization. Wait a minute, then test again.",
     });
   });
