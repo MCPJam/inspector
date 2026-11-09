@@ -25,11 +25,11 @@ vi.mock("../../../services/evals/route-helpers.js", async (importActual) => ({
   createConvexClient: createConvexClientMock,
 }));
 
-vi.mock("../../../utils/hosted-egress-guard.js", async (importActual) => ({
+vi.mock("../../../utils/checked-address-fetch.js", async (importActual) => ({
   ...(await importActual<
-    typeof import("../../../utils/hosted-egress-guard.js")
+    typeof import("../../../utils/checked-address-fetch.js")
   >()),
-  createGuardedFetch: () => gatewayFetch,
+  createCheckedAddressFetch: () => gatewayFetch,
 }));
 
 function postTest(body: Record<string, unknown>) {

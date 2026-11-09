@@ -34,7 +34,7 @@ export type GatewayProbeInput = {
   baseUrl: string;
   secret?: string;
   apis?: readonly GatewayApi[];
-  /** A guarded fetch (`createGuardedFetch`). */
+  /** A guarded fetch (`createCheckedAddressFetch`). */
   fetch: typeof fetch;
   /** Catalog ids (`provider/model`) a gateway name may be matched to. */
   catalogIds: readonly string[];

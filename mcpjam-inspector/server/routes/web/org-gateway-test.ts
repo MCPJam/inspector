@@ -12,8 +12,10 @@
  * bounds it is the same as for every route here that dials a caller-named
  * address: a signed-in, verified caller (mounted in `index.ts`), the hosted
  * egress guard on every request, no redirects, and short, truncated answers.
- * Nothing is read from the organization beyond that question, and nothing is
- * written to it.
+ * Hosted, each probe dials only the address the guard checked, so a name that
+ * answers public for the check and private for the connection cannot reach a
+ * private service. Nothing is read from the organization beyond that
+ * question, and nothing is written to it.
  */
 import { Hono, type Context } from "hono";
 import { makeFunctionReference } from "convex/server";
@@ -28,7 +30,7 @@ import { handleRoute } from "./auth.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
-import { createGuardedFetch } from "../../utils/hosted-egress-guard.js";
+import { createCheckedAddressFetch } from "../../utils/checked-address-fetch.js";
 import { probeGatewayConnection } from "../../utils/gateway-connection-probe.js";
 import { GATEWAY_APIS } from "@/shared/gateway-connection";
 import { hostedModelDefinitionsFromSnapshot } from "@/shared/types";
@@ -93,7 +95,7 @@ orgGatewayTest.post("/", async (c) =>
       baseUrl: body.baseUrl,
       ...(body.secret?.trim() ? { secret: body.secret.trim() } : {}),
       ...(body.apis ? { apis: body.apis } : {}),
-      fetch: createGuardedFetch(),
+      fetch: createCheckedAddressFetch(),
       catalogIds: hostedModelDefinitionsFromSnapshot().map((model) =>
         String(model.id),
       ),
