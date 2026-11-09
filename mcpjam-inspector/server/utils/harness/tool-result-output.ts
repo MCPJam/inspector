@@ -19,7 +19,9 @@ export function toToolResultOutput(
     // failed tool with no payload would produce a value that serializes away
     // and fails `modelMessageSchema` — an invalid message describing an error.
     const text =
-      typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
+      typeof rawOutput === "string"
+        ? rawOutput
+        : (harnessToolOutputError(rawOutput) ?? JSON.stringify(rawOutput));
     return {
       type: "error-text",
       value: text ?? "The tool reported an error with no payload.",
@@ -31,4 +33,22 @@ export function toToolResultOutput(
   // error signal), and it trusted the type tag without checking the value
   // against it.
   return toModelMessageToolOutput(rawOutput) ?? { type: "json", value: null };
+}
+
+/**
+ * The error an ACP runtime reports inside a tool result, or `undefined`.
+ *
+ * ACP marks a failed MCP call `completed` with `rawOutput: { error }` rather
+ * than `failed`, so the result arrives looking successful. Cursor's own 60 s
+ * MCP timeout reaches MCPJam exactly this way. Only that exact shape counts: an
+ * object whose single key is a non-empty `error` string.
+ */
+export function harnessToolOutputError(output: unknown): string | undefined {
+  if (!output || typeof output !== "object" || Array.isArray(output))
+    return undefined;
+  const keys = Object.keys(output);
+  const error: unknown = Reflect.get(output, "error");
+  return keys.length === 1 && typeof error === "string" && error.trim()
+    ? error
+    : undefined;
 }
