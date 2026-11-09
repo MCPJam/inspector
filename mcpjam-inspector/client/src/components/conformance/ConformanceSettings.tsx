@@ -128,6 +128,18 @@ export function ConformanceSettings({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         <div className="mx-auto w-full max-w-240">
+          {onSaveTimeout ? (
+            <section className="mb-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+              <h3 className="mb-4 text-base font-medium tracking-tight">
+                Run Timeout
+              </h3>
+              <ConformanceTimeoutSetting
+                seconds={timeoutSeconds}
+                onSave={onSaveTimeout}
+                onBusyChange={setTimeoutBusy}
+              />
+            </section>
+          ) : null}
           <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
             <h3 className="mb-4 text-base font-medium tracking-tight">
               Default Checks
@@ -153,18 +165,6 @@ export function ConformanceSettings({
               defaultsMode
             />
           </section>
-          {onSaveTimeout ? (
-            <section className="mt-4 rounded-xl border border-border bg-card p-5 shadow-sm">
-              <h3 className="mb-4 text-base font-medium tracking-tight">
-                Run Timeout
-              </h3>
-              <ConformanceTimeoutSetting
-                seconds={timeoutSeconds}
-                onSave={onSaveTimeout}
-                onBusyChange={setTimeoutBusy}
-              />
-            </section>
-          ) : null}
         </div>
       </div>
     </div>

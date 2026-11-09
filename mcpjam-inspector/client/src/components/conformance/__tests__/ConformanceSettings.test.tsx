@@ -426,9 +426,10 @@ describe("Settings run timeout", () => {
         }}
       />,
     );
+    // Run Timeout comes first, above Default Checks.
     expect(
-      screen.getByRole("heading", { name: "Run Timeout" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+    ).toEqual(["Run Timeout", "Default Checks"]);
     const field = screen.getByLabelText("Total run timeout (seconds)");
     expect(field).toHaveValue(120);
     fireEvent.change(field, { target: { value: "60" } });
