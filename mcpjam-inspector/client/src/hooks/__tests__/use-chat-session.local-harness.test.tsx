@@ -580,7 +580,7 @@ describe("useChatSession — a harness client with no model it can run", () => {
     expect(session.selectedModel).toMatchObject({
       disabled: true,
       disabledReason:
-        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models.",
+        "Claude Code runs MCPJam models, your organization's Anthropic key, or a gateway that serves Anthropic Messages. Set one up in Organization models.",
     });
     expect(session.submitBlocked).toBe(true);
   });

@@ -11,6 +11,7 @@ import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { INSPECTOR_RUN_POLICY_REASON } from "@/lib/org-keys-refusal";
+import { gatewayModelFor } from "@/shared/harness-gateway-model";
 import {
   isUsableOrgConnection,
   type OrgAiKeyPolicyView,
@@ -374,6 +375,8 @@ export function buildAvailableModelsFromOrgConfig(
         provider: "custom" as const,
         customProviderName: customSlug,
         orgProvider: orgStamp(p),
+        // What a harness picker judges the row on (`gatewayHarnessModel`).
+        gateway: gatewayModelFor(p, modelId),
       });
     }
   }
