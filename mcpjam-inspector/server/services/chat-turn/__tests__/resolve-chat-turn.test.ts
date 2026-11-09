@@ -134,6 +134,30 @@ describe("grouped turn preparation", () => {
       expect(resolveEnvironmentForRuntime).not.toHaveBeenCalled();
     },
   );
+  it("uses the authorized preparation once and validates the same runtime", async () => {
+    const result = await resolveChatTurn({
+      ...common, target: { kind: "host", hostId: "host" },
+      selection: { kind: "explicit", serverIds: [] }, prepareChatTurn: true,
+      preparedChatTurn: { kind: "resolved", harness: null, environment: preparedEnvironment },
+    });
+    expect(result.environment).toEqual(preparedEnvironment);
+    expect(client.action).not.toHaveBeenCalled();
+    expect(composeTurnEnvironment).not.toHaveBeenCalled();
+  });
+  it.each([
+    [null, 502],
+    [{ kind: "resolved", environment: {} }, 502],
+    [{ kind: "failed", errorData: { code: "HOST_UNRESOLVED", message: "Client unavailable", details: { hostId: "host" } } }, 404],
+    [{ kind: "failed", errorData: {} }, 502],
+  ])("refuses invalid or failed combined preparation without replay", async (preparedChatTurn, status) => {
+    await expect(resolveChatTurn({
+      ...common, target: { kind: "host", hostId: "host" },
+      selection: { kind: "explicit", serverIds: [] }, prepareChatTurn: true,
+      preparedChatTurn,
+    })).rejects.toMatchObject({ status });
+    expect(client.action).not.toHaveBeenCalled();
+    expect(composeTurnEnvironment).not.toHaveBeenCalled();
+  });
   it("keeps external accounts on the existing credential and venue path", async () => {
     vi.spyOn(client, "action").mockResolvedValueOnce({
       kind: "external-account",

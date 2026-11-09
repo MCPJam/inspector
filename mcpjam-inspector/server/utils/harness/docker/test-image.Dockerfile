@@ -26,9 +26,10 @@ FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # procps for the lifecycle checks (`ps`, `pgrep`); git because the vendor CLIs
-# probe for a repository; xz for the Node tarball.
+# probe for a repository; xz for the Node tarball; python3 for the warm
+# Claude parent-death launcher, matching the computer template.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl xz-utils git procps \
+    && apt-get install -y --no-install-recommends ca-certificates curl xz-utils git procps python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Node by exact version AND checksum, from nodejs.org — not a distro or

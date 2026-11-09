@@ -175,6 +175,8 @@ export function ConformanceTab({
   // Bumped to send a finished run's view back to the page's home: its key
   // changes, so it mounts fresh, on the server list.
   const [homeVersion, setHomeVersion] = useState(0);
+  // The tab a run was started from, so the run's Back returns there.
+  const [runFrom, setRunFrom] = useState<ConformanceView>("overview");
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   // The tools each server's checks may call: set in step 2, and
@@ -449,10 +451,11 @@ export function ConformanceTab({
   });
   const cardsDisabled =
     !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
-  const runServer = (serverName: string) =>
-    onLoadServerDefaults
-      ? void requestDefaults(serverName, "auto")
-      : startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+  const runServer = (serverName: string) => {
+    setRunFrom("overview");
+    if (onLoadServerDefaults) void requestDefaults(serverName, "auto");
+    else startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+  };
   const home =
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
@@ -538,7 +541,14 @@ export function ConformanceTab({
     const noServerRunButton = (
       <Button
         size="sm"
-        onClick={openSetup ?? (() => toast.info(NO_SERVERS_MESSAGE))}
+        onClick={
+          openSetup
+            ? () => {
+                setRunFrom(activeView);
+                openSetup();
+              }
+            : () => toast.info(NO_SERVERS_MESSAGE)
+        }
       >
         {RUN_LABEL}
       </Button>
@@ -584,8 +594,12 @@ export function ConformanceTab({
       onViewChange={changeView}
       onShowHome={() => {
         setHomeVersion((version) => version + 1);
-        changeView("overview");
+        changeView(runFrom);
       }}
+      backLabel={
+        runFrom === "history" ? "Conformance History" : "Conformance"
+      }
+      onRunFrom={setRunFrom}
       serverIconUrl={serverIcons?.[server.name]}
       showHistory={showHistory}
       history={history}
