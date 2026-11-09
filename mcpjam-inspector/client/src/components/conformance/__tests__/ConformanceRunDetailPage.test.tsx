@@ -447,11 +447,29 @@ describe("ConformanceRunDetailPage", () => {
     expect(
       screen.getByText("Incomplete. No check finished, so there is no score."),
     ).toBeInTheDocument();
+    // Inside the score card, under the verdict it explains, not floating
+    // between the card and the suites.
+    const scoreCard = screen.getByText(/^OVERALL SCORE/).parentElement!;
     expect(
-      screen.getByText(
+      within(scoreCard).getByText(
         "Run lease expired before every requested suite settled",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a run's reason off the page when a suite already says it", () => {
+    const reason = "Run stopped before every requested suite settled";
+    useArtifactQueryMock.mockReturnValue(
+      run([report({ incompleteReason: reason })], {
+        status: "completed",
+        outcome: "incomplete",
+        incompleteReason: reason,
+      }),
+    );
+    render(<ConformanceRunDetailPage runId="run_1" />);
+
+    const scoreCard = screen.getByText(/^OVERALL SCORE/).parentElement!;
+    expect(within(scoreCard).queryByText(reason)).toBeNull();
   });
 
   it("shows absent Apps without an explanation or percentage", () => {

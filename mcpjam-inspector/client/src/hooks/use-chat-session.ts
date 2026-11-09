@@ -372,8 +372,7 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 import * as AppStateContext from "@/state/app-state-context";
-import { findProjectByAnyId, type AppState } from "@/state/app-types";
-import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
+import { type AppState } from "@/state/app-types";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { isEmbeddedPreview } from "@/lib/embedded-preview";
 import {
@@ -3615,24 +3614,6 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel],
   );
-  const hasLocalOnlySelectedServer = useMemo(() => {
-    if (!appState || selectedServers.length === 0) return false;
-    const activeProject = findProjectByAnyId(
-      appState.projects,
-      hostedProjectId ?? appState.activeProjectId,
-    );
-    return selectedServers.some((serverName) => {
-      const server =
-        appState.servers?.[serverName] ?? activeProject?.servers?.[serverName];
-      // Fail CLOSED when a selected server's config can't be resolved (state
-      // not yet loaded, name mismatch): treat it as local-only. The local
-      // engine reaches public servers fine, but routing a stdio server to the
-      // cloud reproduces the exact "STDIO not supported" failure this flag
-      // exists to prevent.
-      if (!server?.config) return true;
-      return isLocalOnlyMcpServerConfig(server.config);
-    });
-  }, [appState, hostedProjectId, selectedServers]);
   // Managed local and service turns share environment composition. The
   // process role, rather than the selected model or transport, owns execution.
   const hiddenEnvironmentActive = !!hostedHiddenEnvironment;
@@ -3653,10 +3634,6 @@ export function useChatSession(
   // servers by Convex id.
   const hostedRequiresWebChatApi =
     explicitRequiresWebChatApi || hiddenEnvironmentActive;
-  const localMcpRuntimeRequired =
-    !HOSTED_MODE &&
-    selectedModelUsesOrgRuntime &&
-    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -4267,9 +4244,7 @@ export function useChatSession(
           // Local builds only, for both bodies. "This machine": run this host's
           // bash on the local computer engine; the consent capability rides the
           // header above, and the server ignores this without it. Absent ⇒ the
-          // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
-          // org-runtime model's turn on this server's runtime resolution, which
-          // local-only MCP servers and an explicit local-harness ask both need.
+          // legacy cloud-family resolution.
           ...(!HOSTED_MODE
             ? {
                 ...(personalBrowserEngine && !hostedScenarioId
@@ -4278,10 +4253,6 @@ export function useChatSession(
                     }
                   : {}),
                 ...(sendLocalEngine ? { computerEngine: "local" } : {}),
-                ...(localMcpRuntimeRequired ||
-                (localHarnessRequested && selectedModelUsesOrgRuntime)
-                  ? { localMcpRuntimeRequired: true }
-                  : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
                   : {}),
@@ -4378,7 +4349,6 @@ export function useChatSession(
     getCustomProviderByName,
     customProviders,
     selectedModelUsesOrgRuntime,
-    localMcpRuntimeRequired,
     localHarnessRequested,
     localHarnessExecution,
     hostedRequiresWebChatApi,

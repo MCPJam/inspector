@@ -518,6 +518,8 @@ export function buildLlmRuntimeConfigFromOrgConfig(
       const name = provider.providerKey.replace(/^custom:/, "");
       if (!name) continue;
 
+      // Checked where it is dialed: `createLlmModel` sends every hop to this
+      // base URL, redirects included, through the hosted egress guard.
       runtime.customProviders.push({
         name,
         protocol: provider.protocol || "openai-compatible",

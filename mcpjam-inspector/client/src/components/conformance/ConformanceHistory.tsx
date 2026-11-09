@@ -497,18 +497,18 @@ export function ConformanceRunDetailPage({
             detail.status !== "timed_out" &&
             detail.status !== "cancelled"
           }
+          // A suite's own row already says why it is incomplete; the card
+          // repeats the run's reason only when no suite carries it (e.g. a
+          // suite that never reported).
+          note={
+            detail.incompleteReason &&
+            !detail.reports.some(
+              (report) => report.incompleteReason === detail.incompleteReason,
+            )
+              ? detail.incompleteReason
+              : null
+          }
         />
-        {/* A suite's own row already says why it is incomplete; repeat the
-            run's reason here only when no suite carries it (e.g. a suite
-            that never reported). */}
-        {detail.incompleteReason &&
-        !detail.reports.some(
-          (report) => report.incompleteReason === detail.incompleteReason,
-        ) ? (
-          <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
-            {detail.incompleteReason}
-          </p>
-        ) : null}
 
         <ConformanceAdvice groups={advice} />
 
