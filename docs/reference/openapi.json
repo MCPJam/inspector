@@ -12013,6 +12013,9 @@
             "$ref": "#/components/parameters/serverId"
           },
           {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -12218,7 +12221,7 @@
         "operationId": "getConformanceRun",
         "tags": ["Conformance runs"],
         "summary": "Get a persisted conformance run",
-        "description": "Status, outcome, and score are three different answers. A run whose `projectId` is not the path's is `404`. Per-suite `profileId` / `pending` are present when the backend has stored them.",
+        "description": "Status, outcome, and score are three different answers. A run whose `projectId` is not the path's is `404`. Per-suite `profileId` / `pending` are present when the backend has stored them. `launcher` is the label the launching client declared in `x-mcpjam-launcher`; `attribution` is how the platform recorded the start (`surface`, and `apiKeyId` for a key). Each is `null` when the run has none.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"

@@ -127,6 +127,8 @@ export type ExecutePersistedConformanceArgs = {
   settings?: ConformanceRunSettings;
   /** The run's time budget. Absent: no deadline beyond the backend's sweep. */
   runTimeoutSeconds?: number;
+  /** What the launching client declared it was, stored on the run as is. */
+  launcher?: { kind: string; client?: string; version?: string };
   /**
    * Route-level idempotency. Mapped by the caller onto a namespaced
    * `externalRunId` (`api:<projectId>:<serverId>:<key>`). Absent ⇒ every start inserts.
@@ -482,6 +484,8 @@ export async function executePersistedConformanceRun(
       engineVersion: args.engineVersion,
       actorLabel: args.actorLabel,
       runTimeoutSeconds: args.runTimeoutSeconds,
+      ...(args.launcher ? { launcher: args.launcher } : {}),
+      ...(args.settings ? { settingsSource: args.settings.source } : {}),
       githubCheckTriggerId: args.githubCheckTriggerId,
       ...(args.externalRunId ? { externalRunId: args.externalRunId } : {}),
     } as never

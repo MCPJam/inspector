@@ -14,6 +14,7 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import type { McpProtocolVersion } from "@mcpjam/sdk";
+import type { RunLauncher } from "../../utils/launch-context.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { toHttpConfig } from "../web/auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -81,6 +82,8 @@ export interface StartHostedConformanceRunInput {
   engineVersion?: string;
   /** The server's saved settings (the default), or none. */
   settings?: ConformanceSettingsMode;
+  /** The client's declared launcher, from the launch headers. */
+  launcher?: RunLauncher;
   translateError: (error: unknown) => Error;
 }
 
@@ -209,6 +212,7 @@ export async function startHostedConformanceRun(
       engineVersion: input.engineVersion,
       actorLabel: "MCPJam API",
       settings,
+      ...(input.launcher ? { launcher: input.launcher } : {}),
       runTimeoutSeconds: settings.runTimeoutSeconds,
       externalRunId: input.idempotencyKey
         ? `api:${input.projectId}:${input.serverId}:${input.idempotencyKey}`
@@ -285,6 +289,8 @@ export function toConformanceRunDto(
     requestedSuites: run.requestedSuites ?? [],
     /** Recorded by backends that store it; null for runs started before. */
     settingsSource: run.settingsSource ?? null,
+    launcher: run.launcher ?? null,
+    attribution: run.attribution ?? null,
     protocolVersion: run.protocolVersion ?? null,
     engineVersion: run.engineVersion ?? null,
     createdAt: run.createdAt,

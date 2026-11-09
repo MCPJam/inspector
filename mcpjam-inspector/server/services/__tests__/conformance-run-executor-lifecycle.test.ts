@@ -146,6 +146,38 @@ describe("executePersistedConformanceRun with saved settings", () => {
     expect(config.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("records the declared launcher and the settings the run used", async () => {
+    const { calls } = convexClient();
+    suiteConfigsForRunMock.mockResolvedValue({ protocolVersion: undefined });
+    runConformanceMock.mockResolvedValue({
+      outcome: "passed",
+      score: { score: 100 },
+    });
+
+    await executePersistedConformanceRun({
+      ...BASE,
+      suites: ["protocol"],
+      settings: SAVED,
+      runTimeoutSeconds: 300,
+      launcher: { kind: "mcp", client: "claude-code" },
+    });
+    expect(calls[0]!.args).toMatchObject({
+      launcher: { kind: "mcp", client: "claude-code" },
+      settingsSource: "saved",
+    });
+
+    // A worker start declares neither, and sends neither.
+    vi.clearAllMocks();
+    const worker = convexClient();
+    runConformanceMock.mockResolvedValue({
+      outcome: "passed",
+      score: { score: 100 },
+    });
+    await executePersistedConformanceRun({ ...BASE, suites: ["protocol"] });
+    expect(worker.calls[0]!.args).not.toHaveProperty("launcher");
+    expect(worker.calls[0]!.args).not.toHaveProperty("settingsSource");
+  });
+
   it("stops within one heartbeat of a cancel and writes no report after it", async () => {
     vi.useFakeTimers();
     const { calls } = convexClient(() => ({ ok: false, error: "terminal" }));

@@ -3368,7 +3368,8 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId
       )}/conformance-runs`,
-      { body },
+      // The launch headers say which client started the run, as for evals.
+      { body, declareLaunch: true },
       options
     );
   }
