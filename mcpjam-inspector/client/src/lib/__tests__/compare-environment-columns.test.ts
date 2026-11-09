@@ -1,3 +1,4 @@
+import { cursorModelRows } from "../cursor-models";
 import { describe, expect, it } from "vitest";
 import type { HostDetail } from "@/hooks/useClients";
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
@@ -71,6 +72,7 @@ function resolve(
   options: {
     host?: HostDetail | null;
     hostLoading?: boolean;
+    models?: ModelDefinition[];
     pickedSelection?: Parameters<
       typeof resolveEnvironmentPaneColumn
     >[0]["pickedSelection"];
@@ -92,7 +94,7 @@ function resolve(
       isLoading: options.hostLoading ?? false,
     },
     hosts: [{ hostId: "h-1", name: "Claude Code" } as never],
-    models: catalog,
+    models: options.models ?? catalog,
     pickedSelection: options.pickedSelection,
   });
 }
@@ -131,23 +133,26 @@ describe("resolveEnvironmentPaneColumn", () => {
     expect(result.column.inheritedEnvironmentModel).toBeUndefined();
   });
 
-  it("shows Cursor Auto for an account-chosen client and ignores a pick", () => {
+  it("resolves a Cursor environment model and a pane override from its account catalog", () => {
+    const models = cursorModelRows({
+      configured: true,
+      models: [{ modelId: "cursor/mini", displayName: "Mini" }],
+    });
     const result = resolve(
       { preview: preview("cursor/auto") },
       {
         host: client("h-1", "cursor"),
-        pickedSelection: {
-          source: "hosted",
-          modelId: "openai/gpt-5.5",
-          fallback: { provider: "none", model: "none" },
-        },
+        models,
+        pickedSelection: { source: "legacy", modelId: "cursor/mini" },
       },
     );
-    expect(result.status).toBe("ready");
-    if (result.status !== "ready") return;
-    expect(result.column.model.id).toBe("cursor/auto");
-    expect(result.column.selection).toBeUndefined();
-    expect(result.column.modelRows).toEqual([]);
+    expect(result).toMatchObject({
+      status: "ready",
+      column: {
+        model: { id: "cursor/mini" },
+        selection: { source: "legacy", modelId: "cursor/mini" },
+      },
+    });
   });
 
   it("waits for the environment and its client, and blocks while they load", () => {

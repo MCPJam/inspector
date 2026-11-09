@@ -12,7 +12,7 @@ import {
 } from "@/shared/types";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
   runtimeChosenModelSentinelName,
 } from "@/shared/model-provider";
 import { decideTurnRail } from "./selection-rail.js";
@@ -428,7 +428,7 @@ export function deriveOrgProviderKey(
   const sentinelName = runtimeChosenModelSentinelName(
     String(modelDefinition.id),
   );
-  if (sentinelName) {
+  if (isRuntimeAccountModel(String(modelDefinition.id))) {
     return {
       ok: false,
       error:
@@ -716,7 +716,7 @@ export async function resolveSyntheticModelSource(args: {
   // resolver returns an attribution ("nobody billed MCPJam, and there is no
   // configured provider either") instead of throwing on a key it must not ask
   // for. `orgRuntime` is deliberately absent: there is no runtime to reuse.
-  if (isRuntimeChosenModelSentinel(modelIdStr)) {
+  if (isRuntimeAccountModel(modelIdStr)) {
     return { source: "external-account" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
@@ -897,7 +897,7 @@ export async function resolveHostModelDefinition(args: {
   // live turn: `resolveOrgModelConfig` carries a 15 s timeout, and this call
   // sits between the request and the first token of an external-account harness
   // turn that needs nothing from the org's model config.
-  const skipOrgConfig = shapeIsExact || isRuntimeChosenModelSentinel(modelId);
+  const skipOrgConfig = shapeIsExact || isRuntimeAccountModel(modelId);
   if (!skipOrgConfig && projectId) {
     try {
       const config = await resolveOrgModelConfig({ projectId }, auth);

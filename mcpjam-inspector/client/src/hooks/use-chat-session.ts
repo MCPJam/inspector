@@ -1,3 +1,5 @@
+import { useCursorModels } from "./use-cursor-models";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
@@ -3240,7 +3242,8 @@ export function useChatSession(
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
-  const composedModels = useMemo(
+  const cursorCatalog = useCursorModels(hostedProjectId, !isHostedGuest, [...savedModelIds, initialModelId ?? "", preferredModelId ?? ""]);
+  const baseModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
@@ -3271,6 +3274,7 @@ export function useChatSession(
       savedModelIds,
     ],
   );
+  const composedModels = useMemo(() => [...baseModels, ...cursorCatalog.models], [baseModels, cursorCatalog.models]);
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
   // and every caller that mirrors the selection back) reads this list. Under
@@ -3282,13 +3286,13 @@ export function useChatSession(
   const availableModels = useMemo(
     () =>
       harnessPickerModels(
-        composedModels,
+        harnessId ? composedModels : baseModels,
         harnessId
           ? { harnessId, runtimeVersion: harnessRuntimeVersion }
           : null,
         { requireOrgKeys },
       ),
-    [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+    [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -3371,6 +3375,7 @@ export function useChatSession(
           // a saved choice either. Other locks (guest, ollama-no-tools)
           // stay unselectable.
           !model.disabled ||
+          isRuntimeAccountModel(String(model.id)) ||
           model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
           isOrgPolicyLockReason(model.disabledReason),
       );
@@ -3681,12 +3686,13 @@ export function useChatSession(
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
     allowLocal: !HOSTED_MODE,
+    harnessId,
     temperature: temperatureOverride,
     effortLevels: reasoningEffortOptions(selectedModel,
       reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
     effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
       effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
-  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig, harnessId,
     shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
     temperatureOverride, reasoningEffortHarness]);
   const requestChoiceRef = useRef(requestChoice);

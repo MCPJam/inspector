@@ -54,7 +54,7 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -259,11 +259,11 @@ export function resolveEvalCaseModelDefinition(args: {
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
-  if (!isRuntimeChosenModelSentinel(hostModelId)) return caseModel;
+  if (!isRuntimeAccountModel(hostModelId)) return caseModel;
   // The same builder the swarm runner uses, so the sentinel arrives with its
   // curated label and its registered provider rather than a re-derived guess.
   return {
-    modelDefinition: buildSyntheticModelDefinition(hostModelId),
+    modelDefinition: isRuntimeAccountModel(String(args.caseModel.id)) ? args.caseModel : buildSyntheticModelDefinition(hostModelId),
     externalAccount: true,
   };
 }

@@ -463,7 +463,7 @@ export async function resolveManagedTurnSetup(args: {
     }
   }
   if (
-    (turnMode === "recorded" || externalAccountHarnessTurn) &&
+    turnMode === "recorded" &&
     hostRuntimeConfig &&
     resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
@@ -490,6 +490,7 @@ export async function resolveManagedTurnSetup(args: {
     model: modelDefinition,
     hostWins: turnMode === "recorded",
     allowLocal: localIngress,
+    harnessId: resolvedExecution.harness,
   });
   if (!selected.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
