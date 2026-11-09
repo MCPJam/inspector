@@ -205,7 +205,7 @@ export function NeedsInputTag({
 export function NotRunTag() {
   return (
     <span
-      title="This check needs an input before it can run."
+      title="This check needs a setup change before it can run."
       className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
     >
       Not run
@@ -237,7 +237,7 @@ export function CheckRow({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
-    ([key]) => key !== "missingInput",
+    ([key]) => key !== "missingInput" && key !== "missingInputMessage",
   );
   const warnings = check.warnings;
 

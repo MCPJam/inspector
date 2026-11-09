@@ -618,6 +618,13 @@ it.each(["claude-code", "codex"] as const)("delivers %s App context per turn wit
 });
 
 
+it.each(["claude-code", "codex"] as const)("hands %s the turn's Browser reason as instructions", async (harness) => {
+  const systemPrompt = "Baseline\n\n## Browser\n\nBrowser is unavailable on this conversation's computer for this turn.";
+  await runHarnessTurn(baseOptions({ harness, agentLoop: harness, sourceType: "direct", selectedServers: [], systemPrompt }) as never, "none");
+  expect(agentConstruction.last?.instructions).toBe(systemPrompt);
+});
+
+
 describe("enrolled Claude forwarding admission", () => {
   beforeEach(() => {
     vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");

@@ -14,6 +14,10 @@ const cancelMutation = makeFunctionReference<
   "mutation", Owner & { approvalIds: string[] }, "cancelled" | "already-continuing"
 >("harnessApprovalCancellation:cancelPendingApproval");
 
+const cancelActiveMutation = makeFunctionReference<
+  "mutation", Owner & { requestId: string; approvalIds?: string[] }, null
+>("harnessApprovalCancellation:cancelActiveTurn");
+
 export function pendingHarnessApprovalIds(messages: UIMessage[]): string[] {
   return messages.flatMap((message) => message.parts.flatMap((part) =>
     isToolUIPart(part) && part.state === "approval-requested" ? [part.approval.id] : [],
@@ -29,16 +33,19 @@ export function closeCancelledHarnessApprovals(messages: UIMessage[], ids: strin
   ) }));
 }
 
-export function useHarnessApprovalStop({ owner, messages, setMessages }: {
+export function useHarnessApprovalStop({ owner, messages, setMessages, dispatchBlocked }: {
+  dispatchBlocked: { current: boolean };
   owner: Owner | null;
   messages: UIMessage[];
   setMessages: Dispatch<SetStateAction<UIMessage[]>>;
 }) {
   const convex = useConvex();
   const [stopping, setStopping] = useState(false);
+  const [stopFailed, setStopFailed] = useState(false);
   const ownerKey = JSON.stringify(owner);
   const currentOwner = useRef(ownerKey);
-  useLayoutEffect(() => { currentOwner.current = ownerKey; }, [ownerKey]);
+  const stopGeneration = useRef(0);
+  useLayoutEffect(() => { currentOwner.current = ownerKey; stopGeneration.current++; dispatchBlocked.current = false; setStopping(false); setStopFailed(false); }, [ownerKey]);
   const inFlight = useRef(false);
   const approvalIds = useMemo(() => owner ? pendingHarnessApprovalIds(messages) : [], [messages, ownerKey]);
   const pendingKey = JSON.stringify(approvalIds);
@@ -78,5 +85,36 @@ export function useHarnessApprovalStop({ owner, messages, setMessages }: {
     }
   }, [convex, ownerKey, pendingKey, setMessages]);
 
-  return { canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
+  const stopActiveTurn = useCallback(async (requestId: string) => {
+    if (!owner) return;
+    const generation = ++stopGeneration.current;
+    const isCurrent = () => currentOwner.current === ownerKey && stopGeneration.current === generation;
+    dispatchBlocked.current = true;
+    setStopping(true);
+    setStopFailed(false);
+    try {
+      const lastUser = messages.map((message) => message.role).lastIndexOf("user");
+      const approvalIds = messages.slice(lastUser + 1).flatMap((message) =>
+        message.parts.flatMap((part) =>
+          isToolUIPart(part) && part.state === "approval-responded" ? [part.approval.id] : [],
+        ),
+      );
+      await convex.mutation(cancelActiveMutation, {
+        ...owner, requestId, ...(approvalIds.length ? { approvalIds } : {}),
+      });
+      const cancelled = await convex.query(cancelledQuery, owner);
+      if (isCurrent()) {
+        setMessages((current) => closeCancelledHarnessApprovals(current, cancelled));
+        dispatchBlocked.current = false;
+      }
+    } catch (error) {
+      if (isCurrent()) setStopFailed(true);
+      reportCaught(error, { source: "harness_stop_active_turn" });
+      toast.error("Could not confirm Stop. Refresh this conversation before continuing.");
+    } finally {
+      if (isCurrent()) setStopping(false);
+    }
+  }, [convex, ownerKey, messages, setMessages, dispatchBlocked]);
+
+  return { stopActiveTurn, stopFailed, canStopApproval: Boolean(owner && approvalIds.length), stopping, stopApproval };
 }

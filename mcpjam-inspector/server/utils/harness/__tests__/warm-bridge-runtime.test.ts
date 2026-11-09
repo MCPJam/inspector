@@ -209,7 +209,7 @@ it.each(["claude-code", "codex"] as const)(
     const recipe = await ordinary.getBootstrap?.();
     if (!recipe) throw Error("Missing installed recipe");
     const spawn = vi.fn(unused);
-    const dir = "/home/user/" + recipe.bootstrapDir;
+    const dir = "/home/user/.ai-sdk-harness/" + recipe.bootstrapDir;
     const command = "node '" + dir + "/bridge.mjs' --workdir '/home/user/work'";
     const runtime = withWarmBridgeBootstrap({
       ...ordinary,
@@ -232,6 +232,10 @@ it.each(["claude-code", "codex"] as const)(
       ...f.options.sandboxSession,
       defaultWorkingDirectory: "/home/user",
       spawn,
+      run: async ({ command }: { command: string }) =>
+        command.includes("$HOME")
+          ? { exitCode: 0, stdout: "/home/user", stderr: "" }
+          : { exitCode: 0, stdout: "ready", stderr: "" },
     };
     await expect(
       runtime.doStart({ ...f.options, sandboxSession }),

@@ -46,7 +46,7 @@ const LABELS = [
 /** Routes with a live qualification row at the current pin. */
 const QUALIFIED_DISCOVERY: Record<Harness, readonly (typeof LABELS)[number][]> =
   {
-    "claude-code": ["forwarded-bridge", "host-tools"],
+    "claude-code": [],
     codex: ["forwarded-bridge", "host-tools"],
     cursor: [],
     "copilot-cli": [],

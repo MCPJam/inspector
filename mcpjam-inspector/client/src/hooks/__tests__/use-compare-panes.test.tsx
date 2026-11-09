@@ -1,22 +1,32 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { usePersistedHost } from "../use-persisted-host";
+import { useComparePanes } from "../use-compare-panes";
 import {
-  loadSelectedHostIds,
-  replaceLeadHostId,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  promoteLeadPane,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
+
+function saveSelectedHostIds(projectId: string, hostIds: string[]) {
+  saveComparePanes(projectId, panesForHostIds([], hostIds));
+}
+function loadSelectedHostIds(projectId: string) {
+  return paneHostIds(loadComparePanes(projectId));
+}
+const replaceLeadHostId = promoteLeadPane;
 
 const PROJECT = "p1";
 const PROJECT_B = "p2";
 const TOGGLE_KEY_P1 = `mcp-inspector-multi-host-enabled:${PROJECT}`;
 const TOGGLE_KEY_P2 = `mcp-inspector-multi-host-enabled:${PROJECT_B}`;
 
-describe("usePersistedHost", () => {
+describe("useComparePanes", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -30,7 +40,7 @@ describe("usePersistedHost", () => {
     savePreviewedHostId(PROJECT, "a");
     localStorage.setItem(TOGGLE_KEY_P1, "true");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "b"]);
     expect(result.current.multiHostEnabled).toBe(true);
   });
@@ -38,7 +48,7 @@ describe("usePersistedHost", () => {
   it("returns stored array unchanged when no lead is set", () => {
     saveSelectedHostIds(PROJECT, ["a", "b"]);
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "b"]);
   });
 
@@ -46,7 +56,7 @@ describe("usePersistedHost", () => {
     savePreviewedHostId(PROJECT, "a");
     saveSelectedHostIds(PROJECT, ["a"]);
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
 
     act(() => {
       result.current.setSelectedHostIds(["a", "b"]);
@@ -57,11 +67,11 @@ describe("usePersistedHost", () => {
     expect(loadPreviewedHostId(PROJECT)).toBe("a");
   });
 
-  it("propagates external `replaceLeadHostId` writes into the hook on the next event tick", () => {
+  it("propagates external `promoteLeadPane` writes into the hook on the next event tick", () => {
     saveSelectedHostIds(PROJECT, ["a", "extra"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "extra"]);
 
     act(() => {
@@ -76,7 +86,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds[0]).toBe("a");
 
     // Directly change the previewed host (no array rotation). The hook
@@ -92,18 +102,18 @@ describe("usePersistedHost", () => {
 
   // Defensive derivation: external `savePreviewedHostId` writes (from
   // the global host bar or project setup flows) bypass
-  // `replaceLeadHostId`. The hook must still preserve column count by
+  // `promoteLeadPane`. The hook must still preserve column count by
   // REPLACING slot 0 when the new lead isn't in the stored array — not
   // growing the array.
   it("preserves count when an external savePreviewedHostId targets a host NOT in the array", () => {
     saveSelectedHostIds(PROJECT, ["a", "b"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "b"]);
 
     act(() => {
-      // Direct lead write (not via replaceLeadHostId): "c" isn't in
+      // Direct lead write (not via promoteLeadPane): "c" isn't in
       // stored. The hook must replace slot 0, not append.
       savePreviewedHostId(PROJECT, "c");
     });
@@ -119,7 +129,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "b", "c"]);
 
     act(() => {
@@ -131,14 +141,14 @@ describe("usePersistedHost", () => {
   });
 
   // Multi-select regression analog from the model hook. Starting from
-  // ["a"] with multi-host enabled, the picker calls replaceLeadHostId
+  // ["a"] with multi-host enabled, the picker calls promoteLeadPane
   // (re-affirms the existing lead at slot 0 — no array change) then
   // setSelectedHostIds(["a", "b"]). Final state must be ["a", "b"].
   it("adds a second host when picker re-affirms the lead then writes a longer array", () => {
     saveSelectedHostIds(PROJECT, ["a"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     act(() => {
       result.current.setMultiHostEnabled(true);
     });
@@ -166,7 +176,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["a", "b", "c"]);
 
     act(() => {
@@ -184,7 +194,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
 
     act(() => {
       result.current.setSelectedHostIds(["b"]);
@@ -201,7 +211,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
 
     act(() => {
       result.current.setSelectedHostIds([]);
@@ -211,11 +221,11 @@ describe("usePersistedHost", () => {
     expect(result.current.selectedHostIds).toEqual(["a"]);
   });
 
-  it("preserves column count across a host switch via replaceLeadHostId", () => {
+  it("preserves column count across a host switch via promoteLeadPane", () => {
     saveSelectedHostIds(PROJECT, ["host-a", "extra"]);
     savePreviewedHostId(PROJECT, "host-a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
     expect(result.current.selectedHostIds).toEqual(["host-a", "extra"]);
 
     act(() => {
@@ -228,7 +238,7 @@ describe("usePersistedHost", () => {
   });
 
   it("setMultiHostEnabled persists to project-scoped localStorage key", () => {
-    const { result } = renderHook(() => usePersistedHost(PROJECT));
+    const { result } = renderHook(() => useComparePanes(PROJECT));
 
     act(() => {
       result.current.setMultiHostEnabled(true);
@@ -247,7 +257,7 @@ describe("usePersistedHost", () => {
     saveSelectedHostIds(PROJECT, ["a", "b"]);
     savePreviewedHostId(PROJECT, "a");
 
-    const { result } = renderHook(() => usePersistedHost(PROJECT_B));
+    const { result } = renderHook(() => useComparePanes(PROJECT_B));
     expect(result.current.selectedHostIds).toEqual([]);
   });
 
@@ -258,7 +268,7 @@ describe("usePersistedHost", () => {
     savePreviewedHostId(PROJECT_B, "x");
 
     const { result, rerender } = renderHook(
-      ({ pid }: { pid: string }) => usePersistedHost(pid),
+      ({ pid }: { pid: string }) => useComparePanes(pid),
       { initialProps: { pid: PROJECT } },
     );
     expect(result.current.selectedHostIds).toEqual(["a", "b"]);
@@ -276,10 +286,10 @@ describe("usePersistedHost", () => {
     localStorage.setItem(TOGGLE_KEY_P1, "true");
     localStorage.setItem(TOGGLE_KEY_P2, "false");
 
-    const { result: resultA } = renderHook(() => usePersistedHost(PROJECT));
+    const { result: resultA } = renderHook(() => useComparePanes(PROJECT));
     expect(resultA.current.multiHostEnabled).toBe(true);
 
-    const { result: resultB } = renderHook(() => usePersistedHost(PROJECT_B));
+    const { result: resultB } = renderHook(() => useComparePanes(PROJECT_B));
     expect(resultB.current.multiHostEnabled).toBe(false);
   });
 
@@ -288,12 +298,143 @@ describe("usePersistedHost", () => {
     localStorage.setItem(TOGGLE_KEY_P2, "false");
 
     const { result, rerender } = renderHook(
-      ({ pid }: { pid: string }) => usePersistedHost(pid),
+      ({ pid }: { pid: string }) => useComparePanes(pid),
       { initialProps: { pid: PROJECT } },
     );
     expect(result.current.multiHostEnabled).toBe(true);
 
     rerender({ pid: PROJECT_B });
     expect(result.current.multiHostEnabled).toBe(false);
+  });
+
+  it("keeps each pane's id through a reorder, a promotion and an added client", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    const ids = () =>
+      Object.fromEntries(
+        result.current.panes.map((pane) => [
+          pane.paneId,
+          paneHostIds([pane])[0],
+        ]),
+      );
+    const before = ids();
+
+    act(() => result.current.setSelectedHostIds(["b", "a"]));
+    act(() => replaceLeadHostId(PROJECT, "b"));
+    act(() => result.current.setSelectedHostIds(["b", "a", "c"]));
+
+    expect(result.current.selectedHostIds).toEqual(["b", "a", "c"]);
+    expect(ids()).toMatchObject(before);
+  });
+
+  it("reads a saved v1 host list as panes keyed by the same ids, then saves v2", () => {
+    localStorage.setItem(
+      `mcp-inspector-selected-hosts:${PROJECT}`,
+      JSON.stringify(["a", "b"]),
+    );
+    savePreviewedHostId(PROJECT, "a");
+
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+
+    expect(result.current.panes).toEqual([
+      { paneId: "a", target: { kind: "host", hostId: "a" } },
+      { paneId: "b", target: { kind: "host", hostId: "b" } },
+    ]);
+    expect(
+      JSON.parse(
+        localStorage.getItem(`mcp-inspector-compare-panes:${PROJECT}`)!,
+      ),
+    ).toEqual({ version: 2, panes: result.current.panes });
+    expect(
+      localStorage.getItem(`mcp-inspector-selected-hosts:${PROJECT}`),
+    ).toBeNull();
+  });
+
+  it("restores both named panes in order without saving temporary overrides to the project", () => {
+    savePreviewedHostId(PROJECT, "same-client");
+    const saved = [
+      {
+        paneId: "one",
+        target: { kind: "environment" as const, environmentId: "env-b" },
+        serverIds: [],
+        pluginVersionIds: [],
+      },
+      {
+        paneId: "two",
+        target: { kind: "environment" as const, environmentId: "env-a" },
+        serverIds: null,
+      },
+    ];
+    const { result, unmount } = renderHook(() => useComparePanes(PROJECT));
+    act(() => result.current.restorePanes(saved));
+    expect(result.current.panes).toEqual(saved);
+    act(() =>
+      result.current.setPaneOverrides("two", { pluginVersionIds: ["one-pin"] }),
+    );
+    expect(result.current.panes[0]).toEqual(saved[0]);
+    expect(result.current.panes[1]).toMatchObject({
+      serverIds: null,
+      pluginVersionIds: ["one-pin"],
+    });
+    unmount();
+    const fresh = renderHook(() => useComparePanes(PROJECT));
+    expect(fresh.result.current.panes).toEqual(
+      saved.map(({ paneId, target }) => ({ paneId, target })),
+    );
+  });
+
+  it("restores the saved lead even when the previewed client changed during sign-in", () => {
+    savePreviewedHostId(PROJECT, "other-client");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    const saved = panesForHostIds([], ["b", "a"]);
+    act(() => result.current.restorePanes(saved));
+    expect(result.current.panes).toEqual(saved);
+    expect(loadPreviewedHostId(PROJECT)).toBe("b");
+  });
+
+  it("starts a new project with the v2 list", () => {
+    renderHook(() => useComparePanes(PROJECT));
+    expect(
+      JSON.parse(
+        localStorage.getItem(`mcp-inspector-compare-panes:${PROJECT}`)!,
+      ),
+    ).toEqual({ version: 2, panes: [] });
+  });
+
+  it("saves a pane's picked model and forgets it when the pick is cleared", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    const pick = {
+      source: "hosted" as const,
+      modelId: "openai/gpt-5.5",
+      fallback: { provider: "none" as const, model: "none" as const },
+    };
+    act(() => result.current.setPanePick("b", pick));
+    expect(result.current.panes[1]).toMatchObject({ pickedSelection: pick });
+    expect(loadComparePanes(PROJECT)[1]).toMatchObject({
+      pickedSelection: pick,
+    });
+    act(() => result.current.setPanePick("b", undefined));
+    expect(loadComparePanes(PROJECT)[1]).toEqual({
+      paneId: "b",
+      target: { kind: "host", hostId: "b" },
+    });
+  });
+
+  it("edits pane 0 after an outside lead change put a new client there", () => {
+    saveSelectedHostIds(PROJECT, ["a", "b"]);
+    savePreviewedHostId(PROJECT, "a");
+    const { result } = renderHook(() => useComparePanes(PROJECT));
+    // The global client bar previews c: the lead sync shows it as pane 0.
+    act(() => savePreviewedHostId(PROJECT, "c"));
+    expect(result.current.selectedHostIds).toEqual(["c", "b"]);
+    act(() => result.current.setPaneOverrides("c", { serverIds: [] }));
+    expect(result.current.panes[0]).toMatchObject({
+      paneId: "c",
+      serverIds: [],
+    });
+    expect(result.current.panes[1]).toMatchObject({ paneId: "b" });
   });
 });

@@ -226,11 +226,20 @@ import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
   computerQuotaReserver,
+  decodeHarnessAttachments,
+  releaseHarnessAttachmentDecodes,
   saveHarnessAttachments,
   takeHarnessPromptAttachments,
   unsavedHarnessAttachments,
   withHarnessAttachmentNote,
 } from "./harness-attachments.js";
+import {
+  harnessPromptImageHistory,
+  prepareHarnessPromptImages,
+  shouldPrepareHarnessPromptImages,
+  withHarnessPromptImages,
+  type HarnessPromptImage,
+} from "./harness-prompt-images.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import {
   composeLivePlusSkills,
@@ -530,10 +539,9 @@ const HARNESS_HEARTBEAT_MS = 90_000;
 // A missed renewal aborts preparation immediately; the longer server-side TTL
 // is the crash-recovery backstop for a worker that disappears altogether.
 const HARNESS_RESERVATION_HEARTBEAT_MS = 60_000;
-// v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
-// resumed sessions reconnect to a bridge process holding the OLD env, so force
-// fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
-const HARNESS_RUNTIME_COMPAT_VERSION = 7;
+// v8: image-capable adapter pins and `$HOME/.ai-sdk-harness` bake layout.
+// Resumed sessions keep the old bridge binary, so force a fresh session.
+const HARNESS_RUNTIME_COMPAT_VERSION = 8;
 
 /** Stable hash of the session-scoped runtime inputs. A change forces a fresh
  *  harness session (a resumed Claude Code thread keeps the model/tools it was
@@ -1440,6 +1448,18 @@ export async function runHarnessTurn(
       const promptAttachments = isApprovalResume
         ? { messages, attachments: [] }
         : takeHarnessPromptAttachments(messages);
+      decodeHarnessAttachments(promptAttachments.attachments);
+      const promptImages = shouldPrepareHarnessPromptImages({
+        isApprovalResume,
+        promptImageInput: harnessAdapter.promptImageInput,
+        attachmentCount: promptAttachments.attachments.length,
+      })
+        ? prepareHarnessPromptImages({
+            attachments: promptAttachments.attachments,
+            history: harnessPromptImageHistory(promptAttachments.messages),
+            abortSignal,
+          })
+        : Promise.resolve<HarnessPromptImage[]>([]);
       let attachmentOutcomes = unsavedHarnessAttachments(
         promptAttachments.attachments,
       );
@@ -2184,6 +2204,7 @@ export async function runHarnessTurn(
         const leaseId = crypto.randomUUID();
         const claim = await claimHarnessSessionState({
           owner,
+          requestId: options.harnessStartupRequestId,
           ...(warmAgentPilot || isApprovalResume ? { approvalIds: approvalContinuations.map(({ approvalId }) => approvalId) } : {}),
           runtimeFingerprint,
           ...(skillsHash !== undefined ? { skillsHash } : {}),
@@ -3485,6 +3506,8 @@ export async function runHarnessTurn(
         tDispatch = Date.now();
         logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
+        const images = await promptImages;
+        releaseHarnessAttachmentDecodes(promptAttachments.attachments);
         const res = resumeFromApproval
           ? await agent.continueStream({
               session,
@@ -3494,8 +3517,8 @@ export async function runHarnessTurn(
           : await agent.stream({
               session,
               messages: withHarnessTurnContext(withHarnessAttachmentNote(
-                promptAttachments.messages,
-                buildHarnessAttachmentNote(attachmentOutcomes),
+                withHarnessPromptImages(promptAttachments.messages, images),
+                buildHarnessAttachmentNote(attachmentOutcomes, images),
               ), options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
@@ -4410,6 +4433,7 @@ export async function runHarnessTurn(
         ) {
           drainEndedByAbort = true;
         }
+        if (effectiveAbortSignal.aborted && !drainEndedByAbort) aborted = true;
         if (drainEndedByAbort) {
           logger.info(
             "[harness][background-drain] ended by a stop or deadline; keeping the delivered answer",
@@ -4681,7 +4705,9 @@ export async function runHarnessTurn(
             // this paused turn's transcript WITHOUT a sidecar commit, because
             // this commit has already advanced the state version and released
             // the lease, so an ingest carrying it would be refused.
+            effectiveAbortSignal.throwIfAborted();
             const continueState = await session.suspendTurn();
+            effectiveAbortSignal.throwIfAborted();
             const ok = await commitHarnessSessionState({
               owner: continuity.owner,
               leaseId: continuity.leaseId,
@@ -4696,8 +4722,12 @@ export async function runHarnessTurn(
               // Terminal path — bounded. A missed commit means the next request
               // re-claims the lane and starts fresh, which is recoverable;
               // hanging here is not.
-              signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+              signal: AbortSignal.any([
+                effectiveAbortSignal,
+                AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+              ]),
             });
+            effectiveAbortSignal.throwIfAborted();
             localStateCommitted = ok;
             retainLocalState ||= ok;
             if (!ok && !localPrepared) await releaseHarnessLease?.();
@@ -4755,6 +4785,7 @@ export async function runHarnessTurn(
             if (continuity && !localPrepared) await releaseHarnessLease?.();
           }
         } catch (finalizeErr) {
+          if (effectiveAbortSignal.aborted && !drainEndedByAbort) aborted = true;
           logger.warn(
             "[harness] session finalize failed; releasing lease, sidecar not committed",
             { error: finalizeErr },

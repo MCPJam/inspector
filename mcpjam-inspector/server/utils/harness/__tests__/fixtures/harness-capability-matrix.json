@@ -7,14 +7,15 @@
       "forwardingRuntime": {
         "configurationVersion": "tool-search-auto-v1",
         "ownedInput": true,
-        "runtimeVersion": "2.1.245"
+        "runtimeVersion": "2.1.290"
       },
       "id": "claude-code",
       "liveApprovalRuntime": true,
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
       "modelAccess": "broker",
-      "pinnedRuntimeVersion": "2.1.245",
+      "pinnedRuntimeVersion": "2.1.290",
+      "promptImageInput": true,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.claude/skills",
       "skillsWriteOptions": {
@@ -56,12 +57,9 @@
       },
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "2.1.245"
+      "runtimeVersion": "2.1.290"
     },
-    "qualifiedDiscovery": [
-      "forwarded-bridge",
-      "host-tools"
-    ]
+    "qualifiedDiscovery": []
   },
   "codex": {
     "adapter": {
@@ -80,6 +78,7 @@
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "0.163.0",
+      "promptImageInput": true,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {
@@ -149,6 +148,7 @@
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.0.92",
+      "promptImageInput": false,
       "requiresComputer": true,
       "skillsBaseDir": "",
       "skillsWriteOptions": {
@@ -216,6 +216,7 @@
       "mcpNativeDelivery": "session-config",
       "modelAccess": "external-account",
       "pinnedRuntimeVersion": "2026.11.05-86047df",
+      "promptImageInput": true,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {
@@ -279,6 +280,7 @@
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.18.23",
+      "promptImageInput": false,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {

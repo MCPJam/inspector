@@ -39,6 +39,7 @@ vi.mock("use-stick-to-bottom", () => {
   };
 });
 
+let sessionModel: { id: string; name: string; provider: string; hosted?: boolean } | undefined;
 const mockUseChatSession = {
   // Elicitation surface (hosted). These suites never elicit, but the shape
   // must match the hook's contract or the dialog crashes on undefined.
@@ -47,6 +48,16 @@ const mockUseChatSession = {
   elicitationResponding: false,
   urlElicitationRequired: [],
   dismissUrlElicitationRequired: vi.fn(),
+  // The hook resolves the card's own row; a lazy read because `model` is
+  // declared below this mock.
+  get selectedModel() {
+    return sessionModel ?? model;
+  },
+  // Tests restore the mock with `Object.assign`; writing the card's own row
+  // back clears the per-test override.
+  set selectedModel(value: typeof sessionModel) {
+    sessionModel = value === model ? undefined : value;
+  },
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),

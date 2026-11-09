@@ -65,6 +65,16 @@ describe("harness registry", () => {
     expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
     expect(a.fileChangeToolName).toBeUndefined();
+    expect(a.promptImageInput).toBe(true);
+  });
+
+  it("Codex, Claude Code, and Cursor advertise native prompt images", () => {
+    const nativeImageHarnesses = new Set(["codex", "claude-code", "cursor"]);
+    for (const id of registeredHarnessIds()) {
+      expect(getHarnessAdapter(id).promptImageInput).toBe(
+        nativeImageHarnesses.has(id),
+      );
+    }
   });
 
   it("every adapter that advertises a capability carries its strategy", () => {
@@ -488,7 +498,7 @@ describe("harness registry", () => {
         files: [
           {
             path: "/tmp/harness/claude-code/bridge.mjs",
-            content: `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
+            content: `const HOST_TOOL_PREFIX = "mcp__harness-tools__";
 function createEmitStreamEvent({
   state,
   emit,
@@ -498,27 +508,37 @@ function createEmitStreamEvent({
   return (msg) => {
     const type = msg.type;
     if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }
     if (type === "stream_event") {
       handleStreamEvent({
         event: msg.event,
+        message: msg,
         state,
-        send: emit
+        send: emit,
+        toCommonName
       });
       return;
     }
-    if (type === "assistant" && msg.message?.content) {
+    const messageContent = msg.message?.content;
+    if (type === "assistant" && Array.isArray(messageContent)) {
+      const usage = toUsageRecord(msg.message?.usage);
+      const toolUseIds = [];
       let opensStep = false;
-      for (const block of msg.message.content) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-          opensStep = true;
-          emit({ type: "tool-call" });
-        }
+      for (const block of messageContent) if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+        opensStep = true;
+        emit({ type: "tool-call" });
       }
       if (opensStep) {
         state.stepOpen = true;
       }
+      return;
+    }
+    if (type === "user" && Array.isArray(messageContent)) {
       return;
     }
   };
@@ -528,7 +548,8 @@ function createPermissionOptions(input) {
     canUseTool: async (toolName, toolInput, options) => {
       const approvalId = options.toolUseID;
       input.approvalRequestedToolUseIds.add(approvalId);
-      const decision = await input.turn.requestToolApproval(approvalId);
+      const decisionPromise = input.turn.requestToolApproval(approvalId);
+      const decision = await decisionPromise.finally(() => input.clearWaitingOnHostInput(approvalId));
       return decision;
     }
   };
@@ -557,7 +578,7 @@ const toUserMessage = (options) => ({
   type: "user",
   message: {
     role: "user",
-    content: [{ type: "text", text: options.text }]
+    content: typeof options.content === "string" ? [{ type: "text", text: options.content }] : options.content
   },
   parent_tool_use_id: null,
   uuid: options.messageId
@@ -565,9 +586,6 @@ const toUserMessage = (options) => ({
 function emitUserToolResults(msg) {
     if (type === "system" && msg.subtype === "task_updated" && msg.patch?.status === "failed" && typeof msg.patch.error === "string") {
       emitTerminalError(msg.patch.error);
-      return;
-    }
-    if (type === "user" && msg.message?.content) {
       return;
     }
 }
@@ -585,19 +603,14 @@ async function runBridge(options) {
   };
   wss.on("connection", (ws, req) => {
     ws.on("close", () => {
-      if (activeSocket === ws) {
-        activeSocket = void 0;
-      }
+      if (activeSocket === ws) activeSocket = void 0;
     });
   });
 }
 async function runTurn(start, turn) {
   const onHostAbort = () => {
-    if (gracefulAbort) {
-      gracefulAbort();
-    } else {
-      abortCtl.abort();
-    }
+    if (gracefulAbort) gracefulAbort();
+    else abortCtl.abort();
   };
   const streamEventState = createClaudeStreamEventState();
   const queryInput = createQueryInput({
@@ -620,8 +633,9 @@ async function runTurn(start, turn) {
       if (type === "result") {
         if (msg.subtype === "success") {
           if (typeof msg.total_cost_usd === "number") {
-            totalCostUsd = (totalCostUsd ?? 0) + msg.total_cost_usd;
+            totalCostUsd = msg.total_cost_usd;
           }
+          if (!queryInput.answersSentMessage(msg)) continue;
           queryInput.observeResult();
           if (!queryInput.hasActiveUserMessages()) {
             queryInput.close();
@@ -636,9 +650,10 @@ async function runTurn(start, turn) {
       }
     }
   } catch (err) {
-    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) {
-      turn.emitError({ error: err, message: "claude-code turn failed" });
-    }
+    if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+      error: err,
+      message: "claude-code turn failed"
+    });
     return;
   } finally {
     gracefulAbort = void 0;
@@ -646,17 +661,14 @@ async function runTurn(start, turn) {
   if (emittedTerminalError) return;
   emittedTerminalFinish = true;
 }
-function createQueryInput({
-  initialUserMessage,
-  userMessages,
-  abortSignal
-}) {
+function createQueryInput({ initialUserMessage, userMessages, abortSignal }) {
+  const initialMessageId = randomUUID();
   return {
     next() {
       return {
               value: toUserMessage({
-                  text: initialUserMessage,
-                  messageId: randomUUID3()
+                  content: initialUserMessage,
+                  messageId: initialMessageId
                 }),
               done: false
       };
@@ -666,7 +678,8 @@ function createQueryInput({
 function addUsage(total, usage) {
   if (total == null) return usage;
   return { ...total, ...usage };
-}`,
+}
+`,
           },
         ],
         commands: [],
@@ -743,12 +756,12 @@ function addUsage(total, usage) {
       "activeSocket = void 0;\n        mcpjamHostPresence.onDetach?.();",
     );
     expect(bridge?.content).toContain(
-      "messageId: initialMessageId ?? randomUUID3()",
+      "initialMessageIdOption ?? randomUUID()",
     );
     expect(bridge?.content).toContain("totalCostUsd = msg.total_cost_usd;");
     expect(bridge?.content).not.toContain("(totalCostUsd ?? 0) +");
     expect(bridge?.content).toContain(
-      'if (type === "user" && Array.isArray(msg.message?.content)) {',
+      'if (type === "user" && Array.isArray(messageContent)) {',
     );
     expect(bridge?.content).toContain("streamedAssistantText = false;");
     // Approvals go through the vendor's own gate: a background agent's
@@ -854,7 +867,7 @@ function addUsage(total, usage) {
         ...vendor,
         files: vendor.files.map((file) => ({
           ...file,
-          content: file.content.replace(
+          content: file.content.replaceAll("\t", "  ").replace(
             "      emitStreamEvent(msg);\n      if (type === \"result\") {",
             "      emitStreamEvent(msg);\n\n      if (type === \"result\") {",
           ),
@@ -929,17 +942,17 @@ function addUsage(total, usage) {
     // settings from `pnpm-workspace.yaml`.
     expect(npmrc?.path).toBe(`${bootstrap?.bootstrapDir}/.npmrc`);
     expect(npmrc?.content).toContain("dangerously-allow-all-builds=true");
-    // Exactly ONE pnpm-workspace.yaml, and it is the ADAPTER's version-pinned
-    // allow-list — ours is only a fallback for an adapter that ships none, and
-    // appending a second entry for the same path would write the file twice
-    // with conflicting content.
+    // Exactly ONE pnpm-workspace.yaml, and it is the ADAPTER's allow-list —
+    // ours is only a fallback for an adapter that ships none, and appending a
+    // second entry for the same path would write the file twice with
+    // conflicting content.
     expect(workspaces).toHaveLength(1);
     expect(workspaces?.[0]?.path).toBe(
       `${bootstrap?.bootstrapDir}/pnpm-workspace.yaml`,
     );
     expect(workspaces?.[0]?.content).toContain("allowBuilds:");
     expect(workspaces?.[0]?.content).toMatch(
-      /'@anthropic-ai\/claude-code@[\d.]+': true/,
+      /'@anthropic-ai\/claude-code(?:@[\d.]+)?': true/,
     );
     expect(workspaces?.[0]?.content).not.toContain("dangerouslyAllowAllBuilds");
 
@@ -1274,41 +1287,19 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     expect(runtime.harnessId).toBe("cursor");
   });
 
-  it("shell-quotes the workdir so a metacharacter path cannot execute", () => {
-    // The workdir is host-configured. `resolveWorkingDirectory` confines it to
-    // /home/user but does NOT reject shell metacharacters, so this command is
-    // the injection surface: it is built as a string and handed to a shell in
-    // the box during session setup.
-    //
-    // These assert the EMITTED BYTES, not the intent. The first version of this
-    // used a template literal — where `\'` is just `'`, so the escape silently
-    // collapsed to three quotes, closing the quoted word and leaving the rest
-    // of the path unquoted. It read correctly and did nothing.
-    const cmd = (dir: string) =>
-      getHarnessAdapter("cursor").runtimeVersionCommand!(dir);
-
-    // A plain path is wrapped in single quotes and otherwise untouched.
-    expect(cmd("/home/user")).toBe(
-      "'/home/user/.harness-bootstrap/cursor/implementation/home/.local/bin/agent' --version",
-    );
-
-    // Command substitution stays INSIDE the quotes, so the shell never runs it.
+  it("probes the CLI under the harness state directory, not the session workdir", () => {
+    const cmd = getHarnessAdapter("cursor").runtimeVersionCommand!;
+    const expected =
+      '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version';
+    expect(cmd("/home/user")).toBe(expected);
     for (const dangerous of [
       "/home/user/$(id)",
       "/home/user/`id`",
       "/home/user/$IFS",
+      "/home/user/it's",
     ]) {
-      const out = cmd(dangerous);
-      expect(out.startsWith("'" + dangerous + "/")).toBe(true);
-      // Balanced quoting, and nothing outside it but the flag.
-      expect(out.endsWith("agent' --version")).toBe(true);
-      expect((out.match(/'/g) ?? []).length % 2).toBe(0);
+      expect(cmd(dangerous)).toBe(expected);
     }
-
-    // An apostrophe is closed, escaped and reopened — never three bare quotes.
-    const withQuote = cmd("/home/user/it's");
-    expect(withQuote).toContain("it'\\''s");
-    expect(withQuote).not.toContain("it'''s");
   });
 
   it("names a runtime-version command (its CLI is NOT pinned by the package pin)", () => {

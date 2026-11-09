@@ -1,7 +1,7 @@
 /**
  * Group E: a subagent's steps, for the Claude Code bridge.
  *
- * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.121`,
+ * The vendored bridge (`@ai-sdk/harness-claude-code@1.0.162`,
  * `dist/bridge/index.mjs`) drops every message a subagent produces: its
  * `parent_tool_use_id` guard returns before the `assistant` and `user`
  * branches, so a subagent's tool calls never reach the turn. That is right for
@@ -146,9 +146,17 @@ const REPLACEMENTS: readonly Replacement[] = [
   // The sub-agent guard: forward the step, then return as before.
   [
     `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }`,
     `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       mcpjamForwardSubagentStep(state, emit, msg);
       return;
     }`,
@@ -166,7 +174,7 @@ export const CLAUDE_CODE_SUBAGENT_STEPS_NEEDLES: readonly string[] =
  */
 export function patchClaudeCodeSubagentSteps(content: string): string {
   if (content.includes(CLAUDE_CODE_SUBAGENT_STEPS_MARKER)) return content;
-  let patched = content;
+  let patched = content.replaceAll("\t", "  ");
   for (const [needle, replacement] of REPLACEMENTS) {
     const at = patched.indexOf(needle);
     if (at < 0 || patched.indexOf(needle, at + needle.length) >= 0) {

@@ -8,6 +8,7 @@ import {
 } from "e2b";
 import {
   getSandboxEgressStatus,
+  getSandboxTrafficToken,
   prepareSandboxConnection,
 } from "./control-plane-client.js";
 
@@ -23,6 +24,29 @@ export class SandboxAttachmentError extends Error {
     super(message);
     this.name = "SandboxAttachmentError";
   }
+}
+
+/**
+ * A box created with public traffic off refuses every non-envd request that
+ * lacks its traffic access token: the harness bridge and the workspace
+ * preview would both be turned away at the edge without it.
+ */
+async function readTrafficAccessToken(
+  sandboxId: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const result = await getSandboxTrafficToken({
+    providerComputerId: sandboxId,
+    signal,
+  });
+  if (!result.ok && result.status === 404)
+    throw new SandboxNotFoundError("This sandbox no longer exists.");
+  if (!result.ok || !result.value.trafficAccessToken)
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Could not attach to this sandbox. Try again.",
+    );
+  return result.value.trafficAccessToken;
 }
 
 async function requireReadyPolicy(
@@ -118,6 +142,10 @@ async function readRunningSandboxConnection(
       "sandbox_policy_unavailable",
       "This sandbox cannot run safely. Start a new sandbox.",
     );
+  const trafficAccessToken =
+    data.network?.allowPublicTraffic === false
+      ? await readTrafficAccessToken(sandboxId, signal)
+      : undefined;
   await requireReadyPolicy(sandboxId, signal, deadline);
   return {
     ...options,
@@ -125,6 +153,7 @@ async function readRunningSandboxConnection(
     sandboxDomain: data.domain ?? undefined,
     envdVersion: data.envdVersion,
     envdAccessToken: data.envdAccessToken,
+    ...(trafficAccessToken ? { trafficAccessToken } : {}),
   };
 }
 

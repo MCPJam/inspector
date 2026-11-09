@@ -37,6 +37,7 @@ import {
 import {
   conformanceTargetKey,
   useConformanceRunVersion,
+  versionErrorState,
 } from "./use-conformance-run-version";
 import {
   createAppsState,
@@ -639,19 +640,20 @@ export function useConformanceRun({
         : createOAuthState(currentServer),
     );
     let resolved: McpProtocolVersion | undefined;
+    let loginRequired = false;
     try {
       resolved = await resolveVersion(currentServer, versionPin, runBudget());
-    } catch (error) {
+    } catch (e) {
       if (!isRunActive(runToken, currentServer.name)) return;
-      const state = {
-        status: "error" as const,
-        error: suiteErrorMessage(error),
-      };
-      if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
-      if (isSelected(selected?.apps)) setApps(state);
-      if (isSelected(selected?.tasks)) setTasks(state);
+      const state = versionErrorState(e, suiteErrorMessage(e));
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
-      return;
+      loginRequired = state.verdict === "incomplete";
+      if (!loginRequired) {
+        if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
+        if (isSelected(selected?.apps)) setApps(state);
+        if (isSelected(selected?.tasks)) setTasks(state);
+        return;
+      }
     }
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
@@ -676,7 +678,7 @@ export function useConformanceRun({
       promises.push(
         runApps(runToken, currentServer.name, {
           checkIds: picked?.apps,
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -686,7 +688,7 @@ export function useConformanceRun({
       promises.push(
         runTasks(runToken, currentServer.name, {
           ...tasksRunOptions(probes, picked),
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -697,7 +699,7 @@ export function useConformanceRun({
         promises.push(
           runOAuth(runToken, currentServer, resolved, picked?.oauthAdvice),
         );
-      } else {
+      } else if (!loginRequired) {
         setOAuth(NOT_SELECTED);
       }
     }
