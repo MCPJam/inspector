@@ -216,7 +216,7 @@
       "mcpNativeDelivery": "session-config",
       "modelAccess": "external-account",
       "pinnedRuntimeVersion": "2026.11.05-86047df",
-      "promptImageInput": false,
+      "promptImageInput": true,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.agents/skills",
       "skillsWriteOptions": {

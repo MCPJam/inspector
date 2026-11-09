@@ -68,10 +68,11 @@ describe("harness registry", () => {
     expect(a.promptImageInput).toBe(true);
   });
 
-  it("Codex and Claude Code advertise native prompt images", () => {
+  it("Codex, Claude Code, and Cursor advertise native prompt images", () => {
+    const nativeImageHarnesses = new Set(["codex", "claude-code", "cursor"]);
     for (const id of registeredHarnessIds()) {
       expect(getHarnessAdapter(id).promptImageInput).toBe(
-        id === "codex" || id === "claude-code",
+        nativeImageHarnesses.has(id),
       );
     }
   });
