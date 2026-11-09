@@ -377,6 +377,20 @@ describe("the hosted pane — the socket", () => {
     vi.useRealTimers();
   });
 
+  it("drops the paused state when the pane shows another browser", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+
+    view.rerender(
+      <HostedBrowserBody projectId="proj-2" mintToken={mintToken} active />,
+    );
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("wakes the box on input and brings the picture back", async () => {
     // Resume (or any click on the paused picture) asks the control plane to
     // resume it. The stream is then asked for again: a resumed box comes back

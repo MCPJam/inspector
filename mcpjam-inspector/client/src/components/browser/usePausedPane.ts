@@ -20,32 +20,37 @@ export function usePausedPane(args: {
   state: PausedPaneState;
   pause: () => void;
   resume: () => void;
+  /** The desktop is serving again (a frame arrived) or the pane shows another browser. */
+  clear: () => void;
 } {
   const [state, setState] = useState<PausedPaneState>("awake");
+  // Moved with every transition, not only on render, so calls from socket
+  // events read the state the previous call left.
   const stateRef = useRef(state);
-  stateRef.current = state;
   const argsRef = useRef(args);
   argsRef.current = args;
+  const go = useCallback((next: PausedPaneState) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
 
-  const pause = useCallback(() => setState("paused"), []);
+  const pause = useCallback(() => go("paused"), [go]);
+  const clear = useCallback(() => {
+    if (stateRef.current !== "awake") go("awake");
+  }, [go]);
   const resume = useCallback(() => {
     if (stateRef.current !== "paused") return;
-    stateRef.current = "resuming";
-    setState("resuming");
-    argsRef.current.wake().then(
-      (woke) => {
-        if (!woke) {
-          setState("paused");
-          return;
-        }
-        setState("awake");
-        argsRef.current.onAwake();
-      },
-      // A wake that failed leaves the box asleep; the next input asks again.
-      () => setState("paused"),
-    );
-  }, []);
-  return { state, pause, resume };
+    go("resuming");
+    const settle = (woke: boolean) => {
+      // A frame already showed the desktop serving: nothing is left to do.
+      if (stateRef.current === "awake") return;
+      go(woke ? "awake" : "paused");
+      if (woke) argsRef.current.onAwake();
+    };
+    // A wake that failed leaves the box asleep; the next input asks again.
+    argsRef.current.wake().then(settle, () => settle(false));
+  }, [go]);
+  return { state, pause, resume, clear };
 }
 
 /** How often, at most, VNC input tells the control plane someone is there. */

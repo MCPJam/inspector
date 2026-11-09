@@ -43,8 +43,9 @@ export function registerBrowserInputPing(
       });
       const { computerId } = auth.claims;
       if (computerId && shouldTouchActivity(computerId)) {
-        // As the keepalive does: a failed touch only risks an earlier pause.
-        void deps.touchActivity({ computerId });
+        void deps.touchActivity({ computerId }).catch(() => {
+          // As the keepalive's: a failed touch only risks an earlier pause.
+        });
       }
       return c.json({ ok: true, counted });
     } catch (error) {
