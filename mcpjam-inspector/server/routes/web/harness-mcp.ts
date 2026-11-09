@@ -32,6 +32,11 @@ import {
   type ManagerCallerContext,
 } from "./auth";
 import { authorizeProxyTurn } from "../../utils/harness/proxy-turn.js";
+import {
+  authorizeSessionRequest,
+  sameSessionTurn,
+} from "../../utils/harness/session-proxy-request.js";
+import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -229,17 +234,30 @@ async function handle(c: any) {
   // stays Convex's. A bare token keeps today's path byte-for-byte.
   const presentedToken = readProxyToken(c);
   const sealed = unsealHarnessProxyToken(presentedToken, serverId);
-  const claims = verifyHarnessProxyToken(
-    sealed?.token ?? presentedToken,
-    serverId
-  );
+  // A session envelope carries the lane's handle, not a turn's token: the live
+  // turn and its bound policy come from the backend on every request.
+  const sessionEnvelope = sealed?.session ? sealed : undefined;
+  const boxGrant = c.req.header(SESSION_GRANT_HEADER) || undefined;
+  const session = sessionEnvelope
+    ? await authorizeSessionRequest(sessionEnvelope, serverId, boxGrant)
+    : undefined;
+  if (session instanceof Response) return session;
+  const claims =
+    session?.claims ??
+    verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  const correlationId = session?.turnId ?? readScopeStepUpCorrelationId(c);
 
   const turn = sealed?.turn;
-  const checkTurn = turn ? () => authorizeProxyTurn(turn, claims) : undefined;
-  const denied = await checkTurn?.();
+  const checkTurn = turn
+    ? () => authorizeProxyTurn(turn, claims)
+    : sessionEnvelope && session
+      ? () =>
+          sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
+      : undefined;
+  const denied = turn ? await checkTurn?.() : undefined;
   if (denied) return denied;
 
   if (rateLimited(`${claims.userId}:${serverId}`)) {
@@ -438,7 +456,6 @@ async function handle(c: any) {
               classification: block.marker.classification,
               at: Date.now(),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessPolicyBlock(
               correlationId,
               event,
@@ -487,7 +504,6 @@ async function handle(c: any) {
                 ? { toolInput: context.toolInput }
                 : {}),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessScopeStepUp(
               correlationId,
               event,

@@ -6,6 +6,7 @@ import {
   isHarnessProxyPolicySealAvailable,
   isSealedHarnessProxyToken,
   sealHarnessProxyToken,
+  sealHarnessSessionEnvelope,
   unsealHarnessProxyToken,
 } from "../harness-proxy-policy-seal.js";
 import { verifyHarnessProxyToken } from "../harness-proxy-token.js";
@@ -182,5 +183,52 @@ describe("harness proxy policy seal", () => {
     expect(verifyHarnessProxyToken(opened!.token, "srv-a")).toMatchObject({
       externalId: "u_ext",
     });
+  });
+});
+
+describe("sealHarnessSessionEnvelope (one value for a whole session)", () => {
+  const session = (overrides: Partial<Parameters<typeof sealHarnessSessionEnvelope>[0]> = {}) =>
+    sealHarnessSessionEnvelope({
+      handle: "lane-session-handle",
+      serverId: "srv-a",
+      policy: snapshot,
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+      ...overrides,
+    });
+
+  it("is deterministic, so a fingerprinting runtime sees no change between turns", () => {
+    expect(session()).toBe(session());
+    expect(session()).toMatch(/^mcpjps4\./);
+    expect(isSealedHarnessProxyToken(session())).toBe(true);
+  });
+
+  it("changes whenever the handle, policy or profile does", () => {
+    const base = session();
+    expect(session({ handle: "another-handle" })).not.toBe(base);
+    expect(session({ policy: { ...snapshot, unknownTool: "allow" } })).not.toBe(base);
+    expect(session({ profile: { clientCapabilities: {}, timeout: 10_000 } })).not.toBe(base);
+  });
+
+  it("opens as a session with no expiry, for its server only", () => {
+    const opened = unsealHarnessProxyToken(session(), "srv-a", {
+      nowMs: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    });
+    expect(opened).toMatchObject({
+      session: true,
+      token: "lane-session-handle",
+      serverId: "srv-a",
+      policy: snapshot,
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+    });
+    expect(unsealHarnessProxyToken(session(), "srv-b")).toBeNull();
+  });
+
+  it("refuses a tampered envelope", () => {
+    const [prefix, iv, body] = session().split(".");
+    const flipped = body!.slice(0, -2) + (body!.endsWith("A") ? "BB" : "AA");
+    expect(unsealHarnessProxyToken(`${prefix}.${iv}.${flipped}`, "srv-a")).toBeNull();
+    // A per-turn envelope cannot be relabelled as a session one.
+    const perTurn = seal({}).split(".");
+    expect(unsealHarnessProxyToken(`mcpjps4.${perTurn[1]}.${perTurn[2]}`, "srv-a")).toBeNull();
   });
 });
