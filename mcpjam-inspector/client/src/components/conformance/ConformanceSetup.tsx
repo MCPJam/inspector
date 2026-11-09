@@ -28,6 +28,7 @@ import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
 import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { useConformanceConnectToast } from "@/hooks/use-conformance-connect-toast";
 import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
@@ -138,6 +139,10 @@ export function ConformanceSetup({
       ? protocolConnection.result.protocolVersion
       : undefined;
   const effectiveVersion = resolvedVersion ?? versionPin;
+  const holdConnectToast = useConformanceConnectToast(
+    serverName,
+    protocolConnection,
+  );
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -226,7 +231,8 @@ export function ConformanceSetup({
     }
     setConnecting((names) => names.filter((other) => other !== name));
     if (outcome === "ready") {
-      progress.connected();
+      // Continue still waits on the protocol check, and so does the toast.
+      holdConnectToast(name, progress);
       return;
     }
     progress.failed(
