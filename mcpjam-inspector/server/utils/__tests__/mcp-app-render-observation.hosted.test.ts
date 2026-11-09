@@ -59,12 +59,17 @@ describe("renderMcpAppToolResult — resource read failure alert", () => {
     );
   });
 
-  it("sends nothing from a local install", async () => {
+  it("records the failure without Sentry on a local install", async () => {
     mode.hosted = false;
+    const error = new Error("read timed out");
 
-    const obs = await renderWithFailedRead(new Error("read timed out"));
+    const obs = await renderWithFailedRead(error);
 
     expect(obs.status).toBe("resource_read_failed");
-    expect(systemEvent).not.toHaveBeenCalled();
+    expect(systemEvent).toHaveBeenCalledWith(
+      "mcp_app.resource_read.failed",
+      { durationMs: expect.any(Number) },
+      { error, sentry: false },
+    );
   });
 });

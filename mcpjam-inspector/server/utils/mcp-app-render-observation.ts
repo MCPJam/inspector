@@ -105,21 +105,18 @@ export async function renderMcpAppToolResult(
     }
   } catch (error) {
     const elapsedMs = Date.now() - ts;
-    logger.warn("[mcp-app-render] widget resource read failed", {
-      toolName,
-      resourceUri,
-      elapsedMs,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // Alert on our hosted server only. A local install (npx, desktop) runs
+    // The logger keeps only the error class from `error`, never its text,
+    // which can carry details from the user's own server.
+    logger.warn(
+      `[mcp-app-render] widget resource read failed after ${elapsedMs}ms`,
+    );
+    // Sentry on our hosted server only. A local install (npx, desktop) runs
     // its user's own servers, and the alert would send their details to us.
-    if (HOSTED_MODE) {
-      renderLog.event(
-        "mcp_app.resource_read.failed",
-        { durationMs: elapsedMs },
-        { error, sentry: true },
-      );
-    }
+    renderLog.event(
+      "mcp_app.resource_read.failed",
+      { durationMs: elapsedMs },
+      { error, sentry: HOSTED_MODE },
+    );
     return {
       ...base,
       status: "resource_read_failed",
