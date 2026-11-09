@@ -38,4 +38,3 @@ export function harnessToolApprovalRefusalReason(args: {
   }
   return undefined;
 }
-

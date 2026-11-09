@@ -506,6 +506,8 @@ type HarnessRuntimeAdapterBase = {
  *  are delivered outside the VM, see `buildBrokerDummyAuth`; an
  *  external-account harness gets its customer credential in `auth` instead.) */
 export type HarnessCreateArgs = {
+  /** HOME returned by the current successful warm sandbox probe. */
+  sandboxHomeDir?: string;
   startupTimeoutMs?: number;
   warmAgent?: boolean;
   modelId: string;
@@ -1089,10 +1091,11 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs, warmAgent }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs, warmAgent, sandboxHomeDir }) {
     const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
       startupTimeoutMs,
+      sandboxHomeDir,
       warmAgent,
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as

@@ -26,20 +26,28 @@ describe("E2B bridge endpoints", () => {
     });
   });
 
-  it("carries a private box's traffic token, directly and through a proxy", () => {
-    const privateBox = { ...sandbox, trafficAccessToken: "traffic-token" };
-    vi.stubEnv("E2B_SANDBOX_URL", "");
-    expect(resolveE2BPortEndpoint(privateBox, 8080, "ws")).toEqual({
-      url: "wss://8080-sbx_1.e2b.app",
-      headers: { "e2b-traffic-access-token": "traffic-token" },
-    });
-    vi.stubEnv("E2B_SANDBOX_URL", "https://sandboxes.example.test");
-    expect(resolveE2BPortEndpoint(privateBox, 8080, "ws").headers).toEqual({
-      "E2b-Sandbox-Id": "sbx_1",
-      "E2b-Sandbox-Port": "8080",
-      "e2b-traffic-access-token": "traffic-token",
-    });
-  });
+  it.each(["", "https://sandboxes.example.test"])(
+    "refuses private endpoints before resolving a route (%s)",
+    (proxy) => {
+      vi.stubEnv("E2B_SANDBOX_URL", proxy);
+      const getHost = vi.fn();
+      for (const privateState of [
+        { privateAppPorts: true },
+        { trafficAccessToken: "traffic-token" },
+      ]) {
+        for (const protocol of ["https", "ws"]) {
+          expect(() =>
+            resolveE2BPortEndpoint(
+              { ...sandbox, ...privateState, getHost },
+              8080,
+              protocol,
+            ),
+          ).toThrow("cannot connect to ports on a private workspace");
+        }
+      }
+      expect(getHost).not.toHaveBeenCalled();
+    },
+  );
 
   it("retains HTTP proxy transport for HTTP requests", () => {
     vi.stubEnv("E2B_SANDBOX_URL", "http://10.0.0.2:3002");

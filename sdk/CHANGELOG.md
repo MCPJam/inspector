@@ -1,5 +1,80 @@
 # `@mcpjam/sdk` changelog
 
+## 10.4.0
+
+### Minor Changes
+
+- [#7283](https://github.com/MCPJam/inspector/pull/7283) [`6bdc13c`](https://github.com/MCPJam/inspector/commit/6bdc13c40d4206bed9982db28f2eb70d5ccfdb11) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Hosted conformance runs can be read check by check. `get_conformance_check` (`GET /api/v1/projects/:projectId/conformance-runs/:runId/checks/:checkId`, `mcpjam cloud conformance check`) returns one check with its stored evidence, each of `details` and `output` capped at 16 KB. Run history and a finished run's failing checks page with `cursor` and `nextCursor`. `mcpjam cloud conformance run`, `runs`, `status`, `report` and `check` take a hosted run from start to evidence, and the hosted MCP server serves the conformance tools.
+
+- [#7268](https://github.com/MCPJam/inspector/pull/7268) [`07ad9e8`](https://github.com/MCPJam/inspector/commit/07ad9e837e45a037de44b3a3b991c6757e8b5a07) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Conformance: a check that could not run now costs a point only when the server is to blame. No login, a rejected login, a picked tool that is not listed or makes no task, and arguments the tool's own schema rejects show as gray "Not run" with a plain fix. Completion, Name header, task cancel and graceful close show as "Not applicable" when there is nothing to test. A check skipped because an earlier one broke now names that check.
+
+- [#7254](https://github.com/MCPJam/inspector/pull/7254) [`8d6464e`](https://github.com/MCPJam/inspector/commit/8d6464e0a733e1c9c575b054bfbb06be842a9392) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `mcpjam conformance run --reporter junit-xml` writes one well-formed JUnit document covering every suite, including in CI, where it used to print JSON. A suite that could not run gets a skipped testsuite in the file, and stderr says why. The SDK exports `renderConformanceRunJUnitXml` for a `runConformance` report.
+
+- [#7299](https://github.com/MCPJam/inspector/pull/7299) [`e4bcd54`](https://github.com/MCPJam/inspector/commit/e4bcd54b16abb3e4f805b2d6d03db001ec276160) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - `conformance run --suite oauth` signs in the way `oauth conformance` does: through the browser by default (`--oauth-strategy interactive`, `headless` or `client_credentials`), with any client registration (`--registration auto`, `dcr`, `cimd` or `preregistered`). So one command runs and uploads all four suites for a server that uses a browser sign-in. `auto` picks pre-registered credentials when given, else what the server supports at the run's protocol version. The run also takes `--client-metadata-url`, `--redirect-url`, `--scopes`, `--step-timeout` and `--print-url`. In the SDK, `runConformance` accepts `registrationStrategy: "auto"` for its OAuth suite.
+
+- [#7282](https://github.com/MCPJam/inspector/pull/7282) [`2b7b5c9`](https://github.com/MCPJam/inspector/commit/2b7b5c9a7165c4feed5475a0be00f84ed3b46f63) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `runConformance` takes a `signal`. Every suite receives it beside its own, so aborting it stops the suites still running.
+
+- [#7261](https://github.com/MCPJam/inspector/pull/7261) [`eef5eec`](https://github.com/MCPJam/inspector/commit/eef5eecb47128ff5552756a2d714ba8fe341b42c) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add GitHub Copilot CLI to the hosted Playground for members of the client agent loop pilot. Copilot uses the selected MCP tools, and a pending tool approval survives a chat reload.
+
+- [`12f86dc`](https://github.com/MCPJam/inspector/commit/12f86dc6621a2b4319eb5755985151c0e71092fb) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export one definition of eval run and iteration lifecycle from `@mcpjam/sdk/contract`: `EVAL_RUN_STATUSES`, `isEvalRunTerminalStatus` (a run whose verdict can be read; `grading` is not terminal), `isEvalRunPastExecution` (nothing left to execute, terminal or `grading`) and `isEvalIterationTerminalStatus`.
+
+- [#7211](https://github.com/MCPJam/inspector/pull/7211) [`9e23897`](https://github.com/MCPJam/inspector/commit/9e238976e24a33a4b986d396b0a1838fde190b78) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Decide MCP Events support from each client's saved host config instead of a per-subscription profile. The Events tab subscribes as a chosen client and offers only the delivery modes that client, the event and the runtime all support; the host editor gains an Event delivery setting; and trigger runs connect as the subscription's client. The SDK exports `subscribableModes` and the `com.mcpjam/events` helpers.
+
+- [#5764](https://github.com/MCPJam/inspector/pull/5764) [`0295efd`](https://github.com/MCPJam/inspector/commit/0295efdf4faf23b037391cc46e1e7ed7d774e31b) Thanks [@chelojimenez](https://github.com/chelojimenez)! - MCP Events (triggers), pinned to the working-group draft `28ec35e`. `MCPClientManager` reads a server's top-level `capabilities.events`, which the official client drops (`getEventsSupport`), and speaks `events/list`, `events/poll`, `events/subscribe`, `events/unsubscribe` and `events/stream`. Webhook signing secrets are redacted from every captured RPC frame, while the server still receives them exactly. The new `@mcpjam/sdk/events` entry has:
+  
+  - the lifecycle coordinator for poll, webhook and push
+  - the in-memory inbox
+  - Standard Webhooks signing and verification
+  - delivery and run identities
+  - the draft and ChatGPT profiles, with every field tagged documented, observed or MCPJam policy
+  - the shared event-turn prompt
+  
+  `runEventsConformance` checks a server against either profile, reporting MUST failures and SHOULD warnings separately.
+
+- [#7258](https://github.com/MCPJam/inspector/pull/7258) [`e96b5be`](https://github.com/MCPJam/inspector/commit/e96b5bed71af9b91249dcf1c038a8f886e0a9e82) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add hosted OpenCode as a private Playground harness. Persistence accepts `opencode`, the inspector runs it through the published AI SDK adapter with MCPJam host-executed tools and a platform-brokered Anthropic lease, and guest/local/public catalog stay off.
+
+- [#7156](https://github.com/MCPJam/inspector/pull/7156) [`48e6442`](https://github.com/MCPJam/inspector/commit/48e644206a29db1634b9c93cbc6272c00c91e147) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Expose typed SDK methods and the API contract for retained widget sessions on a local Inspector, including snapshots, actions, scripted steps and owner cleanup.
+
+### Patch Changes
+
+- [#7163](https://github.com/MCPJam/inspector/pull/7163) [`227aab0`](https://github.com/MCPJam/inspector/commit/227aab03b55ab093d6a7871fdb34d21c062aeca1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add authenticated App document admissions with per-view HTTP security policies and bounded, renewable lifetimes.
+
+- [#7254](https://github.com/MCPJam/inspector/pull/7254) [`8d6464e`](https://github.com/MCPJam/inspector/commit/8d6464e0a733e1c9c575b054bfbb06be842a9392) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A protocol conformance run without `--protocol-version` no longer fails Wire Schema Valid on a 2025-era server. The check was grading the server's reply to the `server/discover` probe the client sends to negotiate a version, which no 2025 client sends.
+
+- [#7277](https://github.com/MCPJam/inspector/pull/7277) [`0480a45`](https://github.com/MCPJam/inspector/commit/0480a452b70ec53359b7f984bfe3834c00d0be90) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The conformance run operations and their wire types now live in their own modules. Every export keeps its name and import path, and the operation catalog keeps its order.
+
+- [#7284](https://github.com/MCPJam/inspector/pull/7284) [`58075c1`](https://github.com/MCPJam/inspector/commit/58075c19ab60dd2958ab3cb29d382222aeee034e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A hosted conformance run records which client started it. `startConformanceRun` sends the same launch headers an eval launch does, and a run read over `/api/v1` returns `launcher`, `attribution` (the surface the server verified, and the API key) and `settingsSource`. Requires a backend that stores them.
+
+- [#7244](https://github.com/MCPJam/inspector/pull/7244) [`58e7ba8`](https://github.com/MCPJam/inspector/commit/58e7ba82b6129a06db79afe26ad56350416c010d) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Every conformance run now sends one anonymous `conformance_run_triggered` usage event with a `run_source` (`ui`, `cli`, `sdk`, `api`, `github_app` or `benchmark`), so conformance use can be counted in one place. Each surface keeps its own telemetry opt-outs.
+
+- [#6650](https://github.com/MCPJam/inspector/pull/6650) [`76b5524`](https://github.com/MCPJam/inspector/commit/76b5524a3244256e3757358c497556b904badab4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The `run_eval_suite` tool description now lists `timed_out` as a terminal run status, so an agent polling `get_eval_run` stops when a run times out.
+
+- [#7215](https://github.com/MCPJam/inspector/pull/7215) [`781c768`](https://github.com/MCPJam/inspector/commit/781c768bd43619776e4a4cb6a35755653e815eae) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The SDK's bundled client catalog now states ChatGPT's and MCPJam's MCP Events delivery modes. The Event delivery row in client comparisons and on caniuse.dev shows only a client's saved setting, so clients nobody has measured read "Not yet tested".
+
+- [#7217](https://github.com/MCPJam/inspector/pull/7217) [`c18cda4`](https://github.com/MCPJam/inspector/commit/c18cda418f75fd7c1299c4eb85d7a6cdfa9d520d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `@mcpjam/sdk/host-config/internal` exports `parseHarnessMcpAtTurn`, the reader for the harness MCP route receipt the Inspector records on each harness turn trace.
+
+- [#7250](https://github.com/MCPJam/inspector/pull/7250) [`951820e`](https://github.com/MCPJam/inspector/commit/951820e8a931924766bd06a68ae6d451818660c2) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#7322](https://github.com/MCPJam/inspector/pull/7322) [`78463b1`](https://github.com/MCPJam/inspector/commit/78463b19b84308683630600cd776293a35e26e94) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Release the latest Inspector, CLI, and SDK improvements together.
+
+- [#7203](https://github.com/MCPJam/inspector/pull/7203) [`747bbb5`](https://github.com/MCPJam/inspector/commit/747bbb54643c621ef74b4d5fef9697ae7096d584) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Chat now runs a paused tool call again after a mid-session sign-in when the server has only one saved login. Before, the call was dropped with "signed in with a different account" for both 401 and `_meta["mcp/www_authenticate"]` challenges, because a single login carried no connection ID for the resume check. The SDK's `McpToolConnection` gains an optional `implicit` flag for a host-grouped only login.
+
+- [#7153](https://github.com/MCPJam/inspector/pull/7153) [`8a781f7`](https://github.com/MCPJam/inspector/commit/8a781f74478f1edb0d54a2b58bbac9929c9e909d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Honor the selected client's Forms setting for local manual calls, preserving explicit server capability overrides and withholding modern-only form claims from legacy connections. Keep default local connection capabilities additive so modern form support can apply after negotiation.
+
+- [`0b59742`](https://github.com/MCPJam/inspector/commit/0b5974288a8e22ab1632baa36a90429e2ab47e2d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Keep app tool calls alive while their owned form or approval awaits a person, using the caller's progress token. Preserve ordinary tool deadlines, stop progress on cancellation or completion, and show the server name in owned forms. Send progress only on the original connected request transport. Keep global legacy forms visible in Compare and extend only their matching App request while the owned form is pending.
+
+- [#7150](https://github.com/MCPJam/inspector/pull/7150) [`b7bd067`](https://github.com/MCPJam/inspector/commit/b7bd067535254756d6abefef2525164ad37f257a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Show the server's settings discovery failure description, honor App context group titles, and enable composer mentions in new ChatGPT web client defaults. Existing saved client preferences are preserved.
+  
+  Transfer owned file bytes through a bounded binary transport supporting files up to 8 MiB. Preserve path authorization and ETag conflicts, and report oversized reads and writes as size-limit failures.
+
+- [#7013](https://github.com/MCPJam/inspector/pull/7013) [`35ee0e1`](https://github.com/MCPJam/inspector/commit/35ee0e1654246a6a81e5a9045d678111429c30c1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Apply the operator's private-network allowlist during MCP discovery and credential validation.
+
+- [#7013](https://github.com/MCPJam/inspector/pull/7013) [`35ee0e1`](https://github.com/MCPJam/inspector/commit/35ee0e1654246a6a81e5a9045d678111429c30c1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Hosted mode can reach the private MCP servers and model endpoints an operator lists in `MCPJAM_PRIVATE_EGRESS_ALLOWLIST`, a comma-separated list of CIDRs and host suffixes. Cloud metadata, link-local and unspecified addresses stay refused whatever the list says, and a list with an invalid entry admits nothing. The pinned streaming transport takes an `admitPrivateDestination` option that every redirect hop is checked against.
+
+- [#7145](https://github.com/MCPJam/inspector/pull/7145) [`47a46c6`](https://github.com/MCPJam/inspector/commit/47a46c68f670d33def1c204512ef30d518959888) Thanks [@nachocossio](https://github.com/nachocossio)! - Alias MCP tool names that Anthropic, Bedrock or OpenAI reject (such as `cart.add`) in the request a provider sees, and restore them in its reply. Direct BYOK chat and evals, hosted chat and evals, and `HostRunner` no longer fail every turn on a server with dotted or slashed tool names. Claude Code harness turns on Anthropic or Bedrock models still reject them up front.
+
+- [#7163](https://github.com/MCPJam/inspector/pull/7163) [`227aab0`](https://github.com/MCPJam/inspector/commit/227aab03b55ab093d6a7871fdb34d21c062aeca1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - End pending tool requests when their HTTP response stream is lost without a final response, preserving resumable streams and ordinary reconnects.
+
 ## 10.3.0
 
 ### Minor Changes

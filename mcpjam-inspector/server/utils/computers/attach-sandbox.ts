@@ -8,7 +8,6 @@ import {
 } from "e2b";
 import {
   getSandboxEgressStatus,
-  getSandboxTrafficToken,
   prepareSandboxConnection,
 } from "./control-plane-client.js";
 
@@ -24,29 +23,6 @@ export class SandboxAttachmentError extends Error {
     super(message);
     this.name = "SandboxAttachmentError";
   }
-}
-
-/**
- * A box created with public traffic off refuses every non-envd request that
- * lacks its traffic access token: the harness bridge and the workspace
- * preview would both be turned away at the edge without it.
- */
-async function readTrafficAccessToken(
-  sandboxId: string,
-  signal: AbortSignal,
-): Promise<string> {
-  const result = await getSandboxTrafficToken({
-    providerComputerId: sandboxId,
-    signal,
-  });
-  if (!result.ok && result.status === 404)
-    throw new SandboxNotFoundError("This sandbox no longer exists.");
-  if (!result.ok || !result.value.trafficAccessToken)
-    throw new SandboxAttachmentError(
-      "sandbox_attach_failed",
-      "Could not attach to this sandbox. Try again.",
-    );
-  return result.value.trafficAccessToken;
 }
 
 async function requireReadyPolicy(
@@ -86,7 +62,7 @@ async function readRunningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts,
   preparedByBroker: boolean,
-): Promise<ConstructorParameters<typeof Sandbox>[0]> {
+) {
   const deadline = Date.now() + 60_000;
   const timeout = AbortSignal.timeout(60_000);
   const signal = options.signal
@@ -142,10 +118,6 @@ async function readRunningSandboxConnection(
       "sandbox_policy_unavailable",
       "This sandbox cannot run safely. Start a new sandbox.",
     );
-  const trafficAccessToken =
-    data.network?.allowPublicTraffic === false
-      ? await readTrafficAccessToken(sandboxId, signal)
-      : undefined;
   await requireReadyPolicy(sandboxId, signal, deadline);
   return {
     ...options,
@@ -153,23 +125,33 @@ async function readRunningSandboxConnection(
     sandboxDomain: data.domain ?? undefined,
     envdVersion: data.envdVersion,
     envdAccessToken: data.envdAccessToken,
-    ...(trafficAccessToken ? { trafficAccessToken } : {}),
+    privateAppPorts: data.network?.allowPublicTraffic === false,
   };
 }
 
-export async function attachRunningSandbox(
+export function attachRunningSandbox(
   sandboxId: string,
   options?: SandboxApiOpts,
-): Promise<Sandbox> {
-  return new Sandbox(await runningSandboxConnection(sandboxId, options));
+) {
+  return attach(sandboxId, options ?? {}, false);
 }
 
-/** Ordinary callers retain the wake/renewal and both readiness barriers. */
-export function runningSandboxConnection(
+/** Desktop streaming uses stored origins that cannot authenticate private ports. */
+export async function runningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts = {},
 ): Promise<ConstructorParameters<typeof Sandbox>[0]> {
-  return readRunningSandboxConnection(sandboxId, options, false);
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    false,
+  );
+  if (privateAppPorts)
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Hosted Browser cannot connect to this private desktop.",
+    );
+  return connection;
 }
 
 /**
@@ -177,11 +159,22 @@ export function runningSandboxConnection(
  * this box. GET still verifies lifecycle state, and the final live readiness
  * barrier refuses quarantine or waits for a concurrent policy writer.
  */
-export async function attachBrokerPreparedSandbox(
+export function attachBrokerPreparedSandbox(
   sandboxId: string,
   options: SandboxApiOpts = {},
-): Promise<Sandbox> {
-  return new Sandbox(
-    await readRunningSandboxConnection(sandboxId, options, true),
+) {
+  return attach(sandboxId, options, true);
+}
+
+async function attach(
+  sandboxId: string,
+  options: SandboxApiOpts,
+  brokerPrepared: boolean,
+) {
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    brokerPrepared,
   );
+  return Object.assign(new Sandbox(connection), { privateAppPorts });
 }

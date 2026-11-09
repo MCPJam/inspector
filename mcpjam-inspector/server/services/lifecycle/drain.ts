@@ -15,7 +15,12 @@
  */
 
 export type InFlightKind =
-  "claimed_job" | "eval_run" | "swarm_run" | "doorbell" | "quick_run";
+  | "claimed_job"
+  | "eval_run"
+  | "swarm_run"
+  | "doorbell"
+  | "quick_run"
+  | "conformance_run";
 
 export type InFlightCounts = Partial<Record<InFlightKind, number>>;
 
