@@ -1675,6 +1675,7 @@ export async function runHarnessTurn(
         hostId, scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
         admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools || !!options.harnessAppTools?.length, hasTasks: tasks !== undefined,
           elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
+          nativeVersionNegotiation: forwardingRuntime?.nativeVersionNegotiation,
           modernInputAvailable: options.harnessOwnedInput === true,
           ownedTasksAvailable: options.harnessOwnedTasks === true && tasks?.mode === "expose",
         }),

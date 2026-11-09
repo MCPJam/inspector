@@ -2920,6 +2920,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "cursor-cli",
     "mcpProfile": {
       "profileVersion": 1,
+      "versionNegotiation": "legacy-first",
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],
@@ -2949,6 +2950,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "cursor-cli",
     "mcpProfile": {
       "profileVersion": 1,
+      "versionNegotiation": "legacy-first",
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],

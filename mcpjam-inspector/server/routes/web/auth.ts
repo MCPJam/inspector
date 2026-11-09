@@ -1104,6 +1104,8 @@ export function toHttpConfig(
      * regardless of the client-level toggle.
      */
     mcpProtocolVersion?: McpProtocolVersion;
+    /** `mcpProfile.versionNegotiation`, onto the same-named config field. */
+    versionNegotiation?: "legacy-first";
     /**
      * SEP-2243 `Mcp-Param-*` mirroring. `false` simulates a client that never
      * mirrors, so a server can be tested against one; absent is the
@@ -1166,6 +1168,9 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.mcpProtocolVersion
           ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
+          : {}),
+        ...(initializePins?.versionNegotiation
+          ? { versionNegotiation: initializePins.versionNegotiation }
           : {}),
         ...(initializePins?.mirrorToolParamHeaders === false
           ? { mirrorToolParamHeaders: false }
@@ -1257,6 +1262,9 @@ export function toHttpConfig(
     ...(initializePins?.mcpProtocolVersion
       ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
       : {}),
+    ...(initializePins?.versionNegotiation
+      ? { versionNegotiation: initializePins.versionNegotiation }
+      : {}),
     // Only `false` is meaningful — `true` and absent both mean mirror.
     ...(initializePins?.mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
@@ -1303,6 +1311,7 @@ function resolveEffectiveInitializePinsForServer(
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
     mcpProtocolVersion?: McpProtocolVersion;
+    versionNegotiation?: "legacy-first";
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
@@ -1320,6 +1329,7 @@ function resolveEffectiveInitializePinsForServer(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      versionNegotiation?: "legacy-first";
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
@@ -1357,6 +1367,10 @@ function resolveEffectiveInitializePinsForServer(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    // Inert under a pin; the SDK lets the pin win.
+    ...(initializePins?.versionNegotiation
+      ? { versionNegotiation: initializePins.versionNegotiation }
+      : {}),
     // Host-level and per-server-invariant: mirroring conformance is a property
     // of the simulated CLIENT, so unlike the version pin there is nothing to
     // resolve against a per-server map.
@@ -1504,6 +1518,7 @@ export async function createAuthorizedManager(
       >;
       supportedProtocolVersions?: string[];
       mcpProtocolVersion?: McpProtocolVersion;
+      versionNegotiation?: "legacy-first";
       /** SEP-2243 `Mcp-Param-*` mirroring; host-level, so batch-uniform. */
       mirrorToolParamHeaders?: boolean;
       /** Client-conformance knobs; host-level, so batch-uniform. */

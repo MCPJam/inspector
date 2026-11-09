@@ -238,7 +238,10 @@ import {
 } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
-import { resolveVersionNegotiation } from "./version-negotiation.js";
+import {
+  legacyFirstFallback,
+  resolveVersionNegotiation,
+} from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
@@ -1038,13 +1041,18 @@ export class MCPClientManager {
       const resolvedPin = this.isStdioConfig(config)
         ? undefined
         : config.mcpProtocolVersion;
-      const negotiation = resolveVersionNegotiation(resolvedPin);
+      const preference = this.isStdioConfig(config)
+        ? undefined
+        : config.versionNegotiation;
+      const negotiation = resolveVersionNegotiation(resolvedPin, preference);
       const configuredMode: ConfiguredNegotiationMode =
-        negotiation === undefined
-          ? "legacy"
-          : negotiation.mode === "auto"
-            ? "auto"
-            : "modern-pin";
+        resolvedPin === undefined && preference === "legacy-first"
+          ? "legacy-first"
+          : negotiation === undefined
+            ? "legacy"
+            : negotiation.mode === "auto"
+              ? "auto"
+              : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -2881,7 +2889,8 @@ export class MCPClientManager {
       // per-server or manager-default list here can make the first connection
       // succeed but a later reconnect reject the server's valid counter-offer.
       const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
+        resolvedProtocolVersion,
+        this.isStdioConfig(config) ? undefined : config.versionNegotiation
       );
       const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
@@ -3090,7 +3099,21 @@ export class MCPClientManager {
             timeout,
             state,
             signal
-          );
+          ).catch(async (error: unknown) => {
+            // Legacy-first's one fallback, as Cursor CLI takes it: the server
+            // refused the 2025 handshake and named 2026-07-28, so discover it.
+            const pin = legacyFirstFallback(startupConfig, error);
+            if (!pin) throw error;
+            upstreamClient.setVersionNegotiation({ mode: { pin } });
+            return this.connectViaHttp(
+              serverId,
+              managedClient,
+              { ...startupConfig, mcpProtocolVersion: pin },
+              timeout,
+              state,
+              signal
+            );
+          });
         } finally {
           startupSignal = undefined;
         }
@@ -3381,6 +3404,11 @@ export class MCPClientManager {
         // to gain by trying it; preserve the original error so the host can
         // serialize the challenge and drive the union-scope re-authorization.
         if (isInsufficientScopeError(error)) {
+          throw error;
+        }
+        // The caller retries a legacy-first refusal on the revision it named;
+        // SSE could only reach the 2025 era the server just refused.
+        if (legacyFirstFallback(config, error)) {
           throw error;
         }
         // Declared-transport servers (`disableSseFallback`) never downgrade
