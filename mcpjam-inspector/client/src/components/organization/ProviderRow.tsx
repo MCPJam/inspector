@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { CheckCircle2, Circle, Pencil, Settings2, Trash2 } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -10,7 +11,13 @@ export function ProviderRow({
   isCustom,
   onConfigure,
   onRemove,
+  detail,
+  extraAction,
+  disabled,
 }: {
+  disabled?: boolean;
+  detail?: ReactNode;
+  extraAction?: ReactNode;
   name: string;
   logo?: string;
   configured: boolean;
@@ -35,17 +42,21 @@ export function ProviderRow({
             {name.charAt(0).toUpperCase()}
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">{name}</span>
-          {isCustom ? (
-            <Badge variant="outline" className="text-[10px]">
-              Custom
-            </Badge>
-          ) : null}
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{name}</span>
+            {isCustom ? (
+              <Badge variant="outline" className="text-[10px]">
+                Custom
+              </Badge>
+            ) : null}
+          </div>
+          {detail}
         </div>
       </div>
 
       <div className="flex items-center gap-2">
+        {extraAction}
         {configured ? (
           <Badge
             variant="secondary"
@@ -66,7 +77,13 @@ export function ProviderRow({
 
         {isAdmin ? (
           <>
-            <Button variant="ghost" size="sm" onClick={onConfigure}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled}
+              aria-label={configured ? `Configure ${name}` : undefined}
+              onClick={onConfigure}
+            >
               {configured ? (
                 <Pencil className="size-3.5" />
               ) : (
@@ -80,6 +97,8 @@ export function ProviderRow({
               <Button
                 variant="ghost"
                 size="sm"
+                disabled={disabled}
+                aria-label={`Remove ${name}`}
                 onClick={onRemove}
                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
               >

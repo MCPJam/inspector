@@ -1,3 +1,4 @@
+import { CursorProviderSettings } from "./CursorProviderSettings";
 import { ProviderRow } from "./ProviderRow";
 import { ProviderKeyField } from "./ProviderKeyField";
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
@@ -367,6 +368,7 @@ function OrganizationProviderSettings({
             </div>
           ) : (
             <>
+              <CursorProviderSettings organizationId={organizationId} isAdmin={isAdmin} showUnconfigured={showAllProviders} />
               {PROVIDER_CATALOG.map((entry) => {
                 const provider = providerMap.get(entry.key);
                 const configured = !!provider?.hasSecret || !!provider?.baseUrl;
