@@ -108,6 +108,7 @@ import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
   runtimeChosenModelSentinelName,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -391,11 +392,11 @@ function assertUnambiguousModelId(modelId: string): void {
   // The sentinel is deliberately NOT rewritten into some real model: the whole
   // point of it is that the model is unknown to MCPJam.
   const sentinelName = runtimeChosenModelSentinelName(id);
-  if (sentinelName) {
+  if (isRuntimeAccountModel(id)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `modelId "${modelId}" (${sentinelName}) is a placeholder for a runtime that chooses its own model on your own account, not a model this API can run. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
+      `modelId "${modelId}" (${sentinelName ?? "Cursor account"}) requires the Cursor runtime and cannot run through this API. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
       { reason: "MODEL_NOT_RUNNABLE" },
     );
   }
