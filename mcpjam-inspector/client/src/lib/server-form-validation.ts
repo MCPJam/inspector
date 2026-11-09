@@ -85,3 +85,12 @@ export function validateServerFormData(
   }
   return null;
 }
+
+export type ServerFormValidationError = {
+  field: "name" | "connection" | "form";
+  message: string;
+};
+
+export function serverFormValidationError(data: ServerFormData, message: string): ServerFormValidationError {
+  return { field: !data.name.trim() ? "name" : validateServerFormData(data) ? "connection" : "form", message };
+}

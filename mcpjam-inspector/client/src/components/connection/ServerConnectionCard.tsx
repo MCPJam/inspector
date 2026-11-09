@@ -41,6 +41,9 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
+import { presentConnectionError } from "@/lib/connection-error-presentation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   SERVER_CARD_CLASS_NAME,
   SERVER_CARD_INTERACTIVE_CLASS_NAME,
@@ -199,7 +202,12 @@ export function ServerConnectionCard({
   const needsConsent =
     server.lastNormalizedError?.slug === "auth/consent_required";
 
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signIn } = useAuth();
+  const failurePresentation = presentConnectionError(server.lastNormalizedError ?? server.lastError, {
+    serverName: server.name, facts: server.lastFailureFacts,
+    recoveries: onOpenDetailModal ? ["settings", "sign-in", "reconnect", "copy-details"] : ["sign-in", "reconnect", "copy-details"],
+    oauthStage: getOAuthTraceFailureStep(server.lastOAuthTrace)?.title,
+  });
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -252,7 +260,6 @@ export function ServerConnectionCard({
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
-  const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
   const isPendingConnection =
     Boolean(checkQueueState) ||
@@ -1053,12 +1060,8 @@ export function ServerConnectionCard({
 
           {hasError && (
             <div className="mt-3" onClick={(e) => e.stopPropagation()}>
-              {oauthFailureStep ? (
-                <div className="mb-1 text-xs text-muted-foreground">
-                  OAuth failed during {oauthFailureStep.title}
-                </div>
-              ) : null}
               <ErrorCard
+                presentation={failurePresentation}
                 // Prefer the rich block; fall back to the message string
                 // (the card calls `describeError` internally when needed).
                 error={server.lastNormalizedError ?? server.lastError ?? ""}
@@ -1072,7 +1075,12 @@ export function ServerConnectionCard({
                 open={isErrorExpanded}
                 onOpenChange={setIsErrorExpanded}
                 action={
-                  needsConsent
+                  failurePresentation.recovery === "sign-in"
+                    ? { label: "Sign in", onClick: () => {
+                        captureAppSignInReturnPath();
+                        void signIn(permalinkSignInOptions());
+                      } }
+                    : needsConsent
                     ? {
                         label: "Reconnect",
                         onClick: () =>
@@ -1080,7 +1088,8 @@ export function ServerConnectionCard({
                             allowInteractiveOAuthFlow: true,
                           }),
                       }
-                    : protocolPinAction
+                    : protocolPinAction ?? (onOpenDetailModal ? { label: "Open server settings",
+                          onClick: () => onOpenDetailModal(server, "configuration") } : undefined)
                 }
               />
               {server.retryCount > 0 && (

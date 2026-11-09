@@ -61,6 +61,7 @@ import { resolveServerAuth } from "./server-auth";
 import { useServerAuthReveal } from "./hooks/use-server-auth-reveal";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { serverFormValidationError, type ServerFormValidationError } from "@/lib/server-form-validation";
 import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
@@ -347,6 +348,8 @@ function ProjectServerDetailModal({
   const [reconnectsInFlight, setReconnectsInFlight] = useState(0);
   const isReconnecting = reconnectsInFlight > 0;
   const [isSaving, setIsSaving] = useState(false);
+  const [validationError, setValidationError] = useState<ServerFormValidationError | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
@@ -618,17 +621,17 @@ function ProjectServerDetailModal({
   }, [isOpen, server.connectionStatus, server.name]);
 
   const handleSave = async () => {
+    setValidationError(null);
+    setSaveError(null);
     if (isDuplicateServerName) {
-      toast.error(
-        `A server named "${trimmedName}" already exists. Choose a different name.`
-      );
+      setValidationError({ field: "name", message: "A server with this name already exists. Choose a different name." });
       return;
     }
 
     // Validate form
     const formError = formState.validateForm();
     if (formError) {
-      toast.error(formError);
+      setValidationError(serverFormValidationError({ name: formState.name, type: formState.type, url: formState.url, command: formState.commandInput }, formError));
       return;
     }
 
@@ -639,7 +642,7 @@ function ProjectServerDetailModal({
     ) {
       const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
-        toast.error(clientIdError);
+        formState.setClientIdError(clientIdError);
         return;
       }
 
@@ -648,7 +651,7 @@ function ProjectServerDetailModal({
           formState.clientSecret
         );
         if (clientSecretError) {
-          toast.error(clientSecretError);
+          formState.setClientSecretError(clientSecretError);
           return;
         }
       }
@@ -666,7 +669,7 @@ function ProjectServerDetailModal({
       let revealedHeaders: Record<string, string> | undefined;
       if (formState.needsStoredHeaderReveal) {
         if (!projectId || !hostedServerId) {
-          toast.error(
+          setSaveError(
             "Reveal saved headers before changing authentication so existing hidden headers aren't lost."
           );
           return;
@@ -683,7 +686,7 @@ function ProjectServerDetailModal({
           }
           revealedHeaders = secrets.headers;
         } catch {
-          toast.error(
+          setSaveError(
             "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again."
           );
           return;
@@ -693,10 +696,17 @@ function ProjectServerDetailModal({
       const finalFormData = formState.buildFormData({
         ...(revealedHeaders ? { revealedHeaders } : {}),
       });
-      await onSubmit(finalFormData, server.name);
+      const result = await onSubmit(finalFormData, server.name);
+      if (!result.ok) {
+        setSaveError("Couldn't save the server. Your draft is still here. Review the settings and try again.");
+        return;
+      }
       // The modal stays open after a save, and the save may have replaced the
       // token or headers the Auth tab revealed; make it look them up again.
       serverAuthReveal.reset();
+      formState.markSaved();
+    } catch {
+      setSaveError("Couldn't save the server. Your draft is still here. Review the settings and try again.");
     } finally {
       setIsSaving(false);
     }
@@ -974,6 +984,7 @@ function ProjectServerDetailModal({
               >
                 <div className="pl-1 pr-6">
                   <EditServerFormContent
+                    validationError={validationError}
                     formState={formState}
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
@@ -996,6 +1007,7 @@ function ProjectServerDetailModal({
                       unlike the organization audit log. Renders nothing when
                       there is no history. */}
                   <ServerUrlChangeHistory serverId={hostedServerId} />
+                  {saveError ? <p role="alert" className="mt-2 text-xs text-destructive">{saveError}</p> : null}
                 </div>
               </TabsContent>
 

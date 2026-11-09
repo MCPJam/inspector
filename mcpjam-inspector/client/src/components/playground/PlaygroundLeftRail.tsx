@@ -331,12 +331,11 @@ function ZeroServerToolsBody({
         <AddServerModal
           isOpen={isAddServerOpen}
           onClose={() => setIsAddServerOpen(false)}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             track("connecting_server", {
               location: "playground_tools_rail",
             });
-            onConnect(formData);
-            setIsAddServerOpen(false);
+            return onConnect(formData, options);
           }}
         />
       )}

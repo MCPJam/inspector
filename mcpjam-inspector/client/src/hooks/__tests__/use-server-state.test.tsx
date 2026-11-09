@@ -1727,8 +1727,8 @@ describe("useServerState OAuth callback failures", () => {
     expect(importHostedOAuthTokensMock).not.toHaveBeenCalled();
     expect(reconnectServerMock).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage("Connection failed: Could not save auth method"),
-      { duration: 8000 },
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) },
     );
   });
 
@@ -1753,10 +1753,8 @@ describe("useServerState OAuth callback failures", () => {
 
       expect(reconnectServerMock).not.toHaveBeenCalled();
       expect(toastError).toHaveBeenCalledWith(
-        errorToastMessage(
-          `${handler === "handleConnectWithTokensFromOAuthFlow" ? "Connection failed" : "Token refresh failed"}: Server does not require OAuth`,
-        ),
-        { duration: 8000 },
+        errorToastMessage("Couldn't connect to demo-server."),
+        { duration: 8000, action: undefined, description: expect.any(String) },
       );
       expect(toastSuccess).not.toHaveBeenCalled();
     },
@@ -1803,7 +1801,7 @@ describe("useServerState OAuth callback failures", () => {
     });
     expect(dispatch.mock.calls.some(([action]) => action.type === "UPSERT_SERVER")).toBe(false);
     expect(reconnectServerMock).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith(errorToastMessage("Connection failed: Import failed"), { duration: 8000 });
+    expect(toastError).toHaveBeenCalledWith(errorToastMessage("Couldn't connect to demo-server."), { duration: 8000, action: undefined, description: expect.any(String) });
   });
 
   it("refuses a target that is not in the resolved project", async () => {
@@ -2169,18 +2167,16 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch);
 
     await waitFor(() => {
-      expect(dispatch).toHaveBeenCalledWith({
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
         type: "CONNECT_FAILURE",
         name: "demo-server",
         error: "access_denied: User denied access",
-      });
+      }));
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(
-        "OAuth authorization failed: access_denied: User denied access"
-      ),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(window.location.pathname).toBe("/servers");
@@ -2218,16 +2214,16 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch);
 
     await waitFor(() => {
-      expect(dispatch).toHaveBeenCalledWith({
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
         type: "CONNECT_FAILURE",
         name: "demo-server",
         error: "Token exchange failed",
-      });
+      }));
     });
 
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage("Error completing OAuth flow: Token exchange failed"),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to demo-server."),
+      { duration: 8000, action: undefined, description: expect.any(String) }
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
@@ -3032,14 +3028,15 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(testConnectionMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "new-server",
       error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
-    });
+      failureFacts: {},
+    }));
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to new-server."),
+      expect.objectContaining({ duration: 8000, description: expect.any(String) })
     );
   });
 
@@ -3842,16 +3839,15 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(initiateOAuthMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "Asana",
       error: "Failed to resolve registry OAuth config: registry lookup failed",
-    });
+      failureFacts: {},
+    }));
     expect(toastError).toHaveBeenCalledWith(
-      errorToastMessage(
-        "Network error: Failed to resolve registry OAuth config: registry lookup failed"
-      ),
-      { duration: 8000 }
+      errorToastMessage("Couldn't connect to Asana."),
+      expect.objectContaining({ duration: 8000, description: expect.any(String) })
     );
   });
 
@@ -4088,11 +4084,11 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(initiateOAuthMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: "CONNECT_FAILURE",
       name: "demo-server",
       error: "cleanup failed",
-    });
+    }));
   });
 });
 

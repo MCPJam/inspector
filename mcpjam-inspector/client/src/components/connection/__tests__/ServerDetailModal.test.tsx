@@ -1153,6 +1153,16 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it.each([false, true])("keeps the edit draft when saving is rejected or throws (%s)", async throws => {
+    const onSubmit = throws ? vi.fn().mockRejectedValue(new Error("backend")) : vi.fn().mockResolvedValue({ ok: false, serverName: "test-server" });
+    render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+    fireEvent.change(screen.getByDisplayValue("test-server"), { target: { value: "edited-server" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & Connect" }));
+    expect(await screen.findByText("Couldn't save the server. Your draft is still here. Review the settings and try again.")).toBeVisible();
+    expect(screen.getByDisplayValue("edited-server")).toBeVisible();
+    expect(defaultProps.onClose).not.toHaveBeenCalled();
+  });
+
   it("stops Enter from bubbling out of the modal", () => {
     const onKeyDown = vi.fn();
 

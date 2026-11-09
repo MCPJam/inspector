@@ -1845,9 +1845,8 @@ export function ConformanceRoute() {
           server={editingServer}
           defaultTab="configuration"
           onSubmit={async (formData, originalServerName) => {
-            followEditedName(formData.name.trim() || originalServerName);
             const result = await handleUpdate(originalServerName, formData);
-            followEditedName(result.serverName);
+            if (result.ok) followEditedName(result.serverName);
             return result;
           }}
           onDisconnect={handleDisconnect}

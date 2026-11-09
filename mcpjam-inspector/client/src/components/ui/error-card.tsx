@@ -24,6 +24,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
 import { withTechnicalDetails } from "@/lib/error-technical-details";
 import { useFeedbackReporter } from "@/components/support/FeedbackReporterContext";
+import type { ConnectionErrorPresentation } from "@/lib/connection-error-presentation";
+import { ReviewedErrorSummary } from "./reviewed-error-summary";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
 
@@ -36,6 +38,7 @@ export type ErrorCardProps = {
    * `describeError(error)`.
    */
   error: NormalizedError | WebApiError | Error | string | unknown;
+  presentation?: ConnectionErrorPresentation;
   onRetry?: () => void;
   onDismiss?: () => void;
   /**
@@ -355,6 +358,7 @@ function MonoBlock({ children }: { children: React.ReactNode }) {
 
 export function ErrorCard({
   error,
+  presentation,
   onRetry,
   onDismiss,
   action,
@@ -365,7 +369,9 @@ export function ErrorCard({
   onOpenChange,
   className,
 }: ErrorCardProps) {
-  const normalized = useMemo(() => resolveNormalized(error), [error]);
+  const normalized = useMemo(() => presentation
+    ? { ...presentation.diagnostics, title: presentation.title, oneLine: presentation.explanation }
+    : resolveNormalized(error), [error, presentation]);
   // Present only inside the signed-in hosted shell. Everywhere else the card
   // offers no report link, and never needs a Convex client to render.
   const feedbackReporter = useFeedbackReporter();
@@ -466,7 +472,7 @@ export function ErrorCard({
           {badge.label}
         </span>
       ) : null}
-      {compact ? (
+      {compact && !presentation ? (
         <div className="leading-relaxed text-muted-foreground">
           {normalized.oneLine}
         </div>
@@ -644,7 +650,7 @@ export function ErrorCard({
               className={cn("h-3.5 w-3.5 shrink-0", styles.iconClass)}
             />
             <span className="min-w-0 truncate font-medium leading-none text-foreground">
-              {displayTitle(normalized)}
+              {presentation?.title ?? displayTitle(normalized)}
             </span>
           </button>
           {action ? (
@@ -681,6 +687,8 @@ export function ErrorCard({
             </button>
           ) : null}
         </div>
+        {presentation ? <ReviewedErrorSummary explanation={presentation.explanation}
+          onCopy={() => void handleCopy()} copyState={copyState} /> : null}
         {detailsPanel}
       </div>
     );

@@ -13,6 +13,7 @@ import type {
   ProjectConnectionDefaults,
 } from "@/lib/client-config";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
+import type { ConnectionFailureFacts } from "@/lib/connection-error-presentation";
 
 export type ConnectionStatus =
   | "connected"
@@ -59,6 +60,7 @@ export interface ServerWithName {
    * should prefer `lastNormalizedError` and fall back to `lastError`.
    */
   lastNormalizedError?: NormalizedError;
+  lastFailureFacts?: ConnectionFailureFacts;
   lastOAuthTrace?: OAuthTrace;
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
@@ -234,6 +236,7 @@ export type AppAction =
       type: "CONNECT_FAILURE";
       name: string;
       error: string;
+      failureFacts?: ConnectionFailureFacts;
       /**
        * Optional rich describe-error block. Forwarded onto
        * `ServerWithName.lastNormalizedError` so the ErrorCard renders

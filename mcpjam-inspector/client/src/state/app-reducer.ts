@@ -5,6 +5,7 @@ import {
   ServerWithName,
 } from "./app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
+import { readConnectionFailureFacts, readConnectionDiagnostics } from "@/lib/connection-error-presentation";
 import {
   describeError,
   isNormalizedError,
@@ -42,7 +43,8 @@ const setStatus = (
   server: ServerWithName,
   status: ConnectionStatus,
   patch: Partial<ServerWithName> = {}
-): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
+): ServerWithName => ({ ...server, connectionStatus: status,
+  lastFailureFacts: status === "failed" ? server.lastFailureFacts : undefined, ...patch });
 
 const buildProjectServerProjection = (
   server: ServerWithName
@@ -249,10 +251,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.name]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
             lastError: action.error,
-            lastNormalizedError: resolveNormalized(
-              action.error,
-              action.normalized
-            ),
+            lastFailureFacts: readConnectionFailureFacts(action),
+            lastNormalizedError: readConnectionDiagnostics(action.normalized ?? action.error),
             lastOAuthTrace: action.oauthTrace,
           }),
         },

@@ -144,6 +144,8 @@ import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
 import { toastServerConnectionFailure } from "@/lib/server-error-toast";
+import { connectionFailureFields } from "@/lib/connection-error-presentation";
+import { submitServerDraft } from "@/lib/server-connection-submission";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -1036,11 +1038,12 @@ export function useServerState({
   };
 
   const failPendingOAuthConnection = useCallback(
-    (errorMessage: string, oauthTrace?: OAuthTrace) => {
+    (errorMessage: string, oauthTrace?: OAuthTrace, failure: unknown = errorMessage) => {
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
+          ...connectionFailureFields(failure),
           name: pendingServerName,
           error: errorMessage,
           oauthTrace,
@@ -2969,15 +2972,11 @@ export function useServerState({
             })`;
           // Thread backend-attached normalized so the reducer doesn't
           // re-derive a less-specific slug from just the message string.
-          const reTestNormalized = (result as { normalized?: unknown })
-            ?.normalized;
           dispatch({
             type: "CONNECT_FAILURE",
+            ...connectionFailureFields(result),
             name,
             error: errorMessage,
-            ...(reTestNormalized && typeof reTestNormalized === "object"
-              ? { normalized: reTestNormalized as NormalizedError }
-              : {}),
           });
         } catch (error) {
           if (isStaleOp(name, token)) return;
@@ -3161,7 +3160,7 @@ export function useServerState({
             const message =
               "This sign-in is no longer waiting. Return to the chat and try again.";
             failPendingOAuthConnection(message);
-            if (!suppressErrorToast) toast.error(message);
+            if (!suppressErrorToast) toastServerConnectionFailure(pendingServerName, message);
           }
           return;
         }
@@ -3233,7 +3232,7 @@ export function useServerState({
 
         if (!result.success && onlyStoresCredential(hostedCallbackContext)) {
           if (!suppressErrorToast) {
-            toast.error(result.error ?? "Could not connect the account");
+            toastServerConnectionFailure(hostedCallbackContext?.serverName ?? pendingServerName ?? "this server", result);
           }
           return;
         }
@@ -3296,6 +3295,7 @@ export function useServerState({
               if (isCancelled()) return;
               dispatch({
                 type: "CONNECT_FAILURE",
+                ...connectionFailureFields(error),
                 name: settledServerName,
                 error:
                   error instanceof Error
@@ -3497,12 +3497,11 @@ export function useServerState({
               noteSignInCallbackFailed(serverName);
               dispatch({
                 type: "CONNECT_FAILURE",
+                ...connectionFailureFields(connectionResult),
                 name: serverName,
                 error:
                   connectionResult.error ||
                   "Connection test failed after OAuth",
-                normalized: (connectionResult as { normalized?: unknown })
-                  .normalized as any,
                 oauthTrace: result.oauthTrace,
               });
               logger.error("OAuth connection test failed", {
@@ -3510,9 +3509,7 @@ export function useServerState({
                 error: connectionResult.error,
               });
               if (!suppressErrorToast) {
-                toast.error(
-                  `OAuth succeeded but connection test failed: ${connectionResult.error}`,
-                );
+                toastServerConnectionFailure(serverName, connectionResult);
               }
             }
           } catch (connectionError) {
@@ -3534,6 +3531,7 @@ export function useServerState({
                 : "Unknown connection error";
             dispatch({
               type: "CONNECT_FAILURE",
+              ...connectionFailureFields(connectionError),
               name: serverName,
               error: errorMessage,
               oauthTrace: result.oauthTrace,
@@ -3543,13 +3541,12 @@ export function useServerState({
               error: errorMessage,
             });
             if (!suppressErrorToast) {
-              toast.error(
-                `OAuth succeeded but connection test failed: ${errorMessage}`,
-              );
+              toastServerConnectionFailure(serverName, connectionError);
             }
           }
         } else {
           throw {
+            ...connectionFailureFields(result),
             message: result.error || "OAuth callback failed",
             oauthTrace: result.oauthTrace,
           };
@@ -3566,7 +3563,7 @@ export function useServerState({
               ? (error as { message: string }).message
               : "Unknown error";
         if (!suppressErrorToast) {
-          toast.error(`Error completing OAuth flow: ${errorMessage}`);
+          toastServerConnectionFailure(hostedCallbackContext?.serverName ?? pendingServerName ?? "this server", error);
         }
         finishDiagnostic(false, error);
         logger.error("OAuth callback failed", { error: errorMessage });
@@ -3575,7 +3572,7 @@ export function useServerState({
             ? (error as { oauthTrace?: OAuthTrace }).oauthTrace
             : undefined;
         const failedServerName =
-          failPendingOAuthConnection(errorMessage, oauthTrace) ??
+          failPendingOAuthConnection(errorMessage, oauthTrace, error) ??
           pendingServerName;
         if (failedServerName) {
           cancelPendingChatScopeStepUpForCallback(
@@ -3810,7 +3807,7 @@ export function useServerState({
             return;
           }
           if (hostedOAuthCallbackContext?.suppressErrorToast !== true) {
-            toast.error(`OAuth authorization failed: ${errorMessage}`);
+            toastServerConnectionFailure(hostedOAuthCallbackContext?.serverName ?? localStorage.getItem(OAUTH_PENDING_STORAGE_KEY) ?? "this server", errorMessage);
           }
           const failedServerName = failPendingOAuthConnection(errorMessage);
           cancelPendingChatScopeStepUpForCallback(
@@ -3835,7 +3832,7 @@ export function useServerState({
           logger.warn("Could not settle the failed sign-in callback", {
             error,
           });
-          toast.error("Could not finish sign-in. Please try again.");
+          toastServerConnectionFailure(hostedOAuthCallbackContext?.serverName ?? "this server", error);
           // Settling failed, but the user still leaves the callback URL.
           leaveFailedCallback();
         });
@@ -3864,6 +3861,7 @@ export function useServerState({
     async (
       inputFormData: ServerFormData,
       options?: {
+        onAccepted?: () => void;
         suppressErrorToast?: boolean;
         suppressSuccessToast?: boolean;
         // Exact row to save to, for a rename: the new name is not in the
@@ -3891,9 +3889,9 @@ export function useServerState({
       let formData: ServerFormData = { ...inputFormData };
       const showConnectionError = (
         message: string,
-        data?: Parameters<typeof toast.error>[1],
+        data?: Parameters<typeof toastServerConnectionFailure>[2],
       ) => {
-        if (!options?.suppressErrorToast) toast.error(message, data);
+        if (!options?.suppressErrorToast) toastServerConnectionFailure(formData.name, message, data);
       };
       const showConnectionSuccess = (message: string) => {
         if (!options?.suppressSuccessToast) toast.success(message);
@@ -4083,6 +4081,7 @@ export function useServerState({
         ? undefined
         : (localStorage.getItem(`mcp-serverUrl-${formData.name}`) ?? undefined);
       saveOAuthConfigToLocalStorage(formData);
+      options?.onAccepted?.();
 
       // Keyed by server id where one exists; name is the last-resort key for
       // servers that haven't synced an id yet. Declared outside the try so the
@@ -4141,10 +4140,9 @@ export function useServerState({
               storedCredentialResult.error || "OAuth connection failed";
             dispatch({
               type: "CONNECT_FAILURE",
+              ...connectionFailureFields(storedCredentialResult),
               name: formData.name,
               error: errorMessage,
-              normalized: (storedCredentialResult as { normalized?: unknown })
-                .normalized as any,
             });
             showConnectionError(errorMessage);
             return;
@@ -4414,6 +4412,7 @@ export function useServerState({
                 autoOAuthEscalation.markFailed(escalationIdentity);
                 dispatch({
                   type: "CONNECT_FAILURE",
+                  ...connectionFailureFields(connectionResult),
                   name: formData.name,
                   error:
                     connectionResult.error || "OAuth connection test failed",
@@ -4439,6 +4438,7 @@ export function useServerState({
           autoOAuthEscalation.markFailed(escalationIdentity);
           dispatch({
             type: "CONNECT_FAILURE",
+            ...connectionFailureFields(oauthResult),
             name: formData.name,
             error: oauthResult.error || "OAuth initialization failed",
             oauthTrace: oauthResult.oauthTrace,
@@ -4485,13 +4485,9 @@ export function useServerState({
         } else {
           dispatch({
             type: "CONNECT_FAILURE",
+            ...connectionFailureFields(result),
             name: formData.name,
             error: result.error || "Connection test failed",
-            // Thread the backend-attached rich block through. Without this
-            // the reducer's auto-derive would re-classify from just the
-            // message string and lose the slug the backend already pinned
-            // (e.g. `transport/econnrefused` from a Node errno match).
-            ...(result.normalized ? { normalized: result.normalized } : {}),
           });
           logger.error("Connection failed", {
             serverName: formData.name,
@@ -4554,6 +4550,7 @@ export function useServerState({
         autoOAuthEscalation.markFailed(escalationIdentity);
         dispatch({
           type: "CONNECT_FAILURE",
+          ...connectionFailureFields(error),
           name: formData.name,
           error: errorMessage,
         });
@@ -5051,16 +5048,11 @@ export function useServerState({
         // sites — the reducer's auto-derive only sees the message
         // string and produces a less specific slug than the backend
         // already pinned (e.g. via Node errno match).
-        const oauthReconnectNormalized = (result as { normalized?: unknown })
-          .normalized;
         dispatch({
           type: "CONNECT_FAILURE",
+          ...connectionFailureFields(result),
           name: serverName,
           error: result.error || "Connection failed",
-          ...(oauthReconnectNormalized &&
-          typeof oauthReconnectNormalized === "object"
-            ? { normalized: oauthReconnectNormalized as NormalizedError }
-            : {}),
         });
         return { success: false, error: result.error };
       } catch (error) {
@@ -5071,6 +5063,7 @@ export function useServerState({
         }
         dispatch({
           type: "CONNECT_FAILURE",
+          ...connectionFailureFields(error),
           name: serverName,
           error: errorMessage,
         });
@@ -5133,7 +5126,7 @@ export function useServerState({
         toast.success(`Connected to ${serverName}!`);
         warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
-        toast.error(`Connection failed: ${result.error}`);
+        toastServerConnectionFailure(serverName, result);
       }
     },
     [
@@ -5174,7 +5167,7 @@ export function useServerState({
         toast.success(`Tokens refreshed for ${serverName}!`);
         warnIfHostedCannotRefresh(tokens.authorizationServerUrl);
       } else {
-        toast.error(`Token refresh failed: ${result.error}`);
+        toastServerConnectionFailure(serverName, result);
       }
     },
     [
@@ -5855,6 +5848,7 @@ export function useServerState({
           if (!options?.connectionIntent)
             dispatch({
               type: "CONNECT_FAILURE",
+              ...connectionFailureFields(error),
               name: serverName,
               error: errorMessage,
             });
@@ -6105,6 +6099,7 @@ export function useServerState({
             if (!options?.connectionIntent)
               dispatch({
                 type: "CONNECT_FAILURE",
+                ...connectionFailureFields(result),
                 name: serverName,
                 error: errorMessage,
               });
@@ -6219,12 +6214,9 @@ export function useServerState({
           if (!options?.connectionIntent)
             dispatch({
               type: "CONNECT_FAILURE",
+              ...connectionFailureFields(authResult),
               name: serverName,
               error: authResult.error,
-              // Carry the orchestrator's typed block through. The reducer
-              // prefers it over re-describing the message, which is what keeps
-              // this state off `internal/unknown`.
-              normalized: authResult.normalized,
               oauthTrace: authResult.oauthTrace,
             });
           reportError(authResult.error);
@@ -6247,6 +6239,7 @@ export function useServerState({
           if (!options?.connectionIntent)
             dispatch({
               type: "CONNECT_FAILURE",
+              ...connectionFailureFields(authResult),
               name: serverName,
               error: authResult.error,
               oauthTrace: authResult.oauthTrace,
@@ -6298,13 +6291,10 @@ export function useServerState({
         if (!options?.connectionIntent)
           dispatch({
             type: "CONNECT_FAILURE",
+            ...connectionFailureFields(result),
             name: serverName,
             error: errorMessage,
             oauthTrace: authResult.oauthTrace,
-            // Preserve the backend-attached normalized block so the reducer
-            // doesn't have to re-derive a (less specific) slug from just
-            // the message string.
-            ...(result.normalized ? { normalized: result.normalized } : {}),
           });
         logger.error("Reconnection failed", { serverName, result });
         reportError(errorMessage || `Failed to reconnect: ${serverName}`);
@@ -6326,6 +6316,7 @@ export function useServerState({
         if (!options?.connectionIntent)
           dispatch({
             type: "CONNECT_FAILURE",
+            ...connectionFailureFields(error),
             name: serverName,
             error: errorMessage,
           });
@@ -6973,6 +6964,11 @@ export function useServerState({
       saveOAuthConfigToLocalStorage(formData);
 
       await handleDisconnect(originalServerName);
+      const accepted = await submitServerDraft(
+        (data, options) => handleConnect(data, { ...options, ...(renameTarget ? { hostedWriteTarget: renameTarget } : {}) }),
+        formData,
+      );
+      if (!accepted) return { ok: false, serverName: originalServerName };
       if (renameTarget) {
         // handleConnect saves to this row by id; only the old name's local
         // state goes.
@@ -6981,10 +6977,6 @@ export function useServerState({
       } else if (isRename) {
         await removeServerFromStateAndCloud(originalServerName);
       }
-      await handleConnect(
-        formData,
-        renameTarget ? { hostedWriteTarget: renameTarget } : undefined,
-      );
       if (
         appState.selectedServer === originalServerName &&
         nextServerName !== originalServerName

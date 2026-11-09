@@ -12,8 +12,21 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 
 import { useServerForm } from "../use-server-form";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
+import { createServer, createHttpServerConfig } from "@/test/factories";
 
 describe("useServerForm", () => {
+  it("keeps an edited draft through connection failure and refreshes only after an accepted save", () => {
+    const server = createServer({ name: "Asana", config: createHttpServerConfig("https://example.com/mcp"), hasClientSecret: true });
+    const { result, rerender } = renderHook(({ server }) => useServerForm(server), { initialProps: { server } });
+    act(() => result.current.setUrl("https://example.com/edited"));
+    rerender({ server: { ...server, connectionStatus: "failed", lastError: "network" } });
+    expect(result.current.url).toBe("https://example.com/edited");
+    expect(result.current.hasStoredClientSecret).toBe(true);
+    rerender({ server: { ...server, config: createHttpServerConfig("https://example.com/edited") } });
+    act(() => result.current.markSaved());
+    expect(result.current.url).toBe("https://example.com/edited");
+    expect(result.current.hasChanges).toBe(false);
+  });
   beforeEach(() => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
   });

@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { toast } from "sonner";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { describeAsSlug } from "@mcpjam/sdk/browser";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -60,9 +61,11 @@ vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
 // would make the card's tunnel-URL effects (which depend on getAccessToken)
 // re-run on every re-render, masking the real polling cadence under test.
 const mockGetAccessToken = vi.fn().mockResolvedValue("test-token");
+const mockSignIn = vi.fn();
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockGetAccessToken,
+    signIn: mockSignIn,
   }),
 }));
 
@@ -124,6 +127,31 @@ describe("ServerConnectionCard", () => {
     vi.clearAllMocks();
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
+  });
+
+  it("prioritizes trusted MCPJam sign-in over server consent recovery", () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire", lastFailureFacts: { code: "SIGN_IN_REQUIRED" }, lastNormalizedError: describeAsSlug("auth/consent_required", new Error("wire")) });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(mockSignIn).toHaveBeenCalledOnce();
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("keeps consent recovery connected to the existing interactive reconnect", async () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire", lastNormalizedError: describeAsSlug("auth/consent_required", new Error("wire")) });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(defaultProps.onReconnect).toHaveBeenCalledWith("test-server", { allowInteractiveOAuthFlow: true }));
+  });
+
+  it("opens saved settings while diagnostics stay collapsed", () => {
+    const server = createServer({ connectionStatus: "failed", lastError: "wire" });
+    const onOpenDetailModal = vi.fn();
+    render(<ServerConnectionCard server={server} {...defaultProps} onOpenDetailModal={onOpenDetailModal} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open server settings" }));
+    expect(onOpenDetailModal).toHaveBeenCalledWith(server, "configuration");
+    expect(screen.getByRole("button", { name: "Copy details" })).toBeVisible();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute("aria-expanded", "false");
   });
 
   describe("rendering", () => {

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { toast as appToast } from "@/lib/toast";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toastServerConnectionFailure } from "../server-error-toast";
+import { presentConnectionError } from "../connection-error-presentation";
 
 vi.mock("@/lib/clipboard", () => ({
   copyToClipboard: vi.fn(async () => true),
@@ -41,8 +42,8 @@ describe("toastServerConnectionFailure", () => {
 
     toastServerConnectionFailure("Excalidraw (App)", "Request failed (500)");
 
-    expect(await screen.findByText("Excalidraw (App)")).toBeInTheDocument();
-    expect(screen.getByText("Request failed (500)")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't connect to Excalidraw (App).")).toBeInTheDocument();
+    expect(screen.queryByText("Request failed (500)")).not.toBeInTheDocument();
   });
 
   it("keeps a message that already names the server on one line", async () => {
@@ -52,7 +53,8 @@ describe("toastServerConnectionFailure", () => {
 
     toastServerConnectionFailure("champions", message);
 
-    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't connect to champions.")).toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
   });
 
   it("copies the description, not just the server name", async () => {
@@ -67,7 +69,10 @@ describe("toastServerConnectionFailure", () => {
 
     await waitFor(() =>
       expect(copyMock).toHaveBeenCalledWith(
-        "Excalidraw (App): Request failed (500)",
+        (() => {
+          const result = presentConnectionError("Request failed (500)", { serverName: "Excalidraw (App)" });
+          return `${result.title}: ${result.explanation}`;
+        })(),
       ),
     );
   });

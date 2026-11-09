@@ -545,7 +545,7 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -1268,17 +1268,8 @@ export function ServersTab({
 
   const handleSubmitDetailModal = useCallback(
     async (formData: ServerFormData, originalServerName: string) => {
-      const optimisticServerName = formData.name.trim() || originalServerName;
-
-      setDetailModalState((prev) => ({
-        ...prev,
-        serverName: optimisticServerName,
-        serverSnapshot: prev.serverSnapshot
-          ? { ...prev.serverSnapshot, name: optimisticServerName }
-          : prev.serverSnapshot,
-      }));
-
       const result = await onUpdate(originalServerName, formData);
+      if (!result.ok) return result;
 
       setDetailModalState((prev) => {
         const liveServer = projectServers[result.serverName];
@@ -1338,7 +1329,7 @@ export function ServersTab({
   };
 
   const handleConnectServer = useCallback(
-    (formData: ServerFormData) => {
+    (formData: ServerFormData, options?: import("@/lib/server-connection-submission").ServerConnectionSubmissionOptions) => {
       if (isAppBootstrapping) {
         toast.error(
           appReadyMessage ?? "App is still loading. Try again in a moment."
@@ -1346,7 +1337,7 @@ export function ServersTab({
         return;
       }
       focusLoggerOnServer(formData.name);
-      onConnect(formData);
+      return onConnect(formData, options);
     },
     [focusLoggerOnServer, onConnect, isAppBootstrapping, appReadyMessage]
   );
@@ -2225,7 +2216,7 @@ export function ServersTab({
             setIsAddingServer(false);
             setPrefilledServerDraft(undefined);
           }}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             track("connecting_server", {
               location: "servers_tab",
             });
@@ -2238,7 +2229,7 @@ export function ServersTab({
                 version: formData.mcpProtocolVersionOverride,
               });
             }
-            handleConnectServer(formData);
+            return handleConnectServer(formData, options);
           }}
           projectClientConfig={selectedProject?.clientConfig}
           organizationId={selectedProject?.organizationId ?? null}

@@ -41,6 +41,16 @@ function createServer(
 }
 
 describe("appReducer", () => {
+  it("retains validated refusal facts alongside diagnostics and clears them on a new attempt", () => {
+    const initial = createInitialState({ servers: { Asana: createServer("Asana", { hasClientSecret: true }) } });
+    const failed = appReducer(initial, { type: "CONNECT_FAILURE", name: "Asana", error: "wire",
+      failureFacts: { code: "SIGN_IN_REQUIRED", credentialRefusal: { kind: "export_denied" } } });
+    expect(failed.servers.Asana.lastFailureFacts).toEqual({ code: "SIGN_IN_REQUIRED", credentialRefusal: { kind: "export_denied" } });
+    expect(failed.servers.Asana.hasClientSecret).toBe(true);
+    const next = appReducer(failed, { type: "RECONNECT_REQUEST", name: "Asana", config: initial.servers.Asana.config });
+    expect(next.servers.Asana.lastFailureFacts).toBeUndefined();
+  });
+
   describe("HYDRATE_STATE", () => {
     it("replaces entire state with payload", () => {
       const initialState = createInitialState();
