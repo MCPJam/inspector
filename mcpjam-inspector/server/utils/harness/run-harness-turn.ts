@@ -1,3 +1,4 @@
+import { cursorRuntimeLogin } from "./runtime-login.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import { isCallToolResult } from "@modelcontextprotocol/client";
 import { deferCompletedTurnLeaseRelease, finishPendingPersist } from "../completed-turn-finalization.js";
@@ -218,7 +219,6 @@ import {
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
 import { resolveOrgKeyCredentialPlan } from "./external-account-credentials.js";
-import { removeRuntimeCredentials } from "./runtime-credential-files.js";
 import {
   orgKeyHarnessSurfaceRefusal,
   orgKeyRefusedSurfaceFor,
@@ -976,22 +976,13 @@ export async function runHarnessTurn(
         }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
       }
     | undefined;
-  let sandboxSessionWorkDir: string | undefined;
-  // Turn end, whatever the outcome: the vendor tokens the CLI exchanged for its
-  // key leave the box (`removeRuntimeCredentials`). Called before the session
-  // is torn down, and from the engine's outer finally for a turn that never
-  // established one. At most once per turn.
+  // Cleanup uses its own deadline: cancelling the turn must not cancel removal.
   let runtimeCredentialsRemoved = false;
+  let cursorLogin: ReturnType<typeof cursorRuntimeLogin> | undefined;
   const removeTurnRuntimeCredentials = async () => {
-    if (runtimeCredentialsRemoved || !sandboxFileSession) return;
-    if (!sandboxSessionWorkDir) return;
+    if (runtimeCredentialsRemoved) return;
     runtimeCredentialsRemoved = true;
-    await removeRuntimeCredentials({
-      adapter: harnessAdapter,
-      session: sandboxFileSession,
-      sessionWorkDir: sandboxSessionWorkDir,
-      signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-    });
+    await cursorLogin?.clear();
   };
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
@@ -2657,6 +2648,11 @@ export async function runHarnessTurn(
         // could start bootstrapping the same box mid-run. `reservationHeld`
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
+        if (harnessAdapter.id === "cursor") {
+          if (box?.kind !== "sandbox") throw new Error("Cursor requires an owned hosted sandbox.");
+          cursorLogin = cursorRuntimeLogin({ sandboxRowId: box.sandboxRowId, runId: turnRunId,
+            modelId, authorization: currentAuthorization, signal: effectiveAbortSignal });
+        }
       } else {
         reportStartup("authorization");
         brokerRunId = turnRunId;
@@ -2959,7 +2955,7 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
-          sandboxSessionWorkDir = sessionWorkDir;
+          await cursorLogin?.install();
           // NATIVE delivery only: write the host's MCP servers into the session
           // before the runtime starts, via the adapter's own strategy (Claude
           // runtimes can require config files). A host-executed adapter has nothing to
@@ -3398,7 +3394,7 @@ export async function runHarnessTurn(
         } catch (resumeErr) {
           // Preparation has already bound the local gateway and state directory
           // to this identity. Never fall back to an unrelated SDK-generated id.
-          if (localPrepared) throw resumeErr;
+          if (localPrepared || externalAccountAuth) throw resumeErr;
           logger.warn("[harness] resume failed; starting fresh", {
             error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
           });
@@ -4594,7 +4590,14 @@ export async function runHarnessTurn(
       } finally {
         stopHeartbeat?.();
         stopDrainKeepalive();
-        await removeTurnRuntimeCredentials();
+        let credentialCleanupError: unknown;
+        try {
+          await removeTurnRuntimeCredentials();
+        } catch (error) {
+          credentialCleanupError = error;
+          runSucceeded = false;
+          pausedForApproval = false;
+        }
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
           // while the session is still LIVE (before detach/destroy below). Only on
@@ -4762,6 +4765,7 @@ export async function runHarnessTurn(
           capturedHarnessCommit = undefined;
           if (!localPrepared) await releaseHarnessLease?.();
         }
+        if (credentialCleanupError) throw credentialCleanupError;
       }
     } catch (err) {
       const livenessFailed = isLivenessFailure();
@@ -4843,7 +4847,16 @@ export async function runHarnessTurn(
         ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
-      if (!sessionEstablished) await removeTurnRuntimeCredentials();
+      if (!sessionEstablished) {
+        try {
+          await removeTurnRuntimeCredentials();
+        } catch (error) {
+          // Backend quarantine still applies; report failure without skipping teardown.
+          const message = harnessFailureMessageOf(error);
+          emitError(writer, message);
+          onEngineError?.({ message, rawText: message, promptIndex, phase: "setup" });
+        }
+      }
       stopScopeStepUpBridge();
       await nativeForwarding?.stop();
       stopPolicyBlockBridge();
