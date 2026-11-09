@@ -406,6 +406,12 @@ const inputs = [
     input: { ...base(), harness: "cursor" },
   },
   {
+    // OpenCode is the id a backend pin that predates this SDK release must
+    // mask past its HARNESS_IDS guard (`withSdkSafeHarness`).
+    label: "harness-opencode",
+    input: { ...base(), harness: "opencode" },
+  },
+  {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
     // byte-identical to base-minimal for that dimension (hash-neutral default).
     label: "builtin-tool-ids-empty-omitted",
@@ -464,7 +470,7 @@ const inputs = [
   },
 ];
 
-for (const agentLoop of ["claude-code", "codex", "cursor"]) {
+for (const agentLoop of ["claude-code", "codex", "cursor", "opencode"]) {
   inputs.push({
     label: `agent-loop-${agentLoop}`,
     input: { ...base(), agentLoop, computer: { kind: "personal" } },

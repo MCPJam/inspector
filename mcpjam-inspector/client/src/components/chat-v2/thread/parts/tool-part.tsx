@@ -1,7 +1,7 @@
 import { useAppSessionScope } from "../app-session-scope";
 import { ToolResourceAttachments } from "@/components/host-workspace/file-actions";
 import {
-  CHAT_AUTH_RECOVERY_MESSAGE,
+  chatAuthRecoveryFailureMessage,
   useChatAuthRecoveryFailures,
 } from "@/lib/chat-auth-recovery";
 import {
@@ -116,6 +116,7 @@ export function ToolPart({
   editVersion,
   minimalMode = false,
   serverId,
+  resourceServerId = serverId,
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
@@ -131,7 +132,7 @@ export function ToolPart({
   onExitFullscreen?: (toolCallId: string) => void;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
-  /** Display modes the app declared support for. If undefined, all modes are available. */
+  /** Negotiated App display modes. If undefined, only the host restricts modes. */
   appSupportedDisplayModes?: DisplayMode[];
   approvalId?: string;
   onApprove?: (id: string) => void;
@@ -168,6 +169,8 @@ export function ToolPart({
   editVersion?: number;
   minimalMode?: boolean;
   serverId?: string;
+  /** Saved server ID for resource ownership, independent of local connection aliases. */
+  resourceServerId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
@@ -194,13 +197,15 @@ export function ToolPart({
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const recoveryFailures = useChatAuthRecoveryFailures();
-  const recoveryFailed =
-    toolCallId !== undefined &&
-    recoveryFailures.some(
-      (item) =>
-        item.toolCallId === toolCallId &&
-        (!chatSessionId || item.chatSessionId === chatSessionId),
-    );
+  const recoveryFailure =
+    toolCallId !== undefined
+      ? recoveryFailures.find(
+          (item) =>
+            item.toolCallId === toolCallId &&
+            (!chatSessionId || item.chatSessionId === chatSessionId),
+        )
+      : undefined;
+  const recoveryFailed = recoveryFailure !== undefined;
   const state = (
     recoveryFailed &&
     !["output-available", "output-error", "output-denied"].includes(
@@ -320,7 +325,9 @@ export function ToolPart({
   const errorText =
     (part as any).errorText ??
     (part as any).error ??
-    (recoveryFailed ? CHAT_AUTH_RECOVERY_MESSAGE : undefined);
+    (recoveryFailure
+      ? chatAuthRecoveryFailureMessage(recoveryFailure)
+      : undefined);
   // Through the package's shared reader rather than a local copy of the same
   // field test. This channel had three hand-rolled readers with three
   // different gates — this one required a recognised mode, `PartSwitch`
@@ -1145,7 +1152,7 @@ export function ToolPart({
         </span>
       </div>
 
-      <ToolResourceAttachments result={rawResultData} serverId={serverId} />
+      <ToolResourceAttachments result={rawResultData} serverId={resourceServerId} />
       {webSearchRefusalCode ? (
         <WebSearchRefusalNotice code={webSearchRefusalCode} />
       ) : null}

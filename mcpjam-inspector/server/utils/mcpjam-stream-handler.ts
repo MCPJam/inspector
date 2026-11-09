@@ -1,3 +1,5 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
@@ -34,7 +36,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -414,10 +416,12 @@ async function clientAcceptsBackendChunk(
   chunk: unknown,
   reported: Set<string>,
 ): Promise<boolean> {
-  const result = await safeValidateTypes({
-    value: chunk,
-    schema: uiMessageChunkSchema,
-  });
+  // Call the lazy schema's own validate. `safeValidateTypes` from the
+  // inspector's `@ai-sdk/provider-utils` cannot accept this schema: the
+  // harness pin brings a newer copy whose Schema brand does not overlap.
+  const validate = uiMessageChunkSchema().validate;
+  if (!validate) return true;
+  const result = await validate(chunk);
   if (result.success) return true;
 
   const record =
@@ -931,6 +935,9 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
+  /** The route's stage timing; a harness turn adds its stages and first text. */
+  turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -1174,6 +1181,7 @@ export interface MCPJamHandlerOptions {
   agentLoop?: Harness;
   harnessTurnContext?: string;
   harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -5610,6 +5618,7 @@ export async function runChatEngineLoop(
     let modelInvoked = false;
 
     try {
+      options.turnAuthorization?.start(traceTurn.turnId, safeWriter);
       onStreamWriterReady?.(safeWriter);
 
       if (aborted) {
@@ -5831,7 +5840,7 @@ export async function runChatEngineLoop(
             tools,
             progressivePlan,
             discoveryState,
-            authHeader,
+            authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
             scenarioId,
             accessVersion,
             projectId,
@@ -6132,10 +6141,11 @@ export async function runChatEngineLoop(
         };
         capturedTurnTrace = trace;
         try {
-          const persistOutcome = await onConversationComplete?.(
+          let persistOutcome = await onConversationComplete?.(
             [...messageHistory],
             trace,
           );
+          if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
           // Costs no latency: `onConversationComplete` already awaited the
           // ingest, which is what gates this stream's close in the first place.
           if (persistOutcome && chatSessionId) {

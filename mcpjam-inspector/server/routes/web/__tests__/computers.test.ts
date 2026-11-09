@@ -105,8 +105,14 @@ function happyControlPlane() {
   };
 }
 
-function createApp(runner?: BashRunner) {
+function createApp(runner?: BashRunner, delegated = false) {
   const app = new Hono();
+  if (delegated) app.use("*", async (c, next) => {
+    c.set("authMethod", "workos_api_key");
+    c.set("workosUserId", "user-computer-key");
+    c.set("mcpjamOrganizationId", "org-computer-key");
+    await next();
+  });
   app.route("/api/web/computers", createComputersRoutes(runner));
   return app;
 }
@@ -190,6 +196,7 @@ describe("GET /api/web/computers/config", () => {
         browserConsent: true,
         personalCloudAvailable: false,
         ephemeralCloudAvailable: false,
+        pluginComputerRuntime: false,
       },
       // A different axis from the engines: an engine decides where a bash call
       // runs, a harness target decides where the whole vendor agent runs. Off
@@ -213,6 +220,7 @@ describe("GET /api/web/computers/config", () => {
       browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: true,
+      pluginComputerRuntime: false,
     });
   });
 
@@ -232,6 +240,7 @@ describe("GET /api/web/computers/config", () => {
       browserConsent: true,
       personalCloudAvailable: true,
       ephemeralCloudAvailable: false,
+        pluginComputerRuntime: false,
     });
   });
 
@@ -240,6 +249,7 @@ describe("GET /api/web/computers/config", () => {
     stubLocalDataPlaneEnv();
     const response = await createApp().request("/api/web/computers/config");
     const body = (await response.json()) as Record<string, any>;
+    expect(body.capabilities.pluginComputerRuntime).toBe(true);
     expect(body.engines.local.available).toBe(false);
     expect(body.engines.local.workspaceDisplayRoot).toBeNull();
     expect(body.defaultEngine).toBe("cloud");
@@ -301,6 +311,25 @@ describe("GET /api/web/computers/config", () => {
 });
 
 describe("POST /api/web/computers/exec", () => {
+  it("exchanges an authenticated API key before reserving the caller's computer", async () => {
+    stubLocalDataPlaneEnv();
+    happyControlPlane();
+    const controlPlane = fetchHandler;
+    fetchHandler = (path, body) => path === "/web/delegated-token"
+      ? { status: 200, json: { ok: true, token: "delegated-computer-token", expiresAt: Date.now() + 3_600_000 } }
+      : controlPlane(path, body);
+    const runner = vi.fn(async () => ({ stdout: "ok", stderr: "", exitCode: 0 }));
+    const response = await postExec(createApp(runner, true), {
+      projectId: "proj_1", command: "echo ok", commandId: "delegated-command",
+    }, { authorization: "Bearer sk_fixture_computer" });
+    expect(response.status).toBe(200);
+    expect(runner).toHaveBeenCalledOnce();
+    expect(fetchCalls.find(call => call.path === "/computers/reserve")?.headers.authorization).toBe("Bearer delegated-computer-token");
+    expect(fetchCalls.some(call => JSON.stringify(call).includes("sk_fixture_computer"))).toBe(false);
+    expect(fetchCalls.find(call => call.path === "/web/delegated-token")?.headers).toMatchObject({
+      "x-mcpjam-acting-as": "user-computer-key", "x-mcpjam-acting-in-org": "org-computer-key",
+    });
+  });
   it("runs the command with the caller's bearer and returns the output", async () => {
     stubLocalDataPlaneEnv();
     happyControlPlane();

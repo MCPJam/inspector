@@ -212,6 +212,8 @@ async function postSessionState(
 
 export function sessionClaimConflictMessage(reason: string | undefined): string {
   switch (reason) {
+    case "harness_turn_cancelled":
+      return "This turn was stopped. Send a new message to continue.";
     case "harness_approval_expired":
       return "This approval has ended. Send a new message to request the action again.";
     case "harness_approval_pending":
@@ -223,6 +225,7 @@ export function sessionClaimConflictMessage(reason: string | undefined): string 
 
 export async function claimHarnessSessionState(args: {
   approvalIds?: string[];
+  requestId?: string;
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -245,6 +248,7 @@ export async function claimHarnessSessionState(args: {
       leaseId: args.leaseId,
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
+      ...(args.requestId ? { requestId: args.requestId } : {}),
     },
     args.signal
   );
@@ -275,12 +279,13 @@ export async function heartbeatHarnessSessionState(args: {
   leaseId: string;
   leaseTtlMs: number;
   bearer: string;
+  signal?: AbortSignal;
 }): Promise<HarnessHeartbeatResult> {
   const res = await postSessionState("heartbeat", args.bearer, {
     ...args.owner,
     leaseId: args.leaseId,
     leaseTtlMs: args.leaseTtlMs,
-  });
+  }, args.signal);
   if (res.ok) {
     // The request reached the endpoint; `extended` is the definitive answer.
     return res.payload?.extended === true ? "ok" : "lost";

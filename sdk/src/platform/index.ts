@@ -82,6 +82,22 @@ export {
 } from "./permalinks.js";
 
 export { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+export type {
+  PlatformWidgetSessionTarget,
+  PlatformWidgetViewport,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetToolCall,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionAssertion,
+  PlatformWidgetSessionStep,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionClosed,
+  PlatformWidgetRenderBody,
+} from "./widget-session-types.js";
 
 export {
   computeRunTargets,
@@ -159,12 +175,14 @@ export type {
   PlatformReadinessObservationState,
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceReportCheck,
   PlatformConformanceReportProfile,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceRunReportSummary,
+  PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
   PlatformReadinessStageResult,
   PlatformReadinessLazyAuthProbe,
@@ -523,6 +541,7 @@ export {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listClientsOperation,
   listHostsOperation,
   listEnvironmentsOperation,
@@ -686,7 +705,10 @@ export {
   type GetConformanceRunResult,
   type ListConformanceRunsInput,
   type ListConformanceRunsResult,
+  type GetConformanceReportInput,
   type GetConformanceReportResult,
+  type GetConformanceCheckInput,
+  type GetConformanceCheckResult,
   type HostCompatibilityVerdict,
   type CloseTunnelInput,
   type CloseTunnelResult,

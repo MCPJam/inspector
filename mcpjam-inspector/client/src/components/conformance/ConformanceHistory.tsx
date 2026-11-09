@@ -11,7 +11,7 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
-import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
+import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
@@ -38,6 +38,7 @@ import {
   type HistorySort,
 } from "./ConformanceHistoryFilters";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
+import { conformanceRunTargetName } from "./conformance-run-target";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -129,7 +130,7 @@ export function ConformanceHistory({
   const [serverFilter, setServerFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<HistorySort>("newest");
-  const navigate = useAppNavigate();
+  const openRun = useOpenRunFromHistory(projectId);
 
   const query = search.trim().toLowerCase();
   // One server's runs all share a name, so the name sort needs no more of
@@ -188,8 +189,7 @@ export function ConformanceHistory({
   }, [readAll, page]);
 
   const serverLabel = (run: ConformanceRunListItem) =>
-    (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
-    run.targetKey.replace(/^server:/, "");
+    conformanceRunTargetName(run, serverNames);
 
   const changeServerFilter = (next: string | null) => {
     if (next === serverFilter) return;
@@ -312,7 +312,7 @@ export function ConformanceHistory({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    navigate(buildConformanceRunPath(run._id, projectId));
+                    openRun(run._id);
                   }}
                 >
                   <span className={`${cell} text-sm font-semibold`}>
@@ -380,7 +380,7 @@ export function ConformanceRunDetailPage({
   serverSettings?: SavedRunServerSettings;
   serversLoading?: boolean;
 }) {
-  const navigate = useAppNavigate();
+  const back = useRunBack();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
@@ -427,8 +427,7 @@ export function ConformanceRunDetailPage({
   const savedServerName = detail.serverId
     ? serverNames?.get(detail.serverId)
     : undefined;
-  const serverName =
-    savedServerName ?? detail.targetKey.replace(/^server:/, "");
+  const serverName = conformanceRunTargetName(detail, serverNames);
   const finished = detail.status === "completed";
 
   if (settingsOpen && savedServerName && serverSettings) {
@@ -446,8 +445,8 @@ export function ConformanceRunDetailPage({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* The same chrome as a run on screen, so a saved run reads like it. */}
       <DetailPageHeader
-        backLabel="Conformance History"
-        onBack={() => navigate("/conformance?view=history")}
+        backLabel={back.label}
+        onBack={back.onBack}
         backTestId="conformance-saved-run-back"
         title={
           <h1

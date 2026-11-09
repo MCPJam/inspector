@@ -138,9 +138,6 @@ export async function prepareMobileApp(
       url.searchParams.has("token"),
     (socket) => socket.send(JSON.stringify({ type: "connected" })),
   );
-  await context.route(`${origin}/api/mcp/mrtr/stream**`, (route) =>
-    route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" }),
-  );
   await context.route(`${origin}/api/mcp/subscriptions/stream**`, (route) =>
     route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" }),
   );

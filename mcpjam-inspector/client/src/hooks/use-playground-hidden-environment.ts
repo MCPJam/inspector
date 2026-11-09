@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useComputersDataPlaneConfig } from "./useProjectComputer";
 import { useConvex } from "convex/react";
 import {
   activePluginServers,
@@ -77,6 +78,8 @@ export interface PlaygroundHiddenEnvironmentInput {
    * client is never composed without the key it needs.
    */
   hostResolved: boolean;
+  /** The selected saved client, never a browser-only runtime override. */
+  computerAttached?: boolean;
 }
 
 export interface PlaygroundHiddenEnvironmentState {
@@ -111,6 +114,7 @@ type Composition = {
   venue: HiddenEnvironmentVenue;
   /** The member runs this chat's client here: what both venues come from. */
   clientRunsHere: boolean;
+  computerAvailable: boolean;
   pluginVersionIds: string[];
   pluginServerIds: string[];
   secretSelection?: { mode: "explicit"; secretIds: string[] };
@@ -144,6 +148,11 @@ export function usePlaygroundHiddenEnvironment(
   input: PlaygroundHiddenEnvironmentInput,
 ): PlaygroundHiddenEnvironmentState {
   const { projectId, eligible, hostId, harnessId, hostResolved } = input;
+  const dataPlane = useComputersDataPlaneConfig();
+  const computerAvailable =
+    hostResolved &&
+    input.computerAttached === true &&
+    dataPlane?.pluginComputerRuntime === true;
   const pluginsEnabled = usePluginsEnabled();
   const memberActor = useIsMemberActor();
   const isMember = memberActor === true;
@@ -171,6 +180,7 @@ export function usePlaygroundHiddenEnvironment(
         hostedMode: HOSTED_MODE,
         clientRunsHere,
         needsLocal: true,
+        computerAvailable,
       }),
     },
   );
@@ -185,6 +195,7 @@ export function usePlaygroundHiddenEnvironment(
     hostedMode: HOSTED_MODE,
     clientRunsHere,
     needsLocal: plugins.some(needsLocalVenue),
+    computerAvailable,
   });
   // The chat's plugin notices offer the same Sign in as the server's card, for
   // the members whose plugins they name. Registered before the notices below
@@ -200,7 +211,7 @@ export function usePlaygroundHiddenEnvironment(
         : undefined,
     [canSignIn, signIn],
   );
-  usePluginServerNotices(plugins);
+  usePluginServerNotices(plugins, projectId);
   // No authoritative answer yet: who this is, or which plugins it has. An
   // empty list here is not "no plugins". Only for a chat that could have
   // plugins at all (the flag is on, a real project and a client).
@@ -283,6 +294,7 @@ export function usePlaygroundHiddenEnvironment(
       hostId,
       venue,
       clientRunsHere,
+      computerAvailable,
       pluginVersionIds,
       pluginServerIds,
       ...(secretSelection ? { secretSelection } : {}),
@@ -295,6 +307,7 @@ export function usePlaygroundHiddenEnvironment(
     hostResolved,
     venue,
     clientRunsHere,
+    computerAvailable,
     pluginVersionIds,
     pluginServerIds,
     credential,
@@ -420,6 +433,7 @@ export function usePlaygroundHiddenEnvironment(
         hiddenEnvironmentVenue({
           hostedMode: HOSTED_MODE,
           clientRunsHere: target.clientRunsHere,
+          computerAvailable: target.computerAvailable,
           needsLocal,
         });
       // A fresh read, not the subscription's last answer: the refusal says

@@ -28,7 +28,12 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 // dispatch hooks) rather than reached for via `@/stores`, so this registry
 // carries no inspector telemetry into the widget package (Tier-B).
 import type { WidgetDebugSink } from "./widget-host";
-import { listAppToolCatalog, MAX_SNAPSHOT_ENTRIES } from "./app-tools-catalog";
+import { updateAppPresentation, type AppToolPresentation } from "./app-tool-presentation";
+import {
+  listAppToolCatalog,
+  MAX_SNAPSHOT_ENTRIES,
+  modelChatSessionId,
+} from "./app-tools-catalog";
 
 /** Injected traffic-log sink — `WidgetDebugSink["addTrafficLog"]`. */
 export type AddTrafficLog = WidgetDebugSink["addTrafficLog"];
@@ -41,9 +46,12 @@ export type AppToolDescriptor = NonNullable<
 >[number];
 
 export interface AppInstance {
+  presentation?: AppToolPresentation;
   bridgeId: BridgeId;
   /** Chat session/lane that owns this rendered iframe. */
   chatSessionId?: string;
+  /** Retained workspace Apps target this conversation without changing ownership. */
+  getModelChatSessionId?: () => string | undefined;
   /** The host tool call whose render mounted this iframe. */
   parentToolCallId: string;
   serverId: string;
@@ -73,6 +81,8 @@ export interface AppToolAlias {
 
 /** What the snapshot ships to the server in the chat POST body. */
 export interface AppToolSnapshotEntry {
+  /** Exact bridge generation; older clients omit it and cannot use native app tools. */
+  bridgeId?: string;
   alias: string;
   appName: string;
   appVersion?: string;
@@ -92,6 +102,7 @@ export interface AppToolAttribution {
 }
 
 export interface AppToolsRegistryState {
+  updatePresentation: (bridgeId: string, presentation: AppToolPresentation) => void;
   enabled: boolean;
   instancesByBridgeId: Map<BridgeId, AppInstance>;
   aliases: Map<string, AppToolAlias>;
@@ -538,6 +549,10 @@ export function createAppToolsRegistry(
       });
     },
 
+    updatePresentation: (bridgeId, presentation) => set((state) => {
+      const instancesByBridgeId = updateAppPresentation(state.instancesByBridgeId, bridgeId, presentation);
+      return instancesByBridgeId === state.instancesByBridgeId ? state : { instancesByBridgeId };
+    }),
     snapshotForChatBody: (chatSessionId) => {
       const catalog = listAppToolCatalog(get(), chatSessionId);
       const capped = catalog.dropped.filter(
@@ -552,6 +567,7 @@ export function createAppToolsRegistry(
         ({ alias, instance, rawName, description, inputSchema, readOnly }) => ({
           alias,
           appName: instance.appName,
+          bridgeId: instance.bridgeId,
           appVersion: instance.appVersion,
           serverId: instance.serverId,
           parentToolCallId: instance.parentToolCallId,
@@ -584,7 +600,7 @@ export function createAppToolsRegistry(
       if (!a) return null;
       const inst = get().instancesByBridgeId.get(a.bridgeId);
       if (!inst) return null;
-      if (chatSessionId && inst.chatSessionId !== chatSessionId) return null;
+      if (chatSessionId && modelChatSessionId(inst) !== chatSessionId) return null;
       if (
         get().activeBridgeByParent.get(
           getActiveParentKey(inst.parentToolCallId, inst.chatSessionId)
@@ -674,9 +690,7 @@ export function createAppToolInvocationLog() {
     },
   }));
 }
-export type AppToolInvocationLog = ReturnType<
-  typeof createAppToolInvocationLog
->;
+export type AppToolInvocationLog = ReturnType<typeof createAppToolInvocationLog>;
 const legacyInvocationLog = createAppToolInvocationLog();
 export function useAppToolInvocationLogApi(): AppToolInvocationLog {
   return useContext(WidgetWorkspaceContext)?.invocations ?? legacyInvocationLog;

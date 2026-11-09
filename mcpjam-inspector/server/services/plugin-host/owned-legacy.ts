@@ -1,3 +1,4 @@
+import { ownedMrtrFormCapabilities } from "./owned-mrtr.js";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import type { MCPClientManager, MCPClientManagerOptions } from "@mcpjam/sdk";
 import { HostedElicitationBridge } from "../../routes/web/hosted-elicitation.js";
@@ -23,6 +24,7 @@ import { OPENAI_FORM_CLIENT_EXTENSION_KEYS } from "@mcpjam/sdk/host-config/inter
 /** Shared owned legacy dispatch, independent of connection creation or execution origin. */
 export function createOwnedPluginLegacyForms(deps: {
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   workspaceId: string;
   hostId: string;
@@ -61,6 +63,7 @@ export function createOwnedPluginLegacyForms(deps: {
   const serverNamesById = { [deps.serverId]: "MCP server" };
   const bridge = new HostedElicitationBridge({
     convexBearer: deps.bearer,
+    getConvexBearer: deps.getAuthorization,
     projectId: deps.projectId,
     pluginWorkspaceId: deps.workspaceId,
     serverNamesById,
@@ -94,16 +97,62 @@ export function createOwnedPluginLegacyForms(deps: {
       },
     });
 
+  const answer = async (request: { params?: Record<string, unknown> }) => {
+    const active = operation;
+    if (!active) throw denied();
+    active.signal.throwIfAborted();
+    await deps.assertCurrent();
+    if (operation !== active) throw denied();
+    serverNamesById[deps.serverId] = deps.serverName?.() || "MCP server";
+    // The envelope only: the requested schema arrives exactly as sent.
+    const params = parseOpenAIForm(request.params);
+    if (pluginFormSchemaTooLarge(params.requestedSchema))
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Plugin form schema is too large",
+      );
+    let plan;
+    try {
+      plan = compilePluginForm(params.requestedSchema, {
+        ...(typeof deps.profile === "function"
+          ? deps.profile()
+          : deps.profile),
+        origin: active.authorization.origin === "app" ? "mcp-app" : "server",
+      });
+    } catch {
+      // Unsupported as a whole: an input type or constraint this client
+      // doesn't support, a broken server rule, or a missing host service.
+      // Deliver it unchanged so the card says why and Logs records it;
+      // nothing is partially displayed. It can only be declined or
+      // cancelled, and a forged accept is refused below.
+      plan = undefined;
+    }
+    const result = await bridge.callback({
+      requestId: crypto.randomUUID(),
+      serverId: deps.serverId,
+      mode: "form",
+      message: params.message,
+      schema: plan?.schema ?? params.requestedSchema,
+    });
+    await deps.assertCurrent();
+    if (operation !== active) throw denied();
+    if (
+      result.action === "accept" &&
+      (!plan || !validatePluginFormContent(plan, result.content ?? {}).valid)
+    )
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Plugin form answer does not satisfy its schema",
+      );
+    return result;
+  };
   const binding = {
     method: OPENAI_LEGACY_FORM_METHOD,
     schemas: openAILegacyFormSchemas,
     waitsForInput: true,
     legacyClaim: OPENAI_LEGACY_FORM_EXTENSION,
     handler: async (request: { params?: Record<string, unknown> }) => {
-      const active = operation;
-      if (!active) throw denied();
-      active.signal.throwIfAborted();
-      // Modern extension mapping remains assumed: this handler serves legacy only.
+      // Only the owned collector may submit modern forms to answer().
       if (
         deps.manager()?.getInitializationInfo(deps.serverId)
           ?.protocolVersion === "2026-07-28"
@@ -112,54 +161,12 @@ export function createOwnedPluginLegacyForms(deps: {
           ProtocolErrorCode.MethodNotFound,
           "Legacy extension forms are unavailable on this wire",
         );
-      await deps.assertCurrent();
-      if (operation !== active) throw denied();
-      serverNamesById[deps.serverId] = deps.serverName?.() || "MCP server";
-      // The envelope only: the requested schema arrives exactly as sent.
-      const params = parseOpenAIForm(request.params);
-      if (pluginFormSchemaTooLarge(params.requestedSchema))
-        throw new ProtocolError(
-          ProtocolErrorCode.InvalidParams,
-          "Plugin form schema is too large",
-        );
-      let plan;
-      try {
-        plan = compilePluginForm(params.requestedSchema, {
-          ...(typeof deps.profile === "function"
-            ? deps.profile()
-            : deps.profile),
-          origin: active.authorization.origin === "app" ? "mcp-app" : "server",
-        });
-      } catch {
-        // Unsupported as a whole: an input type or constraint this client
-        // doesn't support, a broken server rule, or a missing host service.
-        // Deliver it unchanged so the card says why and Logs records it;
-        // nothing is partially displayed. It can only be declined or
-        // cancelled, and a forged accept is refused below.
-        plan = undefined;
-      }
-      const result = await bridge.callback({
-        requestId: crypto.randomUUID(),
-        serverId: deps.serverId,
-        mode: "form",
-        message: params.message,
-        schema: plan?.schema ?? params.requestedSchema,
-      });
-      await deps.assertCurrent();
-      if (operation !== active) throw denied();
-      if (
-        result.action === "accept" &&
-        (!plan || !validatePluginFormContent(plan, result.content ?? {}).valid)
-      )
-        throw new ProtocolError(
-          ProtocolErrorCode.InvalidParams,
-          "Plugin form answer does not satisfy its schema",
-        );
-      return result;
+      return answer(request);
     },
   };
 
   return {
+    answer,
     binding: binding satisfies NonNullable<
       MCPClientManagerOptions["extensionRequestHandlers"]
     >[string][number],
@@ -195,9 +202,11 @@ export function installedFormClientCapabilities(
   installed: { legacy?: { binding: unknown }; mrtr: boolean },
   forms: boolean | undefined,
 ): Record<string, unknown> | undefined {
+  if (installed.mrtr && forms !== false)
+    return ownedMrtrFormCapabilities(base ?? {});
   if (installed.legacy && forms !== false)
     return ownedLegacyFormCapabilities(base ?? {}, installed.legacy);
-  if (!base || (installed.mrtr && forms !== false)) return base;
+  if (!base) return base;
   const capabilities = { ...base };
   for (const field of ["extensions", "experimental"] as const) {
     const value = capabilities[field];

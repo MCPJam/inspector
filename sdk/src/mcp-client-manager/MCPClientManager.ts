@@ -1,3 +1,4 @@
+import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
 import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
@@ -3339,6 +3340,7 @@ export class MCPClientManager {
       client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
+        const guarded = guardToolResponseStreams(streamableTransport);
         const wrapped = wrapTransportForEventStreams(
           this.applyDroppedListChanged(
             config,
@@ -3346,8 +3348,8 @@ export class MCPClientManager {
               config,
               wrapTransportForTaskResults(
                 logger
-                  ? wrapTransportForLogging(serverId, logger, streamableTransport)
-                  : streamableTransport
+                  ? wrapTransportForLogging(serverId, logger, guarded)
+                  : guarded
               )
             )
           ),
@@ -4149,14 +4151,11 @@ export class MCPClientManager {
         delete exactCapabilities.elicitation;
       }
 
-      return (
-        era === "modern"
-          ? this.withoutUnansweredClaims(
-              serverId,
-              exactCapabilities,
-              mrtrFulfils
-            )
-          : exactCapabilities
+      return this.withoutUnansweredClaims(
+        serverId,
+        exactCapabilities,
+        mrtrFulfils,
+        era === "modern" || this.isPinnedModern(config)
       ) as ClientCapabilityOptions;
     }
 
@@ -4194,13 +4193,12 @@ export class MCPClientManager {
     if (mrtrDisabled && era === "modern") {
       delete (resolved as Record<string, unknown>).elicitation;
     }
-    return era === "modern"
-      ? (this.withoutUnansweredClaims(
-          serverId,
-          resolved as Record<string, unknown>,
-          mrtrFulfils
-        ) as ClientCapabilityOptions)
-      : resolved;
+    return this.withoutUnansweredClaims(
+      serverId,
+      resolved as Record<string, unknown>,
+      mrtrFulfils,
+      era === "modern" || this.isPinnedModern(config)
+    ) as ClientCapabilityOptions;
   }
 
   /** The `extensions` keys nothing on this server answers on a 2026-era
@@ -4221,15 +4219,22 @@ export class MCPClientManager {
       : [...legacy, ...modern];
   }
 
-  /** A 2026-era connection has no server-to-client requests, so a claim only
-   *  such a request could honor is withheld there, as is a claim only an
-   *  MRTR collector that drives no rounds could honor. Narrowing only. */
+  /** Withhold extension claims whose only fulfiller belongs to the other era.
+   * Modern connections also withhold claims when MRTR is disabled. */
   private withoutUnansweredClaims(
     serverId: string,
     capabilities: Record<string, unknown>,
-    mrtrFulfils: boolean
+    mrtrFulfils: boolean,
+    modern = true
   ): Record<string, unknown> {
-    const claims = this.unansweredModernClaims(serverId, mrtrFulfils);
+    const legacyClaims = (
+      this.extensionRequestHandlers.get(serverId) ?? []
+    ).flatMap((binding) => (binding.legacyClaim ? [binding.legacyClaim] : []));
+    const claims = modern
+      ? this.unansweredModernClaims(serverId, mrtrFulfils)
+      : (this.mrtrExtensionClaims.get(serverId) ?? []).filter(
+          (claim) => !legacyClaims.includes(claim)
+        );
     const extensions = capabilities.extensions;
     if (
       !claims.length ||

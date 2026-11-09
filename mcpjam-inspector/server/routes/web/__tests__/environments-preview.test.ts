@@ -118,6 +118,44 @@ describe("GET /api/web/environments/:id/preview", () => {
     );
   });
 
+  it("shows the environment's own connection even when its host uses another model", async () => {
+    const own = {
+      source: "org",
+      modelId: "openai/gpt-5-mini",
+      connectionRef: { kind: "orgProvider", id: "org-connection" },
+      fallback: { provider: "none", model: "none" },
+    };
+    convexQueryMock.mockResolvedValue({
+      ...SPEC,
+      host: { ...SPEC.host, runtimeConfig: {
+        ...SPEC.host.runtimeConfig,
+        modelSelection: { source: "legacy", modelId: "anthropic/claude-sonnet" },
+        modelSelectionLabel: { selection: own, origin: "backfill" },
+      } },
+    });
+    const response = await get("/api/web/environments/env_1/preview?projectId=p_1");
+    expect(response.status).toBe(200);
+    const { host } = await response.json();
+    expect(host.modelSelection).toEqual(own);
+    expect(host).not.toHaveProperty("modelSelectionLabel");
+  });
+
+  it("blocks a label that disagrees with the model or contains a secret", async () => {
+    for (const selection of [
+      { source: "legacy", modelId: "other/model" },
+      { source: "legacy", modelId: SPEC.host.runtimeConfig.modelId, apiKey: "private-key" },
+    ]) {
+      convexQueryMock.mockResolvedValue({
+        ...SPEC, host: { ...SPEC.host, runtimeConfig: {
+          ...SPEC.host.runtimeConfig, modelSelectionLabel: { selection },
+        } },
+      });
+      const response = await get("/api/web/environments/env_1/preview?projectId=p_1");
+      expect(response.status).toBe(409);
+      expect(await response.text()).not.toContain("private-key");
+    }
+  });
+
   it("NEVER returns skill content, file URLs, or raw host secrets", async () => {
     const response = await get(
       "/api/web/environments/env_1/preview?projectId=p_1"

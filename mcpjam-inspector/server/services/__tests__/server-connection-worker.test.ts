@@ -15,12 +15,18 @@
  * be free to disagree.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProbeHttpAttempt, ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
 } from "../../utils/hosted-egress-guard.js";
+
+vi.mock("../../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../config.js")>()),
+  HOSTED_MODE: true,
+}));
+afterEach(() => vi.unstubAllEnvs());
 
 const backend = vi.hoisted(() => ({
   acquireLease: vi.fn(),
@@ -286,6 +292,23 @@ describe("discovery outcomes", () => {
 describe("validation outcomes", () => {
   beforeEach(() => {
     backend.acquireLease.mockResolvedValue(leased("validating"));
+  });
+
+  it("validates an admitted private server with the operator's pinned policy", async () => {
+    vi.stubEnv("MCPJAM_PRIVATE_EGRESS_ALLOWLIST", "10.0.0.0/8");
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://10.0.0.5/mcp", accessToken: null, authMethod: "none",
+    });
+    probe.probeMcpServer.mockResolvedValue(probeResult({
+      status: "ready",
+      transport: { selected: "streamable-http", attempts: [attempt("streamable_initialize", 200)] },
+    }));
+    await runConnectionJob("scr_x");
+    expect(backend.reportValidation).toHaveBeenCalledWith(expect.objectContaining({ outcome: "ready" }));
+    const options = transport.createPinnedFetch.mock.calls.at(-1)?.[0];
+    expect(options?.admitPrivateDestination({ hostname: "10.0.0.5" })).toBe(true);
+    expect(options?.admitPrivateDestination({ hostname: "192.168.1.5" })).toBe(false);
+    expect(options?.admitPrivateDestination({ hostname: "169.254.169.254" })).toBe(false);
   });
 
   it("reports ready when an authenticated initialize succeeds", async () => {

@@ -161,6 +161,7 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:copilot-cli-bridge -w @mcpjam/inspector && \
     npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
     npm run bundle:local-harness-layer -w @mcpjam/inspector
 

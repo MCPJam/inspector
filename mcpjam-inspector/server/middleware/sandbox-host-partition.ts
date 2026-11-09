@@ -1,3 +1,4 @@
+import { sandboxViewHeaders, SANDBOX_VIEW_DENY_POLICY } from "../utils/sandbox-view-response.js";
 /**
  * Sandbox-host partition
  *
@@ -27,7 +28,8 @@ import {
   SANDBOX_HOSTS,
   type SandboxIsolationStatus,
 } from "../config.js";
-import { logger as appLogger } from "../utils/logger.js";
+import { logger as appLogger, printForOperator } from "../utils/logger.js";
+import { sandboxOriginOf } from "../../shared/sandbox-origin.js";
 
 /**
  * Everything a sandbox hostname is allowed to answer.
@@ -78,7 +80,7 @@ function requestHost(c: Context): string {
 }
 
 /** A per-server view label, as `view-origin-label.ts` derives them. */
-const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
+const VIEW_ORIGIN_LABEL = /^(?:v-)?[a-f0-9]{16}$/;
 
 /**
  * How a hostname relates to the sandbox.
@@ -95,14 +97,14 @@ const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
  * One label only. A nested subdomain is not a name this service mints, and
  * matching it would extend the partition to hostnames nobody derived.
  */
-function sandboxHostKind(host: string): "exact" | "view" | null {
+function sandboxHostKind(host: string): "exact" | "view" | "admission" | null {
   if (SANDBOX_HOSTS.has(host)) return "exact";
   const dot = host.indexOf(".");
   if (dot === -1) return null;
   const label = host.slice(0, dot);
   const parent = host.slice(dot + 1);
   if (!VIEW_ORIGIN_LABEL.test(label)) return null;
-  return SANDBOX_HOSTS.has(parent) ? "view" : null;
+  return SANDBOX_HOSTS.has(parent) ? (label.startsWith("v-") ? "admission" : "view") : null;
 }
 
 const sandboxHostPartition: MiddlewareHandler = async (c, next) => {
@@ -111,8 +113,11 @@ const sandboxHostPartition: MiddlewareHandler = async (c, next) => {
     await next();
     return;
   }
+  if (kind === "admission") {
+    for (const [name, value] of Object.entries(sandboxViewHeaders(SANDBOX_VIEW_DENY_POLICY))) c.header(name, value);
+  }
   const openPaths =
-    kind === "view" ? SANDBOX_VIEW_HOST_OPEN_PATHS : SANDBOX_HOST_OPEN_PATHS;
+    kind === "exact" ? SANDBOX_HOST_OPEN_PATHS : SANDBOX_VIEW_HOST_OPEN_PATHS;
   if (openPaths.has(c.req.path)) {
     await next();
     return;
@@ -139,8 +144,24 @@ function sandboxIsolationFault(status: SandboxIsolationStatus): string | null {
       return null;
     case "unset":
       return "SANDBOX_HOSTS names no hostname to partition (or MCPJAM_HOSTED_ORIGIN is unparseable), so MCP Apps widgets are not isolated from the host app.";
-    case "same-origin":
-      return `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${MCPJAM_HOSTED_ORIGIN}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`;
+    case "same-origin": {
+      // Listed in SANDBOX_HOSTS, or named only by MCPJAM_SANDBOX_ORIGIN.
+      const listed =
+        resolveSandboxIsolation(SANDBOX_HOSTS, MCPJAM_HOSTED_ORIGIN, null) ===
+        "same-origin";
+      // The parsed origin, never the raw value, as for "unpartitioned" below.
+      // This verdict is only reached once the value has parsed.
+      const appOrigin = new URL(MCPJAM_HOSTED_ORIGIN).origin;
+      return listed
+        ? `SANDBOX_HOSTS contains the app's own host from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app, and that hostname now answers nothing but the sandbox proxy.`
+        : `MCPJAM_SANDBOX_ORIGIN is the app's own origin from MCPJAM_HOSTED_ORIGIN (${appOrigin}): MCP Apps widgets share cookies and storage with the host app. Point it at a separate hostname and list that hostname in SANDBOX_HOSTS.`;
+    }
+    case "unpartitioned": {
+      // The parsed origin, never the raw value, which could carry credentials
+      // or a query string into the logs.
+      const origin = sandboxOriginOf(process.env.MCPJAM_SANDBOX_ORIGIN);
+      return `MCPJAM_SANDBOX_ORIGIN (${origin}) names a host that SANDBOX_HOSTS does not list, so that host still serves the app shell and /api next to MCP Apps widgets. Add its hostname to SANDBOX_HOSTS.`;
+    }
   }
 }
 
@@ -156,5 +177,6 @@ export function assertSandboxIsolation(): void {
   const fault = sandboxIsolationFault(resolveSandboxIsolation());
   if (fault) {
     appLogger.error(`[Security] ${fault}`);
+    printForOperator(`[Security] ${fault}`);
   }
 }

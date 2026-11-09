@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import type { HarnessV1, HarnessV1StartOptions } from "@ai-sdk/harness";
+import {
+  harnessSessionDataDirectoryPath,
+  harnessStateDirectoryPath,
+  type HarnessV1,
+  type HarnessV1StartOptions,
+} from "@ai-sdk/harness";
+import { resolveSandboxHomeDir } from "@ai-sdk/harness/utils";
 import { patchWarmClaudeQuery } from "./warm-claude-query.js";
+import { patchClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { shellQuote } from "./shell-quote.js";
 import { processBirthIdentity, WARM_BRIDGE_WINDOW_MS } from "./warm-bridge.js";
 
@@ -9,15 +16,28 @@ export const WARM_BRIDGE_FILE = "mcpjam-warm.json";
 
 /** Only hashes, process identity and expiry cross the command line. */
 export function warmBridgeCommand(args: {
-  directory: string;
+  sessionId: string;
   configuration: string;
   token: string;
   port: number;
   park: boolean;
+  includeHome?: boolean;
 }): string {
+  // Use the adapter's session encoding; resolve HOME in the existing probe.
+  const directory = posix.join(
+    harnessSessionDataDirectoryPath({
+      stateDirectory: harnessStateDirectoryPath({ sandboxHomeDir: "." }),
+      sessionId: args.sessionId,
+    }),
+    "bridge",
+  );
   const script = `
 const fs = require("node:fs");
-const [dir, configuration, tokenHash, port, park] = process.argv.slice(1);
+const path = require("node:path");
+const home = require("node:os").homedir();
+if (!path.isAbsolute(home) || home.includes("\\0")) process.exit(1);
+const [relativeDir, configuration, tokenHash, port, park] = process.argv.slice(1);
+const dir = path.join(home, relativeDir);
 const birth = ${processBirthIdentity.toString()};
 try {
   const meta = JSON.parse(fs.readFileSync(dir + "/bridge-meta.json", "utf8"));
@@ -34,14 +54,14 @@ try {
     const saved = JSON.parse(fs.readFileSync(path, "utf8"));
     if (saved.pid !== meta.pid || saved.birthIdentity !== born || saved.configuration !== configuration || saved.tokenHash !== tokenHash || saved.expiresAt <= Date.now() || saved.expiresAt > Date.now() + ${WARM_BRIDGE_WINDOW_MS}) process.exit(1);
   }
-  process.stdout.write("ready");
+  process.stdout.write(${args.includeHome ? 'JSON.stringify({ ready: true, home })' : '"ready"'});
 } catch { process.exit(1); }
 `;
   return [
     "node",
     "-e",
     script,
-    args.directory,
+    directory,
     args.configuration,
     createHash("sha256").update(args.token).digest("hex"),
     String(args.port),
@@ -133,7 +153,7 @@ export function fenceWarmBridgeSocket(source: string): string {
   for (const control of [
     'case "resume":',
     'case "destroy":',
-    'case "stop": {',
+    'case "stop":',
   ]) {
     if (!guarded.includes(control))
       throw new Error("The bridge ownership protocol changed.");
@@ -200,12 +220,18 @@ export function withWarmBridgeBootstrap<T extends HarnessV1>(runtime: T): T {
           const recipe = await target.getBootstrap?.({
             abortSignal: options.abortSignal,
           });
-          if (!recipe || !("defaultWorkingDirectory" in options.sandboxSession))
+          if (!recipe)
             throw new Error(
               "The hosted agent installation directory is unavailable.",
             );
+          const sandboxHomeDir = await resolveSandboxHomeDir({
+            sandbox: options.sandboxSession,
+            ...(options.abortSignal
+              ? { abortSignal: options.abortSignal }
+              : {}),
+          });
           const directory = posix.resolve(
-            options.sandboxSession.defaultWorkingDirectory,
+            harnessStateDirectoryPath({ sandboxHomeDir }),
             recipe.bootstrapDir,
           );
           return target.doStart({
@@ -221,24 +247,25 @@ export function withWarmBridgeBootstrap<T extends HarnessV1>(runtime: T): T {
           const bootstrap = await target.getBootstrap!(...args);
           return {
             ...bootstrap,
-            files: bootstrap.files.map((file) =>
-              file.path.endsWith("/bridge.mjs")
-                ? {
-                    ...file,
-                    path: posix.join(
-                      posix.dirname(file.path),
-                      "warm-bridge.mjs",
-                    ),
-                    content: patchWarmBridgeExpiry(
-                      fenceWarmBridgeSocket(
-                        runtime.harnessId === "claude-code"
-                          ? patchWarmClaudeQuery(file.content)
-                          : file.content,
-                      ),
-                    ),
-                  }
-                : file,
-            ),
+            files: bootstrap.files.map((file) => {
+              if (!file.path.endsWith("/bridge.mjs")) return file;
+              const content = patchWarmBridgeExpiry(
+                fenceWarmBridgeSocket(
+                  runtime.harnessId === "claude-code"
+                    ? patchWarmClaudeQuery(file.content)
+                    : file.content,
+                ),
+              );
+              return {
+                ...file,
+                path: posix.join(posix.dirname(file.path), "warm-bridge.mjs"),
+                // Both routing modes share one artifact. The native route's
+                // outer wrapper still decides whether to call its refresh hook.
+                content: runtime.harnessId === "claude-code"
+                  ? patchClaudeForwardingResume(content)
+                  : content,
+              };
+            }),
           };
         };
       }

@@ -5,6 +5,7 @@ import { useAppToolRun } from "@/components/playground/use-app-tool-run";
 import { AppToolsSection } from "@/components/playground/AppToolsSection";
 import { createDeterministicToolMessages } from "../playground-helpers";
 import { useEffect } from "react";
+import { useMrtrElicitationStore } from "@/stores/mrtr-elicitation-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -45,7 +46,9 @@ const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
-const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockReadHistory = vi.hoisted(() => vi.fn());
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
+const mockGetChatHistoryState = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // Convex auth is what decides whether chat history — and therefore the way back
 // from a branch — is reachable at all. Mutable so the edit/branch tests can
@@ -316,8 +319,8 @@ vi.mock("@/hooks/useViews", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
-  getChatHistoryDetail: (...args: unknown[]) =>
-    mockGetChatHistoryDetail(...args),
+  getChatHistoryDetail: mockGetChatHistoryDetail,
+  getChatHistoryState: mockGetChatHistoryState,
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
@@ -358,6 +361,11 @@ const mockUseChatSession = {
   setSelectedModelIds: vi.fn(),
   multiModelEnabled: false,
   setMultiModelEnabled: vi.fn(),
+  // The root session's catalog before its harness filter; the mock has no
+  // filter, so it is the same list (and follows per-test overrides).
+  get catalogModels() {
+    return this.availableModels;
+  },
   availableModels: [],
   isAuthLoading: false,
   systemPrompt: "",
@@ -905,7 +913,7 @@ describe("PlaygroundMain", () => {
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
-    mockGetChatHistoryDetail.mockReset();
+    mockReadHistory.mockReset();
     mockChatHistoryAction.mockReset();
     mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
@@ -1091,7 +1099,7 @@ describe("PlaygroundMain", () => {
       });
     });
     try {
-      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
       const { rerender } = render(<PlaygroundMain {...defaultProps} />);
       await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
       await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread(session); });
@@ -1117,7 +1125,7 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.restoredToolRenderOverrides = {};
       mockReactiveHistoryState.session = undefined;
       mockReactiveHistoryState.widgetSnapshots = undefined;
-      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session: { ...session, _id: "other-row", chatSessionId: "other-row" }, widgetSnapshots: [] });
+      mockReadHistory.mockResolvedValue({ ok: true, session: { ...session, _id: "other-row", chatSessionId: "other-row" }, widgetSnapshots: [] });
       await act(async () => { await usePlaygroundChatHistoryBridgeStore.getState().bridge?.onSelectThread({ ...session, _id: "other-row", chatSessionId: "other-row" }); });
       rerender(<PlaygroundMain {...defaultProps} />);
       expect(mockThread.mock.lastCall?.[0].toolRenderOverrides).not.toHaveProperty("live");
@@ -1438,6 +1446,22 @@ describe("PlaygroundMain", () => {
       const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as any;
       expect(composer.pluginServers).toEqual([]);
     });
+  });
+
+  it("shows local manual-tool input before a chat thread exists", () => {
+    const store = useMrtrElicitationStore.getState();
+    vi.spyOn(store, "connect").mockImplementation(() => {});
+    store.__reset();
+    render(<PlaygroundMain {...defaultProps} />);
+    act(() => store.__ingest({
+      type: "mrtr_input_request", opId: "manual-review", roundKey: "manual-review:1", round: 1,
+      serverId: "test-server", timestamp: new Date().toISOString(),
+      requests: [{ key: "review", mode: "form", message: "Manual review input", requestedSchema: {
+        type: "object", properties: { approved: { type: "boolean" } },
+      } }],
+    }));
+    expect(screen.getByText("Manual review input")).toBeInTheDocument();
+    store.__reset();
   });
 
   describe("rendering", () => {
@@ -2037,7 +2061,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSessionLocal,
@@ -2124,7 +2148,7 @@ describe("PlaygroundMain", () => {
         { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
       ];
-      mockGetChatHistoryDetail.mockResolvedValueOnce({
+      mockReadHistory.mockResolvedValueOnce({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -2150,9 +2174,12 @@ describe("PlaygroundMain", () => {
         screen.getByTestId("conversation-target-notice-acknowledge")
       );
 
+      mockGetChatHistoryDetail.mockClear();
+      mockGetChatHistoryState.mockClear();
+
       // Control: with the sync healthy the send goes through, so the assertions
       // below are about the failure and not about a submit path that never runs.
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -2164,8 +2191,10 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
 
-      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      mockReadHistory.mockRejectedValue(new Error("network down"));
       fireEvent.change(screen.getByTestId("chat-input-field"), {
         target: { value: "another message" },
       });
@@ -2181,6 +2210,151 @@ describe("PlaygroundMain", () => {
       // Leave the module-level detail cache as this test found it — the ids
       // above are reused by later tests, which queue their own
       // `mockResolvedValueOnce` responses and would otherwise be served stale.
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("drops the send but keeps the open thread when its pre-send read lands after another thread opened", async () => {
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      invalidateChatHistoryPrefetch();
+      // A non-empty transcript, so a detach would show as `detachToLocalFork`.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      const view = render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+      let resolveLate!: (value: unknown) => void;
+      mockReadHistory.mockReturnValue(
+        new Promise((resolve) => {
+          resolveLate = resolve;
+        })
+      );
+      mockGetChatHistoryState.mockClear();
+      try {
+        fireEvent.change(screen.getByTestId("chat-input-field"), {
+          target: { value: "first message" },
+        });
+        await act(async () => {
+          fireEvent.submit(screen.getByTestId("chat-input"));
+        });
+        expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+        // Another conversation is now the open one.
+        mockUseChatSession.chatSessionId = "chat-session-2";
+        view.rerender(<PlaygroundMain {...defaultProps} />);
+        await act(async () => {
+          resolveLate({ ok: true, session, widgetSnapshots: [] });
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+        expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+      } finally {
+        mockUseChatSession.chatSessionId = "chat-session-1";
+        invalidateChatHistoryPrefetch();
+      }
+    });
+
+    it("sends without the pre-send read only while the live session matches the thread's version and visibility", async () => {
+      // The live session subscription runs only for a Convex-authenticated user.
+      mockConvexAuthState.isAuthenticated = true;
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      invalidateChatHistoryPrefetch();
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockReadHistory.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+      // The live subscription holds the thread at the cursor's version.
+      mockUseChatSession.resumedVersion = 4;
+      mockReactiveHistoryState.session = { ...session };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      mockGetChatHistoryState.mockClear();
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "first message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryState).not.toHaveBeenCalled();
+
+      // Shared elsewhere, version unchanged: the turn must not send the old
+      // visibility unchecked, so the read runs again.
+      mockReactiveHistoryState.session = {
+        ...session,
+        directVisibility: "project" as const,
+      };
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "second message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
       invalidateChatHistoryPrefetch();
     });
 
@@ -2208,7 +2382,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSession,
@@ -4103,7 +4277,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -4189,7 +4363,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -4315,7 +4489,7 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.messages = [
         { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
       ];
-      mockGetChatHistoryDetail.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+      mockReadHistory.mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
       const { rerender } = render(<PlaygroundMain {...defaultProps} />);
       await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
       await act(async () => {
@@ -4569,7 +4743,7 @@ describe("PlaygroundMain", () => {
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored",
@@ -4614,7 +4788,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4640,7 +4814,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4683,7 +4857,7 @@ describe("PlaygroundMain", () => {
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored-target",
@@ -4721,7 +4895,7 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain {...props} syncConversationToUrl />
       );
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });

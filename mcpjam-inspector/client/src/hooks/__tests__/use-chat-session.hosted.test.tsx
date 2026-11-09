@@ -201,6 +201,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
+  renewSessionBearer: vi.fn(async () => {}),
   buildServerRequest: mockState.buildServerRequest,
   buildResolvedServerBatchRequest: vi.fn(
     ({
@@ -412,6 +413,25 @@ describe("useChatSession hosted mode", () => {
     await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
     expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
     unmount();
+  });
+
+  it("shows the environment's exact connection without sending a pick, then edits that same choice", () => {
+    const base = selectionOptions();
+    const { result, rerender } = renderHook(({ environmentId }) => useChatSession({
+      ...base, pickedModelSelection: undefined, executionConfig: undefined,
+      selectionIntent: "inherit", inheritedEnvironmentModel: {
+        modelId: savedOrgChoice.modelId, modelSelection: savedOrgChoice,
+      },
+      hostedContext: { ...base.hostedContext, executionTarget: { kind: "environment", environmentId } },
+    }), { initialProps: { environmentId: "env-a" } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body().modelSelection).toMatchObject({
+      source: "org", connectionRef: savedOrgChoice.connectionRef, settings: { temperature: 0.9 },
+    });
+    rerender({ environmentId: "env-b" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
   });
 
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
@@ -2889,6 +2909,7 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
         selectedServerIds: ["server-id-1"],
         executionTarget: { kind: "environment", environmentId: "env_new" },
         environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        autoContributedPluginServerIds: ["srv_new"],
         includeProjectSkills: true,
         messages: [{ role: "user", content: "hi" }],
       });

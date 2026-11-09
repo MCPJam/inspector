@@ -133,6 +133,11 @@ export interface ProvisionedHarnessBox {
   /** What ACTUALLY booted; absent means terminal. */
   runtimeKind?: "terminal" | "desktop-browser";
   workdir?: string;
+  /**
+   * A desktop booted beside this box for Browser alone, when the run pins a
+   * terminal image. Shell, files and harness stay on this box.
+   */
+  browser?: { sandboxRowId: string; sandboxId: string };
 }
 
 export type ProvisionHarnessBoxResult<Refusal> =
@@ -150,10 +155,12 @@ export type HarnessBoxBinding = TrustedHarnessSandboxBinding & {
 export interface HarnessBox {
   readonly surface: HarnessBoxSurface;
   readonly binding: HarnessBoxBinding;
+  /** The desktop Browser runs on, when one was booted beside `binding`. */
+  readonly browserBinding?: HarnessBoxBinding;
   /**
-   * Stop the heartbeat and, for an owned box, release it. Idempotent and never
-   * throws: it runs in `finally` blocks, and a release failure must not turn a
-   * finished turn into a failed one.
+   * Stop the heartbeat and, for an owned box, release it (and its paired
+   * desktop). Idempotent and never throws: it runs in `finally` blocks, and a
+   * release failure must not turn a finished turn into a failed one.
    */
   release(): Promise<void>;
 }
@@ -209,36 +216,57 @@ export function holdHarnessBox(
     runtimeKind: provisioned.runtimeKind ?? "terminal",
     ...(provisioned.workdir ? { workdir: provisioned.workdir } : {}),
   };
-  const stopHeartbeat = startHarnessBoxHeartbeat({
-    surface: options.surface,
-    binding,
-    ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.touch ? { touch: options.touch } : {}),
-    ...(options.heartbeatIntervalMs !== undefined
-      ? { intervalMs: options.heartbeatIntervalMs }
-      : {}),
-    ...(options.maxHeartbeatMs !== undefined
-      ? { maxHeartbeatMs: options.maxHeartbeatMs }
-      : {}),
-  });
+  const browserBinding: HarnessBoxBinding | undefined = provisioned.browser
+    ? {
+        sandboxRowId: provisioned.browser.sandboxRowId,
+        sandboxId: provisioned.browser.sandboxId,
+        runtimeKind: "desktop-browser",
+      }
+    : undefined;
+  // The paired desktop has its own row and idle clock, so it is touched and
+  // released exactly like the box it sits beside.
+  const boxes = browserBinding ? [binding, browserBinding] : [binding];
+  const stopHeartbeats = boxes.map((box) =>
+    startHarnessBoxHeartbeat({
+      surface: options.surface,
+      binding: box,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.touch ? { touch: options.touch } : {}),
+      ...(options.heartbeatIntervalMs !== undefined
+        ? { intervalMs: options.heartbeatIntervalMs }
+        : {}),
+      ...(options.maxHeartbeatMs !== undefined
+        ? { maxHeartbeatMs: options.maxHeartbeatMs }
+        : {}),
+    }),
+  );
   let released: Promise<void> | null = null;
   const release = (): Promise<void> => {
     released ??= (async () => {
-      stopHeartbeat();
+      for (const stop of stopHeartbeats) stop();
       if (!HARNESS_BOX_SCOPES[options.surface].ownsBox) return;
-      try {
-        await (options.release ?? releaseByRowId)(binding.sandboxRowId);
-      } catch (err) {
-        logger.warn("[harness-box] release failed; the reaper will take it", {
-          surface: options.surface,
-          sandboxRowId: binding.sandboxRowId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      await Promise.all(
+        boxes.map(async (box) => {
+          try {
+            await (options.release ?? releaseByRowId)(box.sandboxRowId);
+          } catch (err) {
+            logger.warn("[harness-box] release failed; the reaper will take it", {
+              surface: options.surface,
+              sandboxRowId: box.sandboxRowId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }),
+      );
     })();
     return released;
   };
-  return { surface: options.surface, binding, release };
+  return {
+    surface: options.surface,
+    binding,
+    ...(browserBinding ? { browserBinding } : {}),
+    release,
+  };
 }
 
 async function releaseByRowId(sandboxRowId: string): Promise<void> {

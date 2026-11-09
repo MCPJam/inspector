@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   sessionWorkDir: "/home/user/work/claude-code-session-1",
   streamMessages: [] as unknown[][],
   adapterRejected: null as string | null,
+  promptImageInput: false,
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -48,6 +49,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
         .find((m) => m.role === "user");
       if (prompt && Array.isArray(prompt.content)) {
         for (const part of prompt.content as Array<{ type: string }>) {
+          if (part.type === "image" && state.promptImageInput) continue;
           if (part.type !== "text") {
             state.adapterRejected = part.type;
             throw new Error(
@@ -92,6 +94,7 @@ vi.mock("../registry.js", () => ({
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
+    promptImageInput: state.promptImageInput,
   })),
 }));
 
@@ -272,6 +275,7 @@ beforeEach(() => {
   state.sessionWorkDir = "/home/user/work/claude-code-session-1";
   state.streamMessages = [];
   state.adapterRejected = null;
+  state.promptImageInput = false;
 });
 
 afterEach(() => {
@@ -367,6 +371,77 @@ describe("runHarnessTurn: composer attachments", () => {
     );
     expect(state.adapterRejected).toBeNull();
     expect(options.onEngineError).not.toHaveBeenCalled();
+  });
+
+  it("Claude Code stand-in stays text-only when an image is pasted", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what colour is this" },
+              {
+                type: "image",
+                mediaType: "image/png",
+                image: `data:image/png;base64,${png.toString("base64")}`,
+              },
+            ],
+          } as unknown as ModelMessage,
+        ],
+      }) as never,
+      "none",
+    );
+    expect(streamedPrompt().every((part) => part.type === "text")).toBe(true);
+    expect(state.adapterRejected).toBeNull();
+    expect(streamedPrompt().at(-1)!.text).toContain(
+      "use your file tools to read them",
+    );
+  });
+
+  it("declaring adapter: image parts ride the prompt, then the note", async () => {
+    state.promptImageInput = true;
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        harness: "codex",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what colour is this" },
+              {
+                type: "image",
+                mediaType: "image/png",
+                image: `data:image/png;base64,${png.toString("base64")}`,
+              },
+            ],
+          } as unknown as ModelMessage,
+        ],
+      }) as never,
+      "none",
+    );
+    const prompt = streamedPrompt() as Array<{
+      type: string;
+      text?: string;
+      image?: string;
+    }>;
+    expect(prompt[0]).toEqual({
+      type: "text",
+      text: "what colour is this",
+    });
+    expect(prompt[1]?.type).toBe("image");
+    expect(prompt.at(-1)?.text).toContain("(attached)");
+    expect(state.adapterRejected).toBeNull();
   });
 
   it("leaves a text-only turn exactly as it was", async () => {

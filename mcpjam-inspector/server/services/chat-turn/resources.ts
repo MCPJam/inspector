@@ -29,8 +29,15 @@ export class TurnResources {
     return this.disposal;
   }
 
-  /** Transfer ownership only after preparation has produced a response. */
-  response(response: Response, signal?: AbortSignal): Response {
+  /**
+   * Transfer ownership only after preparation has produced a response.
+   * `headers` are added to the streamed copy, never to `response` itself.
+   */
+  response(
+    response: Response,
+    signal?: AbortSignal,
+    headers?: Record<string, string>,
+  ): Response {
     const onAbort = () => {
       void this.dispose();
     };
@@ -45,6 +52,10 @@ export class TurnResources {
       return response;
     }
     const reader = response.body.getReader();
+    const outgoing = new Headers(response.headers);
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      outgoing.set(name, value);
+    }
     return new Response(
       new ReadableStream<Uint8Array>({
         async pull(controller) {
@@ -72,7 +83,7 @@ export class TurnResources {
       {
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers,
+        headers: outgoing,
       },
     );
   }

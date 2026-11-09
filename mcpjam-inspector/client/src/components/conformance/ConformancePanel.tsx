@@ -222,6 +222,8 @@ export function ConformanceContent({
   onOpenSettings,
   settingsLoading = false,
   onShowHome,
+  backLabel = "Conformance",
+  onRunFrom,
   serverIconUrl,
   autoStart = false,
   onAutoStart,
@@ -252,8 +254,12 @@ export function ConformanceContent({
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
   serverIconUrl?: string;
-  /** Return to the server list; the completed run remains in History. */
+  /** Return to where the run started; the completed run remains in History. */
   onShowHome: () => void;
+  /** Names where `onShowHome` goes, on the run's Back button. */
+  backLabel?: string;
+  /** The page's Run was used on this tab: the run's Back returns to it. */
+  onRunFrom?: (view: ConformanceView) => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
@@ -467,7 +473,11 @@ export function ConformanceContent({
   const runButton = (
     <Button
       size="sm"
-      onClick={onRequestRun ?? handleRun}
+      onClick={() => {
+        // Not Run again: this one is on the page's tabs, so Back returns there.
+        onRunFrom?.(view);
+        (onRequestRun ?? handleRun)();
+      }}
       disabled={isRunning || isConnecting || runDisabled}
     >
       {isRunning || isConnecting ? (
@@ -506,15 +516,18 @@ export function ConformanceContent({
         <ConformanceRunHeader
           serverName={server.name}
           startedAt={startedAt}
+          backLabel={backLabel}
           onBack={onShowHome}
           busy={isRunning || isConnecting}
           isConnecting={isConnecting}
           showHistory={showHistory}
-          onShowHistory={() => onViewChange("history")}
           onOpenSettings={onOpenSettings}
           settingsLoading={settingsLoading}
           showShare={Boolean(persist)}
           savedRunId={savedRunId}
+          // A server the project doesn't have is saved as an external target
+          // with no name, and the card and post are public: no name here either.
+          shareServerName={persist?.serverId ? server.name : undefined}
           onRunAgain={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
           runDisabled={runDisabled}
         />

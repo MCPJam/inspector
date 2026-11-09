@@ -82,6 +82,7 @@ import { WebmcpInspectorTab } from "./components/webmcp-inspector/WebmcpInspecto
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { createConformanceConnector } from "./components/conformance/connect-conformance-server";
 import { ConformanceTab } from "./components/conformance/ConformanceTab";
+import { conformanceRunOriginState } from "./components/conformance/conformance-run-origin";
 import { ServerDetailModal } from "./components/connection/ServerDetailModal";
 import {
   ConformanceHistory,
@@ -381,6 +382,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
@@ -1205,6 +1207,7 @@ function useTemplateVerifyDeepLink({
     useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
@@ -1275,6 +1278,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
@@ -1353,6 +1357,7 @@ function useTemplateVerifyDeepLink({
     claudeCodeEnabled,
     codexEnabled,
     cursorCliEnabled,
+    copilotCliEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -1826,7 +1831,9 @@ export function ConformanceRoute() {
         onViewRun={
           convexProjectId
             ? (runId) =>
-                navigate(buildConformanceRunPath(runId, convexProjectId))
+                navigate(buildConformanceRunPath(runId, convexProjectId), {
+                  state: conformanceRunOriginState("overview"),
+                })
             : undefined
         }
       />
@@ -2376,11 +2383,21 @@ export function SessionsRoute() {
 }
 
 export function ResourcesRoute() {
-  const { selectedMCPConfig, selectedServerEntry, appState } =
-    useAppRouteContext();
+  const {
+    selectedMCPConfig, selectedServerEntry, appState, convexProjectId,
+    currentUser, hostedServerIdsByName = {},
+  } = useAppRouteContext();
+  const [hostId] = usePreviewedHostId(convexProjectId);
+  const selected = appState.selectedServer;
+  const serverId = hostedServerIdsByName[selected] ??
+    (Object.values(hostedServerIdsByName).includes(selected) ? selected : null);
+  const openInChatScope = currentUser?._id && hostId && convexProjectId && serverId
+    ? { actorId: currentUser._id, projectId: convexProjectId, hostId, serverId }
+    : null;
   return (
     <div className="h-full overflow-hidden">
       <ResourcesTab
+        openInChatScope={openInChatScope}
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         server={selectedServerEntry ?? undefined}
@@ -6634,6 +6651,7 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
+    currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,
     convexProjectId,
@@ -6661,6 +6679,7 @@ export default function App() {
     handleUpdateHostContext,
     handleUpdateProject,
     hostsTabSelectedHostId,
+    hostedServerIdsByName,
     isAuthLoading,
     isAuthenticated,
     isClientConfigSyncPending,
@@ -7057,7 +7076,7 @@ export default function App() {
                 isOpeningPlayground={isOpeningFirstRunPlayground}
                 onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
                 onSkip={dismissFirstRunOverlay}
-                guestSessionRefused={Boolean(guestSessionRefusal)}
+                guestSessionRefusal={guestSessionRefusal?.reason ?? null}
                 organizationId={activeOrganizationId}
                 isSignedIn={Boolean(workOsUser)}
                 onSignIn={() => {

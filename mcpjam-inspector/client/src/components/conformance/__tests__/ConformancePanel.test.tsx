@@ -612,8 +612,11 @@ describe("ConformanceTab", () => {
     // On History only the header offers Run.
     await clickRun();
 
-    // The run's own header, which leads back to History.
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    // The run's own header, whose Back leads to History.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance History",
+    );
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.queryByText("History table")).toBeNull();
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -633,11 +636,11 @@ describe("ConformanceTab", () => {
       "true",
     );
 
-    await clickRun();
+    await runToCompletion();
     expect(window.location.search).toBe("");
 
-    // The run header's History tab goes back to History.
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    // The run started from History, so Back goes there.
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
     expect(window.location.search).toBe("?view=history");
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",
@@ -649,7 +652,10 @@ describe("ConformanceTab", () => {
       window.history.pushState({}, "", "/conformance");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("stays on History when Run has no server to run", async () => {
@@ -906,14 +912,14 @@ describe("ConformanceTab", () => {
     const oauth = screen.getByRole("button", {
       name: /^OAuth.*checks selected$/,
     });
-    expect(oauth).toHaveTextContent(/\d+ checks selected/);
+    expect(oauth).toHaveTextContent(/\d+\/\d+ checks selected/);
     expect(oauth).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
     // one flow, so a check's box says whether it COUNTS: unchecked, it still
     // runs, unscored.
-    const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
+    const count = oauth.textContent?.match(/(\d+)\/\d+ checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
@@ -937,8 +943,11 @@ describe("ConformanceTab", () => {
     }
     fireEvent.click(oauthChecks[0]!);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
-    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
-    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // No in-between state: the suite's box is checked only with every check.
+    expect(oauthBox).toHaveAttribute("data-state", "unchecked");
+    expect(oauth).toHaveTextContent(
+      `${Number(count) - 1}/${count} checks selected`,
+    );
     // The suite's box puts every check back, then leaves the flow out.
     fireEvent.click(oauthBox);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
@@ -973,16 +982,17 @@ describe("ConformanceTab", () => {
     const appsBox = screen.getByRole("checkbox", { name: "Run Apps" });
     expect(appsBox).toHaveAttribute("data-state", "checked");
 
-    // Leave one Apps check out: the suite reads as partly picked.
+    // Leave one Apps check out: the suite's box goes unchecked, and the
+    // count says how many of the suite's checks are left.
     const appsRow = appsBox.closest("label")!.parentElement!.parentElement!;
     const appsChecks = within(appsRow)
       .getAllByRole("checkbox")
       .filter((box) => box !== appsBox);
     const dropped = appsChecks[0]!;
     fireEvent.click(dropped);
-    expect(appsBox).toHaveAttribute("data-state", "indeterminate");
+    expect(appsBox).toHaveAttribute("data-state", "unchecked");
     expect(appsRow).toHaveTextContent(
-      `${appsChecks.length - 1} checks selected`,
+      `${appsChecks.length - 1}/${appsChecks.length} checks selected`,
     );
 
     // Leave Tasks and OAuth out entirely.
@@ -1337,9 +1347,8 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance", exact: true }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(save).not.toHaveBeenCalled();
     expect(mockRunProtocol).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
@@ -1681,7 +1690,7 @@ describe("ConformanceTab", () => {
     // Apps and Tasks finished, yet no headline number claims a result.
     await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
     expect(screen.queryByText(/^\d+\/\d+ · partial$/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
   });
 
   it("counts only the suites the run covers in its progress", async () => {
@@ -1708,7 +1717,7 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back to the server list from History's Overview after a run", async () => {
+  it("goes back to the server list from the run's Back", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
     const lastRun = {
@@ -1756,8 +1765,7 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
 
     // The page's home, not the run it just left.
     expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
@@ -1895,7 +1903,13 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
+    // The checks that still need a tool stay picked in the defaults, so they
+    // run once a tool is set.
+    expect(onSaveServerDefaults.mock.calls[0]![1].protocol).toBeUndefined();
+
     // The saved row has not come back yet: Settings shows the run's picks.
+    // Its protocol checks that need a tool show unchecked, so the suite's box
+    // does too.
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1903,7 +1917,10 @@ describe("ConformanceTab", () => {
     );
     expect(
       screen.getByRole("checkbox", { name: "Run Protocol" }),
-    ).toHaveAttribute("data-state", "checked");
+    ).toHaveAttribute("data-state", "unchecked");
+    expect(
+      screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+    ).not.toHaveTextContent(/(^|\D)0\/\d+ checks selected/);
   });
 
   it("runs again with the checks changed in Settings", async () => {
@@ -1972,11 +1989,14 @@ describe("ConformanceTab", () => {
         "Could not save the default checks and inputs. Try again.",
       ),
     );
-    // Once the save settles, the boxes show what is saved again.
+    // Once the save settles, the boxes show what is saved again. The Tasks
+    // checks that need a tool stay unchecked, so the count shows the others.
+    const tasksHeader = () =>
+      screen.getByRole("button", { name: /^Tasks.*checks selected$/ });
     await waitFor(() =>
-      expect(
-        screen.getByRole("checkbox", { name: "Run Tasks" }),
-      ).toHaveAttribute("data-state", "checked"),
+      expect(tasksHeader()).not.toHaveTextContent(
+        /(^|\D)0\/\d+ checks selected/,
+      ),
     );
 
     // Run again does not use the change that was never saved.
@@ -1999,7 +2019,8 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("History table")).toBeInTheDocument();
@@ -2419,6 +2440,65 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
+    it("shows checks that need input unchecked until they have it", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2();
+
+      // Three protocol checks still need a tool: the count leaves them out,
+      // so the suite's box is unchecked.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      const [, picked, total] = header
+        .textContent!.match(/(\d+)\/(\d+) checks selected/)!
+        .map(Number);
+      expect(picked).toBe(total! - 3);
+      const suiteBox = screen.getByRole("checkbox", { name: "Run Protocol" });
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      fireEvent.click(header);
+      const logsCheck = screen.getByRole("checkbox", {
+        name: "Run Logs Require A Log Level",
+      });
+      expect(logsCheck).toHaveAttribute("data-state", "unchecked");
+      expect(logsCheck).toBeDisabled();
+
+      // Every check that can run is picked, so the suite's box leaves the
+      // suite out, then picks it again.
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(`0/${total} checks selected`);
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(
+        `${total! - 3}/${total} checks selected`,
+      );
+
+      // The tool field stays under the locked check, so it can still be set.
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await waitFor(() => expect(logs).toBeEnabled());
+      await user.click(logs);
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+      expect(logsCheck).toHaveAttribute("data-state", "checked");
+      expect(logsCheck).toBeEnabled();
+      expect(header).toHaveTextContent(
+        `${total! - 2}/${total} checks selected`,
+      );
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      // The run still sends the checks without a tool, so the result reports
+      // them as not run for want of input, like Run again does.
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const { checkIds } = mockRunProtocol.mock.calls[0]![1] as {
+        checkIds?: string[];
+      };
+      expect(checkIds).toBeUndefined();
+    });
+
     it("shades the output check when no tool declares an output schema", async () => {
       const user = userEvent.setup();
       mockListTools.mockResolvedValue({
@@ -2517,12 +2597,13 @@ describe("ConformanceTab", () => {
           name: /^Undeclared Task Creation Refused/,
         });
         expect(taskRow).toHaveTextContent("Needs input");
-        fireEvent.click(
-          screen.getByRole("checkbox", { name: "Run Result Type Discipline" }),
-        );
-        expect(
-          within(header).getByText(inputBadge("10 optional checks need input")),
-        ).toBeInTheDocument();
+        // A picked check without its tool sits the run out: shown unchecked,
+        // and locked until the tool is set.
+        const typeCheck = screen.getByRole("checkbox", {
+          name: "Run Result Type Discipline",
+        });
+        expect(typeCheck).toHaveAttribute("data-state", "unchecked");
+        expect(typeCheck).toBeDisabled();
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
         );
@@ -2531,6 +2612,8 @@ describe("ConformanceTab", () => {
         );
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         expect(taskRow).toHaveTextContent("Input set");
+        expect(typeCheck).toHaveAttribute("data-state", "checked");
+        expect(typeCheck).toBeEnabled();
 
         await user.click(
           screen.getByRole("combobox", { name: "Tool that creates a task" }),
@@ -2540,7 +2623,7 @@ describe("ConformanceTab", () => {
         fireEvent.click(header);
         expect(header).toHaveAttribute("aria-expanded", "false");
         expect(
-          within(header).getByText(inputBadge("10 optional checks need input")),
+          within(header).getByText(inputBadge("11 optional checks need input")),
         ).toBeInTheDocument();
       },
     );
@@ -2884,7 +2967,15 @@ describe("ConformanceTab", () => {
     });
 
     it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      const user = userEvent.setup();
       await openProtocolChecks();
+      // The advice calls the logs tool, so it can run once that is set.
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
       const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
       fireEvent.click(suite);
       expect(suite).toHaveAttribute("data-state", "unchecked");
@@ -2895,7 +2986,9 @@ describe("ConformanceTab", () => {
       expect(advice).toBeDisabled();
 
       fireEvent.click(suite);
-      expect(suite).toHaveAttribute("data-state", "checked");
+      // Two protocol checks still need a tool, so the suite's box stays
+      // unchecked while the advice comes back.
+      expect(suite).toHaveAttribute("data-state", "unchecked");
       expect(advice).toHaveAttribute("data-state", "checked");
       expect(advice).toBeEnabled();
     });
@@ -2960,7 +3053,8 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
 
@@ -3039,17 +3133,14 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    // Swarm's header: back, the server's name and the page's tabs, then
-    // Run again and when it ran; no pickers in the run's header.
+    // Back and the server's name, then Run again and when it ran; no
+    // Overview/History tabs and no pickers in the run's header.
     expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
       "Conformance",
     );
     expect(screen.getByRole("heading", { name: "alpha" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     expect(screen.getByText(/ · UI$/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -3110,7 +3201,7 @@ describe("ConformanceTab", () => {
     const error = vi.spyOn(toast, "error");
     const loading = vi.spyOn(toast, "loading");
     const success = vi.spyOn(toast, "success");
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
@@ -3128,6 +3219,17 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
     // One toast says it is connecting, then settles into the result.
     expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    // Not while beta is still loading into the session.
+    expect(success).not.toHaveBeenCalled();
+    const connectedBeta = createHttpServer({ name: "beta" });
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, connectedBeta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
     await waitFor(() =>
       expect(success).toHaveBeenCalledWith("beta connected", {
         id: loading.mock.results[0]!.value,
@@ -4910,6 +5012,8 @@ it("does not dispatch later suites when the deadline expires after preflight", a
 
 
 it("keeps an unsaved project server's timeout for the session without saving a missing server", async () => {
+  const connection = createDeferred<Awaited<ReturnType<typeof checkConformanceConnection>>>();
+  vi.mocked(checkConformanceConnection).mockReturnValueOnce(connection.promise);
   const server = createHttpServer({ name: "unsaved-server" });
   const saveTimeout = vi.fn(async () => { throw new Error("No saved server exists"); });
   render(<ConformanceTab
@@ -4921,15 +5025,22 @@ it("keeps an unsaved project server's timeout for the session without saving a m
     onSaveServerTimeout={saveTimeout}
   />);
   fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  const next = await screen.findByRole("button", { name: "Continue" });
+  expect(next).toBeDisabled();
+  fireEvent.click(next);
+  expect(screen.queryByRole("button", { name: "Run timeout" })).not.toBeInTheDocument();
+  await act(async () => {
+    connection.resolve({ status: "ready", protocolVersion: "2025-11-25" });
+  });
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
   expect(saveTimeout).not.toHaveBeenCalled();
   expect(screen.getByText("90s")).toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
-  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
 });
@@ -4946,7 +5057,7 @@ it("restores unsaved timeouts after remount, isolates projects, and keeps a clea
       onSelectServer={vi.fn()} onSaveServerTimeout={saveTimeout}
     />);
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
     return view;
   };
@@ -4983,7 +5094,7 @@ it("does not carry an unsaved timeout into another project without unmounting", 
   const props = { server, servers: [server], isSavedServer: () => false, onSelectServer: vi.fn() };
   const view = render(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
   fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  await continueSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
   fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));

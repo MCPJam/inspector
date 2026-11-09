@@ -5,6 +5,7 @@ import {
   OAuthConformanceTest,
   RENAMED_MCP_TASKS_CHECK_IDS,
   RETIRED_MCP_CHECK_IDS,
+  type RunConformanceOAuthConfig,
 } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
@@ -29,6 +30,7 @@ import {
 import { CliError } from "../src/lib/output.js";
 import { parseServerConfig } from "../src/lib/server-config.js";
 import { main } from "../src/index.js";
+import { runCli } from "./support/cli-run.js";
 
 function parseConformanceRun(argv: string[]): Record<string, unknown> {
   const program = new Command();
@@ -93,6 +95,7 @@ test("conformance run --suite oauth runs the OAuth negative checks", () => {
     { url: "https://example.com/mcp" },
     {
       oauthStrategy: "client_credentials",
+      registration: "preregistered",
       clientId: "client",
       clientSecret: "secret",
     },
@@ -100,9 +103,32 @@ test("conformance run --suite oauth runs the OAuth negative checks", () => {
 
   assert.equal(config.oauthConformanceChecks, true);
   assert.equal(config.allowPrivateNetwork, true);
+  const { registrationStrategy } = config;
+  assert.ok(registrationStrategy !== "auto");
   // The SDK validates in the constructor: a config it rejects never reaches
   // a single check, and the run reports no OAuth result at all.
-  assert.doesNotThrow(() => new OAuthConformanceTest(config));
+  assert.doesNotThrow(
+    () => new OAuthConformanceTest({ ...config, registrationStrategy }),
+  );
+});
+
+test("conformance run --suite oauth hands auto the client_credentials client", () => {
+  const config = buildOAuthConfig(
+    { url: "https://example.com/mcp" },
+    {
+      oauthStrategy: "client_credentials",
+      clientId: "client",
+      clientSecret: "secret",
+    },
+  );
+
+  // The SDK's plan picks pre-registered credentials when they are here.
+  assert.equal(config.registrationStrategy, "auto");
+  assert.equal(config.auth?.mode, "client_credentials");
+  assert.deepEqual(config.client?.preregistered, {
+    clientId: "client",
+    clientSecret: "secret",
+  });
 });
 
 test("conformance run --suite oauth keeps the client_credentials client out of the server config", () => {
@@ -199,6 +225,46 @@ test("conformance run rejects --reporter html before making any request", async 
     assert.equal(requestCount, 0);
   } finally {
     process.stderr.write = originalWrite;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+// CI is never a TTY, so the output format defaults to json there. The
+// reporter must still win, and several suites must make one JUnit document.
+test("conformance run --reporter junit-xml writes one JUnit document off a TTY", async () => {
+  const server: Server = createServer((_req, res) => {
+    res.statusCode = 404;
+    res.end("not an MCP endpoint");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+  const originalKey = process.env.MCPJAM_API_KEY;
+  delete process.env.MCPJAM_API_KEY;
+
+  try {
+    const { exitCode, stdout, stderr } = await runCli([
+      "conformance",
+      "run",
+      "--url",
+      `http://127.0.0.1:${address.port}/mcp`,
+      "--reporter",
+      "junit-xml",
+    ]);
+
+    assert.equal(exitCode, 3);
+    assert.ok(stdout.startsWith('<?xml version="1.0"'), stdout.slice(0, 80));
+    assert.equal(stdout.split("<?xml").length - 1, 1);
+    assert.equal(stdout.split("<testsuites ").length - 1, 1);
+    assert.match(stdout, /<testsuites name="MCPJam Conformance" tests="3"/);
+    assert.match(stderr, /Run incomplete/);
+  } finally {
+    // The command reports exit 3 through process.exitCode, which would
+    // otherwise fail this whole file.
+    process.exitCode = 0;
+    if (originalKey !== undefined) process.env.MCPJAM_API_KEY = originalKey;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
@@ -332,13 +398,89 @@ test("conformance run rejects an id or flag for a suite it leaves out", () => {
       ["--suite", "protocol", "--tool-name", "slow_job", "--poll-timeout", "1000"],
       "--tool-name, --poll-timeout are for the tasks suite",
     ],
+    [
+      ["--oauth-strategy", "interactive"],
+      "--oauth-strategy is for the oauth suite",
+    ],
+    [
+      ["--suite", "protocol", "--registration", "dcr", "--print-url"],
+      "--registration, --print-url are for the oauth suite",
+    ],
   ];
   for (const [argv, message] of cases) {
     assert.throws(() => runInput(argv), isUsageError(message), argv.join(" "));
   }
 
-  // A default is not a typed flag: --poll-timeout and --fixture-tool have one.
+  // A default is not a typed flag: --poll-timeout, --fixture-tool and
+  // --step-timeout have one.
   assert.doesNotThrow(() => runInput(["--suite", "apps"]));
+});
+
+/** What `conformance run --suite oauth` hands the OAuth suite for these flags. */
+function oauthConfig(argv: string[]): RunConformanceOAuthConfig {
+  const { options } = parseCommand(
+    registerConformanceRunCommand,
+    ["conformance", "run"],
+    ["--url", TARGET, "--suite", "oauth", ...argv],
+  );
+  return buildOAuthConfig(
+    { url: TARGET },
+    options as CompositeConformanceOptions,
+  );
+}
+
+test("conformance run --suite oauth signs in through the browser and auto-registers by default", () => {
+  const config = oauthConfig([]);
+
+  assert.equal(config.auth?.mode, "interactive");
+  assert.equal(config.registrationStrategy, "auto");
+  assert.equal(config.protocolVersion, "2025-11-25");
+  assert.equal(config.stepTimeout, 30_000);
+});
+
+test("conformance run --suite oauth takes the OAuth command's flow flags", () => {
+  const config = oauthConfig([
+    ...["--registration", "cimd", "--print-url"],
+    ...["--scopes", "openid email", "--step-timeout", "300000"],
+    ...["--redirect-url", "http://127.0.0.1:6274/callback"],
+  ]);
+
+  assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(typeof (config.auth as { openUrl?: unknown }).openUrl, "function");
+  assert.equal(config.scopes, "openid email");
+  assert.equal(config.stepTimeout, 300_000);
+  assert.equal(config.redirectUrl, "http://127.0.0.1:6274/callback");
+});
+
+test("conformance run --suite oauth checks a sign-up method against a pinned version", () => {
+  assert.throws(
+    () => oauthConfig(["--protocol-version", "2025-06-18", "--registration", "cimd"]),
+    isUsageError("CIMD registration is not supported for protocol version 2025-06-18."),
+  );
+});
+
+test("conformance run --suite oauth rejects an unknown strategy or registration", () => {
+  assert.throws(
+    () => oauthConfig(["--oauth-strategy", "browser"]),
+    isUsageError('Unknown --oauth-strategy "browser".'),
+  );
+  assert.throws(
+    () => oauthConfig(["--registration", "magic"]),
+    isUsageError('Unknown --registration "magic".'),
+  );
+  assert.throws(
+    () => oauthConfig(["--oauth-strategy", "headless", "--print-url"]),
+    isUsageError("--print-url only applies to --oauth-strategy interactive."),
+  );
+});
+
+test("conformance run --suite oauth leaves a --refresh-token login's client to that login", () => {
+  const config = oauthConfig([
+    ...["--refresh-token", "refresh", "--client-id", "login-client"],
+  ]);
+
+  assert.equal(config.registrationStrategy, "auto");
+  assert.equal(config.client?.preregistered, undefined);
 });
 
 test("conformance run gives the protocol suite the same tools as protocol conformance", () => {

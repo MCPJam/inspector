@@ -176,6 +176,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
   "get /projects/{projectId}/conformance-runs/{runId}/report":
     "getConformanceReport",
+  "get /projects/{projectId}/conformance-runs/{runId}/checks/{checkId}":
+    "getConformanceCheck",
 
   // Clients
   "get /projects/{projectId}/clients": "listClients",
@@ -482,6 +484,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // MCP App widget render
   "post /projects/{projectId}/servers/{serverId}/widgets/render":
     "renderServerWidget",
+  "post /projects/{projectId}/servers/{serverId}/widget-sessions":
+    "createServerWidgetSession",
+  "get /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/snapshot":
+    "getServerWidgetSessionSnapshot",
+  "post /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action":
+    "executeServerWidgetSessionAction",
+  "post /projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step":
+    "executeServerWidgetSessionStep",
+  "delete /projects/{projectId}/servers/{serverId}/widget-sessions/{id}":
+    "closeServerWidgetSession",
 
   // Agent Playground
   "post /chat-sessions/messages": "sendChatMessage",

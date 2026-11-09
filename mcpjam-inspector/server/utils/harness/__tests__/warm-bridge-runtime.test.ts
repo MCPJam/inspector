@@ -38,13 +38,13 @@ function fixture() {
   };
   const start = vi.fn(async (_options: HarnessV1StartOptions) => session);
   const factory = vi.fn(
-    (_timeout?: number): HarnessV1 => ({
+    (_timeout?: number, _home?: string): HarnessV1 => ({
       specificationVersion: "harness-v1",
       harnessId: "codex",
       doStart: start,
     }),
   );
-  const run = vi.fn(async () => ({ exitCode: 0, stdout: "ready", stderr: "" }));
+  const run = vi.fn(async (_args: { command: string }) => ({ exitCode: 0, stdout: JSON.stringify({ ready: true, home: "/home/user" }), stderr: "" }));
   const spawn = vi.fn(unused);
   const options: HarnessV1StartOptions = {
     sessionId: "session",
@@ -69,17 +69,54 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe("warm runtime lifecycle", () => {
+  it.each([
+    { sessionId: "session", segment: "session" },
+    { sessionId: "../shared/session", segment: "..%2Fshared%2Fsession" },
+    { sessionId: "..", segment: "%2E%2E" },
+  ])("uses private HOME state for a custom workspace ($sessionId)", async ({ sessionId, segment }) => {
+    const f = fixture();
+    const workspace = "/workspace/custom-project";
+    const options = {
+      ...f.options,
+      sessionId,
+      sandboxSession: { ...f.options.sandboxSession, defaultWorkingDirectory: workspace },
+    };
+    const session = await withWarmBridgeRuntime(f.factory, "configuration").doStart(options);
+    await session.doDetach();
+    expect(f.run).toHaveBeenCalledTimes(2);
+    for (const [{ command }] of f.run.mock.calls) {
+      expect(command).toContain(`.ai-sdk-harness/.agent-runs/${segment}/bridge`);
+      expect(command).not.toContain(workspace);
+    }
+  });
+
   it("attaches without dispatching a prompt and refreshes retention on detach", async () => {
     const f = fixture();
     const runtime = withWarmBridgeRuntime(f.factory, "configuration");
     const session = await runtime.doStart(f.options);
-    expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS);
+    expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, "/home/user");
     expect(f.start).toHaveBeenCalledTimes(1);
     expect(f.start.mock.calls[0][0].resumeFrom).toBe(state);
     await session.doDetach();
     expect(f.detach).toHaveBeenCalledTimes(1);
     expect(f.run).toHaveBeenCalledTimes(2);
     expect(f.run.mock.calls[1]).toBeDefined();
+  });
+
+  it.each([undefined, "", "relative/path", "/home/\0bad"])(
+    "does not forward an invalid sandbox HOME: %s", async (home) => {
+      const f = fixture();
+      f.run.mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify({ ready: true, home }), stderr: "" });
+      await withWarmBridgeRuntime(f.factory, "configuration").doStart(f.options);
+      expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, undefined);
+    },
+  );
+
+  it("does not accept HOME from saved session state", async () => {
+    const f = fixture();
+    f.options.resumeFrom = { ...state, data: { ...state.data, home: "/untrusted" } };
+    await withWarmBridgeRuntime(f.factory, "configuration").doStart(f.options);
+    expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, "/home/user");
   });
 
   it("uses disk continuity when the identity or configuration probe refuses reuse", async () => {
@@ -209,7 +246,7 @@ it.each(["claude-code", "codex"] as const)(
     const recipe = await ordinary.getBootstrap?.();
     if (!recipe) throw Error("Missing installed recipe");
     const spawn = vi.fn(unused);
-    const dir = "/home/user/" + recipe.bootstrapDir;
+    const dir = "/home/user/.ai-sdk-harness/" + recipe.bootstrapDir;
     const command = "node '" + dir + "/bridge.mjs' --workdir '/home/user/work'";
     const runtime = withWarmBridgeBootstrap({
       ...ordinary,
@@ -232,6 +269,10 @@ it.each(["claude-code", "codex"] as const)(
       ...f.options.sandboxSession,
       defaultWorkingDirectory: "/home/user",
       spawn,
+      run: async ({ command }: { command: string }) =>
+        command.includes("$HOME")
+          ? { exitCode: 0, stdout: "/home/user", stderr: "" }
+          : { exitCode: 0, stdout: "ready", stderr: "" },
     };
     await expect(
       runtime.doStart({ ...f.options, sandboxSession }),

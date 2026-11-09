@@ -32,3 +32,12 @@ export const CODEX_SKILLS_BASE = "/home/user/.agents/skills";
  * runtime's root.
  */
 export const CURSOR_SKILLS_BASE = "/home/user/.agents/skills";
+
+/**
+ * OpenCode's skills root (`~/.agents/skills`, the Agent-Skills-spec location).
+ *
+ * Declared but DORMANT: the OpenCode adapter ships with `supportsSkills: false`,
+ * so nothing writes here and no MCPJam pass targets it. It exists so the
+ * adapter's `skillsBaseDir` states a real path rather than a placeholder.
+ */
+export const OPENCODE_SKILLS_BASE = "/home/user/.agents/skills";

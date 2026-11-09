@@ -32,6 +32,8 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/claude[ -]?desktop/i, "claude-desktop"],
   [/claude/i, "claude"],
   [/chatgpt|openai/i, "chatgpt"],
+  [/opencode/i, "opencode"],
+  [/copilot[ -]cli/i, "copilot-cli"],
   [/copilot/i, "copilot"],
   // BEFORE the bare /cursor/i, same ordering trap as claude-code above: a host
   // named "Cursor CLI" must resolve to the `cursor-cli` id, not to `cursor`.

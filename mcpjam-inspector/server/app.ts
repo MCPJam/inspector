@@ -46,6 +46,7 @@ import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
+import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -107,6 +108,7 @@ import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
 import { createNodeWebSocket } from "@hono/node-ws";
+import { createLocalMrtrStream } from "./routes/web/local-mrtr-stream.js";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
 import {
   createLocalComputerTerminalWsHandler,
@@ -137,7 +139,7 @@ export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
-  if (!HOSTED_MODE) void startPluginFormFileJanitor();
+  void startPluginFormFileJanitor(!HOSTED_MODE);
   // One line, after the env is loaded: which grading-engine mode this process
   // could reach. An operator debugging "why are there no score rows" should
   // find the answer in the log, not in a flag dashboard.
@@ -195,6 +197,7 @@ export async function createHonoApp() {
   // `injectWebSocket` is returned to the caller (src/main.ts) to attach to the
   // node server, exactly as server/index.ts calls it on its own server.
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
+  const localMrtrStream = createLocalMrtrStream(upgradeWebSocket);
   const strictModeResponse = (c: any, path: string) =>
     c.json(
       {
@@ -431,6 +434,7 @@ export async function createHonoApp() {
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
   // local browser there to stream. Mirror of the mount in server/index.ts.
   if (!HOSTED_MODE) {
+    app.get("/api/web/mcp/mrtr/stream", localMrtrStream.handler);
     app.get(
       "/api/web/webmcp/sessions/:id/frames",
       createWebMcpFramesWsHandler(upgradeWebSocket),
@@ -466,6 +470,9 @@ export async function createHonoApp() {
   // name fails here rather than in every request that asks for a client
   // address. Unset, this is a no-op.
   resolveTrustedClientIpHeader(process.env);
+  // And `MCPJAM_FEATURE_FLAGS_FILE`: a missing or malformed file is reported
+  // on stderr now, not at the first flag evaluation. Unset, this is a no-op.
+  loadFeatureFlagFileAtBoot();
 
   // Mounted in every runtime, hosted included — see the mirror of this mount
   // in server/index.ts for why the gate had to go.
@@ -708,6 +715,8 @@ export async function createHonoApp() {
   return {
     app,
     injectWebSocket,
+    shutdownLocalMrtrStreams: localMrtrStream.shutdown,
+    killLocalMrtrStreams: localMrtrStream.kill,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
     // A local agent browser is a real Chromium this process started. Nothing

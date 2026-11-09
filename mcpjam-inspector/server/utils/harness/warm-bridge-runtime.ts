@@ -4,7 +4,6 @@ import type {
   HarnessV1Session,
 } from "@ai-sdk/harness";
 import { createHash } from "node:crypto";
-import { posix } from "node:path";
 import { z } from "zod";
 import { logger } from "../logger.js";
 import { diskResumeState } from "./local/resume-state.js";
@@ -39,7 +38,7 @@ function withoutSpawn<T extends object>(target: T): T {
 
 /** A warm attempt cannot dispatch a prompt or spawn a replacement process. */
 export function withWarmBridgeRuntime<T extends HarnessV1>(
-  factory: (startupTimeoutMs?: number) => T,
+  factory: (startupTimeoutMs?: number, sandboxHomeDir?: string) => T,
   configuration: string,
 ): T {
   const ordinary = factory();
@@ -61,12 +60,6 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           .update(configuration)
           .update(JSON.stringify(bootstrap?.files ?? []))
           .digest("hex");
-        const directory = posix.join(
-          options.sandboxSession.defaultWorkingDirectory,
-          ".agent-runs",
-          options.sessionId,
-          "bridge",
-        );
         const saved = coordinates.safeParse(options.resumeFrom);
         let session: HarnessV1Session | undefined;
         // Resume approvals through the original adapter, then retain the
@@ -80,17 +73,25 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
           const attempt = async () => {
             const result = await options.sandboxSession.run({
               command: warmBridgeCommand({
-                directory,
+                sessionId: options.sessionId,
                 configuration: fingerprint,
                 ...saved.data.data.bridge,
                 park: false,
+                includeHome: true,
               }),
               abortSignal: signal,
             });
-            if (result.exitCode !== 0 || result.stdout !== "ready")
+            const probe = z.object({ ready: z.literal(true), home: z.string().optional() })
+              .safeParse(JSON.parse(result.stdout));
+            if (result.exitCode !== 0 || !probe.success)
               throw new Error("Warm bridge identity or configuration changed.");
+            // This value comes from the current, identity-checked sandbox command,
+            // never the persisted resume payload or a client-supplied path.
+            const home = probe.data.home;
+            const sandboxHomeDir = home?.startsWith("/") && !home.includes("\0")
+              ? home : undefined;
             signal.throwIfAborted();
-            return factory(WARM_ATTACH_TIMEOUT_MS).doStart({
+            return factory(WARM_ATTACH_TIMEOUT_MS, sandboxHomeDir).doStart({
               ...options,
               abortSignal: signal,
               sandboxSession: withoutSpawn(options.sandboxSession),
@@ -151,7 +152,7 @@ export function withWarmBridgeRuntime<T extends HarnessV1>(
                   try {
                     const write = options.sandboxSession.run({
                       command: warmBridgeCommand({
-                        directory,
+                        sessionId: options.sessionId,
                         configuration: fingerprint,
                         ...bridge.data.data.bridge,
                         park: true,

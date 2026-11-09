@@ -40,6 +40,7 @@ import {
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import type { ConformanceProbes } from "./conformance-probes.js";
+import { protocolSdkFields } from "../../../shared/conformance-settings.js";
 import {
   createSession,
   deleteSession,
@@ -186,18 +187,7 @@ export async function runProtocolConformance(
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
     ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
-    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
-    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
-    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
-    ...(input.logLevelFilteringProbe
-      ? { logLevelFilteringProbe: input.logLevelFilteringProbe }
-      : {}),
-    ...(input.inputRequiredProbe
-      ? { inputRequiredProbe: input.inputRequiredProbe }
-      : {}),
-    ...(input.toolCallProbe
-      ? { fixtures: { toolCalls: [input.toolCallProbe] } }
-      : {}),
+    ...protocolSdkFields(input),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -211,6 +201,8 @@ export async function runProtocolConformance(
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
     fetchFn: deadlineFetch(createConformanceFetch("MCP server"), signal),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -245,6 +237,8 @@ export async function runAppsConformance({
       ...pinSuiteVersion(serverConfig, protocolVersion),
       signal,
       baseFetch: deadlineFetch(serverConfig.baseFetch ?? createConformanceFetch("MCP server"), signal),
+      // The browser counts the whole run once; a suite request must not.
+      __suppressTelemetry: true,
     });
     return { result: await test.run() };
   });
@@ -304,6 +298,8 @@ export async function runTasksConformance({
         serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
         deadline.signal,
       ),
+      // The browser counts the whole run once; a Tasks group request must not.
+      __suppressTelemetry: true,
     });
     const result = await test.run();
     deadline.signal.throwIfAborted();
@@ -393,6 +389,8 @@ export async function startOAuthConformance(
     // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
     // this suite grades redirects, and following one would erase the evidence.
     fetchFn: deadlineFetch(createConformanceFetch("OAuth endpoint"), deadline.signal),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {

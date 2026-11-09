@@ -18,6 +18,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
+  trackConformanceRunTriggered,
+  type ConformanceRunAnalyticsLocation,
+} from "./conformance-run-analytics";
+import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
@@ -33,6 +37,7 @@ import {
 import {
   conformanceTargetKey,
   useConformanceRunVersion,
+  versionErrorState,
 } from "./use-conformance-run-version";
 import {
   createAppsState,
@@ -59,25 +64,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-
-/** Only web URLs may open the authorization popup. */
-function isWebUrl(raw: string): boolean {
-  try {
-    const { protocol } = new URL(raw);
-    return protocol === "https:" || protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-/** The OAuth popup, or null when the browser blocked it. */
-function openAuthorizationPopup(authorizationUrl: string): Window | null {
-  return window.open(
-    authorizationUrl,
-    "oauth_conformance_auth",
-    "width=600,height=700,scrollbars=yes"
-  );
-}
+import { isWebUrl, useAuthorizationPopup } from "./conformance-oauth-popup";
 
 export {
   createAppsState,
@@ -103,6 +90,8 @@ export type {
 export interface UseConformanceRunOptions {
   runTimeoutSeconds?: number;
   server: ServerWithName;
+  /** Where runs start from, for analytics. Defaults to the Conformance tab. */
+  analyticsLocation?: ConformanceRunAnalyticsLocation;
   /** Park OAuth until the caller explicitly authorizes it. */
   deferOAuthAuthorization?: boolean;
   /** The revision the first run tests against, e.g. one picked before Run. */
@@ -152,6 +141,7 @@ export interface UseConformanceRunResult {
 
 export function useConformanceRun({
   server,
+  analyticsLocation = "conformance_tab",
   deferOAuthAuthorization = false,
   initialVersionPin = "auto",
   initialResolvedProtocolVersion,
@@ -207,7 +197,9 @@ export function useConformanceRun({
   }, []);
 
   const { remember: rememberSession, forget: forgetSession, cancel: cancelSession } = useConformanceOAuthSession();
+  const authorizationPopup = useAuthorizationPopup();
   const deadline = useConformanceDeadline((message) => {
+    authorizationPopup.expire();
     cancelSession();
     latestRunTokenRef.current += 1;
     pendingOAuthRef.current = null;
@@ -426,7 +418,8 @@ export function useConformanceRun({
         });
         return;
       }
-      const popup = openAuthorizationPopup(authorizationUrl);
+      const cleanupFns: Array<() => void> = [];
+      const popup = authorizationPopup.open(authorizationUrl, cleanupFns);
       setOAuth({
         status: "running",
         sessionId,
@@ -435,7 +428,6 @@ export function useConformanceRun({
         popupBlocked: !popup,
       });
 
-      const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
         for (const fn of cleanupFns) fn();
         if (oauthListenerCleanupRef.current === cleanup) {
@@ -481,7 +473,7 @@ export function useConformanceRun({
         // BroadcastChannel not available
       }
     },
-    [handleOAuthCallback],
+    [authorizationPopup.open, handleOAuthCallback],
   );
 
   const runOAuth = useCallback(
@@ -590,11 +582,11 @@ export function useConformanceRun({
 
   const openAuthorizationWindow = useCallback(() => {
     if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
-    const popup = openAuthorizationPopup(oauth.authorizationUrl);
+    const popup = authorizationPopup.open(oauth.authorizationUrl);
     setOAuth((prev) =>
       prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev,
     );
-  }, [oauth.authorizationUrl, oauth.waitingForAuth]);
+  }, [authorizationPopup.open, oauth.authorizationUrl, oauth.waitingForAuth]);
 
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.
@@ -619,6 +611,15 @@ export function useConformanceRun({
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
     const selected = runnableSelection(selection, versionPin);
+    // Count only a run that starts a suite: protocol and OAuth need HTTP.
+    if (
+      isSelected(selected?.apps) ||
+      isSelected(selected?.tasks) ||
+      (httpServerNow &&
+        (isSelected(selected?.protocol) || selected?.oauth !== false))
+    ) {
+      trackConformanceRunTriggered(analyticsLocation);
+    }
     setOAuthUnscored(scorableOAuthIds(selected?.oauthUnscored));
     setRunVersion((value) => value + 1);
     setResolvedProtocolVersion(undefined);
@@ -641,19 +642,20 @@ export function useConformanceRun({
         : createOAuthState(currentServer),
     );
     let resolved: McpProtocolVersion | undefined;
+    let loginRequired = false;
     try {
       resolved = await resolveVersion(currentServer, versionPin, runBudget());
-    } catch (error) {
+    } catch (e) {
       if (!isRunActive(runToken, currentServer.name)) return;
-      const state = {
-        status: "error" as const,
-        error: suiteErrorMessage(error),
-      };
-      if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
-      if (isSelected(selected?.apps)) setApps(state);
-      if (isSelected(selected?.tasks)) setTasks(state);
+      const state = versionErrorState(e, suiteErrorMessage(e));
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
-      return;
+      loginRequired = state.verdict === "incomplete";
+      if (!loginRequired) {
+        if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
+        if (isSelected(selected?.apps)) setApps(state);
+        if (isSelected(selected?.tasks)) setTasks(state);
+        return;
+      }
     }
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
@@ -678,7 +680,7 @@ export function useConformanceRun({
       promises.push(
         runApps(runToken, currentServer.name, {
           checkIds: picked?.apps,
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -688,7 +690,7 @@ export function useConformanceRun({
       promises.push(
         runTasks(runToken, currentServer.name, {
           ...tasksRunOptions(probes, picked),
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -699,13 +701,14 @@ export function useConformanceRun({
         promises.push(
           runOAuth(runToken, currentServer, resolved, picked?.oauthAdvice),
         );
-      } else {
+      } else if (!loginRequired) {
         setOAuth(NOT_SELECTED);
       }
     }
 
     await Promise.allSettled(promises);
   }, [
+    analyticsLocation,
     beginRun,
     deadline.start,
     runTimeoutSeconds,

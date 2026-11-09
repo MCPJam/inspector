@@ -54,7 +54,14 @@ export interface ComputerSandboxInfo {
   sandboxRowId?: string;
   providerComputerId: string | null;
   provider: string;
-  status: ComputerStatus;
+  status:
+    | ComputerStatus
+    | "live"
+    | "sleeping"
+    | "retiring"
+    | "reaping"
+    | "released"
+    | "leaked";
   projectId: string;
   ownerUserId: string;
   /** Hand-mirrored from the backend `ComputerView` (PR e2). */
@@ -308,6 +315,44 @@ export interface EvalSandbox {
   /** Where the box's harness and shell start. Absent from an older control
    * plane; the harness then falls back to the box home. */
   workdir?: string;
+  /**
+   * The desktop Browser gets beside this box, when the request set
+   * `pairBrowser` and the run pins an image. The fields above then describe
+   * the pinned terminal box.
+   */
+  browser?: PairedBrowserBox;
+}
+
+/** A desktop booted beside a pinned terminal box, for Browser alone. */
+export interface PairedBrowserBox {
+  sandboxId: string;
+  sandboxRowId: string;
+  runtimeKind: "desktop-browser";
+}
+
+/**
+ * Keep a provision's `browser` only when it names a desktop by both ids. A
+ * half-formed one is dropped, so the desktop request reads as answered with a
+ * terminal and fails the run instead of browsing on a box nothing can reach.
+ */
+function withPairedBrowser<T extends { browser?: PairedBrowserBox }>(
+  result: ControlPlaneResult<T>,
+): ControlPlaneResult<T> {
+  const box: unknown = result.ok ? result.value?.browser : undefined;
+  if (!result.ok || box === undefined) return result;
+  const fields =
+    box && typeof box === "object" ? (box as Record<string, unknown>) : {};
+  const named = (id: unknown) => typeof id === "string" && id !== "";
+  if (
+    named(fields.sandboxId) &&
+    named(fields.sandboxRowId) &&
+    fields.runtimeKind === "desktop-browser"
+  )
+    return result;
+  logger.warn(
+    "[computers] provision named an unusable paired browser box; ignoring it",
+  );
+  return { ok: true, value: { ...result.value, browser: undefined } };
 }
 
 /**
@@ -319,8 +364,9 @@ export interface EvalSandbox {
  *
  * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant: the control
  * plane refuses it unless the iteration's own frozen host config advertises
- * the `browser` tool, and refuses it outright when the run also pins a custom
- * environment image.
+ * the `browser` tool. When the run also pins a custom environment image it is
+ * refused (`desktop_pin_conflict`) unless `pairBrowser` asks for the pinned
+ * terminal box plus a separate desktop, answered in `browser`.
  *
  * Failure statuses the caller must distinguish:
  *   409 `desktop_not_advertised` / `desktop_pin_conflict` /
@@ -346,7 +392,7 @@ export interface EvalSandbox {
  */
 export async function provisionEvalSandbox(
   args: (
-    | { runId: string; iterationId?: string }
+    | { runId: string; iterationId?: string; pairBrowser?: boolean }
     /**
      * A SINGLE-CASE run has no suite run: the body names the iteration alone,
      * and the control plane authorizes the iteration itself. Terminal only —
@@ -385,9 +431,12 @@ export async function provisionEvalSandbox(
           ...(args.runId ? { runId: args.runId } : {}),
           ...(args.iterationId ? { iterationId: args.iterationId } : {}),
           ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+          ...("pairBrowser" in args && args.pairBrowser
+            ? { pairBrowser: true }
+            : {}),
         },
         signal,
-      ),
+      ).then(withPairedBrowser),
     {
       ...EVAL_SANDBOX_CAPACITY_POLICY,
       totalBudgetMs:
@@ -485,6 +534,8 @@ export interface JourneySandbox {
   runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
+  /** Browser's desktop beside a pinned box; see {@link EvalSandbox.browser}. */
+  browser?: PairedBrowserBox;
 }
 
 export interface PlaygroundSandbox {
@@ -804,6 +855,7 @@ export async function provisionPlaygroundTerminalSandbox(args: {
  *
  * `runtimeKind: "desktop-browser"` is a REQUEST, not a grant — the control
  * plane refuses it unless the target's FROZEN snapshot advertises `browser`.
+ * `pairBrowser` keeps a pinned image's box beside the desktop, as for evals.
  */
 export async function provisionJourneySandbox(args: {
   bearer: string;
@@ -811,6 +863,7 @@ export async function provisionJourneySandbox(args: {
   targetId: string;
   sessionIdx: number;
   runtimeKind?: RuntimeKind;
+  pairBrowser?: boolean;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<JourneySandbox>> {
   return postJson<JourneySandbox>(
@@ -821,9 +874,10 @@ export async function provisionJourneySandbox(args: {
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
       ...(args.runtimeKind ? { runtimeKind: args.runtimeKind } : {}),
+      ...(args.pairBrowser ? { pairBrowser: true } : {}),
     },
     args.signal,
-  );
+  ).then(withPairedBrowser);
 }
 
 /**
