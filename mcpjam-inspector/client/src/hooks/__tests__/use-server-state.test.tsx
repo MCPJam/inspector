@@ -3806,6 +3806,67 @@ describe("useServerState OAuth callback failures", () => {
     );
   });
 
+  it.each(["connect", "reconnect"])(
+    "keeps the actual OAuth exception in both the %s card and toast",
+    async (operation) => {
+      const message =
+        "Automatic OAuth could not find a usable CIMD or DCR flow. Configure pre-registered credentials to continue.";
+      const { ensureAuthorizedForReconnect } = await import(
+        "@/state/oauth-orchestrator"
+      );
+      if (operation === "connect") {
+        testConnectionMock.mockResolvedValueOnce({
+          success: false,
+          error: "Authorization required",
+          oauthRequired: true,
+        });
+        initiateOAuthMock.mockResolvedValueOnce({
+          success: false,
+          error: message,
+        });
+      } else {
+        reconnectServerMock.mockResolvedValueOnce({
+          success: false,
+          error: "Authorization required",
+          oauthRequired: true,
+        });
+        vi.mocked(ensureAuthorizedForReconnect)
+          .mockReset()
+          .mockResolvedValueOnce({ kind: "error", error: message });
+      }
+      const dispatch = vi.fn();
+      const { result } = renderUseServerState(dispatch);
+      await act(async () => {
+        if (operation === "connect") {
+          await result.current.handleConnect({
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            useOAuth: true,
+          });
+        } else {
+          await result.current.handleReconnect("demo-server");
+        }
+      });
+      const presentation = presentConnectionError(message, {
+        serverName: "demo-server",
+      });
+      expect(presentation.diagnostics.slug).toBe("internal/unknown");
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CONNECT_FAILURE", error: message }),
+      );
+      expect(toastError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          props: expect.objectContaining({
+            text: presentation.title,
+            copyText: expect.stringContaining(message),
+          }),
+        }),
+        expect.objectContaining({ description: presentation.explanation }),
+      );
+    },
+  );
+
   it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,

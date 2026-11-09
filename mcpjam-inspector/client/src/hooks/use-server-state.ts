@@ -3889,10 +3889,10 @@ export function useServerState({
     ) => {
       let formData: ServerFormData = { ...inputFormData };
       const showConnectionError = (
-        message: string,
+        failure: unknown,
         data?: Parameters<typeof toastServerConnectionFailure>[2],
       ) => {
-        if (!options?.suppressErrorToast) toastServerConnectionFailure(formData.name, message, data);
+        if (!options?.suppressErrorToast) toastServerConnectionFailure(formData.name, failure, data);
       };
       const showConnectionSuccess = (message: string) => {
         if (!options?.suppressSuccessToast) toast.success(message);
@@ -4145,7 +4145,7 @@ export function useServerState({
               name: formData.name,
               error: errorMessage,
             });
-            showConnectionError(errorMessage);
+            showConnectionError(storedCredentialResult);
             return;
           }
           // Auto escalation gate: the user picked Auto, not OAuth, so a 401
@@ -4419,9 +4419,7 @@ export function useServerState({
                     connectionResult.error || "OAuth connection test failed",
                   oauthTrace: oauthResult.oauthTrace,
                 });
-                showConnectionError(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
-                );
+                showConnectionError(connectionResult);
               }
             } else {
               // Redirect pending — the marker stays PENDING; the page is about
@@ -4444,9 +4442,7 @@ export function useServerState({
             error: oauthResult.error || "OAuth initialization failed",
             oauthTrace: oauthResult.oauthTrace,
           });
-          showConnectionError(
-            `OAuth initialization failed: ${oauthResult.error}`,
-          );
+          showConnectionError(oauthResult);
           return;
         }
 
@@ -4495,9 +4491,7 @@ export function useServerState({
             error: result.error,
           });
           showConnectionError(
-            `Failed to connect to ${formData.name}${
-              result.error ? `: ${result.error}` : ""
-            }`,
+            result,
             // A pinned protocol version the server doesn't offer is the one
             // connect failure with an exact fix, and the toast is where the
             // user is actually looking when a connect fails — the server
@@ -4559,11 +4553,7 @@ export function useServerState({
           serverName: formData.name,
           error: errorMessage,
         });
-        showConnectionError(
-          errorMessage === PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
-            ? errorMessage
-            : `Network error: ${errorMessage}`,
-        );
+        showConnectionError(error);
       }
     },
     [
@@ -5601,14 +5591,11 @@ export function useServerState({
       // provably did not cause this.
       const hostIdAtReconnectStart = previewedHostIdRef.current;
 
-      const reportError = (errorMessage: string) => {
+      const reportError = (failure: unknown) => {
         if (suppressErrors) return;
-        // Reconnect is the path a user takes right AFTER changing the protocol
-        // version, so it is the likeliest place to meet a pin the server
-        // doesn't offer. Matched on the message because that is all this
-        // helper receives; the clause is MCPJam's own wording.
-        if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          toastServerConnectionFailure(serverName, errorMessage, {
+        const { normalized } = connectionFailureFields(failure);
+        if (isProtocolVersionPinFailure(normalized, normalized.rawMessage)) {
+          toastServerConnectionFailure(serverName, failure, {
             action: {
               label: "Change protocol version",
               onClick: () => {
@@ -5627,7 +5614,7 @@ export function useServerState({
         // Everything else names the server in the toast title: a generic
         // failure ("Connection refused") says nothing about WHICH one, and
         // several can fail at once.
-        toastServerConnectionFailure(serverName, errorMessage);
+        toastServerConnectionFailure(serverName, failure);
       };
 
       if (isClientConfigSyncPending) {
@@ -5853,7 +5840,7 @@ export function useServerState({
               name: serverName,
               error: errorMessage,
             });
-          reportError(errorMessage);
+          reportError(error);
           return { status: "failed", error: errorMessage };
         }
 
@@ -5934,7 +5921,7 @@ export function useServerState({
               error: errorMessage,
               oauthTrace: oauthResult.oauthTrace,
             });
-          reportError(`OAuth failed: ${serverName}`);
+          reportError(oauthResult);
           return {
             status: "failed",
             error: errorMessage,
@@ -5988,7 +5975,7 @@ export function useServerState({
             error: errorMessage,
             oauthTrace: oauthResult.oauthTrace,
           });
-        reportError(errorMessage);
+        reportError(result);
         return {
           status: "failed",
           error: errorMessage,
@@ -6105,7 +6092,7 @@ export function useServerState({
                 error: errorMessage,
               });
             logger.error("OAuth reconnect failed", { serverName, result });
-            reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+            reportError(result);
             return {
               status: "failed",
               error: errorMessage,
@@ -6151,7 +6138,7 @@ export function useServerState({
               serverName,
               error: errorMessage,
             });
-            reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+            reportError(error);
             return {
               status: "failed",
               error: errorMessage,
@@ -6220,7 +6207,7 @@ export function useServerState({
               error: authResult.error,
               oauthTrace: authResult.oauthTrace,
             });
-          reportError(authResult.error);
+          reportError(authResult);
           return {
             status: "reauth",
             error: authResult.error,
@@ -6245,7 +6232,7 @@ export function useServerState({
               error: authResult.error,
               oauthTrace: authResult.oauthTrace,
             });
-          reportError(`Failed to connect: ${serverName}`);
+          reportError(authResult);
           return {
             status: "failed",
             error: authResult.error,
@@ -6298,7 +6285,7 @@ export function useServerState({
             oauthTrace: authResult.oauthTrace,
           });
         logger.error("Reconnection failed", { serverName, result });
-        reportError(errorMessage || `Failed to reconnect: ${serverName}`);
+        reportError(result);
         return {
           status: "failed",
           error: errorMessage,
@@ -6325,7 +6312,7 @@ export function useServerState({
           serverName,
           error: errorMessage,
         });
-        reportError(errorMessage);
+        reportError(error);
         return {
           status: "failed",
           error: errorMessage,

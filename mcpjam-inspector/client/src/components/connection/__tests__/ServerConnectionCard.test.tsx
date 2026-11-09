@@ -12,6 +12,7 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { describeAsSlug } from "@mcpjam/sdk/browser";
 import { appReducer } from "@/state/app-reducer";
 import type { AppState } from "@/state/app-types";
+import userEvent from "@testing-library/user-event";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -129,6 +130,21 @@ describe("ServerConnectionCard", () => {
     vi.clearAllMocks();
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
+  });
+
+  it("opens and closes error details with Enter and Space without reconnecting", async () => {
+    const message = "Automatic OAuth could not find a usable CIMD or DCR flow.";
+    const server = createServer({ connectionStatus: "failed", lastError: message });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+    const disclosure = screen.getByTestId("error-card-details");
+    disclosure.focus();
+    expect(disclosure).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(message)).toBeVisible();
+    await userEvent.keyboard(" ");
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
   });
 
   it("prioritizes trusted MCPJam sign-in over server consent recovery", () => {
