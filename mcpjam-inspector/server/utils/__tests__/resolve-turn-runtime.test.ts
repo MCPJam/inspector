@@ -342,9 +342,11 @@ describe("resolveTurnRuntime — runtime shape", () => {
 
     expect(rt.modelSource).toBe("local_byok");
     expect(assertOrgModelAllowedMock).toHaveBeenCalledWith(provider, "llama3");
+    // With the hosted egress guard as its fetch (plain fetch locally).
     expect(buildOrgModelFromResolvedConfigMock).toHaveBeenCalledWith(
       provider,
       "llama3",
+      { fetch: expect.any(Function) },
     );
     expect(rt.runtime).toEqual({
       kind: "direct",

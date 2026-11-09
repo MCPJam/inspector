@@ -31,10 +31,8 @@ import { modelWorkloadFor } from "./model-workload.js";
 import type { ToolSet } from "ai";
 import type { Harness, RequestedModelSelection } from "@mcpjam/sdk";
 import type { ModelDefinition } from "@/shared/types";
-import {
-  assertOrgModelAllowed,
-  buildOrgModelFromResolvedConfig,
-} from "@mcpjam/sdk/model-factory";
+import { assertOrgModelAllowed } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import {
   resolveSyntheticModelSource,
   type SyntheticModelSource,
@@ -274,7 +272,7 @@ export async function resolveTurnRuntime(
     assertOrgModelAllowed(orgRuntime.provider, modelId);
     const attempts: LocalExecutionAttempt[] = [];
     const llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(orgRuntime.provider, modelId),
+      buildGuardedOrgModel(orgRuntime.provider, modelId),
       orgRuntime.admission,
       modelId,
       attempts,
