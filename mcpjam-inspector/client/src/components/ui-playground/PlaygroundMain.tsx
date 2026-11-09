@@ -363,7 +363,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
 import {
   chatHistoryAction,
-  getChatHistoryDetail,
+  getChatHistoryState,
   type ChatHistorySession,
   type ChatHistoryDetailSession,
   type ChatHistoryWidgetSnapshot,
@@ -3715,7 +3715,7 @@ export function PlaygroundMain({
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             chatSessionId,
             projectId: convexProjectId ?? undefined,
           });

@@ -38,7 +38,9 @@ const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const compareSetup = { ready: true, error: undefined as string | undefined };
 const mockTraceViewer = vi.fn();
-const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockReadHistory = vi.hoisted(() => vi.fn());
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
+const mockGetChatHistoryState = vi.hoisted(() => vi.fn((...args: unknown[]) => mockReadHistory(...args)));
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // Convex auth is what decides whether chat history — and therefore the way back
 // from a branch — is reachable at all. Mutable so the edit/branch tests can
@@ -309,8 +311,8 @@ vi.mock("@/hooks/useViews", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
-  getChatHistoryDetail: (...args: unknown[]) =>
-    mockGetChatHistoryDetail(...args),
+  getChatHistoryDetail: mockGetChatHistoryDetail,
+  getChatHistoryState: mockGetChatHistoryState,
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
 }));
 
@@ -902,7 +904,7 @@ describe("PlaygroundMain", () => {
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
-    mockGetChatHistoryDetail.mockReset();
+    mockReadHistory.mockReset();
     mockChatHistoryAction.mockReset();
     mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
@@ -1879,7 +1881,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSessionLocal,
@@ -1966,7 +1968,7 @@ describe("PlaygroundMain", () => {
         { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
       ];
-      mockGetChatHistoryDetail.mockResolvedValueOnce({
+      mockReadHistory.mockResolvedValueOnce({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -1992,9 +1994,12 @@ describe("PlaygroundMain", () => {
         screen.getByTestId("conversation-target-notice-acknowledge")
       );
 
+      mockGetChatHistoryDetail.mockClear();
+      mockGetChatHistoryState.mockClear();
+
       // Control: with the sync healthy the send goes through, so the assertions
       // below are about the failure and not about a submit path that never runs.
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session,
         widgetSnapshots: [],
@@ -2006,8 +2011,10 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+      expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
 
-      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      mockReadHistory.mockRejectedValue(new Error("network down"));
       fireEvent.change(screen.getByTestId("chat-input-field"), {
         target: { value: "another message" },
       });
@@ -2050,7 +2057,7 @@ describe("PlaygroundMain", () => {
         directVisibility: "project" as const,
         version: 5,
       };
-      mockGetChatHistoryDetail
+      mockReadHistory
         .mockResolvedValueOnce({
           ok: true,
           session: privateSession,
@@ -3945,7 +3952,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -4031,7 +4038,7 @@ describe("PlaygroundMain", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: { selectedServers: ["test-server"] },
       };
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: savedSession,
         widgetSnapshots: [],
@@ -4287,7 +4294,7 @@ describe("PlaygroundMain", () => {
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored",
@@ -4332,7 +4339,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4358,7 +4365,7 @@ describe("PlaygroundMain", () => {
       );
 
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });
@@ -4401,7 +4408,7 @@ describe("PlaygroundMain", () => {
         "",
         `/playground?conversation=${RESTORED_SESSION_ID}`
       );
-      mockGetChatHistoryDetail.mockResolvedValue({
+      mockReadHistory.mockResolvedValue({
         ok: true,
         session: {
           _id: "history-restored-target",
@@ -4439,7 +4446,7 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain {...props} syncConversationToUrl />
       );
       await waitFor(() => {
-        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+        expect(mockReadHistory).toHaveBeenCalledWith(
           expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
         );
       });

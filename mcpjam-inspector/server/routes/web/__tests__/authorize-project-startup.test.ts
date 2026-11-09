@@ -10,6 +10,37 @@ afterEach(() => {
 });
 
 describe("startup authorization facts", () => {
+  it.each([
+    { conversationId: "chat", writable: false, requireNativeToolDiscovery: true },
+    { conversationId: "another", writable: true },
+    { conversationId: "chat", writable: true, requireNativeToolDiscovery: "invalid" },
+  ])("uses only a complete policy for the requested chat", async (conversationState) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, conversationState })));
+    const result = await authorizeProject({}, "test-bearer", "project", "chat");
+    expect(result.conversationState).toEqual(
+      conversationState.writable === false ? conversationState : undefined,
+    );
+  });
+  it("includes preparation in the authorized HTTPS request and preserves its result", async () => {
+    const preparedChatTurn = { kind: "resolved", environment: {}, harness: null };
+    const request = { projectId: "project", hostId: "host", serverOverrideIds: [] };
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, preparedChatTurn })));
+    const result = await authorizeProject({}, "test-bearer", "project", undefined, request, controller.signal);
+    expect(result.preparedChatTurn).toEqual(preparedChatTurn);
+    const [, options] = vi.mocked(fetch).mock.calls[0];
+    expect(JSON.parse(String(options?.body))).toEqual({ projectId: "project", chatPreparation: request });
+    expect(options?.redirect).toBe("error");
+    controller.abort();
+    expect(options?.signal?.aborted).toBe(true);
+  });
+  it("leaves legacy backends and HTTP deployments on the action fallback", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "http://localhost:3211");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, chatPreparationVersion: 1, preparedChatTurn: null })));
+    const result = await authorizeProject({}, "test-bearer", "project", undefined, { projectId: "project" });
+    expect(result.preparedChatTurn).toBeUndefined();
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({ projectId: "project" });
+  });
   it.each(["admin", "editor"])(
     "returns the current %s grant with the preparation capability",
     async (projectRole) => {

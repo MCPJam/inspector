@@ -2769,11 +2769,12 @@ export async function runHarnessTurn(
             })
           : [],
       );
-      const buildRuntime = (startupTimeoutMs?: number) =>
+      const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2789,6 +2790,7 @@ export async function runHarnessTurn(
             })
           : harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2804,7 +2806,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       let harnessRuntime = warmAgentPilot
-        ? withWarmBridgeRuntime((ms) => withWarmBridgeBootstrap(buildRuntime(ms)),
+        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home)),
             JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]))
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {

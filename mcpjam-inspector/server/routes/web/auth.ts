@@ -1,3 +1,4 @@
+import type { chatPreparationRequest } from "../../services/chat-turn/resolve-chat-turn.js";
 import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
 import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
@@ -27,6 +28,7 @@ import {
   withStampedAuthChallenge,
 } from "../../utils/connection-effective-auth.js";
 import { z } from "zod";
+import type { WebConversationState } from "./web-conversation-state.js";
 import type { Context } from "hono";
 import {
   MCPClientManager,
@@ -984,6 +986,15 @@ export async function authorizeBatch(
   };
 }
 
+const conversationAuthorization = z.object({
+  ok: z.literal(true),
+  conversationState: z.object({
+    conversationId: z.string(),
+    writable: z.boolean(),
+    requireNativeToolDiscovery: z.boolean().optional(),
+  }),
+});
+
 /**
  * Project membership with no servers to authorize: the same backend
  * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
@@ -995,7 +1006,12 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
+  conversationId?: string,
+  chatPreparation?: ReturnType<typeof chatPreparationRequest>,
+  signal?: AbortSignal,
 ): Promise<{
+  preparedChatTurn?: unknown;
+  conversationState?: WebConversationState;
   chatEnvironments: boolean;
   chatPreparation: boolean;
   organizationId?: string;
@@ -1010,13 +1026,24 @@ export async function authorizeProject(
     );
   }
 
+  const checkConversation =
+    Boolean(conversationId) && convexUrl.startsWith("https://");
+  const prepareChat =
+    Boolean(chatPreparation) && convexUrl.startsWith("https://");
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-project`, {
       method: "POST",
       headers: buildConvexAuthHeaders(caller, bearerToken),
-      body: JSON.stringify({ projectId }),
-      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+      body: JSON.stringify({
+        projectId,
+        ...(checkConversation ? { conversationId } : {}),
+        ...(prepareChat ? { chatPreparation } : {}),
+      }),
+      ...(checkConversation || prepareChat ? { redirect: "error" as const } : {}),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(WEB_CALL_TIMEOUT_MS)])
+        : AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
     });
   } catch (error) {
     throw new WebRouteError(
@@ -1037,7 +1064,16 @@ export async function authorizeProject(
       payload && typeof payload === "object" && "projectRole" in payload
         ? payload.projectRole
         : undefined;
+    const policy = checkConversation
+      ? conversationAuthorization.safeParse(payload)
+      : undefined;
     return {
+      ...(prepareChat && payload && typeof payload === "object" && "preparedChatTurn" in payload
+        ? { preparedChatTurn: payload.preparedChatTurn }
+        : {}),
+      ...(policy?.success && policy.data.conversationState.conversationId === conversationId
+        ? { conversationState: policy.data.conversationState }
+        : {}),
       ...(payload && typeof payload === "object" && "organizationId" in payload &&
         typeof payload.organizationId === "string" ? { organizationId: payload.organizationId } : {}),
       chatPreparation:
