@@ -69,6 +69,8 @@ describe("org model helpers", () => {
       hosted: false,
       customProviderName: "local",
       orgProvider: { providerKey: "custom:local" },
+      // An older backend sent no APIs: the gateway serves no harness.
+      gateway: { providerKey: "custom:local", apis: [] },
     });
   });
 
