@@ -343,6 +343,8 @@ export function ConformanceTab({
   const [loadingDefaults, setLoadingDefaults] = useState(false);
   /** The server whose run is waiting on its defaults, for its card. */
   const [startingServer, setStartingServer] = useState<string | null>(null);
+  /** The server a run is connecting before it starts, for its card. */
+  const [connectingServer, setConnectingServer] = useState<string | null>(null);
   const [failedRequest, setFailedRequest] = useState<{
     name: string;
     pin?: ProtocolVersionPin;
@@ -466,7 +468,7 @@ export function ConformanceTab({
         disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
         startingServerName={
-          loadingDefaults ? (startingServer ?? undefined) : undefined
+          (loadingDefaults ? startingServer : connectingServer) ?? undefined
         }
         onRun={runServer}
       />
@@ -635,6 +637,9 @@ export function ConformanceTab({
       onAutoStart={() => {
         if (start) startedIdRef.current = start.id;
       }}
+      onConnectingChange={(connecting) =>
+        setConnectingServer(connecting ? server.name : null)
+      }
       initialVersionPin={startsHere ? start?.versionPin : undefined}
       initialResolvedProtocolVersion={
         startsHere ? start?.resolvedProtocolVersion : undefined

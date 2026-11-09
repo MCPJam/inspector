@@ -1713,6 +1713,61 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
 
+  it("keeps the card starting while its run connects the server", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    const beta = createHttpServer({ name: "beta" });
+    const connected = createDeferred<"ready">();
+    const onConnectServer = vi.fn(() => connected.promise);
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection: {},
+          inputs: {},
+        }))}
+        serverDefaults={{ alpha: {}, beta: {} }}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Run alpha" },
+      ),
+    );
+
+    // The defaults are in and the run is connecting alpha: the card still
+    // says which one is starting. The run view mounted anew, so the list is
+    // looked up again.
+    await waitFor(() => expect(onConnectServer).toHaveBeenCalled());
+    const starting = await waitFor(() =>
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Starting alpha" },
+      ),
+    );
+    const list = screen.getByRole("list", { name: "Servers" });
+    expect(starting).toBeDisabled();
+    expect(starting).toHaveTextContent("Starting...");
+    expect(
+      within(list).getByRole("button", { name: "Run beta" }),
+    ).toHaveTextContent(/^Run$/);
+
+    await act(async () => connected.resolve("ready"));
+  });
+
   it("shows progress, not a score, until the run finishes", async () => {
     setupSuccessfulRunMocks();
     // Protocol never answers: the run stays going.

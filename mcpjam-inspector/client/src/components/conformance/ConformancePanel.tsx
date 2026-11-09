@@ -227,6 +227,7 @@ export function ConformanceContent({
   serverIconUrl,
   autoStart = false,
   onAutoStart,
+  onConnectingChange,
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
@@ -265,6 +266,8 @@ export function ConformanceContent({
   /** Run once on mount: the setup steps just chose this server. */
   autoStart?: boolean;
   onAutoStart?: () => void;
+  /** Whether this run is connecting its server before it starts. */
+  onConnectingChange?: (connecting: boolean) => void;
   initialVersionPin?: ProtocolVersionPin;
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
@@ -423,6 +426,17 @@ export function ConformanceContent({
   }, [autoStart]);
   const isConnecting =
     connect.status === "connecting" || connect.status === "ready";
+  // The page's server list says which card is starting while this connects.
+  // Cleared on unmount too, so a run dropped mid-connect leaves no card stuck.
+  const reportConnecting = useRef(onConnectingChange);
+  useEffect(() => {
+    reportConnecting.current = onConnectingChange;
+  });
+  useEffect(() => {
+    if (!isConnecting) return;
+    reportConnecting.current?.(true);
+    return () => reportConnecting.current?.(false);
+  }, [isConnecting]);
   const hasStarted =
     started ||
     isRunning ||
