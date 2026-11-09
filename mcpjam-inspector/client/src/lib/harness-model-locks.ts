@@ -46,7 +46,10 @@ import {
   modelRowKey,
   providerKeyForModelDefinition,
 } from "@/components/chat-v2/shared/model-selection";
-import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
+import {
+  INSPECTOR_RUN_POLICY_REASON,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
 
 export type { HarnessKeyPolicy };
 
@@ -263,29 +266,28 @@ export function harnessModelLockReasonsByRow(
 }
 
 /**
- * The models a harness host's chat picker OFFERS: only the ones its runtime
- * can run. Unlike `applyHarnessModelLocks` (a shared axis across several
- * hosts, where a row one host refuses may still suit another), a single
- * harness host has nothing to gain from rows it would refuse, and offering
- * them is how a Codex client ended up on Claude Haiku.
+ * The rows a harness host's chat picker shows: every row, with the ones its
+ * runtime can't run disabled and the server's reason on each. Unlike
+ * `applyHarnessModelLocks` (a shared axis across several hosts, where a row
+ * one host refuses may still suit another), the verdict here is this one
+ * host's. A row the picker hid without saying why would look like a missing
+ * model, and a Codex client must not be offered Claude Haiku as pickable.
  *
- * Kept, for a brokered harness: MCPJam-provided rows, and rows from an
- * organization connection on the harness's own vendor (run on the org's key),
- * that the evidence table admits for chat on their canonical id. Every other
- * row is refused by the server, so it is not offered. A row the table has not
- * verified (`unknown`) stays, with its reason as a warning, because the server
- * runs it in chat with the same warning. Nothing runnable leaves the list
- * EMPTY — the picker's empty state — never the unfiltered list, which would
- * offer only rows the server refuses. That includes a platform-funded
- * brokered harness (OpenCode) whose filter removed every org-key row. The
- * catalog fallback is only for an external-account harness (Cursor): its
- * account picks the model, so the turn's picker is not what runs.
+ * Runnable, for a brokered harness: MCPJam-provided rows, and rows from an
+ * organization connection that serves the harness's API (run on the org's
+ * key), that the evidence table admits for chat on their canonical id. A row
+ * the table has not verified (`unknown`) stays enabled, with its reason as a
+ * warning, because the server runs it in chat with the same warning. Nothing
+ * runnable leaves every row disabled, and the caller shows the empty state;
+ * the catalog is returned unlocked only for an external-account harness
+ * (Cursor), whose account picks the model.
  *
- * Under the organization's key policy (`policy.requireOrgKeys`) a brokered
- * harness offers only organization rows on its own vendor. A saved model the
- * policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the
- * picker never lists it and shows it only on its trigger, as a warning, so
- * the saved choice is never switched silently.
+ * Under the organization's key policy (`policy.requireOrgKeys`) a saved model
+ * the policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the
+ * picker shows it only on its trigger, as a warning, so the saved choice is
+ * never switched silently. A row from a connection whose calls come from the
+ * Inspector (`INSPECTOR_RUN_POLICY_REASON`) is kept the same way, so it shows
+ * the policy's explanation and fix rather than a harness refusal.
  */
 export function harnessPickerModels(
   models: ModelDefinition[],
@@ -293,35 +295,42 @@ export function harnessPickerModels(
   policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
   if (!target) return models;
-  const kept: ModelDefinition[] = [];
-  for (const model of models) {
+  let runnable = 0;
+  const rows = models.map((model): ModelDefinition => {
     if (
       policy.requireOrgKeys &&
       model.disabled &&
-      model.disabledReason === ORG_KEYS_MODEL_REASON
+      (model.disabledReason === ORG_KEYS_MODEL_REASON ||
+        model.disabledReason === INSPECTOR_RUN_POLICY_REASON)
     ) {
-      kept.push(model);
-      continue;
+      return model;
     }
     const row = harnessRowModelId(model, target, policy);
-    if ("refusal" in row) continue;
+    const refused = (reason: string): ModelDefinition => ({
+      ...model,
+      disabled: true,
+      disabledReason: reason,
+    });
+    if ("refusal" in row) return refused(row.refusal);
     if (row.rail === "evidence" && !isMCPJamProvidedModelMenuItem(model)) {
-      continue;
+      return refused(
+        harnessOrgProviderUnsupportedReason(target.harnessId, policy),
+      );
     }
     const verdict = harnessModelSupport({
       harnessId: target.harnessId,
       runtimeVersion: runtimeVersionOf(target),
       modelId: row.modelId,
     });
-    if (!harnessModelVerdictAdmits(verdict, "chat")) continue;
-    kept.push(
-      verdict.status === "unknown" && !model.warningReason
-        ? { ...model, warningReason: verdict.reason }
-        : model,
-    );
-  }
-  if (kept.length > 0 || harnessIsBrokered(target.harnessId)) return kept;
-  return models;
+    if (!harnessModelVerdictAdmits(verdict, "chat")) {
+      return refused(verdict.reason);
+    }
+    runnable += 1;
+    return verdict.status === "unknown" && !model.warningReason
+      ? { ...model, warningReason: verdict.reason }
+      : model;
+  });
+  return runnable > 0 || harnessIsBrokered(target.harnessId) ? rows : models;
 }
 
 const NO_RUNNABLE_HARNESS_MODEL_ID = "mcpjam/no-runnable-harness-model";

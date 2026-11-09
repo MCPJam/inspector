@@ -10,7 +10,10 @@ import {
   isNoRunnableHarnessModel,
   noRunnableHarnessModel,
 } from "../harness-model-locks";
-import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
+import {
+  INSPECTOR_RUN_POLICY_REASON,
+  ORG_KEYS_MODEL_REASON,
+} from "@/lib/org-keys-refusal";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -80,7 +83,8 @@ describe("harness model locks", () => {
   });
 });
 
-// The picker for ONE harness client offers only what that harness runs.
+// The picker for ONE harness client offers only what that harness runs; the
+// rest stay listed, disabled, with the reason.
 const CATALOG = [
   { id: "anthropic/claude-haiku-4.5", name: "Haiku", provider: "anthropic", hosted: true },
   { id: "anthropic/claude-fable-5", name: "Fable 5", provider: "anthropic", hosted: true },
@@ -91,18 +95,34 @@ const CATALOG = [
   { id: "openai/gpt-5-nano", name: "GPT-5 nano (own key)", provider: "openai", hosted: false },
 ] as ModelDefinition[];
 const ids = (models: ModelDefinition[]) => models.map((m) => `${m.id}${m.hosted ? "" : " (own)"}`);
+const offered = (models: ModelDefinition[]) => models.filter((m) => !m.disabled);
 
 describe("harnessPickerModels", () => {
   it("offers a Codex client only the MCPJam-provided models Codex can run", () => {
-    expect(ids(harnessPickerModels(CATALOG, { harnessId: "codex" }))).toEqual([
+    const rows = harnessPickerModels(CATALOG, { harnessId: "codex" });
+    expect(ids(offered(rows))).toEqual([
       "openai/gpt-5-mini",
       "openai/gpt-5-nano",
       "openai/gpt-5.6-luna",
     ]);
   });
 
+  it("shows the rows Codex can't run disabled, each with the server's reason", () => {
+    const rows = harnessPickerModels(CATALOG, { harnessId: "codex" });
+    expect(rows).toHaveLength(CATALOG.length);
+    expect(rows[0]).toMatchObject({
+      id: "anthropic/claude-haiku-4.5",
+      disabled: true,
+      disabledReason: "This model isn’t supported by Codex. Choose a supported model or switch clients.",
+    });
+    expect(rows.at(-1)).toMatchObject({
+      disabled: true,
+      disabledReason: "The Codex client needs an MCPJam model or your organization's OpenAI key. Choose a supported model.",
+    });
+  });
+
   it("keeps a model Claude Code has not verified, with the reason as a warning", () => {
-    const models = harnessPickerModels(CATALOG, { harnessId: "claude-code" });
+    const models = offered(harnessPickerModels(CATALOG, { harnessId: "claude-code" }));
     expect(ids(models)).toEqual(["anthropic/claude-haiku-4.5", "anthropic/claude-fable-5"]);
     expect(models[0]!.warningReason).toBeUndefined();
     expect(models[1]!.warningReason).toMatch(/not been verified/);
@@ -203,7 +223,7 @@ describe("organization-key rows on a harness", () => {
 
   it("Claude Code offers hosted rows plus the org's Anthropic rows", () => {
     expect(
-      harnessPickerModels(WITH_ORG, { harnessId: "claude-code" }).map(
+      offered(harnessPickerModels(WITH_ORG, { harnessId: "claude-code" })).map(
         modelRowKey,
       ),
     ).toEqual([
@@ -216,7 +236,7 @@ describe("organization-key rows on a harness", () => {
 
   it("Codex offers hosted rows plus the org's OpenAI rows", () => {
     expect(
-      harnessPickerModels(WITH_ORG, { harnessId: "codex" }).map(modelRowKey),
+      offered(harnessPickerModels(WITH_ORG, { harnessId: "codex" })).map(modelRowKey),
     ).toEqual([
       "hosted:openai:openai/gpt-5-mini",
       "hosted:openai:openai/gpt-5-nano",
@@ -227,7 +247,7 @@ describe("organization-key rows on a harness", () => {
 
   it("OpenCode offers hosted Anthropic rows and refuses organization keys", () => {
     expect(
-      harnessPickerModels(WITH_ORG, { harnessId: "opencode" }).map(modelRowKey),
+      offered(harnessPickerModels(WITH_ORG, { harnessId: "opencode" })).map(modelRowKey),
     ).toEqual([
       "hosted:anthropic:anthropic/claude-haiku-4.5",
       "hosted:anthropic:anthropic/claude-fable-5",
@@ -268,17 +288,27 @@ describe("organization-key rows on a harness", () => {
   });
 
   it("an empty state, never the unfiltered list, when nothing is runnable", () => {
-    expect(
-      harnessPickerModels([LOCAL_ANTHROPIC, ORG_OPENROUTER_CLAUDE], {
-        harnessId: "claude-code",
-      }),
-    ).toEqual([]);
+    const rows = harnessPickerModels([LOCAL_ANTHROPIC, ORG_OPENROUTER_CLAUDE], {
+      harnessId: "claude-code",
+    });
+    expect(offered(rows)).toEqual([]);
+    expect(rows.map((row) => row.disabledReason)).toEqual([
+      expect.stringMatching(/organization's Anthropic key/),
+      expect.stringMatching(/organization's Anthropic key/),
+    ]);
   });
 
   it("an org-only catalog leaves OpenCode empty rather than restoring refused rows", () => {
     expect(
       harnessPickerModels([ORG_ANTHROPIC], { harnessId: "opencode" }),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        ...ORG_ANTHROPIC,
+        disabled: true,
+        disabledReason:
+          "The OpenCode client does not support organization provider keys. Choose another client.",
+      },
+    ]);
   });
 
   it("locks per ROW: the hosted row and an org row of one id can differ", () => {
@@ -338,7 +368,7 @@ describe("a harness under the organization's key policy", () => {
 
   it("Claude Code offers only the organization's Anthropic rows", () => {
     expect(
-      harnessPickerModels(WITH_ORG, { harnessId: "claude-code" }, POLICY).map(
+      offered(harnessPickerModels(WITH_ORG, { harnessId: "claude-code" }, POLICY)).map(
         modelRowKey,
       ),
     ).toEqual(["org:orgprov_anthropic:claude-sonnet-4-5"]);
@@ -346,7 +376,7 @@ describe("a harness under the organization's key policy", () => {
 
   it("Codex offers only the organization's OpenAI rows", () => {
     expect(
-      harnessPickerModels(WITH_ORG, { harnessId: "codex" }, POLICY).map(
+      offered(harnessPickerModels(WITH_ORG, { harnessId: "codex" }, POLICY)).map(
         modelRowKey,
       ),
     ).toEqual(["org:orgprov_openai:gpt-5-mini"]);
@@ -388,21 +418,46 @@ describe("a harness under the organization's key policy", () => {
       disabled: true,
       disabledReason: ORG_KEYS_MODEL_REASON,
     } as ModelDefinition;
-    expect(
-      harnessPickerModels(
-        [disallowed, ORG_ANTHROPIC, ORG_OPENAI],
-        { harnessId: "claude-code" },
-        POLICY,
-      ),
-    ).toEqual([disallowed, ORG_ANTHROPIC]);
+    const [kept, org, other] = harnessPickerModels(
+      [disallowed, ORG_ANTHROPIC, ORG_OPENAI],
+      { harnessId: "claude-code" },
+      POLICY,
+    );
+    expect(kept).toBe(disallowed);
+    expect(org).toBe(ORG_ANTHROPIC);
+    expect(other).toMatchObject({
+      disabled: true,
+      disabledReason: expect.stringMatching(/requires your organization's Anthropic key/),
+    });
+  });
+
+  it("keeps the policy's reason on a connection whose calls come from the Inspector", () => {
+    const inspectorRun = {
+      id: "custom:lan:lan-model",
+      name: "LAN / lan-model",
+      provider: "custom",
+      customProviderName: "lan",
+      orgProvider: { providerKey: "custom:lan", id: "orgprov_lan" },
+      hosted: false,
+      disabled: true,
+      disabledReason: INSPECTOR_RUN_POLICY_REASON,
+    } as ModelDefinition;
+    const [kept] = harnessPickerModels(
+      [inspectorRun, ORG_ANTHROPIC],
+      { harnessId: "claude-code" },
+      POLICY,
+    );
+    expect(kept).toBe(inspectorRun);
   });
 
   it("an empty list says which organization provider the harness needs", () => {
     expect(
-      harnessPickerModels(
-        [ORG_OPENAI, ...CATALOG],
-        { harnessId: "claude-code" },
-        POLICY,
+      offered(
+        harnessPickerModels(
+          [ORG_OPENAI, ...CATALOG],
+          { harnessId: "claude-code" },
+          POLICY,
+        ),
       ),
     ).toEqual([]);
     const standIn = noRunnableHarnessModel("claude-code", POLICY);

@@ -125,10 +125,6 @@ export const NOT_SUPPORTED_YET_GUIDANCE =
 export const HARNESS_ORG_KEYS_GUIDANCE =
   "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.";
 
-/** What a harness runtime can't run on while the setting is on. */
-export const HARNESS_NOT_SUPPORTED_GUIDANCE =
-  "Custom base URLs, local runtimes and models the MCPJam SDK calls directly aren't supported.";
-
 /**
  * The harness row's guidance, or null to fall back to the general one. With
  * no matching provider the fix names the vendor each harness needs, so no one
@@ -143,10 +139,9 @@ function harnessGuidance(
       return HARNESS_ORG_KEYS_GUIDANCE;
     case "unconfigured":
     case "unsupported": {
-      const fix = canManage
-        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers."
-        : "Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex.";
-      return `${fix} ${HARNESS_NOT_SUPPORTED_GUIDANCE}`;
+      return canManage
+        ? "Add an Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers."
+        : "Ask an organization admin to add an Anthropic provider for Claude Code or an OpenAI provider for Codex.";
     }
     default:
       return null;
