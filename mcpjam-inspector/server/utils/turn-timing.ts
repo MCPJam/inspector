@@ -7,8 +7,16 @@
  * shows them; the harness adds them, with the time to the first text it
  * forwards, to its per-turn `[harness][timing]` line.
  */
-export type TurnTimingStage =
-  "setup" | "turnAuthorization" | "connections" | "tools" | "streamPreparation";
+export const TURN_TIMING_STAGES = [
+  "setup",
+  "turnAuthorization",
+  "connections",
+  "tools",
+  "streamPreparation",
+] as const;
+
+/** Each stage's `<stage>Ms` field is declared on `harness.timing` (`log-events.ts`). */
+export type TurnTimingStage = (typeof TURN_TIMING_STAGES)[number];
 
 export class TurnTiming {
   private readonly startedAt: number;

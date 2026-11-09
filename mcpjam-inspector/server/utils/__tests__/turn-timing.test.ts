@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TurnTiming } from "../turn-timing.js";
+import { buildLegacyLogRow } from "../../../shared/strict-log.js";
+import { TURN_TIMING_STAGES, TurnTiming } from "../turn-timing.js";
 
 function clock(...readings: number[]) {
   let index = 0;
@@ -29,6 +30,17 @@ describe("TurnTiming", () => {
     timing.markFirstText();
     expect(timing.fields()).toEqual({ setupMs: 50, firstTextMs: 3200 });
     expect(timing.text()).toBe(" setupMs=50 firstTextMs=3200");
+  });
+
+  it("keeps every field in the production log row", () => {
+    const timing = new TurnTiming(clock(0, 10, 20, 30, 40, 50, 60));
+    for (const stage of TURN_TIMING_STAGES) timing.mark(stage);
+    timing.markFirstText();
+    const fields = timing.fields();
+    expect(Object.keys(fields)).toHaveLength(TURN_TIMING_STAGES.length + 1);
+    expect(
+      buildLegacyLogRow("[harness][timing] claim=1ms", fields),
+    ).toMatchObject({ event: "harness.timing", ...fields });
   });
 
   it("reports nothing before any stage closes", () => {
