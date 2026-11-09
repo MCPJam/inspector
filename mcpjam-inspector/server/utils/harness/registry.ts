@@ -57,6 +57,7 @@ import {
   toOpenCodeNativeModel,
   type HarnessNativeUpstream,
 } from "./runtime-model-ids.js";
+import { claudeCodeOrgGatewayPins } from "./org-gateway-model-ids.js";
 import {
   HARNESS_MCP_DELIVERY,
   type HarnessMcpDelivery,
@@ -778,7 +779,9 @@ function claudeCodeTurnEnv(
   return {
     ...(upstream?.profile === "anthropic-native"
       ? claudeCodeNativeModelPins(upstream.nativeModelId)
-      : claudeCodeModelPins(modelId)),
+      : upstream?.profile === "org-gateway"
+        ? claudeCodeOrgGatewayPins(upstream.nativeModelId)
+        : claudeCodeModelPins(modelId)),
     ...(permissionMode === "allow-all"
       ? {}
       : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
@@ -944,8 +947,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
       // changing whose key pays never changes the effort a turn runs at.
       //
       // On the organization's own Anthropic key the runtime talks to
-      // Anthropic natively, so with no effort the CLI's defaults stand. On the
-      // AI Gateway they are pinned instead:
+      // Anthropic natively, so with no effort the CLI's defaults stand. Its
+      // gateway gets the same: a gateway that serves Anthropic Messages takes
+      // Anthropic's request shape. On the AI Gateway they are pinned instead:
       //  - Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
       //    Anthropic API shape the Gateway's Anthropic-compat schema rejects
       //    (400: expected 'disabled' | 'enabled'). (`"off"` on the canary
@@ -972,7 +976,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
             thinking: { type: "adaptive" as const },
             env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
           }
-        : upstream?.profile === "anthropic-native"
+        : upstream?.profile === "anthropic-native" ||
+            upstream?.profile === "org-gateway"
           ? { env }
           : {
               thinking: { type: "disabled" as const },

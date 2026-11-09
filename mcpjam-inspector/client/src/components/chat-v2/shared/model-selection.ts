@@ -113,6 +113,16 @@ export function canonicalSelectionModelId(
 ): string | null {
   let raw = String(model.id ?? "").trim();
   if (!raw) return null;
+  const provider = String(model.provider ?? "").toLowerCase();
+  // Before the `provider/` rule: a gateway's own model name may contain `/`
+  // (`custom:litellm:anthropic/claude-haiku-4-5`), which names no vendor.
+  if (provider === "custom" && !isHostedRow(model)) {
+    const name = model.customProviderName;
+    if (!name) return null;
+    const prefix = `custom:${name}:`;
+    const native = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
+    return native ? `custom:${name.toLowerCase()}/${native}` : null;
+  }
   if (isHostedRow(model)) {
     raw = getCanonicalModelId(raw, String(model.provider));
   }
@@ -121,14 +131,6 @@ export function canonicalSelectionModelId(
     return `${canonicalPrefix(raw.slice(0, slash))}${raw.slice(slash)}`;
   }
   if (isHostedRow(model)) return null;
-  const provider = String(model.provider ?? "").toLowerCase();
-  if (provider === "custom") {
-    const name = model.customProviderName;
-    if (!name) return null;
-    const prefix = `custom:${name}:`;
-    const native = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
-    return native ? `custom:${name.toLowerCase()}/${native}` : null;
-  }
   if (provider === "ollama") return `ollama/${raw}`;
   return canonicalModelIdForNative(provider, raw);
 }
