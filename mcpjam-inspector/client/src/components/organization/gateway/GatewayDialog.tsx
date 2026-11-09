@@ -142,6 +142,14 @@ export function GatewayDialog({
       setDirty(true);
     };
 
+  // A Test answers for the URL and key it ran with. Editing either makes a
+  // pending answer stale, and a new Test can start right away.
+  const editProbe = (set: (value: string) => void) => (value: string) => {
+    testRun.current += 1;
+    setTesting(false);
+    edit(set)(value);
+  };
+
   const runTest = async (runtimeLocation: GatewayRuntimeLocation = runtime) => {
     if (!baseUrl.trim() || testing) return;
     const run = ++testRun.current;
@@ -249,7 +257,7 @@ export function GatewayDialog({
               id={FIELD_IDS.baseUrl}
               type="url"
               value={baseUrl}
-              onChange={(event) => edit(setBaseUrl)(event.target.value)}
+              onChange={(event) => editProbe(setBaseUrl)(event.target.value)}
               placeholder="https://litellm.example.com/v1"
               aria-invalid={!!keyProblem || outcome?.focus === "baseUrl"}
               aria-describedby={
@@ -271,7 +279,7 @@ export function GatewayDialog({
               !!editProvider?.hasSecret && !keyProblem && !keyRequested
             }
             value={secret}
-            onChange={edit(setSecret)}
+            onChange={editProbe(setSecret)}
             optional={!keyProblem}
           />
           <Button

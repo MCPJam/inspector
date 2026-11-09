@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayConnectionTestResult } from "@/shared/gateway-connection";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
@@ -199,5 +205,40 @@ describe("GatewayDialog", () => {
     await waitFor(() => expect(field("gateway-base-url").value).toBe("https://other.example/v1"));
     expect(screen.queryByText("Responses didn't answer")).not.toBeInTheDocument();
     expect(screen.queryByText("claude-sonnet-4.5")).not.toBeInTheDocument();
+  });
+
+  it("drops a pending Test when the base URL changes, and lets a new one start", async () => {
+    let answer: (result: GatewayConnectionTestResult) => void = () => {};
+    testConnection.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    expect(screen.getByRole("button", { name: "Testing..." })).toBeDisabled();
+
+    type("gateway-base-url", "https://gw.other.example/v1");
+    expect(screen.getByRole("button", { name: "Test" })).toBeEnabled();
+    await act(async () => answer(PASSED));
+
+    expect(
+      screen.queryByText("Responses didn't answer"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("claude-sonnet-4.5")).not.toBeInTheDocument();
+    expect(document.getElementById("gateway-name")).toBeNull();
+    expect(screen.getByRole("button", { name: "Test" })).toBeEnabled();
+
+    testConnection.mockResolvedValueOnce(PASSED);
+    submitTest();
+    expect(
+      await screen.findByText("Responses didn't answer"),
+    ).toBeInTheDocument();
+    expect(testConnection).toHaveBeenLastCalledWith({
+      runtimeLocation: "cloud",
+      baseUrl: "https://gw.other.example/v1",
+    });
   });
 });
