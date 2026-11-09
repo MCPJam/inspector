@@ -98,7 +98,7 @@ const CI_OWNED_SUITE_READ_ONLY_CODE = "CI_OWNED_SUITE_READ_ONLY";
 
 /**
  * The backend's refusal copy (`CI_OWNED_REFUSAL_MESSAGE` there), mirrored for
- * the same reason as the code: the v1 pre-check in `evals.ts` answers before
+ * the same reason as the code: the v1 pre-check in `ci-owned-suite.ts` answers before
  * the backend is asked, so it has to say what the backend would have said.
  */
 const CI_OWNED_SUITE_READ_ONLY_MESSAGE =
@@ -106,7 +106,7 @@ const CI_OWNED_SUITE_READ_ONLY_MESSAGE =
 
 /**
  * The one 409 a configuration write to a CI-owned suite answers with, whether
- * the route refused it up front (`assertSuiteWritableViaApi` in `evals.ts`)
+ * the route refused it up front (`assertSuiteWritableViaApi` in `ci-owned-suite.ts`)
  * or the backend did (the translator below). One builder, so the two cannot
  * drift into different shapes.
  *
