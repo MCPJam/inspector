@@ -156,3 +156,26 @@ describe("other admin-typed base URLs, hosted", () => {
     },
   );
 });
+
+describe("an Azure resource URL, hosted", () => {
+  it("reads the resource from the hostname only, so a crafted query reaches nothing", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await generateText({
+      model: createLlmModel(
+        { id: "deployment-1", name: "d", provider: "azure" },
+        "sk-test",
+        {
+          azure:
+            "https://good.example.test/?u=http://localhost/x.openai.azure.com",
+        },
+      ),
+      prompt: "hi",
+      maxRetries: 0,
+    }).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(BlockedEgressTargetError);
+    for (const call of fetchMock.mock.calls) {
+      expect(new URL(String(call[0])).hostname).not.toBe("localhost");
+    }
+  });
+});

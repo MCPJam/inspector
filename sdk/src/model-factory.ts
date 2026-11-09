@@ -713,10 +713,20 @@ export function buildOrgModelFromResolvedConfig(
   if (providerKey === "azure") {
     const apiKey = requireOrgSecret(config, "Azure OpenAI");
     const baseUrl = requireOrgBaseUrl(config, "Azure OpenAI");
-    const resourceMatch = baseUrl.match(
-      /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i
-    );
-    const resourceName = resourceMatch?.[1];
+    // The resource comes from the parsed hostname only: a resource-shaped
+    // string in a query or path would otherwise become the resource
+    // (`localhost/x`) and send the key to a host the admission check never
+    // judged.
+    let host = "";
+    try {
+      host = new URL(baseUrl).hostname;
+    } catch {
+      // Not a URL: no resource; the SDK reports the base URL itself.
+    }
+    const resourceName =
+      /^([a-z0-9-]+)\.(?:openai|cognitiveservices)\.azure\.com$/i.exec(
+        host
+      )?.[1];
     return createAzure({
       apiKey,
       ...(resourceName ? { resourceName } : { baseURL: baseUrl }),
