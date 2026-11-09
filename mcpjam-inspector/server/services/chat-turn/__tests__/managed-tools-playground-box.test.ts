@@ -46,6 +46,8 @@ vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
 }));
 import { prepareManagedTools } from "../managed-tools.js";
 import { TurnResources } from "../resources.js";
+import { deliveredSecretsFingerprint } from "../../../utils/harness/runtime-secrets.js";
+import { assertRuntimeInvariants } from "../../environments/runtime.js";
 
 type Setup = Parameters<typeof prepareManagedTools>[0]["setup"];
 const harnessSetup = (harness: string) =>
@@ -77,22 +79,28 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function prepareTurn(harness: string) {
+async function prepareTurn(
+  harness: string,
+  overrides: Partial<Setup> = {},
+  rawBody: Record<string, unknown> = {},
+) {
   const app = new Hono<{ Variables: { guestId?: string } }>();
   let failure: unknown;
   let sandboxId: string | undefined;
+  let prepared: Awaited<ReturnType<typeof prepareManagedTools>> | undefined;
   app.post("/", async (c) => {
     if (m.guestId) c.set("guestId", m.guestId);
     try {
       const tools = await prepareManagedTools({
         c,
-        rawBody: {},
+        rawBody,
         bearerToken: "bearer",
         localIngress: false,
         resources: new TurnResources(() => {}),
-        setup: harnessSetup(harness),
+        setup: { ...harnessSetup(harness), ...overrides },
         connections: { validatedPageTools: [] },
       });
+      prepared = tools;
       sandboxId = tools.scenarioBox?.binding.sandboxId;
     } catch (error) {
       failure = error;
@@ -100,14 +108,82 @@ async function prepareTurn(harness: string) {
     return c.json({});
   });
   const done = app.request("/", { method: "POST" });
-  return { done: done.then(() => ({ failure, sandboxId })) };
+  return {
+    done: done.then(() => ({ failure, sandboxId })),
+    get prepared() {
+      return prepared;
+    },
+  };
 }
+
+const resolvedEnvironment = {
+  environmentRef: { environmentId: "env-1", name: "Test", revision: 1 },
+  host: { hostId: "host-1", runtimeConfig: {} },
+  servers: { effectiveServerIds: [] },
+};
 
 describe("the Playground box and the secrets read", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     m.guestId = undefined;
     m.events = [];
+  });
+
+  it("uses an explicitly empty resolved selection without fetching secrets", async () => {
+    m.acquire.mockResolvedValue({ ok: true, box });
+    const turn = await prepareTurn("claude-code", {
+      environmentSpec: { ...resolvedEnvironment, selectedSecretIds: [] },
+      environmentServers: resolvedEnvironment,
+    });
+    await turn.done;
+    expect(m.secrets).not.toHaveBeenCalled();
+    expect(turn.prepared?.runtimeSecrets).toEqual([]);
+    expect(turn.prepared?.secretsUnavailable).toBe(false);
+    expect(deliveredSecretsFingerprint(turn.prepared!.runtimeSecrets!)).not.toBe(
+      deliveredSecretsFingerprint([
+        { name: "OLD_KEY", value: "old", updatedAt: 1 },
+      ]),
+    );
+  });
+
+  it.each([undefined, ["secret-1"], null, { length: 0 }])(
+    "fetches when selected-secret metadata is absent, populated or malformed: %j",
+    async (selectedSecretIds) => {
+      m.acquire.mockResolvedValue({ ok: true, box });
+      m.secrets.mockResolvedValue({ ok: false });
+      const turn = await prepareTurn("claude-code", {
+        environmentSpec: assertRuntimeInvariants({
+          ...resolvedEnvironment,
+          selectedSecretIds,
+        }),
+        environmentServers: resolvedEnvironment,
+      });
+      await turn.done;
+      expect(m.secrets).toHaveBeenCalledTimes(1);
+      expect(turn.prepared?.runtimeSecrets).toBeNull();
+      expect(turn.prepared?.secretsUnavailable).toBe(true);
+    },
+  );
+
+  it("ignores client-supplied empty secret metadata", async () => {
+    m.acquire.mockResolvedValue({ ok: true, box });
+    m.secrets.mockResolvedValue({ ok: false });
+    const turn = await prepareTurn("claude-code", {}, { selectedSecretIds: [] });
+    await turn.done;
+    expect(m.secrets).toHaveBeenCalledTimes(1);
+    expect(turn.prepared?.secretsUnavailable).toBe(true);
+  });
+
+  it("keeps the secret lookup on recorded scenario turns", async () => {
+    m.acquire.mockResolvedValue({ ok: true, box });
+    m.secrets.mockResolvedValue({ ok: true, secrets: [] });
+    const turn = await prepareTurn("claude-code", {
+      turnMode: "recorded",
+      environmentSpec: { ...resolvedEnvironment, selectedSecretIds: [] },
+      environmentServers: resolvedEnvironment,
+    });
+    await turn.done;
+    expect(m.secrets).toHaveBeenCalledTimes(1);
   });
 
   it("books the conversation's box while the secrets read is in flight", async () => {

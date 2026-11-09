@@ -168,11 +168,14 @@ export async function prepareManagedTools(args: {
   // runs bash on a per-conversation disposable box booted from the
   // environment's pinned image, never on the member's personal computer.
   // Later turns reuse the box; the backend's idle reaper owns its teardown.
-  //
   // Project secrets are resolved once, here, because bash, the harness and the
   // transcript scrubber must all see the same list. On failure the list is
   // `null`: "leave existing state alone", never "there are no secrets".
-  const secretsFetch = c.get("guestId")
+  const noSelectedSecrets =
+    turnMode === "interactive" &&
+    Array.isArray(environmentSpec?.selectedSecretIds) &&
+    environmentSpec.selectedSecretIds.length === 0;
+  const secretsFetch = c.get("guestId") || noSelectedSecrets
     ? { ok: true as const, secrets: [] }
     : await fetchRuntimeSecrets(bearerToken, {
         projectId: hostedBody.projectId,
