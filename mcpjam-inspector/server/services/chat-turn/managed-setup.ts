@@ -62,14 +62,13 @@ import {
   externalAccountHostModelRefusalReason,
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
-import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { harnessSupportsSkills, harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
-import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../evals/route-helpers.js";
 import {
@@ -464,10 +463,7 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-  if (
-    turnMode === "recorded" &&
-    hostRuntimeConfig &&
-    resolvedExecution.modelId &&
+  if (turnMode === "recorded" && hostRuntimeConfig && resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
   ) {
     const hostModelId = resolvedExecution.modelId;
