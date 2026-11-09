@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { provisionMock, touchMock, releaseMock, dataPlaneMock } = vi.hoisted(
-  () => ({
+const { provisionMock, touchMock, releaseMock, dataPlaneMock, readinessMock } =
+  vi.hoisted(() => ({
     provisionMock: vi.fn(),
     touchMock: vi.fn(async () => "touched" as const),
     releaseMock: vi.fn(async () => {}),
     dataPlaneMock: vi.fn(() => true),
-  }),
-);
+    readinessMock: vi.fn(),
+  }));
 
 vi.mock("../../computers/control-plane-client.js", () => ({
   provisionPlaygroundTerminalSandbox: provisionMock,
   touchSandbox: touchMock,
   releaseSandbox: releaseMock,
   isComputersDataPlaneConfigured: dataPlaneMock,
+  getHarnessCredentialReadiness: readinessMock,
 }));
 
 vi.mock("../../logger.js", () => ({
@@ -80,27 +81,33 @@ describe("playgroundHarnessBoxReason", () => {
 });
 
 describe("playgroundCredentialRefusal", () => {
-  it("refuses a Cursor turn with no usable key, in the harness's own words", async () => {
-    const refusal = await playgroundCredentialRefusal({
-      harnessId: "cursor",
-      secretEnv: undefined,
+  const ask = { harnessId: "cursor", bearer: "Bearer tok", projectId: "p1" };
+
+  it("refuses a Cursor turn whose org has no key, before any box", async () => {
+    readinessMock.mockResolvedValueOnce({
+      ok: true,
+      value: { readiness: "missing" },
     });
-    expect(refusal).toMatch(/CURSOR_API_KEY/);
+    expect(await playgroundCredentialRefusal(ask)).toBe(
+      "Ask an org admin to add a Cursor key in Organization → AI providers.",
+    );
+    expect(provisionMock).not.toHaveBeenCalled();
   });
 
-  it("passes a turn whose key is delivered, and a harness that needs none", async () => {
+  it("passes a turn whose org key is ready, and a harness that needs none", async () => {
+    readinessMock.mockResolvedValueOnce({
+      ok: true,
+      value: { readiness: "ready" },
+    });
+    expect(await playgroundCredentialRefusal(ask)).toBeNull();
+    expect(readinessMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectId: "p1", harnessId: "cursor" }),
+    );
+    readinessMock.mockClear();
     expect(
-      await playgroundCredentialRefusal({
-        harnessId: "cursor",
-        secretEnv: { CURSOR_API_KEY: "key_live" },
-      }),
+      await playgroundCredentialRefusal({ ...ask, harnessId: "claude-code" }),
     ).toBeNull();
-    expect(
-      await playgroundCredentialRefusal({
-        harnessId: "claude-code",
-        secretEnv: undefined,
-      }),
-    ).toBeNull();
+    expect(readinessMock).not.toHaveBeenCalled();
   });
 });
 

@@ -63,6 +63,7 @@ import {
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
 import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
@@ -441,6 +442,10 @@ export async function resolveManagedTurnSetup(args: {
     harnessUsesExternalAccount(resolvedExecution.harness),
   );
   if (resolvedExecution.harness) {
+    // User Testing boxes never receive the org's vendor key: refused first.
+    if (externalAccountHarnessTurn && turnMode === "recorded") {
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+    }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),

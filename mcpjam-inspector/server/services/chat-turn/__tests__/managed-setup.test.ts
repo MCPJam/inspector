@@ -207,6 +207,65 @@ describe("managed setup local runtime policy", () => {
   });
 });
 
+describe("a Cursor CLI client", () => {
+  const cursorBody = {
+    model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.authorize.mockResolvedValue({
+      chatEnvironments: false,
+      chatPreparation: false,
+    });
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+  });
+
+  it("is refused in User Testing, before the turn's tools or box", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("recorded", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    let thrown: unknown;
+    const app = new Hono();
+    app.post("/", async (c) => {
+      try {
+        await resolveManagedTurnSetup({
+          c,
+          rawBody: {
+            ...baseBody,
+            ...cursorBody,
+            scenarioId: "scenario-1",
+            accessVersion: 1,
+          },
+          bearerToken: "bearer",
+          localIngress: true,
+          rpcCollector: createHostedRpcLogCollector({}),
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      return c.json({});
+    });
+    await app.request("/", { method: "POST" });
+    expect(thrown).toMatchObject({
+      status: 422,
+      message:
+        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Choose a different client for this study.",
+      details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
+    });
+  });
+
+  it("runs from the Playground", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("interactive", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    const { setup } = await resolveSetup(cursorBody);
+    expect(setup.value?.turnMode).toBe("interactive");
+  });
+});
+
 
 describe("request-scoped project access", () => {
   beforeEach(() => {

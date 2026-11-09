@@ -743,6 +743,36 @@ export async function getBoxCredentialAvailability(args: {
   );
 }
 
+/** Whether a harness's organization key can carry a turn right now. */
+export type HarnessCredentialReadiness = "ready" | "missing" | "invalid";
+
+/**
+ * Can a turn on this harness (Cursor) start in this project? Asked on the
+ * member's own bearer before any box is reserved; the answer names no key,
+ * secret or account. `missing` flips the moment an admin removes the key.
+ */
+export async function getHarnessCredentialReadiness(args: {
+  bearer: string;
+  projectId: string;
+  harnessId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<{ readiness: HarnessCredentialReadiness }>> {
+  const result = await postJson<{ readiness?: unknown }>(
+    "/web/harness/credential-readiness",
+    bearerHeader(args.bearer),
+    { projectId: args.projectId, harnessId: args.harnessId },
+    args.signal,
+  );
+  if (!result.ok) return result;
+  // A 2xx whose body is not JSON parses to null: an unexpected answer, not a crash.
+  const readiness = result.value?.readiness;
+  return readiness === "ready" ||
+    readiness === "missing" ||
+    readiness === "invalid"
+    ? { ok: true, value: { readiness } }
+    : { ok: false, status: 502, error: "unexpected readiness answer" };
+}
+
 /** The Playground conversation's disposable shell. */
 export interface PlaygroundTerminalSandbox {
   sandboxId: string;
