@@ -20,8 +20,8 @@ import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
-import { cursorCredentialCleanupCommand } from "./runtime-credential-files.js";
 export {
   CURSOR_CLI_CHECKSUMS,
   CURSOR_CLI_VERSION,
@@ -496,12 +496,6 @@ type HarnessRuntimeAdapterBase = {
    * failed run.
    */
   runtimeVersionCommand?(sessionWorkDir: string): string;
-  /**
-   * Shell command that removes the files where the CLI keeps vendor tokens it
-   * exchanged for its key, given the session workdir. Run at every turn end
-   * (`runtime-credential-files.ts`); absent for runtimes that keep none.
-   */
-  runtimeCredentialCleanupCommand?(sessionWorkDir: string): string;
 };
 
 /** Base args every adapter's `createHarness` receives. (The per-adapter
@@ -1301,26 +1295,22 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // The path is the framework's, not the session workdir: interpolating a
     // host-configured workdir here used to be an injection surface.
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
-  // The CLI writes the access and refresh tokens it exchanges for the org's
-  // key to `auth.json`; they leave the box at every turn end.
-  runtimeCredentialCleanupCommand: cursorCredentialCleanupCommand,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return pinCursorHarnessBootstrap(
+    return withCursorLoginAuthentication(pinCursorHarnessBootstrap(
       createCursor({
-        // The customer's own CURSOR_API_KEY, as the environment arm of
-        // HarnessV1Authentication. Passing an explicit env map (rather than
-        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
-        // the SERVER's process env for a credential — and the routing modes
-        // would only produce a warning here anyway, since Cursor cannot be
-        // re-routed.
+        // An explicit empty key prevents ambient credential lookup. The backend
+        // installs the temporary login before the runtime process starts.
         auth,
+        // The framework replaces even empty keys with placeholders by default.
+        // Keep the CLI on its installed login instead of trying a fake API key.
+        credentialForwarding: () => "",
         // REQUIRED by this arm's signature: `session-config` delivery has no
         // other channel, so a construction that forgot the servers would be a
         // silently tool-less turn. The type makes that unwritable.
         mcpServers: toAcpMcpServers(mcpJson),
       }) as unknown as HarnessAgentAdapter,
-    );
+    ));
   },
 };
 
