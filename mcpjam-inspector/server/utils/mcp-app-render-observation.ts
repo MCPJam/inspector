@@ -14,6 +14,9 @@ import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
 import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
 import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
 import type { WidgetCspMeta } from "./widget-helpers";
+import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger";
+import { getSystemLogger } from "./request-logger.js";
 import {
   extractHtmlFromResourceContent,
   isRecord,
@@ -23,6 +26,8 @@ import type {
   McpAppBrowserHarness,
   WidgetRenderObservation,
 } from "./mcp-app-browser-harness";
+
+const renderLog = getSystemLogger("mcp-app-render");
 
 export interface RenderMcpAppToolResultParams {
   toolCallId: string;
@@ -98,12 +103,28 @@ export async function renderMcpAppToolResult(
       cspMeta = normalizeWidgetCspMeta(contentMeta);
       html = extractHtmlFromResourceContent(content);
     }
-  } catch {
+  } catch (error) {
+    const elapsedMs = Date.now() - ts;
+    logger.warn("[mcp-app-render] widget resource read failed", {
+      toolName,
+      resourceUri,
+      elapsedMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Alert on our hosted server only. A local install (npx, desktop) runs
+    // its user's own servers, and the alert would send their details to us.
+    if (HOSTED_MODE) {
+      renderLog.event(
+        "mcp_app.resource_read.failed",
+        { durationMs: elapsedMs },
+        { error, sentry: true },
+      );
+    }
     return {
       ...base,
       status: "resource_read_failed",
       resourceUri,
-      elapsedMs: Date.now() - ts,
+      elapsedMs,
     };
   }
 
