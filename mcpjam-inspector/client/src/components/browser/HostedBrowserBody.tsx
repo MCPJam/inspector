@@ -390,6 +390,7 @@ export function HostedBrowserBody({
     state: pausedState,
     pause: pausePane,
     resume: resumePane,
+    clear: clearPausedPane,
   } = usePausedPane({
     // A wake that did not land leaves the box paused for the next input,
     // not behind the unavailable message, whose retry wakes nothing.
@@ -400,6 +401,11 @@ export function HostedBrowserBody({
     },
     onAwake: () => setStreamAttempt((n) => n + 1),
   });
+  // Another browser, or a fresh session, starts without the last one's pause.
+  useEffect(
+    () => clearPausedPane(),
+    [projectId, sessionId, tokens, clearPausedPane],
+  );
   const noteVncInput = useThrottledInputPing(() =>
     tokens ? pingHostedBrowserInput(tokens) : Promise.resolve(false),
   );
@@ -857,6 +863,7 @@ export function HostedBrowserBody({
         // works, the lease is ours, and whatever the last close said is over.
         tokenRetriesRef.current = 0;
         setNotice(null);
+        clearPausedPane();
         if (leaseIsStale.current) {
           // Frames are flowing again, so whoever was holding the browser is
           // not holding it any more — and nothing else says so. The JPEG path
@@ -936,6 +943,7 @@ export function HostedBrowserBody({
             paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
             frameSeqRef.current = decoded.seq;
             tokenRetriesRef.current = 0;
+            clearPausedPane();
             setNotice(null);
             if (leaseIsStale.current) {
               leaseIsStale.current = false;
@@ -1144,6 +1152,7 @@ export function HostedBrowserBody({
             // picture is back and the message is no longer true.
             tokenRetriesRef.current = 0;
             setNotice(null);
+            clearPausedPane();
             if (leaseIsStale.current) {
               // Frames are flowing again, so whoever was holding the browser
               // is not holding it any more. Nothing else says so.
@@ -1274,6 +1283,7 @@ export function HostedBrowserBody({
     tokens,
     refresh,
     pausePane,
+    clearPausedPane,
     streamAttempt,
     shell.state.activeTabId,
     selectionReady,

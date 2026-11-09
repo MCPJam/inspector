@@ -60,6 +60,27 @@ describe("usePausedPane", () => {
     expect(onAwake).not.toHaveBeenCalled();
   });
 
+  it("clears when the desktop serves again, and a late wake answer changes nothing", async () => {
+    let finish: (woke: boolean) => void = () => {};
+    const wake = vi.fn(
+      () => new Promise<boolean>((resolve) => (finish = resolve)),
+    );
+    const onAwake = vi.fn();
+    const { result } = renderHook(() => usePausedPane({ wake, onAwake }));
+
+    act(() => result.current.pause());
+    act(() => result.current.clear());
+    expect(result.current.state).toBe("awake");
+
+    act(() => result.current.pause());
+    act(() => result.current.resume());
+    // A frame shows the desktop serving before the wake answers.
+    act(() => result.current.clear());
+    await act(async () => finish(false));
+    expect(result.current.state).toBe("awake");
+    expect(onAwake).not.toHaveBeenCalled();
+  });
+
   it("ignores input while the desktop is awake", () => {
     const wake = vi.fn(async () => true);
     const { result } = renderHook(() =>
