@@ -4,6 +4,7 @@ export type {
   PlatformReadinessLazyAuthProbe,
 } from "./readiness-start-types.js";
 export type {
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceReportCheck,
   PlatformConformanceReportProfile,

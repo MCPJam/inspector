@@ -19,6 +19,7 @@ import { translateConvexWriteError as translateConvexError } from "./convex-erro
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { readAnyIdempotencyKey } from "../../utils/idempotency.js";
+import { findConformanceCheck } from "../shared/conformance-check.js";
 import {
   HOSTED_CONFORMANCE_SUITES,
   fetchSuiteReports,
@@ -190,8 +191,63 @@ conformanceRuns.post(
 );
 
 // ── Read ────────────────────────────────────────────────────────────────
-// `/report` is registered before `/:runId` so a static suffix cannot be
-// captured as a run id.
+// `/report` and `/checks/:checkId` are registered before `/:runId` so a
+// static suffix cannot be captured as a run id.
+
+const SUITE_KINDS = ["protocol", "apps", "tasks", "oauth"] as const;
+
+/** The run's suite reports that have a stored blob, or a 404 saying none do. */
+async function storedSuiteReports(
+  run: Record<string, any>,
+  suite?: string,
+): Promise<{ suiteKind: string; report: unknown }[]> {
+  const reports = Array.isArray(run.reports) ? run.reports : [];
+  const stored = reports.filter(
+    (report: { suiteKind?: unknown; reportUrl?: unknown }) =>
+      typeof report.reportUrl === "string" &&
+      report.reportUrl.length > 0 &&
+      (suite === undefined || report.suiteKind === suite),
+  );
+  if (stored.length === 0) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      "This conformance run has no stored report.",
+    );
+  }
+  return await fetchSuiteReports(stored);
+}
+
+conformanceRuns.get(
+  "/projects/:projectId/conformance-runs/:runId/checks/:checkId",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const runId = c.req.param("runId");
+    const suite = c.req.query("suite");
+    if (
+      suite !== undefined &&
+      !(SUITE_KINDS as readonly string[]).includes(suite)
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `suite must be one of ${SUITE_KINDS.join(", ")}.`,
+      );
+    }
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
+    const run = await loadRun(convex, runId, projectId);
+    const suiteReports = await storedSuiteReports(run, suite);
+    return v1Resource(
+      c,
+      findConformanceCheck(
+        String(run.id ?? run._id ?? runId),
+        suiteReports,
+        c.req.param("checkId"),
+        suite,
+      ),
+    );
+  },
+);
 
 conformanceRuns.get(
   "/projects/:projectId/conformance-runs/:runId/report",
@@ -200,20 +256,12 @@ conformanceRuns.get(
     const runId = c.req.param("runId");
     const convex = createConvexClient(await getConvexBearerForRequest(c));
     const run = await loadRun(convex, runId, projectId);
-    const reports = Array.isArray(run.reports) ? run.reports : [];
-    const stored = reports.filter(
-      (report: { reportUrl?: unknown }) =>
-        typeof report.reportUrl === "string" && report.reportUrl.length > 0,
+    const suiteReports = await storedSuiteReports(run);
+    const cursor = c.req.query("cursor");
+    return v1Resource(
+      c,
+      projectConformanceReports(run, suiteReports, cursor || undefined),
     );
-    if (stored.length === 0) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        "This conformance run has no stored report.",
-      );
-    }
-    const suiteReports = await fetchSuiteReports(stored);
-    return v1Resource(c, projectConformanceReports(run, suiteReports));
   },
 );
 

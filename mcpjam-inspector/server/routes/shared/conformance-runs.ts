@@ -32,6 +32,7 @@ import {
   type ConformanceSettingsSource,
 } from "../../services/conformance-run-settings.js";
 import { createConformanceFetch } from "./conformance.js";
+import { pageFailingChecks } from "./conformance-check.js";
 
 export const HOSTED_CONFORMANCE_SUITES = ["protocol", "apps", "tasks"] as const;
 export type HostedConformanceSuite = (typeof HOSTED_CONFORMANCE_SUITES)[number];
@@ -121,7 +122,10 @@ export type ConformanceReportProjection = {
   totalCases: number;
   /** Failed + could-not-run count, the denominator behind `truncated`. */
   totalFailingCases: number;
+  /** More failing checks follow this page. */
   truncated: boolean;
+  /** The next page's cursor; a running run has none. */
+  nextCursor?: string;
   profiles: ConformanceReportProfile[];
 };
 
@@ -382,6 +386,7 @@ function profileFromReport(
 export function projectConformanceReports(
   run: Record<string, any>,
   suiteReports: { suiteKind: string; report: unknown }[],
+  cursor?: string,
 ): ConformanceReportProjection {
   const all: ConformanceReportCheck[] = [];
   const profiles: ConformanceReportProfile[] = [];
@@ -392,17 +397,25 @@ export function projectConformanceReports(
   const failing = all
     .filter(isFailingCheck)
     .sort((a, b) => caseRank(a) - caseRank(b));
-  const checks = failing.slice(0, CONFORMANCE_REPORT_CASE_CAP);
+  const runId = String(run.id ?? run._id ?? "");
+  const status = String(run.status ?? "");
+  const page = pageFailingChecks(
+    { id: runId, status },
+    failing,
+    CONFORMANCE_REPORT_CASE_CAP,
+    cursor,
+  );
   return {
-    runId: String(run.id ?? run._id ?? ""),
-    status: String(run.status ?? ""),
+    runId,
+    status,
     outcome: run.outcome ?? null,
     score: run.score ?? null,
     pending: run.pending ?? 0,
-    checks,
+    checks: page.checks,
     totalCases: all.length,
     totalFailingCases: failing.length,
-    truncated: failing.length > checks.length,
+    truncated: page.more,
+    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     profiles,
   };
 }

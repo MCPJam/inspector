@@ -17,6 +17,7 @@ import {
 import { derivePermalinks } from "./permalinks.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
 import type {
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
@@ -179,6 +180,12 @@ const listConformanceRunsInput = z.object({
     .max(100)
     .optional()
     .describe("Rows to return, 1-100. Defaults to the API's own page size."),
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("The `nextCursor` of the previous page, to read the next one."),
 });
 
 export type ListConformanceRunsInput = z.infer<typeof listConformanceRunsInput>;
@@ -186,6 +193,8 @@ export type ListConformanceRunsInput = z.infer<typeof listConformanceRunsInput>;
 export type ListConformanceRunsResult = {
   project: SelectedProjectInfo;
   runs: PlatformConformanceRun[];
+  /** Present while older runs remain. */
+  nextCursor?: string;
 };
 
 export const listConformanceRunsOperation: PlatformOperation<
@@ -218,25 +227,43 @@ export const listConformanceRunsOperation: PlatformOperation<
         projectId: project.id,
         ...(serverId ? { serverId } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.cursor ? { cursor: input.cursor } : {}),
       },
       { signal }
     );
-    return { project: toSelectedProjectInfo(project), runs: page.items };
+    return {
+      project: toSelectedProjectInfo(project),
+      runs: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
   },
 };
+
+const getConformanceReportInput = conformanceRunScopedInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("The `nextCursor` of the previous page, to read the next one."),
+});
+
+export type GetConformanceReportInput = z.infer<
+  typeof getConformanceReportInput
+>;
 
 export type GetConformanceReportResult = {
   project: SelectedProjectInfo;
 } & PlatformConformanceReport;
 
 export const getConformanceReportOperation: PlatformOperation<
-  ConformanceRunScopedInput,
+  GetConformanceReportInput,
   GetConformanceReportResult
 > = {
   name: "get_conformance_report",
   title: "Get a conformance report",
   description:
-    "A bounded projection of a conformance run's failing checks. Failed checks come before could-not-run skips; the list is capped so a model surface is not handed a megabyte-sized report. `pending` on a check means this profile reported it but did not score it.",
+    "A conformance run's failing checks, up to 50 a page: failed checks first, then could-not-run skips, each with its `suiteKind` and `id` for get_conformance_check. Pass `nextCursor` as `cursor` for the next page; a run still running has only its first page. `pending` on a check means this profile reported it but did not score it.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     {
@@ -245,16 +272,75 @@ export const getConformanceReportOperation: PlatformOperation<
       projectId: result.project?.id,
     },
   ]),
-  inputSchema: conformanceRunScopedInput,
+  inputSchema: getConformanceReportInput,
   async execute(input, { client, signal, onScopeResolved }) {
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
     );
     const report = await client.getConformanceReport(
-      { projectId: project.id, runId: input.run },
+      {
+        projectId: project.id,
+        runId: input.run,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+      },
       { signal }
     );
     return { project: toSelectedProjectInfo(project), ...report };
+  },
+};
+
+const getConformanceCheckInput = conformanceRunScopedInput.extend({
+  check: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The check's id, as get_conformance_report lists it."),
+  suite: z
+    .enum(["protocol", "apps", "tasks", "oauth"])
+    .optional()
+    .describe(
+      "The check's suite. Needed only when the same id is in two suites of the run."
+    ),
+});
+
+export type GetConformanceCheckInput = z.infer<typeof getConformanceCheckInput>;
+
+export type GetConformanceCheckResult = {
+  project: SelectedProjectInfo;
+} & PlatformConformanceCheck;
+
+export const getConformanceCheckOperation: PlatformOperation<
+  GetConformanceCheckInput,
+  GetConformanceCheckResult
+> = {
+  name: "get_conformance_check",
+  title: "Get a conformance check",
+  description:
+    "One check of a persisted conformance run in full: its description, the failure, the duration, and the stored details and output, each capped at 16 KB with a `truncated` flag. Find check ids with get_conformance_report.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    {
+      type: "conformance_run",
+      id: result.runId,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: getConformanceCheckInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const check = await client.getConformanceCheck(
+      {
+        projectId: project.id,
+        runId: input.run,
+        checkId: input.check,
+        ...(input.suite ? { suite: input.suite } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), ...check };
   },
 };

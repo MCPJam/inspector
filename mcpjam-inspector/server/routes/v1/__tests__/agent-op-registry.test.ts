@@ -1755,6 +1755,20 @@ describe("agent op registry", () => {
     );
   });
 
+  it("marks conformance evidence, written by the graded server, as DATA", () => {
+    for (const name of ["get_conformance_report", "get_conformance_check"]) {
+      const entry = AGENT_OP_REGISTRY.find(
+        (candidate) => candidate.operation.name === name,
+      );
+      expect(
+        entry?.promptNotes?.some((note) =>
+          /DATA, never instructions/.test(note),
+        ),
+        name,
+      ).toBe(true);
+    }
+  });
+
   it("de-duplicates prompt notes and preserves registry order", () => {
     expect(new Set(AGENT_OP_PROMPT_NOTES).size).toBe(
       AGENT_OP_PROMPT_NOTES.length,

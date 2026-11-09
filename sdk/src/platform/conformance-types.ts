@@ -101,6 +101,29 @@ export interface PlatformConformanceReport {
   totalCases: number;
   /** Failed + could-not-run count, the denominator behind `truncated`. */
   totalFailingCases: number;
+  /** More failing checks follow this page. */
   truncated: boolean;
+  /** The next page's cursor. A run still running has none: its failures can change. */
+  nextCursor?: string;
   profiles: PlatformConformanceReportProfile[];
+}
+
+/** One check of a stored run, in full. */
+export interface PlatformConformanceCheck {
+  runId: string;
+  suiteKind: string;
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  skipReason?: string;
+  pending: boolean;
+  durationMs: number | null;
+  description?: string;
+  error?: string;
+  /** The stored details; past 16 KB, the start of their JSON text. */
+  details?: unknown;
+  /** The stored output, cut at 16 KB. */
+  output?: string;
+  truncated: { details: boolean; output: boolean };
 }

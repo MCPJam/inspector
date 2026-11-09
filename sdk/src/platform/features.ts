@@ -115,6 +115,7 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_conformance_run: "conformance",
   list_conformance_runs: "conformance",
   get_conformance_report: "conformance",
+  get_conformance_check: "conformance",
   // The unified sessions feed. `list_chat_sessions` reads chat sessions,
   // which are released.
   search_sessions: "unified-sessions",

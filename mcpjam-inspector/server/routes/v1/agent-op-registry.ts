@@ -66,6 +66,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   generateEvalCasesOperation,
   importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
@@ -1589,7 +1590,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   },
   { operation: getConformanceRunOperation, tier: "direct" },
   { operation: listConformanceRunsOperation, tier: "direct" },
-  { operation: getConformanceReportOperation, tier: "direct" },
+  // A check's `error`, `details` and `output` are text the graded server wrote.
+  {
+    operation: getConformanceReportOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: getConformanceCheckOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
   {
     operation: cancelReadinessRunOperation,
     tier: "direct",
