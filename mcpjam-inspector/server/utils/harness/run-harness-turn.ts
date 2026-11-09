@@ -1499,8 +1499,13 @@ export async function runHarnessTurn(
       //       pinned CLI version. An UNVERIFIED pair runs only in Playground
       //       chat (`sourceType: "direct"`), matching the pre-flight's purpose
       //       rule; evals, scenarios and swarms refuse it here too.
+      //       Skipped on an organization gateway too: the selection names the
+      //       gateway's model (`custom:<slug>/<name>`), which no evidence row
+      //       matches. Lease start judges the catalog model it maps to, at
+      //       the reported CLI version, as the pre-flight leaves it to.
       if (
         harnessAdapter.modelAccess !== "external-account" &&
+        org.upstreamProfile !== "org-gateway" &&
         !harnessAdapter.supportsModel(modelId, {
           allowUnknown:
             harnessModelPurposeForSourceType(sourceType) === "chat",
