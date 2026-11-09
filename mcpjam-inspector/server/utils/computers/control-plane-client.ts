@@ -54,7 +54,14 @@ export interface ComputerSandboxInfo {
   sandboxRowId?: string;
   providerComputerId: string | null;
   provider: string;
-  status: ComputerStatus;
+  status:
+    | ComputerStatus
+    | "live"
+    | "sleeping"
+    | "retiring"
+    | "reaping"
+    | "released"
+    | "leaked";
   projectId: string;
   ownerUserId: string;
   /** Hand-mirrored from the backend `ComputerView` (PR e2). */
@@ -1203,26 +1210,6 @@ export async function prepareSandboxConnection(args: {
     };
   return postJson<{ ok: true }>(
     "/computers/prepare-connection",
-    headers,
-    { providerComputerId: args.providerComputerId },
-    args.signal,
-  );
-}
-
-/** The credential a private box's ports require; wakes nothing. */
-export async function getSandboxTrafficToken(args: {
-  providerComputerId: string;
-  signal?: AbortSignal;
-}): Promise<ControlPlaneResult<{ trafficAccessToken?: string }>> {
-  const headers = authHeaders();
-  if (!headers)
-    return {
-      ok: false,
-      status: 0,
-      error: "Computers service authentication is unavailable",
-    };
-  return postJson<{ trafficAccessToken?: string }>(
-    "/computers/traffic-token",
     headers,
     { providerComputerId: args.providerComputerId },
     args.signal,

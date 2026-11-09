@@ -1,26 +1,27 @@
-/**
- * Resolve a box's port without assuming the E2B hosted domain. A private box
- * (created with public traffic off) answers only requests that carry its
- * traffic access token, so the token rides with every endpoint for it.
- */
+/** Guest listeners can read ingress headers; a sandbox-wide token must never reach them. */
+export function hasPrivateAppPorts(sandbox: { privateAppPorts?: boolean; trafficAccessToken?: string }): boolean {
+  return sandbox.privateAppPorts === true || Boolean(sandbox.trafficAccessToken);
+}
+
 export function resolveE2BPortEndpoint(
   sandbox: {
     sandboxId: string;
     getHost(port: number): string;
+    privateAppPorts?: boolean;
     trafficAccessToken?: string;
   },
   port: number,
   protocol?: string,
 ): { url: string; headers?: Record<string, string> } {
-  const access = sandbox.trafficAccessToken
-    ? { "e2b-traffic-access-token": sandbox.trafficAccessToken }
-    : undefined;
+  if (hasPrivateAppPorts(sandbox))
+    throw new Error(
+      "This harness cannot connect to ports on a private workspace. Use a terminal-based client.",
+    );
   const proxy = process.env.E2B_SANDBOX_URL?.trim();
   if (!proxy) {
     const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
     return {
       url: `${scheme}://${sandbox.getHost(port)}`,
-      ...(access ? { headers: access } : {}),
     };
   }
   let url: URL;
@@ -48,7 +49,6 @@ export function resolveE2BPortEndpoint(
     headers: {
       "E2b-Sandbox-Id": sandbox.sandboxId,
       "E2b-Sandbox-Port": String(port),
-      ...access,
     },
   };
 }

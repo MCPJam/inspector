@@ -102,7 +102,7 @@ describe("sharp packaging", () => {
 });
 
 describe("shouldPrepareHarnessPromptImages", () => {
-  it("prepares only for a declaring adapter with attachments, kill switch on, not a resume", () => {
+  it("prepares only for a declaring adapter with attachments, not a resume", () => {
     expect(
       shouldPrepareHarnessPromptImages({
         isApprovalResume: false,
@@ -129,14 +129,6 @@ describe("shouldPrepareHarnessPromptImages", () => {
         isApprovalResume: false,
         promptImageInput: true,
         attachmentCount: 0,
-      }),
-    ).toBe(false);
-    vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", "false");
-    expect(
-      shouldPrepareHarnessPromptImages({
-        isApprovalResume: false,
-        promptImageInput: true,
-        attachmentCount: 1,
       }),
     ).toBe(false);
   });
