@@ -147,13 +147,27 @@ describe("a paused turn's resume state in Convex", () => {
     expect(turn().commitState(plain)).toEqual(plain);
   });
 
+  it("keeps accepting continuations below the existing backend request limit", async () => {
+    const state = {
+      ...continuation,
+      pendingToolApprovals: [
+        {
+          ...continuation.pendingToolApprovals[0],
+          input: JSON.stringify({ command: "x".repeat(600 * 1024) }),
+        },
+      ],
+    };
+    expect(await commit(state)).toBe(true);
+    expect(await claimResumeState()).toEqual(state);
+  });
+
   it("refuses a completed continuation whose pending input exceeds the storage budget", async () => {
     const state = {
       ...continuation,
       pendingToolApprovals: [
         {
           ...continuation.pendingToolApprovals[0],
-          input: JSON.stringify({ command: "x".repeat(512 * 1024) }),
+          input: JSON.stringify({ command: "x".repeat(768 * 1024) }),
         },
       ],
     };
