@@ -28,7 +28,11 @@ const {
   authorizeServerMock,
   executePersistedConformanceRunMock,
   assertAllowedHostedTargetUrlMock,
+  drainState,
+  takeConformanceStartSlotMock,
 } = vi.hoisted(() => ({
+  drainState: { draining: false },
+  takeConformanceStartSlotMock: vi.fn(),
   validateGuestTokenMock: vi.fn(),
   validateApiKeyMock: vi.fn(),
   resolveUserByExternalIdMock: vi.fn(),
@@ -66,6 +70,25 @@ vi.mock("convex/browser", () => ({
 vi.mock("../../../services/conformance-run-executor.js", () => ({
   executePersistedConformanceRun: executePersistedConformanceRunMock,
 }));
+vi.mock("../../../services/lifecycle/drain.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../services/lifecycle/drain.js")>();
+  const real = actual.createDrainCoordinator();
+  return {
+    ...actual,
+    serverDrain: { ...real, isDraining: () => drainState.draining },
+  };
+});
+vi.mock(
+  "../../../middleware/conformance-run-rate-limit.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../middleware/conformance-run-rate-limit.js")
+    >()),
+    takeConformanceStartSlot: (...args: unknown[]) =>
+      takeConformanceStartSlotMock(...args),
+  }),
+);
 
 vi.mock("../../web/auth.js", async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
@@ -163,6 +186,8 @@ describe("v1 persisted conformance runs", () => {
     process.env.CONVEX_URL = "https://convex.example.com";
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    drainState.draining = false;
+    takeConformanceStartSlotMock.mockReturnValue(null);
     authorizeServerMock.mockResolvedValue(HTTP_SERVER);
     assertAllowedHostedTargetUrlMock.mockResolvedValue(undefined);
     executePersistedConformanceRunMock.mockImplementation(async (args: any) => {
@@ -593,6 +618,106 @@ describe("v1 persisted conformance runs", () => {
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(502);
+    });
+  });
+
+  describe("start options and limits", () => {
+    const START =
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs";
+    const savedRow = (defaultChecks: Record<string, unknown>) =>
+      convexQueryMock.mockImplementation(async (fn: string) =>
+        fn === "conformanceSettings:getServerSettings"
+          ? { serverId: "s1", defaultChecks, runTimeoutSeconds: 60, updatedAt: 1 }
+          : null,
+      );
+
+    it("refuses an unknown protocol version before a run exists, naming the valid ones", async () => {
+      const res = await request("POST", START, {
+        body: { protocolVersion: "2024-01-01" },
+      });
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toContain(
+        "2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28",
+      );
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("runs the server's saved settings by default, without the suites they leave out", async () => {
+      savedRow({ apps: [] });
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        requestedSuites: ["protocol", "tasks"],
+        settingsSource: "saved",
+      });
+      expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject({
+        suites: ["protocol", "tasks"],
+        settings: { source: "saved" },
+        runTimeoutSeconds: 60,
+        actorLabel: "MCPJam API",
+      });
+    });
+
+    it("skips saved settings on request", async () => {
+      savedRow({ apps: [] });
+      const res = await request("POST", START, { body: { settings: "none" } });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        requestedSuites: ["protocol", "apps", "tasks"],
+        settingsSource: "none",
+      });
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "conformanceSettings:getServerSettings",
+        expect.anything(),
+      );
+    });
+
+    it("refuses a start whose saved settings leave out every suite asked for", async () => {
+      savedRow({ protocol: [] });
+      const res = await request("POST", START, {
+        body: { suites: ["protocol"] },
+      });
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toContain('settings set to \\"none\\"');
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("takes the idempotency key from the header before the body", async () => {
+      const res = await makeApp().request(START, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "Idempotency-Key": "header-key",
+        },
+        body: JSON.stringify({ idempotencyKey: "body-key" }),
+      });
+      expect(res.status).toBe(202);
+      expect(
+        executePersistedConformanceRunMock.mock.calls[0]![0].externalRunId,
+      ).toBe("api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s1:header-key");
+    });
+
+    it("refuses a caller over the start limit with the wait before retrying", async () => {
+      takeConformanceStartSlotMock.mockReturnValue({ retryAfterSeconds: 42 });
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("42");
+      expect(JSON.stringify(await res.json())).toContain("Try again in 42 seconds");
+      expect(takeConformanceStartSlotMock).toHaveBeenCalledWith(expect.any(String));
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses starts while the server drains, and still answers reads", async () => {
+      drainState.draining = true;
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        code: "RATE_LIMITED",
+        details: { reason: "SERVER_DRAINING" },
+      });
+      expect(takeConformanceStartSlotMock).not.toHaveBeenCalled();
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
     });
   });
 });

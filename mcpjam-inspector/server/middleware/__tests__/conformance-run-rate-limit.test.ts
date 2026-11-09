@@ -145,3 +145,32 @@ describe("conformanceRunRateLimitMiddleware", () => {
     expect((await hit(app, ip)).status).toBe(200);
   });
 });
+
+describe("takeConformanceStartSlot", () => {
+  async function load(hosted: boolean) {
+    process.env[HOSTED_ENV] = hosted ? "true" : "false";
+    vi.resetModules();
+    return await import("../conformance-run-rate-limit");
+  }
+
+  it("gives each user 30 starts per 10 minutes and says when to retry", async () => {
+    const { takeConformanceStartSlot } = await load(true);
+    const now = 1_000_000;
+    for (let i = 0; i < 30; i++) {
+      expect(takeConformanceStartSlot("user:a", now)).toBeNull();
+    }
+    expect(takeConformanceStartSlot("user:a", now + 60_000)).toEqual({
+      retryAfterSeconds: 540,
+    });
+    // Another user's budget is untouched, and the window resets.
+    expect(takeConformanceStartSlot("user:b", now)).toBeNull();
+    expect(takeConformanceStartSlot("user:a", now + 10 * 60_000)).toBeNull();
+  });
+
+  it("does not count starts outside hosted mode", async () => {
+    const { takeConformanceStartSlot } = await load(false);
+    for (let i = 0; i < 40; i++) {
+      expect(takeConformanceStartSlot("user:a")).toBeNull();
+    }
+  });
+});
