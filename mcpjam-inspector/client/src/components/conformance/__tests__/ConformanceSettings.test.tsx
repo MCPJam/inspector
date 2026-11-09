@@ -240,7 +240,10 @@ describe("Settings inputs", () => {
       screen.queryByRole("combobox", { name: "Tool to check output" });
     expect(taskField()).toBeNull();
     expect(outputField()).toBeNull();
-    // The badge stays with the suite off.
+    // The suite default and the badge stay with the suite off.
+    expect(
+      screen.getByRole("combobox", { name: "Tool that creates a task" }),
+    ).toHaveTextContent("echo");
     const taskRow = screen.getByRole("button", {
       name: /^Result Type Discipline/,
     });

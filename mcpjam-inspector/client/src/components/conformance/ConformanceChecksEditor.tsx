@@ -14,7 +14,6 @@ import {
   probeKeyFor,
   probesApply,
   protocolProbesFor,
-  tasksProbeRuns,
   taskProbePartIsSelected,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
@@ -46,9 +45,8 @@ export function ConformanceChecksEditor({
   const protocolProbes = Boolean(
     server && isHttpServer(server) && (defaultsMode || probesApply(versionPin)),
   );
-  const tasksProbe = tasksProbeRuns(selection.tasks);
-  // A Tasks row shows its tool field when opened even with the suite off, so
-  // the tools load either way.
+  // The Tasks suite default, and a Tasks row's field once opened, show even
+  // with the suite off, so the tools load either way.
   const probeServer = server ?? null;
   const probeTools = useProbeTools(probeServer);
   const invalidProbeArguments = useMemo(
@@ -150,12 +148,11 @@ export function ConformanceChecksEditor({
       showAdvice
       defaultOpen={defaultsMode}
       renderSuiteExtra={(suite) =>
-        suite === "tasks" && probeServer && tasksProbe ? (
+        suite === "tasks" && probeServer ? (
           <TasksSuiteDefaults
             tools={probeTools}
             probes={probes}
             onChange={onProbesChange}
-            selected={selection.tasks}
             onValidChange={(valid) =>
               setProbeValid((prev) => ({ ...prev, tasksProbe: valid }))
             }
