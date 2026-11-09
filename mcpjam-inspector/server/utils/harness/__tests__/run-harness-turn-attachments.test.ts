@@ -444,37 +444,6 @@ describe("runHarnessTurn: composer attachments", () => {
     expect(state.adapterRejected).toBeNull();
   });
 
-  it("kill switch keeps a declaring adapter on today's text-only prompt", async () => {
-    state.promptImageInput = true;
-    vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", "false");
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-      "base64",
-    );
-    await runHarnessTurn(
-      baseOptions({
-        harnessSandboxBinding: BINDING,
-        harness: "codex",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "what colour is this" },
-              {
-                type: "image",
-                mediaType: "image/png",
-                image: `data:image/png;base64,${png.toString("base64")}`,
-              },
-            ],
-          } as unknown as ModelMessage,
-        ],
-      }) as never,
-      "none",
-    );
-    expect(streamedPrompt().every((part) => part.type === "text")).toBe(true);
-    expect(streamedPrompt().at(-1)!.text).not.toContain("(attached)");
-  });
-
   it("leaves a text-only turn exactly as it was", async () => {
     const messages = [
       {

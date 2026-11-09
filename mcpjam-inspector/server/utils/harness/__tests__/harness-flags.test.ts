@@ -1,8 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  harnessNativeImagesEnabled,
-  hostedWarmAgentEnabled,
-} from "../harness-flags.js";
+import { hostedWarmAgentEnabled } from "../harness-flags.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -34,19 +31,3 @@ it("treats an empty restriction as unrestricted", () => {
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", " , ");
   expect(hostedWarmAgentEnabled("organization-a")).toBe(true);
 });
-
-it.each([undefined, "", "true", "1"])(
-  "enables native harness images by default (%s)",
-  (value) => {
-    vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", value);
-    expect(harnessNativeImagesEnabled()).toBe(true);
-  },
-);
-
-it.each(["false", "0", " FALSE "])(
-  "disables native harness images on %s",
-  (value) => {
-    vi.stubEnv("MCPJAM_HARNESS_NATIVE_IMAGES", value);
-    expect(harnessNativeImagesEnabled()).toBe(false);
-  },
-);
