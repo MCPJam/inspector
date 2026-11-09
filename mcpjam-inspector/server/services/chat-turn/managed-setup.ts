@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -597,6 +598,7 @@ export async function resolveManagedTurnSetup(args: {
   }
   if (resolvedExecution.harness) {
     const availability = checkHarnessRuntimeAvailable({
+      mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),

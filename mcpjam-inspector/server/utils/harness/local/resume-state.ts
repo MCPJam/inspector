@@ -18,7 +18,7 @@ export function diskResumeState<T>(state: T): T {
   // `thread/resume` reads the rollout, rather than retrying a dead socket. An
   // approval continuation (`continue-turn`) for either harness is never stripped:
   // the paused call lives in the bridge and cannot be rebuilt by a respawn.
-  if ((record.harnessId !== "claude-code" && record.harnessId !== "codex") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
+  if ((record.harnessId !== "claude-code" && record.harnessId !== "codex" && record.harnessId !== "cursor") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
   const { bridge: _bridge, ...data } = record.data as Record<string, unknown>;
   return { ...record, data } as T;
 }

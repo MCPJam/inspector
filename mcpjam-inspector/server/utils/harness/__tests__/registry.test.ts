@@ -51,7 +51,9 @@ import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../codex-appserver/shared/sandb
 describe("harness registry", () => {
   it("authenticates the registered Cursor adapter through its restricted sandbox", async () => {
     const spawn = vi.fn(async () => ({} as never));
+    const real = await vi.importActual<typeof import("@ai-sdk/harness-cursor")>("@ai-sdk/harness-cursor");
     vi.mocked(createCursor).mockReturnValueOnce({
+      getBootstrap: real.createCursor().getBootstrap,
       specificationVersion: "harness-v1", harnessId: "cursor", builtinTools: {},
       doStart: async (options) => {
         const sandbox = options.sandboxSession;
@@ -1298,7 +1300,8 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // run with some MCP calls unapproved — the conservative direction, and the
     // one this flag exists to protect.
     expect(cursor.supportsMcpToolApproval).toBe(false);
-    expect(cursor.supportsHostExecutedToolApproval).toBe(false);
+    expect(cursor.supportsHostExecutedToolApproval).toBe(true);
+    expect(cursor.hostToolApprovalAtRuntime).toBe(true);
   });
 
   it("constructs a harness from the MCP json it is handed", () => {

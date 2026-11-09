@@ -14,19 +14,19 @@
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "4ffece006f2eed00",
+      "identity": "16c3531d067bb238",
       "runtimeVersion": "0.163.0"
     },
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "9ce68108cee6ca1a",
+      "identity": "d102bf6a093a409d",
       "runtimeVersion": "1.0.92"
     },
     {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
-      "identity": "ae5c15ad65d2829c",
+      "identity": "c0a988d61fbbe6aa",
       "runtimeVersion": "2026.11.05-86047df"
     },
     {

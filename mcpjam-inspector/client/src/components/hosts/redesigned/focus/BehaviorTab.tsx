@@ -316,9 +316,9 @@ export function BehaviorTab({
   // The MODEL is gated too, for one harness: Cursor authenticates with the
   // customer's own Cursor account and that account picks the model, so a
   // selection would persist onto the host and reach nothing.
-  const modelState = harnessControlState(draft.harness, "modelId");
-  const tempState = harnessControlState(draft.harness, "temperature");
-  const effortState = harnessControlState(draft.harness, "reasoningEffort");
+  const modelState = harnessControlState(draft.agentLoop ?? draft.harness, "modelId");
+  const tempState = harnessControlState(draft.agentLoop ?? draft.harness, "temperature");
+  const effortState = harnessControlState(draft.agentLoop ?? draft.harness, "reasoningEffort");
   // The row shows only when there is something to pick or a saved value to
   // see or clear (a harness that refuses efforts still shows, and lets the
   // user clear, one that was saved before).
@@ -329,7 +329,7 @@ export function BehaviorTab({
       reasoningEffortOptions(
         resolvedModelRow,
         reasoningEffortRouteForRow(resolvedModelRow),
-        draft.harness,
+        draft.agentLoop ?? draft.harness,
       ).length > 0);
   const [effortNotice, setEffortNotice] = useState<string | null>(null);
   /*
@@ -348,10 +348,10 @@ export function BehaviorTab({
    * takes a control away that the static map allowed.
    */
   const { capabilities: harnessCapabilities } = useHarnessCapabilities(
-    draft.harness ?? null,
+    draft.agentLoop ?? draft.harness ?? null,
   );
   const staticApprovalState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "requireToolApproval",
   );
   const approvalState =
@@ -360,11 +360,11 @@ export function BehaviorTab({
       ? ENFORCED_CONTROL
       : staticApprovalState;
   const visibilityState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "respectToolVisibility",
   );
   const progressiveState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "progressiveToolDiscovery",
   );
   const progressiveTriValue = progressiveState.enforced

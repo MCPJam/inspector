@@ -107,6 +107,10 @@ describe("toAcpMcpServers", () => {
 });
 
 describe("attributeCursorToolCall", () => {
+  it("attributes host-executed tool names using the shared parser", () => {
+    expect(attributeCursorToolCall({ rawToolName: "mcp__fixture__echo", input: { providerIdentifier: "forged", toolName: "wrong", args: {} }, keyToServerId: { fixture: "server" } })).toEqual({ serverId: "server", toolName: "echo" });
+  });
+
   const keyToServerId = { weather: "srv-weather", "user-notes": "srv-notes" };
 
   it("reads identity out of the INPUT, not the opaque stream name", () => {

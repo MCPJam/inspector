@@ -1,3 +1,5 @@
+import { createHostToolCancellation } from "./host-tool-cancellation";
+import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
 import { cursorRuntimeLogin } from "./runtime-login.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import { isCallToolResult } from "@modelcontextprotocol/client";
@@ -809,6 +811,7 @@ export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  const hostToolCancellation = createHostToolCancellation();
   const {
     messages,
     modelId: rawModelId,
@@ -1543,17 +1546,7 @@ export async function runHarnessTurn(
       //       own native tools (Codex) is unsound under approval whether or not
       //       any MCP server is attached, and its host-executed built-ins
       //       (web_search) would otherwise run unapproved here.
-      const approvalRefusal = harnessToolApprovalRefusalReason({
-        adapter: harnessAdapter,
-        requireToolApproval,
-        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
-        // Every caller with nobody to answer (evals, swarms, synthetic
-        // sessions, API turns) says so this way.
-        unattended: approvalMode === "auto-deny",
-      });
-      if (approvalRefusal) {
-        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
-      }
+
 
       //   (c) reasoning effort (refuse, never drop). The turn's own effort, else
       //       the one on the selection it was sent with, must be one this
@@ -1697,6 +1690,18 @@ export async function runHarnessTurn(
         }),
       });
       turnMcpPlan = mcpPlan;
+      const approvalRefusal = harnessToolApprovalRefusalReason({
+        adapter: harnessAdapter,
+        mcpClient: mcpPlan.delivery === "host-tools" ? "mcpjam" : "harness",
+        requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Every caller with nobody to answer (evals, swarms, synthetic
+        // sessions, API turns) says so this way.
+        unattended: approvalMode === "auto-deny",
+      });
+      if (approvalRefusal) {
+        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
+      }
       const enhancedApps = mcpPlan.forwardingKind === "profiled";
       const useNativeForwarding = mcpPlan.forwardingKind !== undefined;
       assertHarnessMcpDiscoveryGate({
@@ -1741,7 +1746,11 @@ export async function runHarnessTurn(
       // box is woken, so an unreachable server fails the turn cheaply.
       const retainedExecutor = retainedResourceExecutor({
         manager: mcpClientManager, existing: hostToolExecutor,
-        enabled: mcpPlan.surface,
+        enabled: retainedAppResourcesEligible({
+          plane: harnessMcpProxy?.plane, delivery: mcpPlan.delivery,
+          chatSessionId, hostRendersApps: streamSink === "ui" && options.harnessHostCapabilities !== undefined,
+          scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
+        }),
         laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
       });
       const hostExecutedMcp =
@@ -2867,11 +2876,11 @@ export async function runHarnessTurn(
       const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
         ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, getAuthorization: currentAuthorization, getCleanupAuthorization: cleanupAuthorization, signal: effectiveAbortSignal, writer })
         : {};
-      const hostExecutedTools = {
+      const hostExecutedTools = hostToolCancellation.wrap({
         ...appTools,
         ...hostExecutedMcp.tools,
         ...offeredBuiltInTools,
-      } as Record<string, unknown>;
+      });
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.
       //
@@ -2893,7 +2902,7 @@ export async function runHarnessTurn(
       // refuses that combination outright at both gate sites; this is the
       // belt to its braces.
       const gatedHostExecutedToolNames =
-        harnessAdapter.supportsHostExecutedToolApproval
+        harnessAdapter.supportsHostExecutedToolApproval && !harnessAdapter.hostToolApprovalAtRuntime
           ? Object.entries(hostExecutedTools)
               .filter(([, definition]) => {
                 const declared = (
@@ -4259,6 +4268,7 @@ export async function runHarnessTurn(
             continue;
           } else if (type === "raw") {
             const rawValue = (part as { rawValue?: unknown }).rawValue;
+            if (harnessAdapter.hostToolApprovalAtRuntime && hostToolCancellation.cancel(rawValue)) continue;
             // The Claude Code bridge's background drain: progress becomes a
             // transient chunk; notices are logged too, because the bridge's
             // own warnings only ever reach its stderr.

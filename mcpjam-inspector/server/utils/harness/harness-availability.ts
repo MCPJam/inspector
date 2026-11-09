@@ -1,3 +1,5 @@
+import { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
+export { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
 /**
  * Cheap, synchronous pre-flight for a harness-typed host (Claude Code | Codex).
  *
@@ -424,43 +426,6 @@ export function harnessReasoningEffortRefusalReason(args: {
  * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
  * the same posture a runtime that can't pause already gets.
  */
-export function harnessToolApprovalRefusalReason(args: {
-  adapter: HarnessRuntimeAdapter;
-  requireToolApproval: boolean;
-  /** Whether the host has any selected MCP servers. Selects whether the
-   *  MCP-surface arm applies; the native-surface arm applies regardless. */
-  hasSelectedMcpServers: boolean;
-  /** Nobody can answer an approval on this run (evals, swarms). */
-  unattended?: boolean;
-}): string | undefined {
-  if (!args.requireToolApproval) return undefined;
-  const name = args.adapter.displayName;
-  if (args.unattended) {
-    return (
-      `The ${name} client cannot wait for tool approval in evals or swarms. ` +
-      "Turn off tool approvals for this client to continue."
-    );
-  }
-  // The runtime runs its own native tools in-sandbox. If it can't pause on
-  // those, approval is unsound for the whole turn — servers or no servers.
-  if (!args.adapter.supportsNativeToolApproval) {
-    return (
-      `The ${name} client does not support interactive tool approval. ` +
-      "Turn off tool approvals for this client or choose another client."
-    );
-  }
-  const mcpToolApproval =
-    args.adapter.mcpDelivery === "harness"
-      ? args.adapter.supportsMcpToolApproval
-      : args.adapter.supportsHostExecutedToolApproval;
-  if (args.hasSelectedMcpServers && !mcpToolApproval) {
-    return (
-      `The ${name} client cannot wait for approval of MCP server tools. ` +
-      "Turn off tool approvals for this client or choose another client."
-    );
-  }
-  return undefined;
-}
 
 /**
  * Why a harness was refused, as a value rather than a sentence.
@@ -514,6 +479,7 @@ export type HarnessAvailability =
   | { ok: false; kind: HarnessUnavailableKind; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
+  mcpClient?: "mcpjam" | "harness";
   /** The harness this host runs — selects the capability set. */
   harnessId: HarnessId;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
@@ -673,6 +639,7 @@ export function checkHarnessRuntimeAvailable(args: {
   // can never disagree about which combinations are sound.
   const approvalRefusal = harnessToolApprovalRefusalReason({
     adapter,
+    mcpClient: args.mcpClient,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     unattended: args.unattended === true,
