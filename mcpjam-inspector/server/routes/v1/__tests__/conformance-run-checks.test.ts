@@ -276,4 +276,15 @@ describe("v1 conformance checks", () => {
     expect(second.checks.map((check) => check.id)).toEqual(["c-50"]);
     expect(second.nextCursor).toBeUndefined();
   });
+
+  it("treats an empty report cursor as no cursor", async () => {
+    convexQueryMock.mockResolvedValue(runRow("completed"));
+    serveBlobs({ protocol: storedReport(["c-0"]) });
+    const res = await request(
+      "GET",
+      `/api/v1/projects/${PROJECT}/conformance-runs/run_1/report?cursor=`,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ checks: [{ id: "c-0" }] });
+  });
 });

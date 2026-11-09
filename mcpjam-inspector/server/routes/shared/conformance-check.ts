@@ -95,10 +95,16 @@ export interface ConformanceCheckDetail {
   truncated: { details: boolean; output: boolean };
 }
 
+/** Cut at the cap in UTF-8 bytes, never inside a character. */
 function capText(text: string): { text: string; truncated: boolean } {
-  return text.length > CONFORMANCE_CHECK_FIELD_CAP
-    ? { text: text.slice(0, CONFORMANCE_CHECK_FIELD_CAP), truncated: true }
-    : { text, truncated: false };
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length <= CONFORMANCE_CHECK_FIELD_CAP) {
+    return { text, truncated: false };
+  }
+  let end = CONFORMANCE_CHECK_FIELD_CAP;
+  // A continuation byte (10xxxxxx) here means the cut splits a character.
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+  return { text: bytes.subarray(0, end).toString("utf8"), truncated: true };
 }
 
 function casesOf(report: unknown): Record<string, unknown>[] {

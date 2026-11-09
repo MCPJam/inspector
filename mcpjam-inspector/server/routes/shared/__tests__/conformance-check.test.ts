@@ -138,6 +138,39 @@ describe("findConformanceCheck", () => {
     expect(check.output).toHaveLength(CONFORMANCE_CHECK_FIELD_CAP);
   });
 
+  it("caps multibyte output in UTF-8 bytes, on a character boundary", () => {
+    const emoji = {
+      suiteKind: "protocol",
+      report: {
+        groups: [
+          {
+            id: "core",
+            cases: [
+              {
+                id: "emoji",
+                title: "Emoji",
+                status: "failed",
+                // The leading "a" puts the cap in the middle of an emoji.
+                output: "a" + "😀".repeat(CONFORMANCE_CHECK_FIELD_CAP),
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const check = findConformanceCheck("run_1", [emoji], "emoji", undefined);
+    const output = check.output!;
+    expect(check.truncated.output).toBe(true);
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(
+      CONFORMANCE_CHECK_FIELD_CAP,
+    );
+    expect(Buffer.byteLength(output, "utf8")).toBeGreaterThan(
+      CONFORMANCE_CHECK_FIELD_CAP - 4,
+    );
+    expect(output.endsWith("😀")).toBe(true);
+    expect(output).not.toContain("\uFFFD");
+  });
+
   it("keeps small details as stored", () => {
     const check = findConformanceCheck("run_1", [detailed], "ping", undefined);
     expect(check).toMatchObject({ status: "passed", pending: false });

@@ -3421,7 +3421,12 @@ export class PlatformApiClient {
 
   /** One check of a stored run in full; `suite` only when an id is in two. */
   getConformanceCheck(
-    params: { projectId: string; runId: string; checkId: string; suite?: string },
+    params: {
+      projectId: string;
+      runId: string;
+      checkId: string;
+      suite?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformConformanceCheck> {
     return this.request(

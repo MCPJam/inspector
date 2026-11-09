@@ -1193,14 +1193,16 @@ function errorStructuredContent(
     // A feature-gate refusal keeps its own code and the feature it names, so
     // an agent can tell FEATURE_UNAVAILABLE for one beta from any other 403.
     // Only these two keys: the rest of `details` is the server's envelope.
-    const feature = error.details?.feature;
+    const feature =
+      typeof error.details?.feature === "string"
+        ? error.details.feature
+        : undefined;
+    const detailCode = error.details?.code;
     const details =
-      typeof feature === "string"
+      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE"
         ? {
-            ...(typeof error.details?.code === "string"
-              ? { code: error.details.code }
-              : {}),
-            feature,
+            ...(typeof detailCode === "string" ? { code: detailCode } : {}),
+            ...(feature !== undefined ? { feature } : {}),
           }
         : {};
     return {

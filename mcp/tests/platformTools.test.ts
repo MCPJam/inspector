@@ -1021,6 +1021,37 @@ describe("runPlatformOperation", () => {
     });
   });
 
+  it("keeps a feature-gate code even when the refusal names no feature", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "This feature is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "This feature is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE" },
+    });
+  });
+
   it("quotes the failing request's id in both channels", async () => {
     vi.stubGlobal(
       "fetch",
