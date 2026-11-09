@@ -54,7 +54,14 @@ export interface ComputerSandboxInfo {
   sandboxRowId?: string;
   providerComputerId: string | null;
   provider: string;
-  status: ComputerStatus;
+  status:
+    | ComputerStatus
+    | "live"
+    | "sleeping"
+    | "retiring"
+    | "reaping"
+    | "released"
+    | "leaked";
   projectId: string;
   ownerUserId: string;
   /** Hand-mirrored from the backend `ComputerView` (PR e2). */
