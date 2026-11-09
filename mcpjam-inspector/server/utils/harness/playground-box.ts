@@ -39,7 +39,7 @@ import {
 } from "./harness-box.js";
 import {
   ExternalAccountCredentialRefusal,
-  resolveExternalAccountCredentialPlan,
+  resolveOrgKeyCredentialPlan,
 } from "./external-account-credentials.js";
 import { convexListProjectSecretBindings } from "../computers/convex-secrets-client.js";
 import { createConvexClient } from "../../routes/v1/convex-client.js";
@@ -192,27 +192,21 @@ export async function resolvePlaygroundCredentialEnvironment(args: {
 /**
  * The credential check a `credential` turn would fail inside `runHarnessTurn`,
  * run BEFORE the box is booted — the same function, the same inputs — so a
- * refused turn provisions nothing. The sentence on refusal, or null when the
- * credential is satisfiable (or the harness needs none).
- *
- * `boxKind: "sandbox"` because that is where the turn is about to run: only a
- * disposable box carries a brokered key.
+ * turn with no org key provisions nothing. The sentence on refusal, or null
+ * when the key is ready (or the harness needs none).
  */
 export async function playgroundCredentialRefusal(args: {
   harnessId: string;
-  secretEnv: Readonly<Record<string, string>> | undefined;
   bearer?: string;
   projectId?: string;
-  environmentId?: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   try {
-    await resolveExternalAccountCredentialPlan({
+    await resolveOrgKeyCredentialPlan({
       harness: getHarnessAdapter(args.harnessId),
-      secretEnv: args.secretEnv,
       ...(args.bearer ? { bearer: args.bearer } : {}),
       ...(args.projectId ? { projectId: args.projectId } : {}),
-      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
-      boxKind: "sandbox",
+      ...(args.signal ? { signal: args.signal } : {}),
     });
     return null;
   } catch (error) {

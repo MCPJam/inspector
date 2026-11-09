@@ -217,10 +217,12 @@ import {
   externalAccountPlanWallError,
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
+import { resolveOrgKeyCredentialPlan } from "./external-account-credentials.js";
+import { removeRuntimeCredentials } from "./runtime-credential-files.js";
 import {
-  resolveExternalAccountCredentialPlan,
-  type ExternalAccountCredentialPlan,
-} from "./external-account-credentials.js";
+  orgKeyHarnessSurfaceRefusal,
+  orgKeyRefusedSurfaceFor,
+} from "./org-key-surfaces.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
@@ -970,9 +972,27 @@ export async function runHarnessTurn(
         }): PromiseLike<unknown>;
         run(args: {
           command: string;
+          abortSignal?: AbortSignal;
         }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
       }
     | undefined;
+  let sandboxSessionWorkDir: string | undefined;
+  // Turn end, whatever the outcome: the vendor tokens the CLI exchanged for its
+  // key leave the box (`removeRuntimeCredentials`). Called before the session
+  // is torn down, and from the engine's outer finally for a turn that never
+  // established one. At most once per turn.
+  let runtimeCredentialsRemoved = false;
+  const removeTurnRuntimeCredentials = async () => {
+    if (runtimeCredentialsRemoved || !sandboxFileSession) return;
+    if (!sandboxSessionWorkDir) return;
+    runtimeCredentialsRemoved = true;
+    await removeRuntimeCredentials({
+      adapter: harnessAdapter,
+      session: sandboxFileSession,
+      sessionWorkDir: sandboxSessionWorkDir,
+      signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+    });
+  };
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
   // continuation is committed with `awaitingApproval` and the next request
@@ -1889,40 +1909,16 @@ export async function runHarnessTurn(
         ? toSecretEnv(runtimeSecrets)
         : undefined;
 
-      // EXTERNAL-ACCOUNT CREDENTIAL. A harness that authenticates on the
-      // customer's own provider account takes its credential from the project's
-      // secrets — there is no broker lease to mint, so this is the only place
-      // the value can come from.
+      // EXTERNAL-ACCOUNT CREDENTIAL. A harness that runs on a vendor account
+      // (Cursor) runs on the ORGANIZATION's key, which never enters this
+      // process or the box: the backend's egress injects it on the vendor's
+      // hosts and the adapter gets a placeholder. Resolved HERE, before the
+      // sandbox provider is built and before any box is reserved, so a turn
+      // with no key stops before anything starts. A project secret of the same
+      // name is kept out of the box's session env bag either way.
       //
-      // TWO DELIVERIES, and the second is what makes hosted evals and swarms
-      // possible at all:
-      //
-      //   MATERIALIZED — the plaintext is in `secretEnv` above and goes to the
-      //     adapter directly. Unchanged.
-      //   BROKERED — the plaintext never enters this process or the box. The
-      //     backend composes the secret into the box's E2B egress transform;
-      //     the adapter gets a PLACEHOLDER so the CLI has something to send,
-      //     and the proxy overwrites the header outside the VM.
-      //
-      // Eval and swarm runs REFUSE an environment that selects materialized
-      // secrets (`evalSandboxes.ts`, `journeyRuns.ts`) because only the chat
-      // path injects them — so before brokered delivery existed here, a Cursor
-      // host could not run on those surfaces in either configuration.
-      //
-      // Resolved HERE, before the sandbox provider is built, for two reasons:
-      // an unsatisfiable credential must fail the turn before anything is
-      // provisioned, and a materialized credential has to be REMOVED from the
-      // box's session env bag that the provider is about to be constructed
-      // with.
-      //
-      // What that removal does and does not buy on the MATERIALIZED arm: the
-      // key no longer rides on every `run`/`spawn` in the box, so an unrelated
-      // command the agent shells out to cannot read it out of its own
-      // environment. The runtime process itself still receives it — it has to,
-      // that is how the CLI authenticates. The BROKERED arm has no such
-      // residue: the box never holds the value at any point.
       // A NON-MEMBER PARTICIPANT never runs an external-account harness. Its
-      // credential is the project's own vendor key; brokered delivery keeps the
+      // credential is the organization's vendor key; egress keeps the
       // raw value out of the box, but the box's agent still holds a shell and the
       // egress proxy injects the key on the vendor's host, so a participant can
       // have the CLI exchange it for a reusable vendor token (Cursor:
@@ -1939,40 +1935,35 @@ export async function runHarnessTurn(
             "Ask the study owner to choose a different agent.",
         );
       }
+      // User Testing and MCP Events never run it, whoever reached the turn;
+      // their callers refuse first (`managed-setup.ts`, `resolveTurnRuntime`).
+      const refusedSurface =
+        harnessAdapter.modelAccess === "external-account"
+          ? orgKeyRefusedSurfaceFor(sourceType)
+          : undefined;
+      if (refusedSurface) {
+        throw new Error(
+          orgKeyHarnessSurfaceRefusal(harnessAdapter.id, refusedSurface),
+        );
+      }
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv
           : undefined;
-      // The reads and the decision live in `resolveExternalAccountCredentialPlan`
-      // so the Playground routes can run the SAME check before they boot a box
-      // for the turn (a refused credential must provision nothing). See it for
-      // why brokered availability depends on the box kind and the environment,
-      // and why it THROWS rather than starting the CLI with no credential.
-      const externalAccountPlan: ExternalAccountCredentialPlan | undefined =
-        await resolveExternalAccountCredentialPlan({
+      // The same check the Playground routes run before they boot a box (a
+      // refused credential must provision nothing); it THROWS rather than
+      // starting the CLI with no usable key.
+      const externalAccountAuth = (
+        await resolveOrgKeyCredentialPlan({
           harness: harnessAdapter,
-          secretEnv,
           bearer: await currentAuthorization(),
           projectId,
-          ...(environmentId ? { environmentId } : {}),
-          ...(environmentUnresolvedReason
-            ? { environmentUnresolvedReason }
-            : {}),
-          boxKind: harnessSandboxBinding ? "sandbox" : "computer",
-          // A box answers for itself: the member-only readers are the
-          // fallback for a persistent computer (and an older backend).
-          ...(harnessSandboxBinding
-            ? { sandboxRowId: harnessSandboxBinding.sandboxRowId }
-            : {}),
           ...(abortSignal ? { signal: abortSignal } : {}),
-        });
-      const externalAccountAuth = externalAccountPlan?.auth;
+        })
+      )?.auth;
       // What the BOX's session env carries: everything the project materialized
-      // MINUS the credentials handed to the adapter directly (see above). An
-      // empty result is treated exactly like "no secrets" by the provider
-      // construction below. Filtering the full REQUIRED list, not just the
-      // materialized arm: on the brokered arm the name is absent from
-      // `secretEnv` anyway, so this is a no-op there and cannot drift.
+      // MINUS the credential names the adapter authenticates with. An empty
+      // result is treated exactly like "no secrets" below.
       const sessionSecretEnv = externalAccountCredentialNames
         ? Object.fromEntries(
             Object.entries(secretEnv ?? {}).filter(
@@ -2968,6 +2959,7 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
+          sandboxSessionWorkDir = sessionWorkDir;
           // NATIVE delivery only: write the host's MCP servers into the session
           // before the runtime starts, via the adapter's own strategy (Claude
           // runtimes can require config files). A host-executed adapter has nothing to
@@ -3435,32 +3427,6 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
-
-      // DELIVERY STAMP for the external-account credential — HERE, because this
-      // is the first point at which the runtime has actually taken it: the
-      // adapter starts the CLI and completes its handshake inside
-      // `createSession`, so a session that resolved is a process that accepted
-      // the credential. Earlier points looked plausible and were not: resolving
-      // `auth` only puts the value in a local object, and `onSandboxSession`
-      // fires before the process exists at all — both would report a delivery
-      // that setup could still have thrown before making.
-      //
-      // It has to be stamped explicitly at all because this path took the
-      // credential OUT of the box's session env bag, so the provider's own
-      // `onSessionEnvUsed` can never fire for it: for a project whose only
-      // secret is this one the bag is empty and nothing would ever stamp,
-      // making a live credential read as dormant to whoever is deciding whether
-      // it is safe to delete.
-      // BROKERED names are excluded on purpose: the backend delivered them
-      // into the box's egress transform, this process never held the value,
-      // and `markSecretsDelivered` re-resolves the MATERIALIZED grant — so
-      // stamping here would credit a delivery neither side made.
-      if (
-        externalAccountPlan &&
-        externalAccountPlan.materializedNames.length > 0
-      ) {
-        onSecretEnvDelivered?.();
-      }
 
       // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
       // license / …) for skills that carry it. The adapter's `skills` param
@@ -4628,6 +4594,7 @@ export async function runHarnessTurn(
       } finally {
         stopHeartbeat?.();
         stopDrainKeepalive();
+        await removeTurnRuntimeCredentials();
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
           // while the session is still LIVE (before detach/destroy below). Only on
@@ -4876,6 +4843,7 @@ export async function runHarnessTurn(
         ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
+      if (!sessionEstablished) await removeTurnRuntimeCredentials();
       stopScopeStepUpBridge();
       await nativeForwarding?.stop();
       stopPolicyBlockBridge();

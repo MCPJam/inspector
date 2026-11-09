@@ -61,7 +61,10 @@
  * `null` is the same answer the turn gave before brokering existed, so a
  * degraded read is a non-regression rather than a new failure.
  */
-import { getBoxCredentialAvailability } from "../computers/control-plane-client.js";
+import {
+  getBoxCredentialAvailability,
+  getHarnessCredentialReadiness,
+} from "../computers/control-plane-client.js";
 import {
   convexGetEnvironmentSecretSelection,
   convexListProjectSecretBindings,
@@ -98,6 +101,71 @@ import type { HarnessExternalAccountBrokerBinding } from "./registry.js";
  *  silently unauthenticated turn. */
 export const EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER =
   "mcpjam-brokered-credential";
+
+/** What a member reads when the org has no usable Cursor key. */
+export const ORG_KEY_MISSING_MESSAGE =
+  "Ask an org admin to add a Cursor key in Organization → AI providers.";
+
+/** The adapter's auth environment for an org-key turn: placeholders only. */
+export type OrgKeyCredentialPlan = { auth: Record<string, string> };
+
+const ORG_KEY_READINESS_TIMEOUT_MS = 10_000;
+
+/**
+ * The credential an external-account harness turn (Cursor) runs on: the
+ * organization's own key. It never enters this process or the box; the
+ * backend's egress injects it on the vendor's hosts, and the box carries the
+ * placeholder. Asked of the backend before anything is reserved, so a turn
+ * with no key stops before any box starts. Undefined for a harness that needs
+ * no external credential; THROWS the sentence the member reads otherwise,
+ * including when readiness can't be read (never guessed ready).
+ */
+export async function resolveOrgKeyCredentialPlan(args: {
+  harness: {
+    id: string;
+    modelAccess: string;
+    externalAccountCredentialEnv?: readonly string[];
+  };
+  bearer?: string;
+  projectId?: string;
+  signal?: AbortSignal;
+}): Promise<OrgKeyCredentialPlan | undefined> {
+  const required =
+    args.harness.modelAccess === "external-account"
+      ? args.harness.externalAccountCredentialEnv
+      : undefined;
+  if (!required) return undefined;
+  const timeout = AbortSignal.timeout(ORG_KEY_READINESS_TIMEOUT_MS);
+  const answer =
+    args.bearer && args.projectId
+      ? await getHarnessCredentialReadiness({
+          bearer: args.bearer,
+          projectId: args.projectId,
+          harnessId: args.harness.id,
+          signal: args.signal ? AbortSignal.any([args.signal, timeout]) : timeout,
+        })
+      : null;
+  if (!answer?.ok) {
+    logger.warn("[external-account-credentials] org key readiness unavailable", {
+      status: answer?.status ?? null,
+    });
+    throw new ExternalAccountCredentialRefusal(
+      // A GitHub check whose approved credentials don't cover this run gets
+      // that answer every time, so its copy names the fix, never a retry.
+      answer?.code === "credential_policy_blocked"
+        ? "This GitHub check is blocked by its approved credential policy. Approve the current commit again to run it."
+        : "Couldn't check your organization's Cursor key. Try again in a moment.",
+    );
+  }
+  if (answer.value.readiness !== "ready") {
+    throw new ExternalAccountCredentialRefusal(ORG_KEY_MISSING_MESSAGE);
+  }
+  return {
+    auth: Object.fromEntries(
+      required.map((name) => [name, EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER]),
+    ),
+  };
+}
 
 /** What a turn should hand the adapter, and what each name cost to get there. */
 export type ExternalAccountCredentialPlan = {

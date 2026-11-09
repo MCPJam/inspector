@@ -3,6 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { resolveChatTurn } from "../resolve-chat-turn.js";
 import { composeTurnEnvironment } from "../compose-turn-environment.js";
 import { resolveEnvironmentForRuntime } from "../../environments/runtime.js";
+import { ErrorCode } from "../../../routes/web/errors.js";
 
 vi.mock("../compose-turn-environment.js", () => ({
   composeTurnEnvironment: vi.fn(),
@@ -222,6 +223,44 @@ describe("grouped turn preparation", () => {
         prepareChatTurn: true,
       }),
     ).rejects.toMatchObject({ status: 504 });
+    expect(composeTurnEnvironment).not.toHaveBeenCalled();
+  });
+});
+
+describe("a Cursor turn whose org key isn't ready", () => {
+  it("is refused as the turn's own key check refuses it, not as a 502", async () => {
+    // The wire answer for `prepareChatTurn`'s ConvexError, read by a real
+    // Convex client: what reaches the translation is what production sees.
+    const backend = new ConvexHttpClient("https://test.convex.cloud", {
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            status: "error",
+            errorMessage: "Uncaught ConvexError: cursor_key_missing",
+            errorData: {
+              code: "cursor_key_missing",
+              message:
+                "Ask an org admin to add a Cursor key in Organization → AI providers.",
+            },
+          }),
+          { status: 560, headers: { "content-type": "application/json" } },
+        ),
+    });
+    await expect(
+      resolveChatTurn({
+        ...common,
+        client: backend,
+        target: { kind: "host", hostId: "host" },
+        selection: { kind: "client-default" },
+        prepareChatTurn: true,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: ErrorCode.CONFLICT,
+      message:
+        "Ask an org admin to add a Cursor key in Organization → AI providers.",
+      details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+    });
     expect(composeTurnEnvironment).not.toHaveBeenCalled();
   });
 });

@@ -11,7 +11,6 @@ import {
   resolveChatSessionEnvironment,
   unappliedBuiltInToolIds,
 } from "./chat-session-environment.js";
-import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
@@ -1759,35 +1758,19 @@ async function handleTurn(c: Context): Promise<Response> {
           reason: "NOT_A_DATA_PLANE",
         });
       }
-      // A credential harness uses its resolved setup grant. Plain host
-      // conversations retain their existing sandbox identity.
-      const boxEnvironment = resolveApiHarnessEnvironment({
-        credential: boxReason === "credential",
-        pinnedEnvironmentId: pins.environmentId,
-        resolvedEnvironmentId:
-          target.resolvedEnvironment?.environmentRef.environmentId,
-      });
-      if (!boxEnvironment.ok) {
-        return v1Error(
-          c,
-          boxEnvironment.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
-          boxEnvironment.message,
-          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-        );
-      }
-      const boxEnvironmentId = boxEnvironment.environmentId;
+      // Only a pinned environment is the box's grant, never the trace
+      // composition; a Cursor key is the organization's, on no environment.
+      const boxEnvironmentId = pins.environmentId;
       if (boxReason === "credential") {
         // The credential check `runHarnessTurn` would fail, run BEFORE the box
         // is booted: a refused turn must not pay for a box, nor fail past
         // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check — this surface hands the harness no
-        // materialized secrets, so only a brokered key can satisfy it.
+        // inputs as the turn's own check.
         const credentialRefusal = await playgroundCredentialRefusal({
           harnessId: engine.harness,
-          secretEnv: undefined,
           bearer: authHeader,
           projectId,
-          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+          signal: abortController.signal,
         });
         if (credentialRefusal) {
           return v1Error(c, "CONFLICT", credentialRefusal, {
