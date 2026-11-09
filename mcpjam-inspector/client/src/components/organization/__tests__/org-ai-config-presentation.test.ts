@@ -5,7 +5,6 @@ import type {
 } from "@/hooks/useOrgAiConfig";
 import {
   EVALS_JUDGE_GUIDANCE,
-  HARNESS_NOT_SUPPORTED_GUIDANCE,
   HARNESS_ORG_KEYS_GUIDANCE,
   NOT_SUPPORTED_YET_GUIDANCE,
   blockedBySentence,
@@ -109,7 +108,7 @@ describe("featureGuidance", () => {
     }
   });
 
-  it("names the vendor each harness runtime runs on, and what doesn't count", () => {
+  it("names the vendor each harness runtime runs on", () => {
     expect(
       featureGuidance(feature({ id: "harness", status: "ready" }), {
         eligibleConnectionIds: ["conn_1"],
@@ -126,7 +125,7 @@ describe("featureGuidance", () => {
           canManage: true,
         }),
       ).toBe(
-        "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers. Custom base URLs, local runtimes and models the MCPJam SDK calls directly aren't supported.",
+        "Add an Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers.",
       );
       expect(
         featureGuidance(feature({ id: "harness", status }), {
@@ -134,7 +133,7 @@ describe("featureGuidance", () => {
           canManage: false,
         }),
       ).toBe(
-        `Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex. ${HARNESS_NOT_SUPPORTED_GUIDANCE}`,
+        "Ask an organization admin to add an Anthropic provider for Claude Code or an OpenAI provider for Codex.",
       );
     }
     // A rejected key is the general fix.

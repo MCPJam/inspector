@@ -198,7 +198,7 @@ describe("a harness host under the policy", () => {
       rows,
       { harnessId: "claude-code" },
       { requireOrgKeys: true },
-    );
+    ).filter((row) => !row.disabled);
     expect(claudeCode.length).toBeGreaterThan(0);
     expect(
       claudeCode.every((row) => row.orgProvider?.id === "orgprov_anthropic"),
@@ -221,12 +221,44 @@ describe("a harness host under the policy", () => {
         rows,
         { harnessId: "claude-code" },
         { requireOrgKeys: true },
-      ),
+      ).filter((row) => !row.disabled),
     ).toEqual([]);
   });
 });
 
 describe("buildAvailableModelsFromOrgConfig under the policy", () => {
+  const inspectorRun: OrgModelProvider = {
+    ...cloudCustom,
+    id: "orgprov_lan",
+    providerKey: "custom:lan",
+    runtimeLocation: "local",
+    modelIds: ["lan-model"],
+    policyEligibility: { eligible: false, code: "org_keys_required" },
+  };
+
+  it("shows an Inspector-run connection's models disabled with the fix, not hidden", () => {
+    const rows = buildAvailableModelsFromOrgConfig(
+      policyConfig([anthropic, inspectorRun]),
+      [hostedHaiku],
+    );
+    const lan = rows.find((row) => row.customProviderName === "lan");
+    expect(lan).toMatchObject({
+      disabled: true,
+      disabledReason:
+        "This connection's calls come from each user's Inspector, which your organization's key policy doesn't allow. Set its calls to come from MCPJam's servers.",
+    });
+    expect(lan?.judgeEligible).toBeUndefined();
+    expect(rows.find((row) => row.provider === "anthropic")?.disabled).toBeFalsy();
+  });
+
+  it("leaves an Inspector-run connection enabled while the policy is off", () => {
+    const rows = buildAvailableModelsFromOrgConfig(
+      { providers: [inspectorRun] },
+      [hostedHaiku],
+    );
+    expect(rows.find((row) => row.customProviderName === "lan")?.disabled).toBeFalsy();
+  });
+
   it("offers only eligible org rows, never hosted ones", () => {
     const rows = buildAvailableModelsFromOrgConfig(
       policyConfig([anthropic, openRouter, localOllama, cloudCustom]),

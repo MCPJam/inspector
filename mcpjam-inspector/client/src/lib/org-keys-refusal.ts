@@ -308,6 +308,13 @@ export const ORG_POLICY_LOADING_REASON =
   "Loading your organization's AI settings…";
 
 /**
+ * A row on a connection whose calls come from each user's Inspector, which
+ * the policy makes ineligible. Listed, disabled, so the admin sees the fix.
+ */
+export const INSPECTOR_RUN_POLICY_REASON =
+  "This connection's calls come from each user's Inspector, which your organization's key policy doesn't allow. Set its calls to come from MCPJam's servers.";
+
+/**
  * A row locked by the organization's AI key policy. A saved selection locked
  * this way stays selected (shown on the trigger) rather than switching to
  * another model, and the chat does not send until another model is chosen.
@@ -316,7 +323,9 @@ export function isOrgPolicyLockReason(
   reason: string | null | undefined,
 ): boolean {
   return (
-    reason === ORG_KEYS_MODEL_REASON || reason === ORG_POLICY_LOADING_REASON
+    reason === ORG_KEYS_MODEL_REASON ||
+    reason === ORG_POLICY_LOADING_REASON ||
+    reason === INSPECTOR_RUN_POLICY_REASON
   );
 }
 

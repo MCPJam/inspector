@@ -211,7 +211,9 @@ describe("each column reads the catalog through its own harness", () => {
         }
         return;
       }
-      const admitted = harnessPickerModels(catalog, { harnessId });
+      const admitted = harnessPickerModels(catalog, { harnessId }).filter(
+        (row) => !row.disabled,
+      );
       const refused = catalog.filter(
         (row) => !admitted.some((kept) => kept.id === row.id),
       );

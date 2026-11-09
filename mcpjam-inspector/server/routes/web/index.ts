@@ -66,6 +66,7 @@ import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
 import clientFlags from "./flags.js";
+import orgGatewayTest from "./org-gateway-test.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
@@ -227,6 +228,15 @@ web.use(
   denyGuests("Browser profiles"),
 );
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Dials an admin-typed gateway URL and answers without calling Convex, so the
+// bearer is verified here rather than left for Convex to judge.
+web.use(
+  "/org-gateway-test",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Gateway tests"),
+  requireVerifiedAuth(),
+);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
@@ -293,6 +303,7 @@ web.route("/swarm", swarmGenerate);
 web.route("/evals", evals);
 web.route("/environments", environments);
 web.route("/export", exporter);
+web.route("/org-gateway-test", orgGatewayTest);
 // Voice transcription forwards the CALLER's bearer and has no credential of its
 // own to fall back on. Every surface supplies one: the client attaches a guest
 // or WorkOS bearer to `/api/web/*` on hosted and local alike (see

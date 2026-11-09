@@ -33,12 +33,22 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
     availableModels,
   }: {
     disabled?: boolean;
-    availableModels?: Array<{ id: string; orgProvider?: { id?: string } }>;
+    availableModels?: Array<{
+      id: string;
+      orgProvider?: { id?: string };
+      disabled?: boolean;
+    }>;
   }) => (
+    // Pickable rows, then the rows listed disabled with a reason.
     <div
       data-testid="model-selector"
       data-disabled={disabled ? "true" : undefined}
       data-models={(availableModels ?? [])
+        .filter((m) => !m.disabled)
+        .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
+        .join(",")}
+      data-locked-models={(availableModels ?? [])
+        .filter((m) => m.disabled)
         .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
         .join(",")}
     />
@@ -286,6 +296,10 @@ describe("the model list a harness host offers", () => {
     expect(screen.getByTestId("model-selector")).toHaveAttribute(
       "data-models",
       "",
+    );
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-locked-models",
+      "orgprov_o:gpt-5-mini",
     );
   });
 
