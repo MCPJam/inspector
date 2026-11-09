@@ -620,14 +620,18 @@ describe("resolveHostTools — browser", () => {
     );
     await initComputersRuntimeConfigBootstrap();
     try {
-      const suppressed: Array<{ id: string; reason: string }> = [];
+      const suppressed: Array<{ id: string; reason: string; code?: string }> =
+        [];
       expect(
         resolveHostTools(
           { builtInToolIds: ["browser"], computer },
           { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
         ),
       ).toBeUndefined();
-      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0]).toMatchObject({
+        id: "browser",
+        code: "hosted_not_configured",
+      });
       expect(suppressed[0].reason).toContain("not fully configured");
     } finally {
       resetComputersRuntimeConfigBootstrapForTests();
@@ -783,7 +787,8 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
   it("suppresses it on a TERMINAL box, and says why", () => {
     // A browser on a terminal image fails with nothing saying why — there is
     // no X server for Chromium to draw on.
-    const suppressed: Array<{ id: string; reason: string }> = [];
+    const suppressed: Array<{ id: string; reason: string; code?: string }> =
+      [];
     const tools = resolveHostTools(
       { builtInToolIds: ["browser"] },
       {
@@ -798,6 +803,42 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
     expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
       "not a desktop",
     );
+    expect(suppressed.find((s) => s.id === "browser")?.code).toBe(
+      "terminal_only",
+    );
+  });
+
+  it("keeps a watched conversation's own browser beside its terminal box", () => {
+    // The shell's box has no display, but a watched conversation has a browser
+    // box of its own; the shell's apps open there through the preview tunnel.
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        sandboxBinding: { sandboxId: "sbx_1", lifetime: "conversation" },
+        onToolSuppressed: (info) => suppressed.push(info),
+      },
+    );
+    expect(suppressed).toEqual([]);
+    expect(tools?.browser_navigate?.description).toContain(
+      "Apps running on this conversation's computer open at http://localhost:<port>.",
+    );
+  });
+
+  it("tells a browser attached before its workspace where the apps open", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        browserPreviewWorkspace: () => undefined,
+      },
+    );
+    expect(tools?.browser_navigate?.description).toContain("http://localhost:<port>");
   });
 
   it("suppresses it for ANY unattended hosted run with no binding at all", () => {

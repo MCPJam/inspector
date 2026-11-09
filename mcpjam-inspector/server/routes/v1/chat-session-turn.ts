@@ -1,4 +1,11 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
+import { HOSTED_MODE } from "../../config.js";
+import {
+  appendBrowserRefusalContext,
+  classifyBrowserRefusal,
+  type BrowserRefusalReason,
+  type BrowserSuppressionCode,
+} from "../../utils/built-in-tools/browser-refusal.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
   resolveChatSessionEnvironment,
@@ -980,6 +987,8 @@ async function handleTurn(c: Context): Promise<Response> {
   let wallClock: ReturnType<typeof setTimeout> | undefined;
   let browserOutbox: ReturnType<typeof createBrowserArtifactOutbox> | undefined;
   let browserReason: string | undefined;
+  let browserSuppression: BrowserSuppressionCode | undefined;
+  let browserRefusal: BrowserRefusalReason | undefined;
   const browserEvidence: BrowserScreenshotEvidence[] = [];
   const browserNotices: string[] = [];
   let builtInTools: ToolSet | undefined;
@@ -1343,6 +1352,16 @@ async function handleTurn(c: Context): Promise<Response> {
         chatSessionId: runtimeChatSessionId,
       });
       const context: BuiltInToolContext = {
+        // The harness box is acquired after the browser attaches, so its apps
+        // are resolved when the agent first opens a localhost page.
+        ...(engine.kind === "harness"
+          ? {
+              browserPreviewWorkspace: () =>
+                conversationBox
+                  ? { sandboxId: conversationBox.binding.sandboxId }
+                  : undefined,
+            }
+          : {}),
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,
@@ -1365,6 +1384,7 @@ async function handleTurn(c: Context): Promise<Response> {
         onBrowserNotice: (notice) => browserNotices.push(notice),
         onToolSuppressed: (item) => {
           browserReason = item.reason;
+          browserSuppression ??= item.code;
         },
         browserCorrelation: {
           chatSessionId: runtimeChatSessionId,
@@ -1435,6 +1455,16 @@ async function handleTurn(c: Context): Promise<Response> {
       } else
         browserReason ??=
           "The browser capability is unavailable on this deployment.";
+      // An explicit request that did not attach: tell the model why, so it
+      // explains instead of reaching for a shell browser.
+      browserRefusal = browserAttached
+        ? undefined
+        : classifyBrowserRefusal({
+            configured: true,
+            advertised: false,
+            suppression: browserSuppression,
+            hostedMode: HOSTED_MODE,
+          });
     }
 
     wallClock = setTimeout(
@@ -1828,7 +1858,10 @@ async function handleTurn(c: Context): Promise<Response> {
       approvalMode: "auto-deny",
       messages: inputMessages,
       modelDefinition,
-      systemPrompt: prepared.enhancedSystemPrompt,
+      systemPrompt: appendBrowserRefusalContext(
+        prepared.enhancedSystemPrompt,
+        browserRefusal,
+      ),
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
@@ -2194,6 +2227,7 @@ async function handleTurn(c: Context): Promise<Response> {
                     reason:
                       browserReason ??
                       "Browser was not requested for this turn.",
+                    ...(browserRefusal ? { refusal: browserRefusal } : {}),
                   }
                 : {}),
               handoff: { waited: handoffWaited, resumed: handoffResumed },

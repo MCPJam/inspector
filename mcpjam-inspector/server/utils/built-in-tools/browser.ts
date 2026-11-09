@@ -94,6 +94,10 @@ import {
   BrowserProtocolMismatchError,
   type BrowserSessionHandle,
 } from "../../services/browserd/browser-session.js";
+import {
+  openPreviewForNavigation,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
 import type { BrowserContextMode } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserSessionService } from "../../services/browserd/session-service.js";
 import { getConfiguredInspectorServiceToken } from "../../middleware/internal-service-auth.js";
@@ -310,6 +314,8 @@ export interface BrowserToolsOptions {
    * produce one.
    */
   sandboxTarget?: { sandboxRowId: string; sandboxId: string; record?: boolean };
+  /** The conversation's workspace, opened at `http://localhost:<port>`. */
+  previewWorkspace?: PreviewWorkspaceSource;
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
@@ -1307,6 +1313,9 @@ export function buildBrowserTools(
       throw error;
     }
     lastBootId = handle.bootId;
+    const preview = await openPreviewForNavigation({ action, workspace: opts.previewWorkspace, handle });
+    if ("refusal" in preview) return { ok: false, error: preview.refusal, tabId: args.tabId ?? "@session" };
+    action = preview.action;
     const recovering = args.recovering === true;
     const tabId = args.tabId ?? "@session";
     const pinned = args.expectedState
@@ -1663,7 +1672,10 @@ export function buildBrowserTools(
           engine,
         )} (or go back / forward / reload). Returns the page ` +
         "after it settles — what you can act on (a11y with refs) AND a screenshot — " +
-        "so you do not need to observe separately before acting.",
+        "so you do not need to observe separately before acting." +
+        (opts.previewWorkspace
+          ? " Apps running on this conversation's computer open at http://localhost:<port>."
+          : ""),
       inputSchema: z.object({
         url: z
           .string()

@@ -76,6 +76,11 @@ import {
   type ComputerEngine,
 } from "../computers/engine.js";
 import { buildSandboxBashTool } from "./sandbox-bash.js";
+import type { BrowserSuppressionCode } from "./browser-refusal.js";
+import {
+  personalComputerWorkspace,
+  type PreviewWorkspaceSource,
+} from "../../services/workspace-preview/workspace-tunnel.js";
 import {
   buildMcpjamTool,
   isMcpjamToolId,
@@ -243,6 +248,12 @@ export interface BuiltInToolContext {
    */
   sandboxBinding?: TrustedSandboxBinding;
   /**
+   * The workspace a watched conversation's browser opens at localhost, when
+   * the browser and the shell run on different boxes and this context cannot
+   * see the shell's binding (the public API attaches the browser first).
+   */
+  browserPreviewWorkspace?: PreviewWorkspaceSource;
+  /**
    * MATERIALIZED project secrets for this turn, exported into every `bash`
    * command's environment.
    *
@@ -275,7 +286,11 @@ export interface BuiltInToolContext {
    * missing tool reads as a host-config bug to whoever opens the run, so
    * surfaces that can show a notice wire this; the rest get log-only behavior.
    */
-  onToolSuppressed?: (info: { id: string; reason: string }) => void;
+  onToolSuppressed?: (info: {
+    id: string;
+    reason: string;
+    code?: BrowserSuppressionCode;
+  }) => void;
   /**
    * Platform API client for the MCPJam workspace tools, bound to the
    * caller's bearer (in the web chat it self-dispatches into this server's
@@ -726,6 +741,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: answered ? "hosted_not_configured" : "hosted_transient",
           reason: answered
             ? "browser is not available on this deployment yet: the backend reports " +
               "the hosted browser runtime is not fully configured."
@@ -744,12 +760,35 @@ export function resolveHostTools(
       // project computer. Reading the binding first is what lets those gates
       // stay about the thing they describe instead of accumulating "…unless a
       // sandbox" clauses.
+      // A watched conversation whose shell runs on a terminal box keeps its
+      // own browser box; the shell's apps open there through the preview
+      // tunnel. An unattended run still needs one box that can do both.
+      const previewWorkspace: PreviewWorkspaceSource | undefined =
+        !isLocalBrowser &&
+        conversationBrowser?.kind === "conversation" &&
+        ctx.browserApprovalDelivery?.kind !== "unattended" &&
+        ctx.sandboxBinding &&
+        ctx.sandboxBinding.runtimeKind !== "desktop-browser"
+          ? { sandboxId: ctx.sandboxBinding.sandboxId }
+          : (ctx.browserPreviewWorkspace ??
+            (!isLocalBrowser &&
+            conversationBrowser?.kind === "conversation" &&
+            computer &&
+            ctx.computerEngine !== "local" &&
+            ctx.localComputerRequested !== true
+              ? personalComputerWorkspace({
+                  authHeader,
+                  projectId: ctx.projectId,
+                  ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+                })
+              : undefined));
       const sandboxBrowser =
-        !isLocalBrowser && ctx.sandboxBinding?.sandboxRowId
+        !isLocalBrowser && !previewWorkspace && ctx.sandboxBinding?.sandboxRowId
           ? ctx.sandboxBinding
           : undefined;
       if (
         !isLocalBrowser &&
+        !previewWorkspace &&
         ctx.sandboxBinding &&
         (!sandboxBrowser ||
           ctx.sandboxBinding.runtimeKind !== "desktop-browser")
@@ -764,6 +803,7 @@ export function resolveHostTools(
         );
         ctx.onToolSuppressed?.({
           id,
+          code: "terminal_only",
           reason:
             "browser is not advertised: this run's sandbox is not a desktop " +
             "(browser) box, and a browser cannot run on a terminal image.",
@@ -855,6 +895,7 @@ export function resolveHostTools(
           ? { approvalDelivery: ctx.browserApprovalDelivery }
           : {}),
         ...(conversationBrowser ? { sessionScope: conversationBrowser } : {}),
+        ...(previewWorkspace ? { previewWorkspace } : {}),
         ...(ctx.browserProfileId
           ? { browserProfileId: ctx.browserProfileId }
           : {}),
