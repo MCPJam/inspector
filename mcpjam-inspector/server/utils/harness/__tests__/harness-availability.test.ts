@@ -1023,7 +1023,7 @@ describe("organization-key selections", () => {
       "claude-haiku-4-5",
       "anthropic",
       "anthropic/claude-haiku-4.5",
-      "model-provider-unsupported",
+      "ok",
     ],
     [
       "claude-code",
@@ -1070,7 +1070,7 @@ describe("organization-key selections", () => {
     },
   );
 
-  it("refuses OpenCode on an organization Anthropic key until that path is qualified", () => {
+  it("runs OpenCode on an organization Anthropic key", () => {
     setFullyAvailable();
     expect(
       checkHarnessRuntimeAvailable(
@@ -1078,20 +1078,32 @@ describe("organization-key selections", () => {
           harnessId: "opencode",
           model: { id: "claude-haiku-4-5", provider: "anthropic" },
           selection: orgSel("anthropic/claude-haiku-4.5"),
-          purpose: "chat",
+          purpose: "eval",
         }),
       ),
-    ).toMatchObject({ ok: false, kind: "model-provider-unsupported" });
-    expect(
-      harnessModelRefusal({
-        adapter: getHarnessAdapter("opencode"),
-        model: { id: "claude-haiku-4-5", provider: "anthropic" },
-        purpose: "chat",
-        selection: orgSel("anthropic/claude-haiku-4.5"),
-      }).refusal?.reason,
-    ).toBe(
-      "The OpenCode client does not support organization provider keys. Choose another client.",
-    );
+    ).toEqual({ ok: true });
+  });
+
+  it("leaves a gateway selection's API and model to lease start, whatever its name's prefix", () => {
+    setFullyAvailable();
+    const row = { id: "custom:litellm:gpt-5.5", provider: "custom" };
+    // The gateway's own names say nothing about the API it serves or the
+    // catalog model they map to: `/reserve` refuses with the backend's reason.
+    for (const harnessId of ["claude-code", "codex", "copilot-cli", "opencode"] as const) {
+      for (const modelId of [
+        "custom:litellm/gpt-5.5",
+        "custom:litellm/anthropic/claude-haiku-4-5",
+      ]) {
+        expect(
+          checkHarnessRuntimeAvailable(
+            args({ harnessId, model: row, selection: orgSel(modelId), purpose: "eval" }),
+          ),
+        ).toEqual({ ok: true });
+        expect(
+          runsHarness({ harness: harnessId, model: row, selection: orgSel(modelId) }),
+        ).toBe(true);
+      }
+    }
   });
 
   it("an org row still answers to the evidence table: unverified is refused for evals", () => {

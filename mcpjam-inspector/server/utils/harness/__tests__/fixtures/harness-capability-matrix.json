@@ -52,10 +52,6 @@
       "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "anthropic-native",
-        "provider": "anthropic"
-      },
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "2.1.290"
@@ -122,10 +118,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [
         "low",
@@ -187,10 +179,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [],
       "runtimeVersion": "1.0.92"
@@ -258,7 +246,6 @@
       "mcpClient": "harness",
       "modelAccess": "external-account",
       "orgKeys": false,
-      "orgUpstream": null,
       "protocol": null,
       "reasoningEfforts": [],
       "runtimeVersion": "2026.11.05-86047df"
@@ -311,8 +298,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
-      "orgKeys": false,
-      "orgUpstream": null,
+      "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "1.18.23"

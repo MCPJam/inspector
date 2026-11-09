@@ -9,9 +9,9 @@
  * - no row says it is blocked by itself;
  * - a feature that can't run on organization providers yet says so and
  *   names the one way to run it now: an admin turning the setting off;
- * - harness runtimes run on the organization's own key for their vendor
- *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
- *   vendor and what doesn't count;
+ * - harness runtimes run on the organization's own key, on a provider or a
+ *   gateway that serves the API each speaks, so their row names both, and a
+ *   gateway that serves neither API is fixed by turning one on;
  * - a feature waiting on the organization's default model says so, and the
  *   fix is choosing that model, not adding a provider.
  */
@@ -119,16 +119,19 @@ export const NOT_SUPPORTED_YET_GUIDANCE =
   "This feature can't run on organization providers yet. An organization admin can turn this setting off to run it on MCPJam-provided models.";
 
 /**
- * Which organization provider each harness runtime runs on while the setting
- * is on: its own vendor's, on the organization's key.
+ * Which organization connections each harness runtime runs on while the
+ * setting is on: a provider for the API it speaks, or a gateway that serves
+ * that API, on the organization's key.
  */
 export const HARNESS_ORG_KEYS_GUIDANCE =
-  "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.";
+  "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.";
 
 /**
  * The harness row's guidance, or null to fall back to the general one. With
- * no matching provider the fix names the vendor each harness needs, so no one
- * is sent to add a provider the harness would still refuse.
+ * no such connection the fix names the ones a harness runs on, so no one is
+ * sent to add a provider the harness would still refuse; with a connection no
+ * harness can run on (`unsupported`: a gateway serving neither API, say) the
+ * fix is turning an API on first.
  */
 function harnessGuidance(
   status: AiReadinessStatus,
@@ -138,11 +141,13 @@ function harnessGuidance(
     case "ready":
       return HARNESS_ORG_KEYS_GUIDANCE;
     case "unconfigured":
-    case "unsupported": {
       return canManage
-        ? "Add an Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers."
-        : "Ask an organization admin to add an Anthropic provider for Claude Code or an OpenAI provider for Codex.";
-    }
+        ? "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers."
+        : "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.";
+    case "unsupported":
+      return canManage
+        ? "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider."
+        : "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.";
     default:
       return null;
   }
