@@ -299,6 +299,41 @@ describe("harness MCP route table", () => {
   });
 });
 
+describe("a pass-through-only runtime", () => {
+  const passThroughOnly = { ...RUNTIME, passThroughOnly: true as const };
+
+  it("keeps its configured route, gaps listed, where others take the bridge", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ forwardingRuntime: passThroughOnly, admit: BRIDGE }),
+    );
+    expect(observed(plan)).toEqual({
+      candidate: true,
+      surface: true,
+      useNativeForwarding: false,
+      enhancedApps: false,
+      nativeMcpDelivery: true,
+      label: "native-proxy",
+      gaps: ["app-host-capabilities", "unqualified-protocol"],
+    });
+    expect(plan.reasons).toEqual([
+      "forwarding not admitted; configured route retained",
+    ]);
+  });
+
+  it("still forwards a gap-free turn on pass-through", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ forwardingRuntime: passThroughOnly, admit: NATIVE }),
+    );
+    expect(plan).toMatchObject({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+      gaps: [],
+      reasons: [],
+    });
+  });
+});
+
 describe("the three route fields", () => {
   it.each([
     ["forwarded-native", NATIVE, "harness", "mcp-endpoint", "pass-through"],

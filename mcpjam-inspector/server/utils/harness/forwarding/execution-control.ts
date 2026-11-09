@@ -67,6 +67,8 @@ const prepared = z.object({
   state,
   replayed: z.boolean(),
   requireToolApproval: z.boolean(),
+  /** The approval the user gave at the runtime's own prompt was bound to this request. */
+  approved: z.boolean().optional(),
 });
 const payload = z
   .object({
@@ -201,6 +203,12 @@ export function createExecutionControl(args: {
       ),
     prepare: (intent: ExecutionIntent) =>
       post({ kind: "prepare", ...intent }, prepared),
+    /** The client cancelled this request: it never runs, even if it arrives later. */
+    cancel: (turnId: string, rpcId: string | number) =>
+      post(
+        { kind: "cancel", turnId, rpcId },
+        z.object({ cancelled: z.number() }),
+      ),
     read: (executionId: string) => post({ kind: "read", executionId }, receipt),
     requestApproval: (
       executionId: string,

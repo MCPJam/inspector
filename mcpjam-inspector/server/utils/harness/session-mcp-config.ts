@@ -24,6 +24,7 @@ import {
 import {
   bindHarnessSessionTurn,
   type HarnessOwnerRef,
+  type HarnessSessionTurnServer,
 } from "./harness-session-state.js";
 import type { HarnessProxyServerInput } from "./mcp-config.js";
 import { logger } from "../logger.js";
@@ -42,9 +43,28 @@ export type HarnessSessionTurn = {
 export function sessionPolicyDigest(
   serverId: string,
   policy: ToolPolicySnapshot,
-  profile: HarnessConnectionProfile,
+  profile?: HarnessConnectionProfile,
 ): string {
   return nativePolicyDigest({ [serverId]: policy }, { profile });
+}
+
+/** Bind the turn to its lane's lease; returns each server's session handle. */
+export async function bindSessionTurnHandles(
+  session: HarnessSessionTurn,
+  servers: HarnessSessionTurnServer[],
+  bearer: string,
+): Promise<Record<string, string>> {
+  const bound = await bindHarnessSessionTurn({ ...session, servers, bearer });
+  if (!bound.ok) {
+    logger.warn("[harness] session turn binding failed", {
+      status: bound.status,
+      error: bound.error,
+    });
+    throw new Error(
+      "Couldn't connect this turn to its chat session. Send your message again.",
+    );
+  }
+  return bound.handles;
 }
 
 /** Signed-proxy inputs for the session: the same envelope on every turn. */
@@ -66,23 +86,11 @@ export async function sessionProxyInputs(args: {
       policyDigest: sessionPolicyDigest(serverId, policy, profile),
     };
   });
-  const bound = await bindHarnessSessionTurn({
-    ...args.session,
-    servers: servers.map(({ serverId, policyDigest }) => ({
-      serverId,
-      policyDigest,
-    })),
-    bearer: args.authHeader,
-  });
-  if (!bound.ok) {
-    logger.warn("[harness] session turn binding failed", {
-      status: bound.status,
-      error: bound.error,
-    });
-    throw new Error(
-      "Couldn't connect this turn to its chat session. Send your message again.",
-    );
-  }
+  const handles = await bindSessionTurnHandles(
+    args.session,
+    servers.map(({ serverId, policyDigest }) => ({ serverId, policyDigest })),
+    args.authHeader,
+  );
   return Promise.all(
     servers.map(async ({ serverId, policy, profile }) => ({
       name: serverId,
@@ -92,7 +100,7 @@ export async function sessionProxyInputs(args: {
         authHeader: args.authHeader,
       }),
       sealedProxyToken: sealHarnessSessionEnvelope({
-        handle: bound.handles[serverId]!,
+        handle: handles[serverId]!,
         serverId,
         policy,
         profile,

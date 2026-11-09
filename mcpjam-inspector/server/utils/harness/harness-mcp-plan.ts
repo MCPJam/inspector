@@ -117,14 +117,18 @@ export function resolveHarnessMcpPlan(
   const admission: HarnessForwardingAdmission = candidate
     ? facts.admit()
     : { gaps: [] };
+  const delivery =
+    admission.delivery === "bridge" && facts.forwardingRuntime?.passThroughOnly
+      ? undefined
+      : admission.delivery;
   refuse(
-    candidate && admission.delivery === undefined,
+    candidate && delivery === undefined,
     "forwarding not admitted; configured route retained",
   );
   const forwardingKind: HarnessMcpAtTurnForwardingKind | undefined =
-    admission.delivery === "native"
+    delivery === "native"
       ? "pass-through"
-      : admission.delivery === "bridge"
+      : delivery === "bridge"
         ? "profiled"
         : undefined;
   return {

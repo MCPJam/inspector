@@ -20,7 +20,9 @@ export async function authorizeSessionRequest(
   sealed: SealedHarnessProxyPolicy,
   serverId: string,
   boxGrant: string | undefined,
-): Promise<{ claims: HarnessMcpProxyClaims; turnId: string } | Response> {
+): Promise<
+  { claims: HarnessMcpProxyClaims; turnId: string; laneId: string } | Response
+> {
   const handle = verifyHarnessSessionHandle(sealed.token, serverId);
   if (!handle || !sealed.profile || !boxGrant) return unauthorized();
   const turn = await authorizeSessionTurn({
@@ -45,6 +47,7 @@ export async function authorizeSessionRequest(
       serverId,
     },
     turnId: turn.turnId,
+    laneId: handle.laneId,
   };
 }
 
