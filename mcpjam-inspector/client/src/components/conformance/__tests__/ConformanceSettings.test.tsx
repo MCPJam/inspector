@@ -224,10 +224,11 @@ describe("Settings inputs", () => {
   );
   it("shows an off check's tool field while its row is open, without blocking on it", async () => {
     const user = userEvent.setup();
+    const onSave = vi.fn(async () => {});
     render(
       <Harness
         saved={false}
-        onSave={vi.fn(async () => {})}
+        onSave={onSave}
         selection={{ protocol: [], tasks: [] }}
       />,
     );
@@ -258,14 +259,66 @@ describe("Settings inputs", () => {
     fireEvent.change(within(field).getByRole("textbox", { name: "Arguments" }), {
       target: { value: "[1]" },
     });
-    // The check is off, so its tool is not called yet.
+    // The check is off, so its tool is not called yet: Back stays usable and
+    // another change still saves.
     expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    await user.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({ protocol: [] }),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     await user.click(
       screen.getByRole("checkbox", { name: "Run Tool Output Schema Honored" }),
     );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Back" })).toBeDisabled(),
+    await act(async () => {});
+    // Picked, its draft holds later saves back.
+    const saves = onSave.mock.calls.length;
+    await user.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    await act(async () => {});
+    expect(onSave).toHaveBeenCalledTimes(saves);
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  });
+
+  it("keeps the picked advice's bad log tool draft blocking after an off logs row closes", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => {});
+    render(
+      <Harness
+        saved={false}
+        onSave={onSave}
+        selection={{
+          protocol: ["modern-tool-output-schema-conformant"],
+          tasks: [],
+        }}
+      />,
     );
+    const logFields = () =>
+      screen.queryAllByRole("combobox", { name: "Tool that emits logs" });
+    // The advice is picked and the logging check is off, so the advice
+    // holds the log tool field.
+    expect(logFields()).toHaveLength(1);
+    const field = logFields()[0].parentElement!.closest("div.space-y-2")!;
+    fireEvent.click(within(field).getByRole("switch"));
+    fireEvent.change(within(field).getByRole("textbox", { name: "Arguments" }), {
+      target: { value: "[1]" },
+    });
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+
+    const logsRow = screen.getByRole("button", {
+      name: /^Logs Require A Log Level/,
+    });
+    await user.click(logsRow);
+    expect(logFields()).toHaveLength(2);
+    await user.click(logsRow);
+    expect(logFields()).toHaveLength(1);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("updates untouched inputs from shared defaults", () => {

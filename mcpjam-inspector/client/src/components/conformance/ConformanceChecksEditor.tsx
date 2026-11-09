@@ -10,7 +10,6 @@ import {
 import {
   LOG_LEVEL_ADVICE,
   probeInputStatus,
-  PROBE_CHECKS,
   PROBE_KEYS,
   probeKeyFor,
   probesApply,
@@ -78,13 +77,37 @@ export function ConformanceChecksEditor({
       : checkId === LOG_LEVEL_ADVICE
         ? usedProbes.logLevelOverride
         : undefined;
+  const protocolPicked = (id: string) => {
+    const { protocol, protocolAdvice } = selection;
+    if (id !== LOG_LEVEL_ADVICE)
+      return !protocol || (protocol as string[]).includes(id);
+    // The advice runs only with at least one protocol check.
+    return (
+      (!protocol || protocol.length > 0) &&
+      (!protocolAdvice || (protocolAdvice as string[]).includes(id))
+    );
+  };
+  // The parts whose draft blocks Run. A protocol field reports as
+  // "row|part", and only a picked row's report counts: an off row's field,
+  // shown while it is open, is not used. Opened beside the picked log level
+  // advice, it is a second log tool field, so closing it must clear only its
+  // own report.
+  const blocking = Object.entries(probeValid).flatMap(([report, ok]) => {
+    if (ok) return [];
+    const at = report.indexOf("|");
+    if (at < 0)
+      return taskProbePartIsSelected(report, probes, selection.tasks)
+        ? [report]
+        : [];
+    return protocolPicked(report.slice(0, at)) ? [report.slice(at + 1)] : [];
+  });
   const inputStatusFor = (checkId: string) => {
     const override = overrideFor(checkId);
     if (override) {
       const tool = probeTools.tools.find(
         (item) => item.name === override.toolName,
       );
-      return probeValid[checkId] === false ||
+      return blocking.includes(checkId) ||
         (tool?.inputSchema !== undefined &&
           acceptsToolArguments(tool.inputSchema, override.arguments ?? {}) ===
             false)
@@ -95,8 +118,8 @@ export function ConformanceChecksEditor({
     // A row's own field can hold an unparsed draft while it still inherits.
     return key &&
       (invalidProbeArguments.has(key) ||
-        probeValid[key] === false ||
-        probeValid[checkId] === false)
+        blocking.includes(key) ||
+        blocking.includes(checkId))
       ? "missing"
       : probeInputStatus(checkId, usedProbes);
   };
@@ -115,27 +138,7 @@ export function ConformanceChecksEditor({
     noOutputSchemas &&
     !probes.toolCallProbe &&
     probeKeyFor(checkId) === "toolCallProbe";
-  const protocolPicked = (id: string) => {
-    const { protocol, protocolAdvice } = selection;
-    if (id !== LOG_LEVEL_ADVICE)
-      return !protocol || (protocol as string[]).includes(id);
-    // The advice runs only with at least one protocol check.
-    return (
-      (!protocol || protocol.length > 0) &&
-      (!protocolAdvice || (protocolAdvice as string[]).includes(id))
-    );
-  };
-  // An off row's field, shown while it is open, blocks nothing: its tool is
-  // not called until a picked check calls it.
-  const partIsPicked = (part: string) =>
-    part === LOG_LEVEL_ADVICE
-      ? protocolPicked(part)
-      : part !== "tasksProbe" && (PROBE_KEYS as readonly string[]).includes(part)
-        ? PROBE_CHECKS[part as keyof typeof PROBE_CHECKS].some(protocolPicked)
-        : taskProbePartIsSelected(part, probes, selection.tasks);
-  const valid = !Object.entries(probeValid).some(
-    ([part, valid]) => !valid && partIsPicked(part),
-  );
+  const valid = blocking.length === 0;
   useEffect(() => {
     onValidChange(valid);
   }, [valid, onValidChange]);
@@ -190,7 +193,7 @@ export function ConformanceChecksEditor({
                   onValidChange={(part, valid) =>
                     setProbeValid((prev) => ({
                       ...prev,
-                      [part]: valid,
+                      [`${checkId}|${part}`]: valid,
                     }))
                   }
                 />
