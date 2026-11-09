@@ -48,6 +48,11 @@ describe("touchSandbox", () => {
     expect(await touch()).toEqual({ outcome: "touched" });
     reply(200, { idleMs: "soon" });
     expect(await touch()).toEqual({ outcome: "touched" });
+    // A window that would become a runaway heartbeat is no window at all.
+    for (const idleMs of [3, 300_000.5, 10 * 24 * 60 * 60_000, -1]) {
+      reply(200, { idleMs });
+      expect(await touch()).toEqual({ outcome: "touched" });
+    }
     reply(404);
     expect(await touch()).toEqual({ outcome: "gone" });
     reply(409);
