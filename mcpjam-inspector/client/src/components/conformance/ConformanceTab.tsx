@@ -541,7 +541,14 @@ export function ConformanceTab({
     const noServerRunButton = (
       <Button
         size="sm"
-        onClick={openSetup ?? (() => toast.info(NO_SERVERS_MESSAGE))}
+        onClick={
+          openSetup
+            ? () => {
+                setRunFrom(activeView);
+                openSetup();
+              }
+            : () => toast.info(NO_SERVERS_MESSAGE)
+        }
       >
         {RUN_LABEL}
       </Button>
