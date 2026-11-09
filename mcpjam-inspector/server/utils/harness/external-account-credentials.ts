@@ -123,7 +123,7 @@ export async function resolveOrgKeyCredentialPlan(args: {
   }
   return {
     auth: Object.fromEntries(
-      required.map((name) => [name, EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER]),
+      required.map((name) => [name, ""]),
     ),
   };
 }
