@@ -553,6 +553,16 @@ export type SystemEventMap = {
     harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
     harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
     harnessTurn?: "failed";
+    /**
+     * `TurnTiming` (`turn-timing.ts`), in whole milliseconds: each route stage
+     * before the model stream, and the request's time to its first text.
+     */
+    setupMs?: number;
+    turnAuthorizationMs?: number;
+    connectionsMs?: number;
+    toolsMs?: number;
+    streamPreparationMs?: number;
+    firstTextMs?: number;
   };
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;

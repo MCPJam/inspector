@@ -25,6 +25,8 @@ import {
   type HarnessBootstrapRecipe,
 } from "../harness-bake.js";
 import { getHarnessAdapter } from "../registry.js";
+import { withWarmBridgeBootstrap } from "../warm-bridge-files.js";
+import type { HarnessV1 } from "@ai-sdk/harness";
 import { HOSTED_APPROVAL_SANDBOX_POLICY } from "../codex-appserver/hosted-sandbox-policy.js";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
@@ -116,7 +118,7 @@ function copilotRecipe(proxyUrl: string) {
   return { ...runtime, getBootstrap: async () => await runtime.getBootstrap!() };
 }
 
-function hostedHarnesses(): Record<
+function hostedHarnesses(warmAgent = false): Record<
   "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode",
   HarnessWithBootstrap
 > {
@@ -132,9 +134,10 @@ function hostedHarnesses(): Record<
     "claude-code": claude({
       modelId: "anthropic/claude-sonnet-4-5",
       auth: CLAUDE_AUTH,
+      warmAgent,
       mcpJson: { mcpServers: {} },
     }),
-    codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
+    codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH, warmAgent }),
     "copilot-cli": copilotRecipe("http://test.invalid"),
     cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
     opencode: opencode({
@@ -142,6 +145,30 @@ function hostedHarnesses(): Record<
       auth: CLAUDE_AUTH,
     }),
   };
+}
+
+function warmHostedHarness(id: "claude-code" | "codex" | "copilot-cli", native = true): HarnessWithBootstrap {
+  const adapter = getHarnessAdapter(id);
+  let harness = withWarmBridgeBootstrap(hostedHarnesses(true)[id] as HarnessV1);
+  if (native && adapter.mcpDelivery === "harness" && adapter.forwardingRuntime) {
+    harness = adapter.forwardingRuntime.refresh(harness, {}, "bake");
+  }
+  return harness as HarnessWithBootstrap;
+}
+
+/** Both runtime selections must find their exact recipe marker in the image. */
+function allHostedHarnesses(): HarnessWithBootstrap[] {
+  const base = hostedHarnesses();
+  return [
+    base["claude-code"],
+    warmHostedHarness("claude-code"),
+    base.codex,
+    warmHostedHarness("codex"),
+    base["copilot-cli"],
+    warmHostedHarness("copilot-cli"),
+    base.cursor,
+    base.opencode,
+  ];
 }
 
 /**
@@ -231,6 +258,35 @@ describe("harnessRecipeIdentity", () => {
     },
   );
 
+  it("uses one exact warm Claude artifact for bridged and native MCP delivery", async () => {
+    const bridged = await warmHostedHarness("claude-code", false).getBootstrap();
+    const native = await warmHostedHarness("claude-code", true).getBootstrap();
+    expect(bridged).toEqual(native);
+    const bridge = bridged.files.find(file => file.path.endsWith("/warm-bridge.mjs"));
+    expect(bridge?.content.match(/var mcpjamRefreshNativeMcp;/g)).toHaveLength(1);
+    expect(harnessRecipeIdentity(bridged)).toBe(harnessRecipeIdentity(native));
+  });
+
+  it.each(["claude-code", "codex", "copilot-cli"] as const)(
+    "bakes the marker the real framework requests with warm reuse (%s)",
+    async (id) => {
+      const harness = warmHostedHarness(id);
+      const recipe = await harness.getBootstrap();
+      const seen = await frameworkMarkerIdentity(harness);
+      const lock = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as HarnessBakeLock;
+      expect(seen.bootstrapDir).toBe(
+        `${HARNESS_STATE_DIRECTORY_NAME}/${recipe.bootstrapDir}`,
+      );
+      expect(seen.identity).toBe(harnessRecipeIdentity(recipe));
+      expect(lock.recipes).toContainEqual({
+        harnessId: id,
+        bootstrapDir: recipe.bootstrapDir,
+        identity: seen.identity,
+        runtimeVersion: HARNESS_PINNED_VERSIONS[id],
+      });
+    },
+  );
+
   it("bakes every registered hosted recipe", async () => {
     const harnesses = hostedHarnesses();
     const dirs = await Promise.all(
@@ -284,15 +340,15 @@ describe("harness-bake.lock.json", () => {
       },
       recipes: (
         await Promise.all(
-          Object.entries(hostedHarnesses()).map(async ([harnessId, h]) => {
+          allHostedHarnesses().map(async (h) => {
             const recipe = await h.getBootstrap();
             return {
-              harnessId,
+              harnessId: recipe.harnessId,
               bootstrapDir: recipe.bootstrapDir,
               identity: harnessRecipeIdentity(recipe),
               runtimeVersion:
                 HARNESS_PINNED_VERSIONS[
-                  harnessId as keyof typeof HARNESS_PINNED_VERSIONS
+                  recipe.harnessId as keyof typeof HARNESS_PINNED_VERSIONS
                 ],
             };
           }),
@@ -482,12 +538,12 @@ describe("the generated bake context", () => {
   it("records the identities the running inspector resolves", async () => {
     // The manifest is what the template bakes; the right hand side is what a
     // hosted turn on this commit will look for.
-    const harnesses = hostedHarnesses();
-    expect(manifest.recipes).toHaveLength(Object.keys(harnesses).length);
-    const byDir = new Map(manifest.recipes.map((r) => [r.bootstrapDir, r]));
-    for (const harness of Object.values(harnesses)) {
+    const harnesses = allHostedHarnesses();
+    expect(manifest.recipes).toHaveLength(harnesses.length);
+    const byIdentity = new Map(manifest.recipes.map((r) => [r.identity, r]));
+    for (const harness of harnesses) {
       const live = await harness.getBootstrap();
-      const baked = byDir.get(live.bootstrapDir);
+      const baked = byIdentity.get(harnessRecipeIdentity(live));
       expect(baked, live.bootstrapDir).toBeDefined();
       expect(baked!.identity).toBe(harnessRecipeIdentity(live));
       expect(baked!.marker).toBe(`.bootstrap-${baked!.identity}.ok`);

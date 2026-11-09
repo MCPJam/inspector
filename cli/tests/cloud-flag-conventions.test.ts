@@ -21,6 +21,7 @@ const CLOUD_COMMAND_FILES = [
   "auth.ts",
   "cloud.ts",
   "cloud-link.ts",
+  "conformance-cloud.ts",
   "environments.ts",
   "clients.ts",
   "eval.ts",
