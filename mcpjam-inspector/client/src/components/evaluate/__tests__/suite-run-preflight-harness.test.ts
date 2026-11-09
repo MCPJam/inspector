@@ -226,7 +226,7 @@ describe("a harness client under the policy", () => {
         withKey("ready"),
       ),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     ]);
     expect(
       problemsFor(
