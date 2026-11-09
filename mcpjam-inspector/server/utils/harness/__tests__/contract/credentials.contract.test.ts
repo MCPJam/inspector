@@ -33,16 +33,11 @@ describe.each(CASES)(
     it("declares its account credential once, in the descriptor", () => {
       if (descriptor.credential === null) {
         expect(adapter.externalAccountCredentialEnv).toBeUndefined();
-        expect(adapter.externalAccountBrokerBinding).toBeUndefined();
         return;
       }
-      const { env, binding } = descriptor.credential;
-      expect(adapter.externalAccountCredentialEnv).toEqual([env]);
-      expect(adapter.externalAccountBrokerBinding?.[env]).toEqual({
-        hosts: [...binding.hosts],
-        header: binding.header,
-        template: binding.template,
-      });
+      expect(adapter.externalAccountCredentialEnv).toEqual([
+        descriptor.credential.env,
+      ]);
     });
 
     it("reads its organization upstream from the descriptor", () => {

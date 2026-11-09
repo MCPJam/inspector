@@ -438,10 +438,6 @@ export async function handleManagedChatTurn(
                   ) ?? {},
               }
             : {}),
-          localMcpRuntimeRequired:
-            localIngress &&
-            (body.localMcpRuntimeRequired === true ||
-              localMachine?.localBrowserRequested === true),
           customProviders: body.customProviders,
           ...(localIngress &&
           (turnRail === "local" ||

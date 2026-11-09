@@ -2,23 +2,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 /**
- * The EXTERNAL-ACCOUNT turn path: a harness that authenticates on the
- * customer's own account with the runtime vendor (Cursor), so MCPJam mints no
- * lease and holds no model credential.
+ * The EXTERNAL-ACCOUNT turn path: a harness that runs on the organization's own
+ * account with the runtime vendor (Cursor), so MCPJam mints no lease and holds
+ * no model credential.
  *
- * Four things separate it from a brokered turn, and each is a way the turn can
- * be silently wrong rather than loudly broken:
- *   - the broker start is SKIPPED (a lease would install MCPJam's credential
- *     into the egress transform for spend MCPJam is not billed for);
- *   - the box reservation is HELD for the whole turn (nothing else takes over
- *     the per-box fence, because there is no lease to do it);
- *   - the credential comes OUT of the box's session env bag and goes to the
- *     adapter directly;
- *   - a missing credential is refused up front instead of defaulted.
+ * What separates it from a brokered turn, each a way it could be silently
+ * wrong rather than loudly broken:
+ *   - the broker start is SKIPPED;
+ *   - the box reservation is HELD for the whole turn;
+ *   - the adapter gets a placeholder, never a key, and only once the backend
+ *     says the org key is ready; otherwise the turn stops before any box;
+ *   - the vendor tokens the CLI exchanged leave the box at every turn end.
  */
+const loginState = vi.hoisted(() => ({
+  install: vi.fn(async () => {}),
+  clear: vi.fn(async () => {}),
+}));
+vi.mock("../runtime-login.js", () => ({
+  cursorRuntimeLogin: () => loginState,
+}));
 
 const harnessState = vi.hoisted(() => ({
   finalText: "done",
+  /** Throw from `createSession` AFTER the box opened (the CLI may have
+   *  authenticated by then). */
+  createSessionError: null as Error | null,
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -45,6 +53,8 @@ vi.mock("@ai-sdk/harness/agent", () => ({
         session: harnessState.session,
         sessionWorkDir: "/home/user",
       });
+      if (harnessState.createSessionError)
+        throw harnessState.createSessionError;
       return harnessState.session;
     });
     stream = vi.fn(async () => ({
@@ -80,13 +90,6 @@ vi.mock("../registry.js", () => ({
     requiresComputer: true,
     modelAccess: "external-account",
     externalAccountCredentialEnv: ["CURSOR_API_KEY"],
-    externalAccountBrokerBinding: {
-      CURSOR_API_KEY: {
-        hosts: ["api2.cursor.sh"],
-        header: "authorization",
-        template: "Bearer {}",
-      },
-    },
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     // Never consulted on this path — declared so a regression that starts
@@ -97,34 +100,20 @@ vi.mock("../registry.js", () => ({
   })),
 }));
 
-/**
- * The BROKERED delivery lookup. Metadata only — there is no function here that
- * could return a brokered value, because there is none in the real client
- * either: a brokered plaintext never enters this process.
- */
-const secretsClientState = vi.hoisted(() => ({
-  rows: [] as Record<string, unknown>[],
-  /** What the run's ENVIRONMENT grants — the boundary the brokered check is
-   *  scoped to. Defaults (in `beforeEach`) to granting the Cursor row. */
-  selection: [] as string[],
-}));
-
 vi.mock("../../computers/convex-secrets-client.js", () => ({
-  convexListProjectSecretBindings: vi.fn(async () => secretsClientState.rows),
-  convexGetEnvironmentSecretSelection: vi.fn(
-    async () => secretsClientState.selection,
-  ),
+  convexListProjectSecretBindings: vi.fn(async () => []),
+  convexGetEnvironmentSecretSelection: vi.fn(async () => []),
   convexListSecretsForRuntimeExecution: vi.fn(async () => []),
   convexMarkSecretsDelivered: vi.fn(async () => ({ marked: 0 })),
 }));
 
-// A box binding makes the turn ask the box's own scope; these cases exercise
-// the member readers, which is what a backend without the route answers.
+/** The backend's answer about the org key. */
+const readinessState = vi.hoisted(() => ({
+  answer: { ok: true, value: { readiness: "ready" } } as unknown,
+}));
+
 vi.mock("../../computers/control-plane-client.js", () => ({
-  getBoxCredentialAvailability: vi.fn(async () => ({
-    ok: false,
-    status: 404,
-  })),
+  getHarnessCredentialReadiness: vi.fn(async () => readinessState.answer),
 }));
 
 vi.mock("../resolve-sandbox.js", () => ({
@@ -156,9 +145,8 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../harness-session-state.js")
-  >();
+  const actual =
+    await importOriginal<typeof import("../harness-session-state.js")>();
   return {
     ...actual,
     claimHarnessSessionState: vi.fn(async () => ({
@@ -203,6 +191,8 @@ import {
   revokeHarnessModelBroker,
   startHarnessModelBroker,
 } from "../harness-model-broker.js";
+import { resolveHarnessSandbox } from "../resolve-sandbox.js";
+import { getHarnessCredentialReadiness } from "../../computers/control-plane-client.js";
 import { EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS } from "../external-account-plan-wall";
 
 const CURSOR_KEY = {
@@ -215,6 +205,8 @@ const OTHER_SECRET = {
   value: "sk_test_123",
   updatedAt: 1,
 };
+const MISSING =
+  "Ask an org admin to add a Cursor key in Organization → AI providers.";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -235,21 +227,21 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     requireToolApproval: false,
     sourceType: "eval",
     harness: "cursor",
-    // The run's Project Environment — the GRANT BOUNDARY. Every hosted surface
-    // that can run a Cursor host threads one (chat via `web-chat-turn`, swarm
-    // via the pinned target's `environmentRef`, eval via the run's
-    // `configSnapshot.environmentRef`), so the default here matches them.
     environmentId: "env-1",
-    runtimeSecrets: [CURSOR_KEY, OTHER_SECRET],
+    harnessSandboxBinding: { sandboxRowId: "sandbox-1", sandboxId: "box-1" },
+    runtimeSecrets: [OTHER_SECRET],
     ...overrides,
   };
 }
 
 beforeEach(() => {
+  loginState.install.mockReset().mockResolvedValue(undefined);
+  loginState.clear.mockReset().mockResolvedValue(undefined);
+  harnessState.session.destroy.mockClear();
   harnessState.finalText = "done";
+  harnessState.createSessionError = null;
   providerState.lastArgs = undefined;
-  secretsClientState.rows = [];
-  secretsClientState.selection = [CURSOR_SECRET_ROW_ID];
+  readinessState.answer = { ok: true, value: { readiness: "ready" } };
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 })),
@@ -263,50 +255,52 @@ afterEach(() => {
   vi.mocked(reserveHarnessBox).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
   vi.mocked(revokeHarnessModelBroker).mockClear();
+  vi.mocked(resolveHarnessSandbox).mockClear();
+  vi.mocked(getHarnessCredentialReadiness).mockClear();
+  harnessState.session.run.mockClear();
   registryState.createHarness.mockClear();
 });
 
-describe("runHarnessTurn — external-account credential path", () => {
-  it("skips the broker entirely and hands the customer's key to the adapter", async () => {
+describe("runHarnessTurn — external-account (org key)", () => {
+  it("skips the broker and hands the adapter only an empty key", async () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
 
     expect(onEngineError).not.toHaveBeenCalled();
+    expect(getHarnessCredentialReadiness).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "project-1", harnessId: "cursor" }),
+    );
     // No lease minted, and therefore nothing to revoke at teardown.
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(revokeHarnessModelBroker).not.toHaveBeenCalled();
-    // …but the box IS still claimed: the CLI runs inside it, so the same
-    // preparation race a brokered turn closes applies here too.
+    // The box IS still claimed: the CLI runs inside it.
     expect(reserveHarnessBox).toHaveBeenCalledTimes(1);
-
     const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
       auth: Record<string, string>;
       mcpJson: unknown;
     };
-    expect(args.auth).toEqual({ CURSOR_API_KEY: CURSOR_KEY.value });
-    // The `session-config` arm's signature requires it; assert it actually
-    // arrives, since a turn constructed without it is silently tool-less.
+    // The key never reaches this process; the backend installs a temporary login.
+    expect(args.auth).toEqual({ CURSOR_API_KEY: "" });
     expect(args.mcpJson).toBeDefined();
   });
 
-  it("takes the credential OUT of the box's session env, keeping the others", async () => {
-    await runHarnessTurn(baseOptions() as never, "none");
-
+  it("never puts a project or member Cursor key on the box, keeping the other secrets", async () => {
+    await runHarnessTurn(
+      baseOptions({ runtimeSecrets: [CURSOR_KEY, OTHER_SECRET] }) as never,
+      "none",
+    );
     const sessionEnv = providerState.lastArgs?.sessionEnv as
       | Record<string, string>
       | undefined;
-    // Reduces exposure to every OTHER command the agent shells out to in the
-    // box. The Cursor process itself still receives it — that is how the CLI
-    // authenticates — so this is a narrowing, not a removal.
-    expect(sessionEnv).toBeDefined();
     expect(sessionEnv).not.toHaveProperty("CURSOR_API_KEY");
     expect(sessionEnv).toHaveProperty("STRIPE_API_KEY", OTHER_SECRET.value);
+    const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
+      auth: Record<string, string>;
+    };
+    expect(args.auth.CURSOR_API_KEY).toBe("");
   });
 
-  it("stamps delivery even when the credential is the project's ONLY secret", async () => {
-    // The bag is empty in that case, so the provider's `onSessionEnvUsed` can
-    // never fire and nothing else would record the delivery — making a live
-    // credential read as dormant to whoever is deciding if it is safe to delete.
+  it("stamps no delivery for the org key: this process never held it", async () => {
     const onSecretEnvDelivered = vi.fn();
     await runHarnessTurn(
       baseOptions({
@@ -315,43 +309,83 @@ describe("runHarnessTurn — external-account credential path", () => {
       }) as never,
       "none",
     );
-    expect(onSecretEnvDelivered).toHaveBeenCalled();
+    expect(onSecretEnvDelivered).not.toHaveBeenCalled();
   });
 
-  it("refuses up front when the credential secret is missing", async () => {
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({ runtimeSecrets: [OTHER_SECRET], onEngineError }) as never,
-      "none",
-    );
+  it.each(["missing", "invalid"])(
+    "stops before any box when the org key is %s",
+    async (readiness) => {
+      readinessState.answer = { ok: true, value: { readiness } };
+      const onEngineError = vi.fn();
+      await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
 
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    // Preflight-shaped copy: names the variable AND where to set it.
-    expect(err.message).toContain("CURSOR_API_KEY");
-    expect(err.message).toMatch(/Project Settings/i);
-    expect(err.message).toContain("Cursor CLI");
-    // Never defaulted to an empty or absent credential.
+      expect(onEngineError).toHaveBeenCalledTimes(1);
+      expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(MISSING);
+      // Nothing was reserved, opened or started.
+      expect(reserveHarnessBox).not.toHaveBeenCalled();
+      expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+      expect(providerState.lastArgs).toBeUndefined();
+      expect(registryState.createHarness).not.toHaveBeenCalled();
+      expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    },
+  );
+
+  it("stops before any box when readiness can't be read", async () => {
+    readinessState.answer = { ok: false, status: 503, error: "down" };
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect((onEngineError.mock.calls[0]![0] as Error).message).toMatch(
+      /Couldn't check your organization's Cursor key/,
+    );
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(registryState.createHarness).not.toHaveBeenCalled();
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
   });
 
-  it("refuses when NO secrets were wired at all (not just the wrong one)", async () => {
+  it("refuses a NON-MEMBER participant before asking about any key", async () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(
-      baseOptions({ runtimeSecrets: undefined, onEngineError }) as never,
+      baseOptions({ scenarioParticipant: true, onEngineError }) as never,
       "none",
     );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(
-      (onEngineError.mock.calls[0]![0] as { message: string }).message,
-    ).toContain("CURSOR_API_KEY");
+    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    expect(err.message).toContain("isn't available to participants");
+    expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
+    expect(registryState.createHarness).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "a User Testing turn",
+      "scenario",
+      "Choose a different client for this study.",
+    ],
+    [
+      "an MCP Events run",
+      "event",
+      "Use it there, or choose a different client.",
+    ],
+  ])(
+    "refuses %s before asking about any key",
+    async (_label, sourceType, next) => {
+      const onEngineError = vi.fn();
+      await runHarnessTurn(
+        baseOptions({
+          sourceType,
+          scenarioId: "scenario-1",
+          onEngineError,
+        }) as never,
+        "none",
+      );
+      expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(
+        `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
+      );
+      expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
+      expect(reserveHarnessBox).not.toHaveBeenCalled();
+      expect(registryState.createHarness).not.toHaveBeenCalled();
+    },
+  );
 
   it("hands the box back at teardown (the claim is held, not leaked)", async () => {
-    // Nothing consumes the reservation on this path — no lease is minted — so
-    // the turn's own teardown is the only thing that can release it. A leak
-    // here makes the next Cursor turn wait out the TTL for an idle box.
     await runHarnessTurn(baseOptions() as never, "none");
     expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
   });
@@ -365,17 +399,13 @@ describe("runHarnessTurn — external-account credential path", () => {
   });
 
   it("fails the turn on an entitlement wall instead of persisting it as an answer", async () => {
-    // Cursor answers a plan-gated request with a normal, successful-looking
-    // turn. Left alone, chat persists that as the assistant's answer and an
-    // eval SCORES it — a verdict about a model that never ran.
     harnessState.finalText = EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS[0]!;
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
-
     expect(onEngineError).toHaveBeenCalledTimes(1);
     const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toMatch(/entitlement/i);
-    expect(err.message).toContain("CURSOR_API_KEY");
+    expect(err.message).toMatch(/didn't run the model/);
+    expect(err.message).toContain("your organization's key");
   });
 
   it("does NOT fail a turn that merely quotes the wall text", async () => {
@@ -386,269 +416,63 @@ describe("runHarnessTurn — external-account credential path", () => {
   });
 });
 
-/**
- * The BROKERED arm. The turn accepts a credential it never sees: the backend
- * composes the project secret into the box's E2B egress transform, and the box
- * carries a placeholder the proxy overwrites on the way out of the VM.
- *
- * This is the delivery hosted evals and swarms accept — they refuse an
- * environment that selects MATERIALIZED secrets outright (`evalSandboxes.ts`,
- * `journeyRuns.ts`), so before this arm existed a Cursor host could not run on
- * those surfaces in any configuration at all.
- */
-const EPHEMERAL_BINDING = {
-  sandboxRowId: "sbxrow_1",
-  sandboxId: "e2b_ephemeral_1",
-  workdir: "/home/user/work",
-};
+describe("runHarnessTurn — the CLI's vendor tokens leave the box", () => {
+  it("at the end of a turn that succeeded", async () => {
+    await runHarnessTurn(baseOptions() as never, "none");
+    expect(loginState.install).toHaveBeenCalledTimes(1);
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
+  });
 
-const CURSOR_SECRET_ROW_ID = "secret-cursor";
+  it("at the end of a turn that failed", async () => {
+    harnessState.finalText = EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS[0]!;
+    await runHarnessTurn(
+      baseOptions({ onEngineError: vi.fn() }) as never,
+      "none",
+    );
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
+  });
 
-const BROKERED_CURSOR_ROW = {
-  secretId: CURSOR_SECRET_ROW_ID,
-  name: "CURSOR_API_KEY",
-  delivery: "brokered",
-  brokerHosts: ["api2.cursor.sh"],
-  brokerHeader: "authorization",
-  brokerTemplate: "Bearer {}",
-};
-
-describe("runHarnessTurn — external-account BROKERED credential", () => {
-  it("runs with no materialized secret, handing the adapter a placeholder", async () => {
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+  it("cleans up an installation whose response failed", async () => {
+    loginState.install.mockRejectedValueOnce(new Error("connection lost"));
     const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-
-    expect(onEngineError).not.toHaveBeenCalled();
-    const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
-      auth: Record<string, string>;
-    };
-    // The REAL key is not here and cannot be: nothing in this process ever
-    // fetched it. What the CLI sends is overwritten outside the VM.
-    expect(args.auth.CURSOR_API_KEY).toBe("mcpjam-brokered-credential");
-    expect(args.auth.CURSOR_API_KEY).not.toContain("key_live");
-    // Still no lease — external-account means MCPJam brokers no MODEL access.
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalled();
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT stamp delivery for a brokered credential", async () => {
-    // `lastDeliveredAt` answers "did anything receive this from us". On this arm
-    // the answer is no: the backend delivered it into the egress transform.
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    const onSecretEnvDelivered = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onSecretEnvDelivered,
-      }) as never,
-      "none",
-    );
-    expect(onSecretEnvDelivered).not.toHaveBeenCalled();
-  });
-
-  it("still stamps delivery when the credential is MATERIALIZED", async () => {
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    const onSecretEnvDelivered = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: [CURSOR_KEY],
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onSecretEnvDelivered,
-      }) as never,
-      "none",
-    );
-    expect(onSecretEnvDelivered).toHaveBeenCalled();
-    const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
-      auth: Record<string, string>;
-    };
-    // Materialized WINS when both are configured: it is the delivery this
-    // process can prove reached the box.
-    expect(args.auth.CURSOR_API_KEY).toBe(CURSOR_KEY.value);
-  });
-
-  it("keeps the placeholder out of the box's session env bag", async () => {
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: [OTHER_SECRET],
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-      }) as never,
-      "none",
-    );
-    const sessionEnv = providerState.lastArgs?.sessionEnv as
-      | Record<string, string>
-      | undefined;
-    expect(sessionEnv).not.toHaveProperty("CURSOR_API_KEY");
-    expect(sessionEnv).toHaveProperty("STRIPE_API_KEY", OTHER_SECRET.value);
-  });
-
-  it("refuses a NON-MEMBER participant before planning any credential", async () => {
-    // The project's brokered key must never reach a participant's box: their
-    // agent has a shell and could exchange it for a reusable vendor token.
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
+  it("when the session never came up after the box opened", async () => {
+    harnessState.createSessionError = new Error("session/new failed");
     const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        scenarioParticipant: true,
-        onEngineError,
-      }) as never,
-      "none",
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalled();
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("credential cleanup failure", () => {
+  it("destroys the session and releases its reservation when clearing fails", async () => {
+    loginState.clear.mockRejectedValueOnce(
+      new Error("Cursor login cleanup could not be confirmed."),
     );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toContain("isn't available to participants");
-    // Names neither the credential nor where the project sets it.
-    expect(err.message).not.toContain("CURSOR_API_KEY");
-    expect(err.message).not.toMatch(/Project Settings/i);
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(harnessState.session.destroy).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("cleanup") }),
+    );
   });
 
-  it("refuses a brokered-only credential on a PERSISTENT computer", async () => {
-    // `listBrokeredSecretsForBox` answers `[]` for any box with no sandbox row,
-    // so this box will never carry the transform — starting it would send a
-    // placeholder to the vendor.
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({ runtimeSecrets: undefined, onEngineError }) as never,
-      "none",
+  it("still releases a failed startup when clearing also fails", async () => {
+    loginState.install.mockRejectedValueOnce(new Error("install failed"));
+    loginState.clear.mockRejectedValueOnce(
+      new Error("Cursor login cleanup could not be confirmed."),
     );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-  });
-
-  it("refuses a correctly bound row the run's ENVIRONMENT does not select", async () => {
-    // The turn-level proof for the scoping fix. The project holds a brokered
-    // CURSOR_API_KEY bound exactly right, but this run's environment does not
-    // grant it, so `listBrokeredSecretsForBox` composes nothing onto the box.
-    // Before scoping, this STARTED the turn and failed vendor auth after the
-    // box was provisioned; now nothing is provisioned at all.
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    secretsClientState.selection = ["secret-something-else"];
     const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("cleanup") }),
     );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toContain("CURSOR_API_KEY");
-    expect(err.message).toMatch(/does not select it/i);
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-    expect(reserveHarnessBox).not.toHaveBeenCalled();
-  });
-
-  it("refuses when the turn resolved no environment at all", async () => {
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        environmentId: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toMatch(/no Project Environment/i);
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-  });
-
-  it("blames the REPLAY path, not the reader, when it cannot name the environment", async () => {
-    // A replay run inherits the source run's environmentRef on the backend, so
-    // its box may really carry the transform — this process just cannot read
-    // that ref back. Still refused (an unverifiable grant is not a grant), but
-    // the copy must not send the reader to change a correct configuration.
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        environmentId: undefined,
-        environmentUnresolvedReason:
-          "replaying a run does not carry the original run's Project " +
-          "Environment through to the runner.",
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toContain("replaying a run");
-    expect(err.message).not.toMatch(/no Project Environment/i);
-    expect(err.message).not.toMatch(/does not select it/i);
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-    expect(reserveHarnessBox).not.toHaveBeenCalled();
-  });
-
-  it("ignores a stale unresolved reason once the environment IS known", async () => {
-    // Belt and braces: a caller that sets both must not turn a real
-    // selection failure into "MCPJam could not tell".
-    secretsClientState.rows = [BROKERED_CURSOR_ROW];
-    secretsClientState.selection = ["secret-something-else"];
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        environmentUnresolvedReason: "should be ignored",
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toMatch(/does not select it/i);
-    expect(err.message).not.toContain("should be ignored");
-  });
-
-  it("refuses when the brokered row is bound to the wrong host", async () => {
-    secretsClientState.rows = [
-      { ...BROKERED_CURSOR_ROW, brokerHosts: ["api.example.com"] },
-    ];
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toContain("api2.cursor.sh");
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-  });
-
-  it("names BOTH deliveries when neither is configured", async () => {
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({
-        runtimeSecrets: undefined,
-        harnessSandboxBinding: EPHEMERAL_BINDING,
-        onEngineError,
-      }) as never,
-      "none",
-    );
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
-    expect(err.message).toContain("CURSOR_API_KEY");
-    expect(err.message).toMatch(/brokered/i);
-    expect(err.message).toMatch(/materialized/i);
   });
 });
