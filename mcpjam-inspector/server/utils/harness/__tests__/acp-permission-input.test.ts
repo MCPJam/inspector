@@ -98,6 +98,18 @@ describe("a Cursor MCP call that asks permission, as acp 1.0.60 delivers it", ()
     ]);
   });
 
+  it("does not replace an approved host execution's empty arguments with the permission wrapper", async () => {
+    const seen = await emitted([
+      raw({ sessionUpdate: "tool_call_update", rawInput: RAW_INPUT }),
+      call("{}"),
+      approval,
+      { type: "tool-call", toolCallId: CALL, toolName: "probe_echo", input: "{}", providerExecuted: false },
+    ]);
+    const calls = seen.filter(part => part.type === "tool-call");
+    expect(calls[0]).toMatchObject({ input: JSON.stringify(RAW_INPUT), providerExecuted: true });
+    expect(calls[1]).toMatchObject({ input: "{}", providerExecuted: false });
+  });
+
   it("leaves a call that already carries its input alone", async () => {
     const input = JSON.stringify({ ...RAW_INPUT, args: { text: "beta" } });
     const seen = await emitted([
