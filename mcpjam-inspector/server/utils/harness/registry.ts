@@ -334,6 +334,11 @@ export type HarnessModelAccess = "broker" | "external-account";
 type HarnessRuntimeAdapterBase = {
   id: HarnessId;
   /**
+   * True only after a live check at the pinned version. An adapter that
+   * declares this must accept AI SDK image parts on the prompt.
+   */
+  promptImageInput: boolean;
+  /**
    * WHICH TRANSPORT this arm speaks, when a harness has more than one.
    *
    * Codex has two — the published `codex exec` adapter and MCPJam's own
@@ -867,6 +872,7 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
+  promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
   // `createHarness` below already maps an effort (`effort` option + adaptive
@@ -1043,6 +1049,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
+  promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
   // exec transport forks (with a visible "runtime-changed" reset) instead of
   // resuming onto a different protocol.
@@ -1144,6 +1151,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
 
 const cursorAdapter: HarnessRuntimeAdapter = {
   id: "cursor",
+  promptImageInput: false,
   // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
   // chat panel) keeps that name, and the two are different products with
   // different surfaces. Every preflight/refusal message a user reads comes from
@@ -1318,6 +1326,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
 
 const copilotCliAdapter: HarnessRuntimeAdapter = {
   id: "copilot-cli",
+  promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   modelAccess: "broker",
   requiresComputer: true,
@@ -1351,6 +1360,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
 
 const opencodeAdapter: HarnessRuntimeAdapter = {
   id: "opencode",
+  promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS.opencode.displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   requiresComputer: true,

@@ -75,6 +75,7 @@ import {
   type OutboundMessage,
   type StartMessage,
 } from "./codex-appserver-bridge-protocol.js";
+import { toCodexPromptContent } from "./codex-prompt-content.js";
 import {
   turnConfigurationFingerprintInput,
   type TurnFingerprintTool,
@@ -276,18 +277,6 @@ function fingerprintTurnConfiguration(input: {
     hash.update(`\u0000sandbox:${sandboxPolicyFingerprint(input.sandboxPolicy)}`);
   }
   return hash.digest("hex").slice(0, 16);
-}
-
-function extractUserText(prompt: HarnessV1Prompt | undefined): string {
-  if (prompt == null) return "";
-  if (typeof prompt === "string") return prompt;
-  const content = prompt.content;
-  if (typeof content === "string") return content;
-  const parts: string[] = [];
-  for (const part of content) {
-    if (part.type === "text") parts.push(part.text);
-  }
-  return parts.join("\n\n");
 }
 
 export function createCodexAppServer(
@@ -895,7 +884,7 @@ function createRetainedBridgeSession(input: {
   ): StartMessage => {
     const message = {
       type: "start" as const,
-      prompt: extractUserText(turnInput.prompt),
+      prompt: toCodexPromptContent(turnInput.prompt),
       ...(input.settings.warmAgent ? { warmWorkDir: input.workDir, nativeMcpServers: input.settings.nativeMcpServers ?? {} } : {}),
       tools: turnInput.tools.map((tool) => ({
         name: tool.name,

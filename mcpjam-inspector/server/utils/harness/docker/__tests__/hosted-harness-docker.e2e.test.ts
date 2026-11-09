@@ -145,6 +145,8 @@ vi.mock("../../resolve-sandbox.js", async (importOriginal) => ({
 }));
 
 import { runHarnessTurn } from "../../run-harness-turn.js";
+import { getHarnessAdapter } from "../../registry.js";
+import { imagesSent, startRecordingProxy } from "./recording-proxy";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
 type Chunk = Record<string, unknown> & { type: string };
@@ -515,6 +517,8 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
           onChunk?: (chunk: Chunk, all: Chunk[], abort: () => void) => void;
           /** A chat turn: continuity is claimed, and the turn's commit kept. */
           chat?: { id: string };
+          /** Files pasted with the prompt, as the composer sends them. */
+          files?: Array<{ mediaType: string; filename: string; data: string }>;
         } = {},
       ) {
         const controller = new AbortController();
@@ -526,7 +530,13 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         mocks.revoke.mockClear();
         mocks.start.mockClear();
         const messages = [
-          { role: "user", content: [{ type: "text", text: prompt }] },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              ...(control.files ?? []).map((f) => ({ type: "file", ...f })),
+            ],
+          },
         ] as unknown as ModelMessage[];
         const result = await runHarnessTurn(
           {
@@ -667,6 +677,37 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
               history: result.history,
             }),
           });
+        },
+        TURN_TIMEOUT_MS,
+      );
+
+      it(
+        "sends a pasted image to the model as an image, not a file to read",
+        async () => {
+          // A 1x1 PNG, pasted with the prompt.
+          const png =
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+          const recorder = await startRecordingProxy(upstream.url);
+          mocks.upstreamBaseUrl = recorder.url;
+          try {
+            const { toolCalls, engineErrors } = await turn("COUNT", {
+              files: [{ mediaType: "image/png", filename: "shot.png", data: png }],
+            });
+            expect(engineErrors).toEqual([]);
+            expect(toolCalls).toEqual([]);
+          } finally {
+            mocks.upstreamBaseUrl = upstream.url;
+            await recorder.close();
+          }
+          // What the vendor CLI sent its model: the image, when the harness
+          // takes images; nothing when it keeps today's file path.
+          const sent = new Set(imagesSent(recorder.bodies));
+          expect(sent.size).toBe(getHarnessAdapter(harness).promptImageInput ? 1 : 0);
+          for (const image of sent) expect(image).toMatch(/^image\/(png|webp|jpeg):\d+$/);
+          // Attached or not, the original stays on the box.
+          expect(
+            docker(["exec", container, "sh", "-c", "ls /home/user/attachments"]),
+          ).toContain("shot.png");
         },
         TURN_TIMEOUT_MS,
       );

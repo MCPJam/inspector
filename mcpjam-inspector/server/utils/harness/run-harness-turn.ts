@@ -226,11 +226,20 @@ import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
   computerQuotaReserver,
+  decodeHarnessAttachments,
+  releaseHarnessAttachmentDecodes,
   saveHarnessAttachments,
   takeHarnessPromptAttachments,
   unsavedHarnessAttachments,
   withHarnessAttachmentNote,
 } from "./harness-attachments.js";
+import {
+  harnessPromptImageHistory,
+  prepareHarnessPromptImages,
+  shouldPrepareHarnessPromptImages,
+  withHarnessPromptImages,
+  type HarnessPromptImage,
+} from "./harness-prompt-images.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import {
   composeLivePlusSkills,
@@ -1440,6 +1449,18 @@ export async function runHarnessTurn(
       const promptAttachments = isApprovalResume
         ? { messages, attachments: [] }
         : takeHarnessPromptAttachments(messages);
+      decodeHarnessAttachments(promptAttachments.attachments);
+      const promptImages = shouldPrepareHarnessPromptImages({
+        isApprovalResume,
+        promptImageInput: harnessAdapter.promptImageInput,
+        attachmentCount: promptAttachments.attachments.length,
+      })
+        ? prepareHarnessPromptImages({
+            attachments: promptAttachments.attachments,
+            history: harnessPromptImageHistory(promptAttachments.messages),
+            abortSignal,
+          })
+        : Promise.resolve<HarnessPromptImage[]>([]);
       let attachmentOutcomes = unsavedHarnessAttachments(
         promptAttachments.attachments,
       );
@@ -3486,6 +3507,8 @@ export async function runHarnessTurn(
         tDispatch = Date.now();
         logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
+        const images = await promptImages;
+        releaseHarnessAttachmentDecodes(promptAttachments.attachments);
         const res = resumeFromApproval
           ? await agent.continueStream({
               session,
@@ -3495,8 +3518,8 @@ export async function runHarnessTurn(
           : await agent.stream({
               session,
               messages: withHarnessTurnContext(withHarnessAttachmentNote(
-                promptAttachments.messages,
-                buildHarnessAttachmentNote(attachmentOutcomes),
+                withHarnessPromptImages(promptAttachments.messages, images),
+                buildHarnessAttachmentNote(attachmentOutcomes, images),
               ), options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.

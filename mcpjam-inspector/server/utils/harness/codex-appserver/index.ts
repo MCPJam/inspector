@@ -11,6 +11,10 @@ export {
   CODEX_APPSERVER_HARNESS_ID,
   type CodexAppServerSettings,
 } from "./codex-appserver-harness.js";
+export {
+  toCodexPromptContent,
+  type CodexPromptContent,
+} from "./codex-prompt-content.js";
 export { CODEX_APPSERVER_BUILTIN_TOOLS } from "./codex-appserver-builtin-tools.js";
 export {
   CODEX_APPSERVER_BOOTSTRAP_DIR,
