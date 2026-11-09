@@ -35,6 +35,24 @@ const COMPLETION = {
   usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
 };
 
+const RESPONSES_REPLY = {
+  id: "resp_1",
+  object: "response",
+  created_at: 0,
+  model: "deployment-1",
+  status: "completed",
+  output: [
+    {
+      type: "message",
+      id: "msg_1",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "ok", annotations: [] }],
+    },
+  ],
+  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+};
+
 function gatewayModel(
   baseUrl: string,
   protocol: "openai-compatible" | "anthropic-compatible" = "openai-compatible",
@@ -159,9 +177,12 @@ describe("other admin-typed base URLs, hosted", () => {
 
 describe("an Azure resource URL, hosted", () => {
   it("reads the resource from the hostname only, so a crafted query reaches nothing", async () => {
-    const fetchMock = vi.fn();
+    setEgressHostResolverForTests(async (hostname) =>
+      hostname === "good.example.test" ? ["93.184.216.34"] : [],
+    );
+    const fetchMock = vi.fn(async () => Response.json(RESPONSES_REPLY));
     vi.stubGlobal("fetch", fetchMock);
-    const error = await generateText({
+    await generateText({
       model: createLlmModel(
         { id: "deployment-1", name: "d", provider: "azure" },
         "sk-test",
@@ -173,9 +194,9 @@ describe("an Azure resource URL, hosted", () => {
       prompt: "hi",
       maxRetries: 0,
     }).catch((thrown: unknown) => thrown);
-    expect(error).toBeInstanceOf(BlockedEgressTargetError);
+    expect(fetchMock).toHaveBeenCalled();
     for (const call of fetchMock.mock.calls) {
-      expect(new URL(String(call[0])).hostname).not.toBe("localhost");
+      expect(new URL(String(call[0])).hostname).toBe("good.example.test");
     }
   });
 });
