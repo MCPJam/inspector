@@ -58,7 +58,7 @@ describe("resolveOrgKeyCredentialPlan", () => {
     readinessState.answer = answer("ready");
     const plan = await resolveOrgKeyCredentialPlan(ask());
     expect(plan).toEqual({
-      auth: { CURSOR_API_KEY: EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER },
+      auth: { CURSOR_API_KEY: "" },
     });
     expect(EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER).toBe(
       "mcpjam-brokered-credential",

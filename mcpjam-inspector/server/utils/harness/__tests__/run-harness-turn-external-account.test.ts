@@ -14,6 +14,14 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
  *     says the org key is ready; otherwise the turn stops before any box;
  *   - the vendor tokens the CLI exchanged leave the box at every turn end.
  */
+const loginState = vi.hoisted(() => ({
+  install: vi.fn(async () => {}),
+  clear: vi.fn(async () => {}),
+}));
+vi.mock("../runtime-login.js", () => ({
+  cursorRuntimeLogin: () => loginState,
+}));
+
 const harnessState = vi.hoisted(() => ({
   finalText: "done",
   /** Throw from `createSession` AFTER the box opened (the CLI may have
@@ -45,7 +53,8 @@ vi.mock("@ai-sdk/harness/agent", () => ({
         session: harnessState.session,
         sessionWorkDir: "/home/user",
       });
-      if (harnessState.createSessionError) throw harnessState.createSessionError;
+      if (harnessState.createSessionError)
+        throw harnessState.createSessionError;
       return harnessState.session;
     });
     stream = vi.fn(async () => ({
@@ -81,9 +90,6 @@ vi.mock("../registry.js", () => ({
     requiresComputer: true,
     modelAccess: "external-account",
     externalAccountCredentialEnv: ["CURSOR_API_KEY"],
-    runtimeCredentialCleanupCommand: vi.fn(
-      (workdir: string) => `rm -f -- ${workdir}/AUTH_JSON`,
-    ),
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     // Never consulted on this path — declared so a regression that starts
@@ -140,9 +146,8 @@ vi.mock("../reconcile-skill-dirs.js", () => ({
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("../harness-session-state.js")
-  >();
+  const actual =
+    await importOriginal<typeof import("../harness-session-state.js")>();
   return {
     ...actual,
     claimHarnessSessionState: vi.fn(async () => ({
@@ -224,17 +229,16 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
     sourceType: "eval",
     harness: "cursor",
     environmentId: "env-1",
+    harnessSandboxBinding: { sandboxRowId: "sandbox-1", sandboxId: "box-1" },
     runtimeSecrets: [OTHER_SECRET],
     ...overrides,
   };
 }
 
-const cleanupCalls = () =>
-  harnessState.session.run.mock.calls.filter((call) =>
-    String((call[0] as { command?: string }).command).includes("AUTH_JSON"),
-  );
-
 beforeEach(() => {
+  loginState.install.mockReset().mockResolvedValue(undefined);
+  loginState.clear.mockReset().mockResolvedValue(undefined);
+  harnessState.session.destroy.mockClear();
   harnessState.finalText = "done";
   harnessState.createSessionError = null;
   providerState.lastArgs = undefined;
@@ -259,7 +263,7 @@ afterEach(() => {
 });
 
 describe("runHarnessTurn — external-account (org key)", () => {
-  it("skips the broker and hands the adapter only the placeholder", async () => {
+  it("skips the broker and hands the adapter only an empty key", async () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
 
@@ -276,8 +280,8 @@ describe("runHarnessTurn — external-account (org key)", () => {
       auth: Record<string, string>;
       mcpJson: unknown;
     };
-    // The key itself never reaches this process; egress injects it.
-    expect(args.auth).toEqual({ CURSOR_API_KEY: "mcpjam-brokered-credential" });
+    // The key never reaches this process; the backend installs a temporary login.
+    expect(args.auth).toEqual({ CURSOR_API_KEY: "" });
     expect(args.mcpJson).toBeDefined();
   });
 
@@ -294,13 +298,16 @@ describe("runHarnessTurn — external-account (org key)", () => {
     const args = registryState.createHarness.mock.calls[0]![0] as unknown as {
       auth: Record<string, string>;
     };
-    expect(args.auth.CURSOR_API_KEY).toBe("mcpjam-brokered-credential");
+    expect(args.auth.CURSOR_API_KEY).toBe("");
   });
 
   it("stamps no delivery for the org key: this process never held it", async () => {
     const onSecretEnvDelivered = vi.fn();
     await runHarnessTurn(
-      baseOptions({ runtimeSecrets: [CURSOR_KEY], onSecretEnvDelivered }) as never,
+      baseOptions({
+        runtimeSecrets: [CURSOR_KEY],
+        onSecretEnvDelivered,
+      }) as never,
       "none",
     );
     expect(onSecretEnvDelivered).not.toHaveBeenCalled();
@@ -348,21 +355,36 @@ describe("runHarnessTurn — external-account (org key)", () => {
   });
 
   it.each([
-    ["a User Testing turn", "scenario", "Choose a different client for this study."],
-    ["an MCP Events run", "event", "Use it there, or choose a different client."],
-  ])("refuses %s before asking about any key", async (_label, sourceType, next) => {
-    const onEngineError = vi.fn();
-    await runHarnessTurn(
-      baseOptions({ sourceType, scenarioId: "scenario-1", onEngineError }) as never,
-      "none",
-    );
-    expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(
-      `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
-    );
-    expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
-    expect(reserveHarnessBox).not.toHaveBeenCalled();
-    expect(registryState.createHarness).not.toHaveBeenCalled();
-  });
+    [
+      "a User Testing turn",
+      "scenario",
+      "Choose a different client for this study.",
+    ],
+    [
+      "an MCP Events run",
+      "event",
+      "Use it there, or choose a different client.",
+    ],
+  ])(
+    "refuses %s before asking about any key",
+    async (_label, sourceType, next) => {
+      const onEngineError = vi.fn();
+      await runHarnessTurn(
+        baseOptions({
+          sourceType,
+          scenarioId: "scenario-1",
+          onEngineError,
+        }) as never,
+        "none",
+      );
+      expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(
+        `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
+      );
+      expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
+      expect(reserveHarnessBox).not.toHaveBeenCalled();
+      expect(registryState.createHarness).not.toHaveBeenCalled();
+    },
+  );
 
   it("hands the box back at teardown (the claim is held, not leaked)", async () => {
     await runHarnessTurn(baseOptions() as never, "none");
@@ -398,20 +420,25 @@ describe("runHarnessTurn — external-account (org key)", () => {
 describe("runHarnessTurn — the CLI's vendor tokens leave the box", () => {
   it("at the end of a turn that succeeded", async () => {
     await runHarnessTurn(baseOptions() as never, "none");
-    expect(cleanupCalls()).toEqual([
-      [
-        {
-          command: "rm -f -- /home/user/AUTH_JSON",
-          abortSignal: expect.any(AbortSignal),
-        },
-      ],
-    ]);
+    expect(loginState.install).toHaveBeenCalledTimes(1);
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
   });
 
   it("at the end of a turn that failed", async () => {
     harnessState.finalText = EXTERNAL_ACCOUNT_PLAN_WALL_TEXTS[0]!;
-    await runHarnessTurn(baseOptions({ onEngineError: vi.fn() }) as never, "none");
-    expect(cleanupCalls()).toHaveLength(1);
+    await runHarnessTurn(
+      baseOptions({ onEngineError: vi.fn() }) as never,
+      "none",
+    );
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up an installation whose response failed", async () => {
+    loginState.install.mockRejectedValueOnce(new Error("connection lost"));
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(onEngineError).toHaveBeenCalled();
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
   });
 
   it("when the session never came up after the box opened", async () => {
@@ -419,6 +446,34 @@ describe("runHarnessTurn — the CLI's vendor tokens leave the box", () => {
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
     expect(onEngineError).toHaveBeenCalled();
-    expect(cleanupCalls()).toHaveLength(1);
+    expect(loginState.clear).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("credential cleanup failure", () => {
+  it("destroys the session and releases its reservation when clearing fails", async () => {
+    loginState.clear.mockRejectedValueOnce(
+      new Error("Cursor login cleanup could not be confirmed."),
+    );
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(harnessState.session.destroy).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("cleanup") }),
+    );
+  });
+
+  it("still releases a failed startup when clearing also fails", async () => {
+    loginState.install.mockRejectedValueOnce(new Error("install failed"));
+    loginState.clear.mockRejectedValueOnce(
+      new Error("Cursor login cleanup could not be confirmed."),
+    );
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ onEngineError }) as never, "none");
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("cleanup") }),
+    );
   });
 });
