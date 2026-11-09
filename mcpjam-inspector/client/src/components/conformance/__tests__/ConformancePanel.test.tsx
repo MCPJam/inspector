@@ -3198,7 +3198,7 @@ describe("ConformanceTab", () => {
     const error = vi.spyOn(toast, "error");
     const loading = vi.spyOn(toast, "loading");
     const success = vi.spyOn(toast, "success");
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
@@ -3216,6 +3216,17 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
     // One toast says it is connecting, then settles into the result.
     expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    // Not while beta is still loading into the session.
+    expect(success).not.toHaveBeenCalled();
+    const connectedBeta = createHttpServer({ name: "beta" });
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, connectedBeta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
     await waitFor(() =>
       expect(success).toHaveBeenCalledWith("beta connected", {
         id: loading.mock.results[0]!.value,
