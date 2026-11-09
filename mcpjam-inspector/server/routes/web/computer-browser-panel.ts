@@ -44,7 +44,7 @@ import {
   touchComputerActivity,
   wakeComputer as wakeComputerViaControlPlane,
   wakePlaygroundSandbox,
-  type ComputerStatus,
+  type ComputerSandboxInfo,
 } from "../../utils/computers/control-plane-client.js";
 import {
   lookupBrowserSession,
@@ -120,7 +120,7 @@ type Claims = ComputerBrowserClaims;
 
 type AuthFailure = { status: 401 | 503; error: string };
 type AuthResult =
-  | { ok: true; claims: Claims; status: ComputerStatus }
+  | { ok: true; claims: Claims; status: ComputerSandboxInfo["status"] }
   | ({ ok: false } & AuthFailure);
 
 /** Deps seam so the route is testable without E2B or a live Convex. */
@@ -333,7 +333,7 @@ export function createComputerBrowserPanelRoutes(
    */
   async function ensureComputerAwake(
     computerId: string,
-    current: ComputerStatus,
+    current: ComputerSandboxInfo["status"],
   ): Promise<boolean> {
     if (current === "ready") return true;
     if (current === "hibernating") {

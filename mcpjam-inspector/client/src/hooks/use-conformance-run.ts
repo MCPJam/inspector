@@ -64,7 +64,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-import { isWebUrl, openAuthorizationPopup } from "./conformance-oauth-popup";
+import { isWebUrl, useAuthorizationPopup } from "./conformance-oauth-popup";
 
 export {
   createAppsState,
@@ -197,7 +197,9 @@ export function useConformanceRun({
   }, []);
 
   const { remember: rememberSession, forget: forgetSession, cancel: cancelSession } = useConformanceOAuthSession();
+  const authorizationPopup = useAuthorizationPopup();
   const deadline = useConformanceDeadline((message) => {
+    authorizationPopup.expire();
     cancelSession();
     latestRunTokenRef.current += 1;
     pendingOAuthRef.current = null;
@@ -416,7 +418,8 @@ export function useConformanceRun({
         });
         return;
       }
-      const popup = openAuthorizationPopup(authorizationUrl);
+      const cleanupFns: Array<() => void> = [];
+      const popup = authorizationPopup.open(authorizationUrl, cleanupFns);
       setOAuth({
         status: "running",
         sessionId,
@@ -425,7 +428,6 @@ export function useConformanceRun({
         popupBlocked: !popup,
       });
 
-      const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
         for (const fn of cleanupFns) fn();
         if (oauthListenerCleanupRef.current === cleanup) {
@@ -471,7 +473,7 @@ export function useConformanceRun({
         // BroadcastChannel not available
       }
     },
-    [handleOAuthCallback],
+    [authorizationPopup.open, handleOAuthCallback],
   );
 
   const runOAuth = useCallback(
@@ -580,11 +582,11 @@ export function useConformanceRun({
 
   const openAuthorizationWindow = useCallback(() => {
     if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
-    const popup = openAuthorizationPopup(oauth.authorizationUrl);
+    const popup = authorizationPopup.open(oauth.authorizationUrl);
     setOAuth((prev) =>
       prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev,
     );
-  }, [oauth.authorizationUrl, oauth.waitingForAuth]);
+  }, [authorizationPopup.open, oauth.authorizationUrl, oauth.waitingForAuth]);
 
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.

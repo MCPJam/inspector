@@ -111,6 +111,8 @@ export interface FrameStreamOptions {
    */
   heartbeatMs?: number;
   stallMs?: number;
+  /** A silent encoder cannot supply the first picture; let the pane use JPEG. */
+  videoStartupMs?: number;
   maxStreams?: number;
   timers?: Timers;
 }
@@ -261,6 +263,7 @@ export function createFrameStreamHost(
 
     let ended = false;
     let stallTimer: unknown;
+    let startupTimer: unknown;
     let beatTimer: unknown;
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
@@ -298,6 +301,7 @@ export function createFrameStreamHost(
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -318,6 +322,7 @@ export function createFrameStreamHost(
         stallTimer = timers.setTimer(() => {
           if (ended) return;
           ended = true;
+          timers.clearTimer(startupTimer);
           timers.clearTimer(beatTimer);
           unsubscribe?.();
           release?.();
@@ -337,6 +342,7 @@ export function createFrameStreamHost(
       if (ended) return;
       ended = true;
       timers.clearTimer(stallTimer);
+      timers.clearTimer(startupTimer);
       timers.clearTimer(beatTimer);
       unsubscribe?.();
       release?.();
@@ -359,6 +365,10 @@ export function createFrameStreamHost(
     }
     release = gate.release;
 
+    startupTimer = timers.setTimer(
+      () => end("video_unavailable"),
+      options.videoStartupMs ?? 10_000,
+    );
     unsubscribe = encoder.subscribe((unit) => {
       if (ended) return;
       // BEFORE EVERY UNIT, not only on the heartbeat. A lease acquired between
@@ -368,6 +378,7 @@ export function createFrameStreamHost(
       // window is not a smaller version of it.
       gate.revalidate();
       if (ended) return; // revalidate may have revoked us
+      if (unit.key) timers.clearTimer(startupTimer);
       const geo = geometry();
       pacer.push(
         encodeFrameStreamRecord({

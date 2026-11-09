@@ -218,13 +218,14 @@ export function ConformanceCheckPicker({
   /**
    * What a check or advice shows under it: the tool it calls, for the ones
    * that must call one. Given its suite, whether each in that suite is
-   * picked, and their titles.
+   * picked, their titles, and whether the row is open.
    */
   renderCheckExtra?: (
     suite: CheckSuite,
     checkId: string,
     isPicked: (id: string) => boolean,
     checkTitle: (id: string) => string | undefined,
+    opened: boolean,
   ) => ReactNode;
   renderSuiteExtra?: (suite: CheckSuite) => ReactNode;
   /** Whether a check that needs an input (a tool to call) has it. */
@@ -307,8 +308,8 @@ export function ConformanceCheckPicker({
             suiteAdvice?.catalog.find((item) => item.id === id)
           )?.title;
         const renderExtra = renderCheckExtra
-          ? (entry: CatalogEntry) =>
-              renderCheckExtra(suite, entry.id, isPicked, titleOf)
+          ? (entry: CatalogEntry, opened: boolean) =>
+              renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
           : undefined;
         const renderTag = (entry: CatalogEntry) => {
           const status = inputStatus?.(entry.id);
@@ -421,7 +422,7 @@ function SuiteChecks({
   onCheckChange?: (id: string, picked: boolean) => void;
   listNote?: string;
   suiteExtra?: ReactNode;
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   renderTag?: (entry: CatalogEntry) => ReactNode;
   notApplicableReason?: (entry: CatalogEntry) => string | undefined;
   /**
@@ -440,8 +441,8 @@ function SuiteChecks({
   const missing = (id: string) => Boolean(needsInput?.(id));
   const picked = (id: string) => Boolean(isPicked?.(id));
   // A picked check missing its input shows unchecked and is locked until the
-  // input is set. Unpicked, its box still works, so it can be opted in and
-  // its tool field shown.
+  // input is set. Unpicked, its box still works, so it can be opted in; its
+  // tool field shows once picked, or while its row is open.
   const shownPicked = (isRowPicked?: (id: string) => boolean) =>
     isRowPicked && ((id: string) => isRowPicked(id) && !missing(id));
   const lockedIn = (isRowPicked?: (id: string) => boolean) => (id: string) =>

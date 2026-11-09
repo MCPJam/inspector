@@ -93,12 +93,28 @@ import {
 } from "../host-compat/index.js";
 import {
   buildShowServersPayload,
-  projectResolutionError,
   resolveProject,
   type ProjectInfo,
   type SelectedProjectInfo,
   type ShowServersPayload,
 } from "./show-servers.js";
+import {
+  PROJECT_SELECTOR_DESCRIPTION,
+  resolveLiveServer,
+  resolveProjectOrThrow,
+  serverScopedInput,
+  toSelectedProjectInfo,
+  toServerInfo,
+  type ResolvedServerInfo,
+  type ServerScopedInput,
+} from "./operation-support.js";
+import {
+  getConformanceCheckOperation,
+  getConformanceReportOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  startConformanceRunOperation,
+} from "./conformance-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -126,9 +142,6 @@ import type {
   PlatformReadinessObservationState,
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
-  PlatformConformanceReport,
-  PlatformConformanceRun,
-  PlatformConformanceRunReceipt,
   PlatformReadinessStageResult,
   PlatformEvalCase,
   PlatformEvalCaseBatchCreated,
@@ -532,9 +545,6 @@ export interface PlatformOperation<TInput, TOutput> {
   execute(input: TInput, context: PlatformOperationContext): Promise<TOutput>;
 }
 
-const PROJECT_SELECTOR_DESCRIPTION =
-  "Project name or ID. Defaults to the most recently updated accessible project.";
-
 /**
  * Up here, not beside the compose resolvers it belongs to, for the same
  * temporal-dead-zone reason `composeRunTargetInput` is declared above the run
@@ -784,60 +794,6 @@ export const showServersOperation: PlatformOperation<
 };
 
 /**
- * Resolve the caller's project selector, and REPORT what it resolved to.
- *
- * The report is the reason this is the one shared resolution path: a selector
- * is usually a name, or absent entirely, so the project id exists only here.
- * Firing `onScopeResolved` at the single point where resolution succeeds is
- * what lets an adapter build a permalink for the project the operation
- * actually read, instead of one it guessed — and doing it here rather than at
- * 154 call sites is what stops half of them from forgetting.
- */
-async function resolveProjectOrThrow(
-  context: Pick<
-    PlatformOperationContext,
-    "client" | "signal" | "onScopeResolved"
-  >,
-  selector: string | undefined
-): Promise<{ project: PlatformProject; sortedProjects: PlatformProject[] }> {
-  const { client, signal, onScopeResolved } = context;
-  const page = await client.listProjects({}, { signal });
-  const resolution = resolveProject(page.items, selector);
-  if (!resolution.ok) {
-    throw projectResolutionError(resolution.message);
-  }
-  reportResolvedScope(onScopeResolved, resolution.project);
-  return {
-    project: resolution.project,
-    sortedProjects: resolution.sortedProjects,
-  };
-}
-
-/**
- * Deliver the resolved-scope receipt, best-effort.
- *
- * A caller's own synchronous failure is the caller's problem, not a reason to
- * fail an operation that already succeeded — the same contract
- * `notifyDisclosure` keeps one screen up.
- */
-function reportResolvedScope(
-  onScopeResolved: PlatformOperationContext["onScopeResolved"],
-  project: PlatformProject
-): void {
-  if (!onScopeResolved) return;
-  try {
-    onScopeResolved({
-      projectId: project.id,
-      ...(project.organizationId
-        ? { organizationId: project.organizationId }
-        : {}),
-    });
-  } catch {
-    // Best-effort by contract.
-  }
-}
-
-/**
  * A case as an OPERATION returns it: the wire projection plus the suite the
  * operation resolved to reach it.
  *
@@ -994,14 +950,6 @@ function environmentRef(environment: {
 
 // ── Named-resource resolution ────────────────────────────────────────
 
-function toSelectedProjectInfo(project: PlatformProject): SelectedProjectInfo {
-  return {
-    id: project.id,
-    name: project.name,
-    organizationId: project.organizationId ?? "",
-  };
-}
-
 function toOtherProjects(
   sortedProjects: PlatformProject[],
   selectedId: string
@@ -1015,61 +963,6 @@ function toOtherProjects(
 // Live MCP ops against one saved server: the platform authorizes the caller,
 // opens an ephemeral connection, runs the op, and disconnects. The server is
 // matched by name or ID within the project, like suites and scenarios.
-
-const SERVER_SELECTOR_DESCRIPTION =
-  "Server name or ID, as saved in the project.";
-
-const serverScopedInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  server: z.string().trim().min(1).describe(SERVER_SELECTOR_DESCRIPTION),
-});
-
-export type ServerScopedInput = z.infer<typeof serverScopedInput>;
-
-export type ResolvedServerInfo = { id: string; name: string };
-
-/**
- * Resolve a server selector and require it to be hosted-operable: live ops
- * connect from the hosted runtime, which can never spawn stdio servers.
- * Failing here is deterministic and names the reason, instead of a
- * downstream connect error.
- */
-async function resolveLiveServer(
-  client: PlatformApiClient,
-  project: PlatformProject,
-  selector: string,
-  signal: AbortSignal | undefined
-): Promise<PlatformProjectServer> {
-  const page = await client.listProjectServers(
-    { projectId: project.id },
-    { signal }
-  );
-  const server = resolveByIdOrName(
-    page.items,
-    selector,
-    "Server",
-    `project "${project.name}"`
-  );
-  if (server.transportType === "stdio" || !server.url) {
-    throw resolutionError(
-      `Server "${selector.trim()}" can't run hosted operations: ${
-        server.transportType === "stdio"
-          ? "stdio servers are not supported on the hosted platform"
-          : "it has no URL"
-      }.`
-    );
-  }
-  return server;
-}
-
-function toServerInfo(server: PlatformProjectServer): ResolvedServerInfo {
-  return { id: server.id, name: server.name };
-}
 
 export type DiagnoseServerResult = {
   project: SelectedProjectInfo;
@@ -2455,236 +2348,29 @@ export const getReadinessReportOperation: PlatformOperation<
 };
 
 // ── Conformance run operations ───────────────────────────────────────
+// Defined in `conformance-operations.ts` and re-exported here, so every
+// operation stays importable from this module.
 
-const conformanceRunScopedInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  run: z.string().trim().min(1).describe("The conformance run's id."),
-});
-
-export type ConformanceRunScopedInput = z.infer<
-  typeof conformanceRunScopedInput
->;
-
-const startConformanceRunInput = serverScopedInput.extend({
-  suites: z
-    .array(z.enum(["protocol", "apps", "tasks"]))
-    .min(1)
-    .optional()
-    .describe(
-      "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface."
-    ),
-  idempotencyKey: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
-    .optional()
-    .describe(
-      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice."
-    ),
-  protocolVersion: z.string().trim().min(1).optional(),
-  engineVersion: z.string().trim().min(1).optional(),
-});
-
-export type StartConformanceRunInput = z.infer<typeof startConformanceRunInput>;
-
-export type StartConformanceRunResult = {
-  project: SelectedProjectInfo;
-  server: ResolvedServerInfo;
-  run: PlatformConformanceRunReceipt;
+export {
+  getConformanceCheckOperation,
+  getConformanceReportOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  startConformanceRunOperation,
 };
-
-export const startConformanceRunOperation: PlatformOperation<
-  StartConformanceRunInput,
-  StartConformanceRunResult
-> = {
-  name: "start_conformance_run",
-  title: "Start a conformance run",
-  description:
-    "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
-  readOnly: false,
-  risk: "none",
-  permalink: derivePermalinks((result) => [
-    {
-      type: "conformance_run",
-      id: result.run.runId,
-      projectId: result.run.projectId,
-    },
-  ]),
-  inputSchema: startConformanceRunInput,
-  async execute(input, { client, signal, onScopeResolved }) {
-    const { project } = await resolveProjectOrThrow(
-      { client, signal, onScopeResolved },
-      input.project
-    );
-    const server = await resolveLiveServer(
-      client,
-      project,
-      input.server,
-      signal
-    );
-    const run = await client.startConformanceRun(
-      {
-        projectId: project.id,
-        serverId: server.id,
-        ...(input.suites ? { suites: input.suites } : {}),
-        ...(input.idempotencyKey
-          ? { idempotencyKey: input.idempotencyKey }
-          : {}),
-        ...(input.protocolVersion
-          ? { protocolVersion: input.protocolVersion }
-          : {}),
-        ...(input.engineVersion ? { engineVersion: input.engineVersion } : {}),
-      },
-      { signal }
-    );
-    return {
-      project: toSelectedProjectInfo(project),
-      server: toServerInfo(server),
-      run,
-    };
-  },
-};
-
-export type GetConformanceRunResult = {
-  project: SelectedProjectInfo;
-  run: PlatformConformanceRun;
-};
-
-export const getConformanceRunOperation: PlatformOperation<
+export type {
   ConformanceRunScopedInput,
-  GetConformanceRunResult
-> = {
-  name: "get_conformance_run",
-  title: "Get a conformance run",
-  description:
-    "Read one persisted conformance run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `outcome` is the grade (a completed run can be `failed`), and `score` is the number. `pending` counts checks this profile reported but did not score.",
-  readOnly: true,
-  permalink: derivePermalinks((result) => [
-    {
-      type: "conformance_run",
-      id: result.run.id,
-      projectId: result.project?.id,
-    },
-  ]),
-  inputSchema: conformanceRunScopedInput,
-  async execute(input, { client, signal, onScopeResolved }) {
-    const { project } = await resolveProjectOrThrow(
-      { client, signal, onScopeResolved },
-      input.project
-    );
-    const run = await client.getConformanceRun(
-      { projectId: project.id, runId: input.run },
-      { signal }
-    );
-    return { project: toSelectedProjectInfo(project), run };
-  },
-};
-
-const listConformanceRunsInput = z.object({
-  project: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  server: z
-    .string()
-    .trim()
-    .min(1)
-    .optional()
-    .describe(SERVER_SELECTOR_DESCRIPTION),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .optional()
-    .describe("Rows to return, 1-100. Defaults to the API's own page size."),
-});
-
-export type ListConformanceRunsInput = z.infer<typeof listConformanceRunsInput>;
-
-export type ListConformanceRunsResult = {
-  project: SelectedProjectInfo;
-  runs: PlatformConformanceRun[];
-};
-
-export const listConformanceRunsOperation: PlatformOperation<
+  GetConformanceCheckInput,
+  GetConformanceCheckResult,
+  GetConformanceReportInput,
+  GetConformanceReportResult,
+  GetConformanceRunResult,
   ListConformanceRunsInput,
-  ListConformanceRunsResult
-> = {
-  name: "list_conformance_runs",
-  title: "List conformance runs",
-  description:
-    "List a project's persisted conformance runs, newest first, optionally narrowed to one saved server. Use it to find a run id when you have a server but not a run.",
-  readOnly: true,
-  permalink: derivePermalinks((result) =>
-    result.runs.map((run) => ({
-      type: "conformance_run" as const,
-      id: run.id,
-      projectId: result.project?.id,
-    }))
-  ),
-  inputSchema: listConformanceRunsInput,
-  async execute(input, { client, signal, onScopeResolved }) {
-    const { project } = await resolveProjectOrThrow(
-      { client, signal, onScopeResolved },
-      input.project
-    );
-    const serverId = input.server
-      ? (await resolveLiveServer(client, project, input.server, signal)).id
-      : undefined;
-    const page = await client.listConformanceRuns(
-      {
-        projectId: project.id,
-        ...(serverId ? { serverId } : {}),
-        ...(input.limit !== undefined ? { limit: input.limit } : {}),
-      },
-      { signal }
-    );
-    return { project: toSelectedProjectInfo(project), runs: page.items };
-  },
-};
-
-export type GetConformanceReportResult = {
-  project: SelectedProjectInfo;
-} & PlatformConformanceReport;
-
-export const getConformanceReportOperation: PlatformOperation<
-  ConformanceRunScopedInput,
-  GetConformanceReportResult
-> = {
-  name: "get_conformance_report",
-  title: "Get a conformance report",
-  description:
-    "A bounded projection of a conformance run's failing checks. Failed checks come before could-not-run skips; the list is capped so a model surface is not handed a megabyte-sized report. `pending` on a check means this profile reported it but did not score it.",
-  readOnly: true,
-  permalink: derivePermalinks((result) => [
-    {
-      type: "conformance_run",
-      id: result.runId,
-      projectId: result.project?.id,
-    },
-  ]),
-  inputSchema: conformanceRunScopedInput,
-  async execute(input, { client, signal, onScopeResolved }) {
-    const { project } = await resolveProjectOrThrow(
-      { client, signal, onScopeResolved },
-      input.project
-    );
-    const report = await client.getConformanceReport(
-      { projectId: project.id, runId: input.run },
-      { signal }
-    );
-    return { project: toSelectedProjectInfo(project), ...report };
-  },
-};
+  ListConformanceRunsResult,
+  StartConformanceRunInput,
+  StartConformanceRunResult,
+} from "./conformance-operations.js";
+export type { ResolvedServerInfo, ServerScopedInput };
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -16603,7 +16289,7 @@ export const getCapabilitiesOperation: PlatformOperation<
   name: "get_capabilities",
   title: "Get what you may do in an MCPJam project",
   description:
-    "What you may do in one project: your organization `role` and `projectRole`; your `plan` with its seat-scaled limits and plan features (null without an organization); `features.sandboxes`, whether Swarms is enabled for you; the product `vocabulary`; and a `can` block of booleans for Swarms, user-testing and eval actions, including which need a project admin. The eval entries are always true and do not reflect plan quota or credits. No other beta feature is reported here — the tool list is the same for every caller, and an action your account cannot take is refused with 403 FORBIDDEN.",
+    "What you may do in one project: your organization `role` and `projectRole`; your `plan` with its seat-scaled limits and plan features (null without an organization); `features.sandboxes`, whether Swarms is enabled for you; `features.conformance`, when reported, whether you can start conformance runs; the product `vocabulary`; and a `can` block of booleans for Swarms, user-testing and eval actions, including which need a project admin. The eval entries are always true and do not reflect plan quota or credits. No other beta feature is reported here; the tool list is the same for every caller, and an action your account cannot take is refused with 403 FORBIDDEN.",
   readOnly: true,
   permalink: noPermalink(
     "no-addressable-resource",
@@ -19566,6 +19252,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
