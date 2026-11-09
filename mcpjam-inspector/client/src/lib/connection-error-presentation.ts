@@ -189,7 +189,9 @@ export function presentConnectionError(
       "The server address changed after its credentials were saved. Open the server settings and re-enter the credentials for the new address.";
   } else if (entry.slug === "internal/unknown") {
     explanation =
-      "We couldn't determine why the connection stopped. Open the server settings to review the connection, or copy the details for support.";
+      !context.recoveries || context.recoveries.includes("settings")
+        ? "Open the server settings to review the connection, or copy the details for support."
+        : "Copy the details for support.";
   } else {
     explanation = [entry.oneLine, ...entry.nextSteps]
       .join(" ")

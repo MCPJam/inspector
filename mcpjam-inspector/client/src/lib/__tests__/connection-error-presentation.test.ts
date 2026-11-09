@@ -15,10 +15,20 @@ describe("connection error presentation", () => {
     const result = presentConnectionError(error, context);
     expect(result.title).toBe("Couldn't connect to Prod Asana MCP.");
     expect(result.explanation).toBe(
-      "We couldn't determine why the connection stopped. Open the server settings to review the connection, or copy the details for support.",
+      "Open the server settings to review the connection, or copy the details for support.",
     );
     expect(result.diagnostics.rawMessage).toBe(error);
     expect(result.recovery).toBe("settings");
+  });
+
+  it("only offers available recovery when the cause is unknown", () => {
+    const result = presentConnectionError("unknown failure", {
+      ...context,
+      recoveries: ["copy-details"],
+    });
+    expect(result.title).toBe("Couldn't connect to Prod Asana MCP.");
+    expect(result.explanation).toBe("Copy the details for support.");
+    expect(result.recovery).toBe("copy-details");
   });
 
   it.each([
