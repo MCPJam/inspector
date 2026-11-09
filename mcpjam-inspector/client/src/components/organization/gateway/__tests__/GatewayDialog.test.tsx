@@ -241,4 +241,38 @@ describe("GatewayDialog", () => {
       baseUrl: "https://gw.other.example/v1",
     });
   });
+
+  it("asks for the key before testing a saved keyed gateway from the Inspector", async () => {
+    renderDialog({
+      providerKey: "custom:lan",
+      displayName: "lan",
+      enabled: true,
+      hasSecret: true,
+      baseUrl: "http://10.0.0.8:4000",
+      runtimeLocation: "local",
+      apis: ["chatCompletions"],
+      models: [{ nativeModelId: "lan-model" }],
+    });
+    submitTest();
+    expect(
+      await screen.findByText("Your Inspector can't use the saved key"),
+    ).toBeInTheDocument();
+    expect(testConnection).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(field("gateway-secret")),
+    );
+
+    testConnection.mockResolvedValueOnce({ ...PASSED, origin: "inspector" });
+    type("gateway-secret", "sk-lan");
+    submitTest();
+    expect(
+      await screen.findByText("Tested from your Inspector"),
+    ).toBeInTheDocument();
+    expect(testConnection).toHaveBeenCalledWith({
+      runtimeLocation: "local",
+      baseUrl: "http://10.0.0.8:4000",
+      secret: "sk-lan",
+      providerKey: "custom:lan",
+    });
+  });
 });

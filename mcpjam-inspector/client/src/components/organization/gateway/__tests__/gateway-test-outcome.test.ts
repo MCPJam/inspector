@@ -4,6 +4,7 @@ import {
   apisFromTest,
   baseUrlKeyProblem,
   gatewayTestOutcome,
+  inspectorTestKeyOutcome,
   modelsFromTest,
   suggestedGatewayName,
 } from "../gateway-test-outcome";
@@ -156,5 +157,25 @@ describe("baseUrlKeyProblem", () => {
     expect(baseUrlKeyProblem(saved, "https://litellm.acme.internal/", "")).toBeNull();
     expect(baseUrlKeyProblem({ ...saved, hasSecret: false }, "https://gw.other.example", "")).toBeNull();
     expect(baseUrlKeyProblem(null, "https://gw.other.example", "")).toBeNull();
+  });
+});
+
+describe("inspectorTestKeyOutcome", () => {
+  const keyed = { hasSecret: true };
+
+  it("asks for the key before a keyed connection is tested from the Inspector", () => {
+    expect(inspectorTestKeyOutcome(keyed, "local", "  ")).toMatchObject({
+      title: "Your Inspector can't use the saved key",
+      focus: "secret",
+    });
+  });
+
+  it("lets every other test run", () => {
+    expect(inspectorTestKeyOutcome(keyed, "local", "sk-lan")).toBeNull();
+    expect(inspectorTestKeyOutcome(keyed, "cloud", "")).toBeNull();
+    expect(
+      inspectorTestKeyOutcome({ hasSecret: false }, "local", ""),
+    ).toBeNull();
+    expect(inspectorTestKeyOutcome(null, "local", "")).toBeNull();
   });
 });

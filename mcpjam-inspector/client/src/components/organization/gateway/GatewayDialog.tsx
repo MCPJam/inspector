@@ -31,6 +31,7 @@ import {
   apisFromTest,
   baseUrlKeyProblem,
   gatewayTestOutcome,
+  inspectorTestKeyOutcome,
   modelsFromTest,
   suggestedGatewayName,
   type GatewayField,
@@ -150,8 +151,23 @@ export function GatewayDialog({
     edit(set)(value);
   };
 
+  const showOutcome = (next: GatewayTestOutcome) => {
+    if (next.focus === "secret") setKeyRequested(true);
+    focusRequest.current = next.focus ?? null;
+    setOutcome(next);
+  };
+
   const runTest = async (runtimeLocation: GatewayRuntimeLocation = runtime) => {
     if (!baseUrl.trim() || testing) return;
+    const needsKey = inspectorTestKeyOutcome(
+      editProvider,
+      runtimeLocation,
+      secret,
+    );
+    if (needsKey) {
+      showOutcome(needsKey);
+      return;
+    }
     const run = ++testRun.current;
     setTesting(true);
     setOutcome(null);
@@ -190,9 +206,7 @@ export function GatewayDialog({
         setDirty(true);
       }
     }
-    if (next.focus === "secret") setKeyRequested(true);
-    focusRequest.current = next.focus ?? null;
-    setOutcome(next);
+    showOutcome(next);
   };
 
   const trimmedName = name.trim();

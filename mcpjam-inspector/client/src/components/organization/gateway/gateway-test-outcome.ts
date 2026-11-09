@@ -13,6 +13,7 @@ import {
   type GatewayModel,
 } from "@/shared/gateway-connection";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import type { GatewayRuntimeLocation } from "./gateway-works-with";
 
 export type GatewayField = "baseUrl" | "secret";
 
@@ -138,6 +139,28 @@ export function gatewayTestOutcome(
         : "No API was tried."
     }`,
     testedFrom,
+  };
+}
+
+/**
+ * What a Test from this Inspector shows instead of running, or null when it
+ * can run. The Inspector never sees a saved connection's key, so probing a
+ * keyed gateway without one typed would report a working gateway as
+ * rejecting its key.
+ */
+export function inspectorTestKeyOutcome(
+  existing: Pick<OrgModelProvider, "hasSecret"> | null,
+  runtimeLocation: GatewayRuntimeLocation,
+  secret: string,
+): GatewayTestOutcome | null {
+  if (runtimeLocation !== "local" || !existing?.hasSecret || secret.trim()) {
+    return null;
+  }
+  return {
+    tone: "warning",
+    title: "Your Inspector can't use the saved key",
+    message: "Enter the API key, then test again.",
+    focus: "secret",
   };
 }
 
