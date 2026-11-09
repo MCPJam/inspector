@@ -1366,6 +1366,7 @@ export function PlaygroundMain({
     setMessages,
     sendMessage,
     stop,
+    canStopApproval,
     error,
     chatSessionId,
     selectedModel,
@@ -2825,6 +2826,7 @@ export function PlaygroundMain({
     useChatStopControls({
       isCompareMode,
       isStreaming,
+      canStopApproval,
       multiModelSummaries: compareSummaries,
       setStopBroadcastRequestId,
       stop,
@@ -6085,6 +6087,7 @@ export function PlaygroundMain({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    canStop: !isCompareMode && canStopApproval,
     placeholder,
     currentModel: selectedModel,
     availableModels,
