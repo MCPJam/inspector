@@ -46,6 +46,9 @@ import {
 import { isAnalyticsDisabled } from "../utils/analytics.js";
 import { resolveEnvironment } from "../utils/log-events.js";
 
+/** How long a stopped run waits for report writes already in flight. */
+const PROGRESS_WRITE_GRACE_MS = 10_000;
+
 export type ConformanceRunSource =
   | "ui"
   | "sdk"
@@ -672,7 +675,16 @@ export async function executePersistedConformanceRun(
             throw error;
           })
         : null;
-    await Promise.allSettled(progressWrites);
+    // Bounded, so a write that never settles cannot hold the run open: past
+    // the grace period its suite is recorded below like one that saved nothing.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled(progressWrites),
+      new Promise<void>((resolve) => {
+        grace = setTimeout(resolve, PROGRESS_WRITE_GRACE_MS);
+      }),
+    ]);
+    clearTimeout(grace);
 
     if (refusal !== null) {
       // Nothing was dialled, so every suite that would have run records the
