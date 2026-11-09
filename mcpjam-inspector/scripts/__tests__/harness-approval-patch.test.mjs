@@ -28,3 +28,12 @@ test("an unrecognized runtime cannot silently skip the approval correction", () 
   assert.throws(() => patchAgent("different runtime"), /no longer matches/);
   assert.throws(() => patchAcp("different runtime"), /no longer matches/);
 });
+
+
+test("the Docker dependency stage has the install hook before installing dependencies", () => {
+  const docker = readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8");
+  const dependencyStage = docker.split("FROM deps AS production-deps")[0];
+  const install = dependencyStage.indexOf("RUN npm ci");
+  const hook = dependencyStage.indexOf("COPY mcpjam-inspector/scripts/patch-harness-approvals.mjs");
+  assert.ok(hook >= 0 && hook < install);
+});

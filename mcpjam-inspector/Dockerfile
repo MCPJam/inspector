@@ -67,6 +67,7 @@ COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+COPY mcpjam-inspector/scripts/patch-harness-approvals.mjs ./mcpjam-inspector/scripts/patch-harness-approvals.mjs
 
 COPY soundcheck/package.json ./soundcheck/package.json
 COPY mcp/package.json ./mcp/package.json
