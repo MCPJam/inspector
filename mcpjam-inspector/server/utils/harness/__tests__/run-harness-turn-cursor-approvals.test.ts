@@ -187,6 +187,7 @@ vi.mock("../../computers/convex-secrets-client.js", () => ({
 }));
 vi.mock("../../computers/control-plane-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../computers/control-plane-client.js")>()),
+  getHarnessCredentialReadiness: vi.fn(async () => ({ ok: true, value: { readiness: "ready" } })),
   getBoxCredentialAvailability: vi.fn(async () => ({ ok: false, status: 404 })),
 }));
 vi.mock("../resolve-sandbox.js", () => ({
@@ -275,7 +276,8 @@ function turn(messages: ModelMessage[]) {
     authHeader: "Bearer test",
     projectId: "p1",
     environmentId: "env-1",
-    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "key_live_abc", updatedAt: 1 }],
+    harnessSandboxBinding: { sandboxRowId: "computer-1", sandboxId: "sandbox-1" },
+    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "fixture-key", updatedAt: 1 }],
     mcpClientManager: manager(),
     selectedServers: ["srv-a"],
     harnessMcpProxy: { plane: "web-authorized", mode: "direct", publicBaseUrl: "https://inspector.test" },

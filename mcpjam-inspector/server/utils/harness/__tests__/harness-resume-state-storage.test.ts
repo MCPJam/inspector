@@ -146,4 +146,23 @@ describe("a paused turn's resume state in Convex", () => {
     const { turnSettings: _settings, ...plain } = continuation;
     expect(turn().commitState(plain)).toEqual(plain);
   });
+
+  it("refuses a completed continuation whose pending input exceeds the storage budget", async () => {
+    const state = {
+      ...continuation,
+      pendingToolApprovals: [
+        {
+          ...continuation.pendingToolApprovals[0],
+          input: JSON.stringify({ command: "x".repeat(512 * 1024) }),
+        },
+      ],
+    };
+    expect(Buffer.byteLength(JSON.stringify(state.data))).toBeLessThan(
+      512 * 1024,
+    );
+    await expect(commit(state)).rejects.toThrow(
+      "conversation state is too large",
+    );
+    expect(stored).toBeUndefined();
+  });
 });

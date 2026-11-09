@@ -67,6 +67,7 @@ vi.mock("../../computers/control-plane-client.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../computers/control-plane-client.js")
   >()),
+  getHarnessCredentialReadiness: vi.fn(async () => ({ ok: true, value: { readiness: "ready" } })),
   getBoxCredentialAvailability: vi.fn(async () => ({ ok: false, status: 404 })),
 }));
 vi.mock("../resolve-sandbox.js", () => ({
@@ -166,7 +167,8 @@ function turn(overrides: Record<string, unknown> = {}) {
     authHeader: "Bearer test",
     projectId: "p1",
     environmentId: "env-1",
-    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "key_live_abc", updatedAt: 1 }],
+    harnessSandboxBinding: { sandboxRowId: "computer-1", sandboxId: "sandbox-1" },
+    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "fixture-key", updatedAt: 1 }],
     mcpClientManager: manager(GAP_FREE),
     selectedServers: ["srv-a"],
     harnessMcpProxy: {
@@ -285,8 +287,7 @@ describe("the Cursor CLI on pass-through forwarding", () => {
     expect(starts).toHaveLength(2);
     expect(starts[0]).toMatchObject({
       harnessId: "cursor",
-      computerId: "computer-1",
-      projectId: "p1",
+      sandboxRowId: "computer-1",
       nativeForwarding: {
         harnessSessionId: "lane-1",
         hostId: "host-1",
