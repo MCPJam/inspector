@@ -22,12 +22,6 @@ import {
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
-import {
-  readLocalTimeout,
-  saveLocalTimeout,
-  readSessionTimeout,
-  saveSessionTimeout,
-} from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -217,28 +211,18 @@ export function ConformanceTab({
         : pending;
     });
   }, [serverTimeouts, persist?.projectId]);
-  const [, refreshSessionTimeout] = useState(0);
-  const isSessionTimeout = (name: string) =>
-    Boolean(
-      persist && isSavedServer && !isSavedServer(name) && !projectServersLoading,
-    );
+  // The timeout is set in a server's Settings, which only a saved project
+  // server has. Every other run (an unsaved server, or no project) takes the
+  // default, the most a run may take anyway.
   const timeoutFor = (name: string) => {
-    if (persist && isSessionTimeout(name)) {
-      return readSessionTimeout(persist.projectId, name);
-    }
     const changed = changedTimeouts[timeoutKeyFor(name)];
     if (changed) return changed.seconds ?? undefined;
-    return savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
+    return savedTimeoutFor(name);
   };
   const saveTimeout = async (name: string, seconds: number | null) => {
-    if (persist && isSessionTimeout(name)) {
-      saveSessionTimeout(persist.projectId, name, seconds);
-      refreshSessionTimeout((version) => version + 1);
-      return;
-    }
-    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
-    else if (!persist) saveLocalTimeout(name, seconds);
-    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
+    if (!onSaveServerTimeout)
+      throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
+    await onSaveServerTimeout(name, seconds);
     setChangedTimeouts((previous) => ({
       ...previous,
       [timeoutKeyFor(name)]: {
@@ -491,8 +475,6 @@ export function ConformanceTab({
             ? start.selection
             : undefined
         }
-        timeoutFor={timeoutFor}
-        onSaveTimeout={saveTimeout}
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
         onLoadDefaults={onLoadServerDefaults ? readDefaults : undefined}
@@ -693,6 +675,12 @@ export function ConformanceTab({
             }
             onSave={(selection, inputs) =>
               saveDefaults(settingsServer, selection, inputs)
+            }
+            timeoutSeconds={timeoutFor(settingsServer)}
+            onSaveTimeout={
+              onSaveServerTimeout
+                ? (seconds) => saveTimeout(settingsServer, seconds)
+                : undefined
             }
             onBack={() => setSettingsFor(null)}
           />

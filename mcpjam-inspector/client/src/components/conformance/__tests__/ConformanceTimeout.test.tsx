@@ -1,117 +1,115 @@
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { TooltipProvider } from "@mcpjam/design-system/tooltip";
-import { ConformanceTimeout } from "../ConformanceTimeout";
+import { ConformanceTimeoutSetting } from "../ConformanceTimeout";
+
+const LABEL = "Total run timeout (seconds)";
 
 function setup(
   seconds?: number,
   onSave = vi.fn(async (_value: number | null) => {}),
+  onBusyChange = vi.fn(),
 ) {
   render(
-    <TooltipProvider>
-      <ConformanceTimeout seconds={seconds} onSave={onSave} />
-    </TooltipProvider>,
+    <ConformanceTimeoutSetting
+      seconds={seconds}
+      onSave={onSave}
+      onBusyChange={onBusyChange}
+    />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-  return {
-    onSave,
-    input: screen.getByLabelText("Total run timeout (seconds)"),
-  };
+  return { onSave, onBusyChange, input: screen.getByLabelText(LABEL) };
 }
 
-describe("ConformanceTimeout", () => {
-  it("shows and prefills the 300-second default", () => {
+function commit(input: HTMLElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+  fireEvent.blur(input);
+}
+
+describe("ConformanceTimeoutSetting", () => {
+  it("shows the 300-second default, with no Save button", () => {
     const { input } = setup();
     expect(input).toHaveValue(300);
-    expect(screen.getByText("300s")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Maximum time for the whole run. Defaults to 300 seconds (5 minutes).",
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
-  it("prefills a saved override", () => {
+
+  it("shows a saved override", () => {
     const { input } = setup(45);
     expect(input).toHaveValue(45);
-    expect(screen.getByText("45s")).toBeInTheDocument();
   });
-  it("reopens with 300 after clearing a saved override", async () => {
-    const onSave = vi.fn(async (_value: number | null) => {});
-    function SavedTimeout() {
-      const [seconds, setSeconds] = useState<number | undefined>(45);
+
+  it.each([1, 90, 300])("saves %s seconds when the field is left", async (seconds) => {
+    const { input, onSave } = setup(45);
+    commit(input, String(seconds));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(seconds));
+  });
+
+  it("saves on Enter", async () => {
+    const { input, onSave } = setup();
+    fireEvent.change(input, { target: { value: "90" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(90));
+  });
+
+  it("does not save a value that did not change", async () => {
+    const { input, onSave } = setup();
+    commit(input, "300");
+    await Promise.resolve();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "301", "1.5", "-1"])(
+    "rejects %s and holds Back until it is fixed",
+    async (value) => {
+      const { input, onSave, onBusyChange } = setup();
+      commit(input, value);
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Enter a whole number from 1 to 300 seconds.",
+      );
+      expect(onSave).not.toHaveBeenCalled();
+      expect(onBusyChange).toHaveBeenLastCalledWith(true);
+      commit(input, "60");
+      await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(false));
+      expect(screen.queryByRole("alert")).toBeNull();
+    },
+  );
+
+  it("clears a saved override back to the default", async () => {
+    function Saved() {
+      const [seconds, setSeconds] = useState<number | undefined>(30);
       return (
-        <ConformanceTimeout
+        <ConformanceTimeoutSetting
           seconds={seconds}
-          onSave={async (value) => {
-            await onSave(value);
-            setSeconds(value ?? undefined);
-          }}
+          onSave={async (value) => setSeconds(value ?? undefined)}
         />
       );
     }
-    render(
-      <TooltipProvider>
-        <SavedTimeout />
-      </TooltipProvider>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-    fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), {
-      target: { value: "" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByText("300s")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(
-      300,
-    );
+    render(<Saved />);
+    const input = screen.getByLabelText(LABEL);
+    expect(input).toHaveValue(30);
+    commit(input, "");
+    await waitFor(() => expect(input).toHaveValue(300));
   });
-  it.each([1, 300])("saves %s seconds", async (seconds) => {
+
+  it("compares a change with its own last save before the prop catches up", async () => {
+    // A saved run's Settings reads a snapshot that may not move after a save.
     const { input, onSave } = setup();
-    fireEvent.change(input, { target: { value: String(seconds) } });
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(seconds));
-    await waitFor(() =>
-      expect(
-        screen.queryByLabelText("Total run timeout (seconds)"),
-      ).not.toBeInTheDocument(),
-    );
+    commit(input, "90");
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(90));
+    commit(input, "300");
+    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith(300));
   });
-  it.each(["0", "301", "1.5", "-1"])("rejects %s", async (value) => {
-    const { input, onSave } = setup();
-    fireEvent.change(input, { target: { value } });
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Enter a whole number from 1 to 300 seconds.",
-    );
-    expect(onSave).not.toHaveBeenCalled();
-  });
-  it("clears a saved timeout", async () => {
-    const { input, onSave } = setup(30);
-    expect(screen.getByText("30s")).toBeInTheDocument();
-    fireEvent.change(input, { target: { value: "" } });
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
-  });
-  it("keeps the draft open after a failed save", async () => {
+
+  it("keeps what was typed after a failed save", async () => {
     const onSave = vi.fn(async (_value: number | null) => {
       throw new Error("offline");
     });
     const { input } = setup(30, onSave);
-    fireEvent.change(input, { target: { value: "90" } });
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
+    commit(input, "90");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not save the timeout. Try again.",
     );
