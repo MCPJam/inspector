@@ -32,8 +32,8 @@
     {
       "harnessId": "opencode",
       "bootstrapDir": ".harness-bootstrap/opencode",
-      "identity": "cf54ba0da1f51ac6",
-      "runtimeVersion": "1.18.23"
+      "identity": "1f2a417a8903bda9",
+      "runtimeVersion": "1.18.34"
     }
   ]
 }

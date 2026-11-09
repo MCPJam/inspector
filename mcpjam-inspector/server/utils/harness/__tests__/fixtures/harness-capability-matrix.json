@@ -218,7 +218,7 @@
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
+      "skillsBaseDir": "/home/user/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
       "skillsWriteOptions": {
         "trailingNewline": false
       },
@@ -279,7 +279,7 @@
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
-      "pinnedRuntimeVersion": "1.18.23",
+      "pinnedRuntimeVersion": "1.18.34",
       "promptImageInput": false,
       "requiresComputer": true,
       "skillsBaseDir": "/home/user/.agents/skills",
@@ -319,7 +319,7 @@
       "orgUpstream": null,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "1.18.23"
+      "runtimeVersion": "1.18.34"
     },
     "qualifiedDiscovery": []
   }

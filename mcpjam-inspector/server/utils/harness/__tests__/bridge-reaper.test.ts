@@ -33,6 +33,17 @@ describe("reapHarnessBridgesCommand", () => {
     ).toBe(true);
   });
 
+  it("also names the sessions root inspectors used before the state directory", () => {
+    expect(
+      reapHarnessBridgesCommand(
+        "/home/user/.ai-sdk-harness/.agent-runs/s-1/bridge",
+      ).endsWith(
+        "' '/home/user/.ai-sdk-harness/.agent-runs/s-1/bridge' " +
+          "'/home/user/.ai-sdk-harness/.agent-runs/' 3000 '/home/user/.agent-runs/'",
+      ),
+    ).toBe(true);
+  });
+
   it("quotes a state dir that would otherwise break out of its argument", () => {
     expect(reapHarnessBridgesCommand("/tmp/it's; rm -rf ~")).toContain(
       `'/tmp/it'\\''s; rm -rf ~'`,
@@ -199,6 +210,28 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
 
     expect(reap(join(root(), "chat-b", "bridge"))).toBe("");
     expect(running(elsewhere)).toBe(true);
+  });
+
+  it("reaps bridges an earlier inspector started under the legacy run state, by the same rules", async () => {
+    // A deploy that moved run state into the framework's state directory:
+    // bridges from before it still run under $HOME/.agent-runs.
+    const home = root();
+    const legacyIdle = await bridge(join(home, ".agent-runs", "chat-a", "bridge"), "waiting");
+    const legacyPaused = await bridge(join(home, ".agent-runs", "chat-c", "bridge"), "running");
+    const currentIdle = await bridge(
+      join(home, ".ai-sdk-harness", ".agent-runs", "chat-d", "bridge"),
+      "waiting",
+    );
+    const otherHome = await bridge(join(root(), ".agent-runs", "chat-e", "bridge"), "waiting");
+
+    const reaped = reap(join(home, ".ai-sdk-harness", ".agent-runs", "chat-b", "bridge"));
+    expect(reaped.split(" ").sort()).toEqual(
+      [String(legacyIdle.pid), String(currentIdle.pid)].sort(),
+    );
+    expect(await exited(legacyIdle)).toBe("SIGTERM");
+    expect(await exited(currentIdle)).toBe("SIGTERM");
+    expect(running(legacyPaused)).toBe(true);
+    expect(running(otherHome)).toBe(true);
   });
 
   it("leaves a process that is not a bridge alone", async () => {

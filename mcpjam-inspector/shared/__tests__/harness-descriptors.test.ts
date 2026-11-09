@@ -25,7 +25,7 @@ describe("harness descriptors", () => {
       codex: "0.163.0",
       cursor: "2026.11.05-86047df",
       "copilot-cli": "1.0.92",
-      opencode: "1.18.23",
+      opencode: "1.18.34",
     });
     expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();
     expect(HARNESS_ORG_UPSTREAM.opencode).toBeNull();

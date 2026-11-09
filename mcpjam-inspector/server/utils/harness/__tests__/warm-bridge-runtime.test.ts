@@ -44,7 +44,17 @@ function fixture() {
       doStart: start,
     }),
   );
-  const run = vi.fn(async () => ({ exitCode: 0, stdout: "ready", stderr: "" }));
+  const run = vi.fn(async (_request: { command: string }) => ({
+    exitCode: 0,
+    stdout: "ready",
+    stderr: "",
+  }));
+  // The framework's HOME probe is answered apart from the commands under test.
+  const home = vi.fn(async () => ({
+    exitCode: 0,
+    stdout: "/home/user",
+    stderr: "",
+  }));
   const spawn = vi.fn(unused);
   const options: HarnessV1StartOptions = {
     sessionId: "session",
@@ -60,10 +70,11 @@ function fixture() {
       writeBinaryFile: unused,
       writeTextFile: unused,
       spawn,
-      run,
+      run: (request: { command: string }) =>
+        request.command === 'printf "%s" "$HOME"' ? home() : run(request),
     },
   };
-  return { session, detach, factory, start, options, run, spawn };
+  return { session, detach, factory, start, options, run, home, spawn };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -80,6 +91,14 @@ describe("warm runtime lifecycle", () => {
     expect(f.detach).toHaveBeenCalledTimes(1);
     expect(f.run).toHaveBeenCalledTimes(2);
     expect(f.run.mock.calls[1]).toBeDefined();
+    // Both probes name the adapter's bridge state, under the framework's state
+    // directory in the box's HOME, and the HOME is asked for once.
+    for (const [request] of f.run.mock.calls) {
+      expect(request.command).toContain(
+        "'/home/user/.ai-sdk-harness/.agent-runs/session/bridge'",
+      );
+    }
+    expect(f.home).toHaveBeenCalledTimes(1);
   });
 
   it("uses disk continuity when the identity or configuration probe refuses reuse", async () => {
@@ -224,10 +243,15 @@ it.each(["claude-code", "codex"] as const)(
         (file) => file.path === recipe.bootstrapDir + "/bridge.mjs",
       ),
     ).toBe(false);
-    expect(
-      pilot?.files.find((file) => file.path.endsWith("/warm-bridge.mjs"))
-        ?.content,
-    ).toContain("Another connection owns this message.");
+    const warm = pilot?.files.find((file) =>
+      file.path.endsWith("/warm-bridge.mjs"),
+    )?.content;
+    expect(warm).toContain("Another connection owns this message.");
+    // Both host-tool ownership checks land on the installed Claude bridge.
+    if (id === "claude-code") {
+      expect(warm).toContain("The tool request belongs to an ended message.");
+      expect(warm).toContain("The tool result belongs to an ended message.");
+    }
     const sandboxSession = {
       ...f.options.sandboxSession,
       defaultWorkingDirectory: "/home/user",

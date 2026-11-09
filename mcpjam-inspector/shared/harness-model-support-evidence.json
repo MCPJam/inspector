@@ -170,7 +170,7 @@
       "versionRange": "1.18.x",
       "familyPattern": "^anthropic/claude-haiku-4\\.5$",
       "status": "supported",
-      "evidence": "OpenCode 1.18.23 ran anthropic/claude-haiku-4.5 against a scripted Anthropic-compatible upstream. No hosted broker lease was exercised.",
+      "evidence": "OpenCode 1.18.34 ran anthropic/claude-haiku-4.5 against a scripted Anthropic-compatible upstream: a host-executed tool, an approved bash call, a cancelled turn and a continued session. No hosted broker lease was exercised.",
       "observedAt": "2026-11-08"
     },
     {
@@ -178,7 +178,7 @@
       "versionRange": "*",
       "familyPattern": "^anthropic/",
       "status": "unknown",
-      "evidence": "Anthropic model outside the measured OpenCode 1.18.23 and claude-haiku-4.5 pair.",
+      "evidence": "Anthropic model outside the measured OpenCode 1.18.34 and claude-haiku-4.5 pair.",
       "observedAt": "2026-11-08"
     },
     {

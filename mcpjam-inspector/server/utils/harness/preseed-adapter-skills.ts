@@ -28,7 +28,7 @@
  *
  * VERSION LOCKSTEP: the no-op depends on this package's `@ai-sdk/harness`
  * hashing byte-identically to the copy nested inside each harness adapter
- * (one deduped 1.0.117 copy shared by all of them today). If they drift,
+ * (one deduped 1.0.158 copy shared by all of them today). If they drift,
  * nothing breaks loudly — the adapter re-writes each skill once per session
  * and MCPJam's supporting files for it are lost until the next session — but
  * the drift should be closed, not
