@@ -31,7 +31,7 @@ import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
-import { ORG_KEY_MISSING_MESSAGE } from "../../utils/harness/external-account-credentials.js";
+import { ORG_KEY_MISSING_MESSAGE } from "../../../shared/org-key-surfaces.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */

@@ -9,6 +9,10 @@ import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
  */
 export type OrgKeyRefusedSurface = "study" | "elsewhere";
 
+/** What a member reads when the org has no usable Cursor key. */
+export const ORG_KEY_MISSING_MESSAGE =
+  "Ask an org admin to add a Cursor key in Organization → AI providers.";
+
 /** The display name of a harness that runs on the organization's vendor key. */
 export function orgKeyHarnessName(
   harnessId: string | null | undefined,
