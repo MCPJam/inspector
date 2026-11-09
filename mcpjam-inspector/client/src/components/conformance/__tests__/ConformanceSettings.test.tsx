@@ -93,6 +93,23 @@ function Harness({
     />
   );
 }
+describe("Settings header", () => {
+  it.each([false, true])(
+    "uses the same Back as a run's page (saved: %s)",
+    (saved) => {
+      render(<Harness saved={saved} onSave={vi.fn(async () => {})} />);
+      // The shared detail header's Back: bordered, with an arrow, not a
+      // bare text link.
+      const back = screen.getByTestId("conformance-settings-back");
+      expect(back).toBe(screen.getByRole("button", { name: "Back" }));
+      expect(back).toHaveClass("border");
+      expect(
+        screen.getByRole("heading", { name: "alpha Conformance Settings" }),
+      ).toBeInTheDocument();
+    },
+  );
+});
+
 describe("Settings inputs", () => {
   it("keeps a saved output tool visible when no tool declares an output schema", async () => {
     toolsMock.outputSchema = false;
