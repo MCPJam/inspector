@@ -3,11 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   acquire: vi.fn(),
   release: vi.fn(async () => {}),
+  unavailable: vi.fn((): string | null => null),
 }));
 vi.mock("../../../utils/harness/playground-box.js", () => ({
   acquirePlaygroundHarnessBox: m.acquire,
+  playgroundHarnessBoxUnavailableReason: m.unavailable,
 }));
-import { acquireOwnedPlaygroundHarnessBox } from "../owned-playground-box.js";
+import {
+  acquireOwnedPlaygroundHarnessBox,
+  startPlaygroundBoxEarly,
+} from "../owned-playground-box.js";
+import { takeEarly } from "../../../utils/early-start.js";
 import { TurnResources } from "../resources.js";
 
 const args = { bearer: "tok", projectId: "p1", chatSessionId: "c1" };
@@ -57,5 +63,40 @@ describe("acquireOwnedPlaygroundHarnessBox", () => {
       refusal,
     );
     expect(own).not.toHaveBeenCalled();
+  });
+});
+
+describe("startPlaygroundBoxEarly", () => {
+  const boxArgs = { ...args, harness: "claude-code" };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.unavailable.mockReturnValue(null);
+  });
+
+  it("books a member's conversation box at once, owned by the turn", async () => {
+    m.acquire.mockResolvedValue(acquired());
+    const resources = new TurnResources(() => {});
+    const early = startPlaygroundBoxEarly(resources, "conversation", boxArgs, false);
+    expect(early).toBeDefined();
+    expect(m.acquire).toHaveBeenCalledWith(boxArgs);
+    await expect(takeEarly(early!)).resolves.toMatchObject({ ok: true });
+    await resources.dispose();
+    expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves every box a check before the booking could refuse to its usual place", () => {
+    const own = vi.fn();
+    expect(startPlaygroundBoxEarly({ own }, "credential", boxArgs, false)).toBeUndefined();
+    expect(startPlaygroundBoxEarly({ own }, "compare", boxArgs, true)).toBeUndefined();
+    expect(startPlaygroundBoxEarly({ own }, null, boxArgs, false)).toBeUndefined();
+    expect(
+      startPlaygroundBoxEarly({ own }, "conversation", { ...boxArgs, chatSessionId: undefined }, false),
+    ).toBeUndefined();
+    expect(
+      startPlaygroundBoxEarly({ own }, "conversation", { ...boxArgs, harness: undefined }, false),
+    ).toBeUndefined();
+    m.unavailable.mockReturnValue("this server can't run boxes");
+    expect(startPlaygroundBoxEarly({ own }, "conversation", boxArgs, false)).toBeUndefined();
+    expect(m.acquire).not.toHaveBeenCalled();
   });
 });

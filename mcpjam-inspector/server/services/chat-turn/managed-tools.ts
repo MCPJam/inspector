@@ -41,8 +41,11 @@ import {
   acquireHarnessBox,
   canProvisionHarnessBoxes,
 } from "../../utils/harness/harness-box.js";
-import { startEarly, takeEarly } from "../../utils/early-start.js";
-import { acquireOwnedPlaygroundHarnessBox } from "./owned-playground-box.js";
+import { takeEarly } from "../../utils/early-start.js";
+import {
+  acquireOwnedPlaygroundHarnessBox,
+  startPlaygroundBoxEarly,
+} from "./owned-playground-box.js";
 import {
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
@@ -147,32 +150,19 @@ export async function prepareManagedTools(args: {
     pinsEnvironment || playgroundBoxReason === "credential"
       ? environmentSpec?.environmentRef.environmentId
       : undefined;
-  const playgroundBoxArgs = (chatSessionId: string, harness: string) => ({
+  const playgroundBoxArgs = {
     bearer: bearerToken,
     projectId: hostedBody.projectId,
-    chatSessionId,
+    chatSessionId: hostedBody.chatSessionId,
     ...(playgroundEnvironmentId
       ? { projectEnvironmentId: playgroundEnvironmentId }
       : {}),
-    harness,
+    harness: resolvedExecution.harness,
     signal: c.req.raw.signal as AbortSignal | undefined,
-  });
-  const boxHarness = resolvedExecution.harness;
-  const boxChatSessionId = hostedBody.chatSessionId;
-  const earlyPlaygroundBox =
-    playgroundBoxReason &&
-    playgroundBoxReason !== "credential" &&
-    boxHarness &&
-    boxChatSessionId &&
-    !c.get("guestId") &&
-    !playgroundHarnessBoxUnavailableReason(boxHarness, playgroundBoxReason)
-      ? startEarly(() =>
-          acquireOwnedPlaygroundHarnessBox(
-            resources,
-            playgroundBoxArgs(boxChatSessionId, boxHarness),
-          ),
-        )
-      : undefined;
+  };
+  const earlyPlaygroundBox = startPlaygroundBoxEarly(
+    resources, playgroundBoxReason, playgroundBoxArgs, Boolean(c.get("guestId")),
+  );
   // ── Phase 4: the scenario's own EPHEMERAL sandbox ────────────────────────
   // An env-backed scenario whose backend says `computerSandbox: 'ephemeral'`
   // runs bash on a per-conversation disposable box booted from the
@@ -478,10 +468,10 @@ export async function prepareManagedTools(args: {
     }
     const acquired = earlyPlaygroundBox
       ? await takeEarly(earlyPlaygroundBox)
-      : await acquireOwnedPlaygroundHarnessBox(
-          resources,
-          playgroundBoxArgs(hostedBody.chatSessionId, resolvedExecution.harness),
-        );
+      : await acquireOwnedPlaygroundHarnessBox(resources, {
+          ...playgroundBoxArgs,
+          chatSessionId: hostedBody.chatSessionId,
+        });
     if (!acquired.ok) {
       logger.warn("[chat-v2] playground harness box provision failed", {
         reason: playgroundBoxReason,

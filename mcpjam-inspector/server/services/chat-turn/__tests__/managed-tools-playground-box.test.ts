@@ -21,13 +21,13 @@ vi.mock("../../../utils/harness/runtime-secrets.js", async (original) => ({
   >()),
   fetchRuntimeSecrets: m.secrets,
 }));
-vi.mock("../owned-playground-box.js", () => ({
-  acquireOwnedPlaygroundHarnessBox: m.acquire,
-}));
+// The booking itself is stubbed one level down, so the turn's own early and
+// late booking paths (`owned-playground-box.ts`) run as they do in production.
 vi.mock("../../../utils/harness/playground-box.js", async (original) => ({
   ...(await original<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
+  acquirePlaygroundHarnessBox: m.acquire,
   playgroundHarnessBoxUnavailableReason: () => null,
   playgroundCredentialRefusal: m.credentialRefusal,
 }));

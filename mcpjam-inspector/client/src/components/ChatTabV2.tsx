@@ -25,6 +25,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -866,26 +867,7 @@ export function ChatTabV2({
     ]
   );
 
-  // The thread a history read was issued for. A read can land after the user
-  // opened another thread (a pre-send read outlives its timeout); its result
-  // must never attach that thread's row or cursor to the one now open.
-  const currentHistoryTargetRef = useRef({
-    chatSessionId,
-    projectId: effectiveHostedProjectId,
-  });
-  // Set after commit: a render React discards must not move the target.
-  useLayoutEffect(() => {
-    currentHistoryTargetRef.current = {
-      chatSessionId,
-      projectId: effectiveHostedProjectId,
-    };
-  }, [chatSessionId, effectiveHostedProjectId]);
-  const isCurrentHistoryTarget = useCallback(
-    (target: { chatSessionId: string; projectId: typeof effectiveHostedProjectId }) =>
-      currentHistoryTargetRef.current.chatSessionId === target.chatSessionId &&
-      currentHistoryTargetRef.current.projectId === target.projectId,
-    []
-  );
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, effectiveHostedProjectId);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
@@ -905,10 +887,7 @@ export function ChatTabV2({
             projectId: effectiveHostedProjectId ?? undefined,
           });
           if (
-            !isCurrentHistoryTarget({
-              chatSessionId,
-              projectId: effectiveHostedProjectId,
-            }) ||
+            !isCurrentHistoryTarget({ chatSessionId, projectId: effectiveHostedProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           ) {
             return null;

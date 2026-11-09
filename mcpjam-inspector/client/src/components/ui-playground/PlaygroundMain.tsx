@@ -6,6 +6,7 @@ import {
   clearComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { ResourceChatHandoff } from "@/components/host-workspace/resource-chat-handoff";
 import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
@@ -3705,20 +3706,7 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  const currentHistoryTargetRef = useRef({
-    chatSessionId,
-    projectId: convexProjectId,
-  });
-  currentHistoryTargetRef.current = {
-    chatSessionId,
-    projectId: convexProjectId,
-  };
-  const isCurrentHistoryTarget = useCallback(
-    (target: { chatSessionId: string; projectId: typeof convexProjectId }) =>
-      currentHistoryTargetRef.current.chatSessionId === target.chatSessionId &&
-      currentHistoryTargetRef.current.projectId === target.projectId,
-    [],
-  );
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
@@ -3732,8 +3720,7 @@ export function PlaygroundMain({
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
-            currentHistoryTargetRef.current.chatSessionId !== chatSessionId ||
-            currentHistoryTargetRef.current.projectId !== convexProjectId ||
+            !isCurrentHistoryTarget({ chatSessionId, projectId: convexProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           )
             return null;
@@ -3780,6 +3767,7 @@ export function PlaygroundMain({
       activeHistorySessionId,
       chatSessionId,
       convexProjectId,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       syncResumedVersion,
     ],
