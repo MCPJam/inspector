@@ -128,7 +128,7 @@ describe("harnessModelSupport — seed evidence", () => {
     expect(verdict.evidence?.harness).toBe("claude-code");
   });
 
-  it("cursor runs cursor/auto and nothing else", () => {
+  it("Cursor supports its account model namespace", () => {
     expect(
       harnessModelSupport({
         harnessId: "cursor",
@@ -136,6 +136,7 @@ describe("harnessModelSupport — seed evidence", () => {
         modelId: "cursor/auto",
       }).status,
     ).toBe("supported");
+    expect(harnessModelSupport({ harnessId: "cursor", modelId: "cursor/mini" }).status).toBe("supported");
     expect(
       harnessModelSupport({
         harnessId: "cursor",
@@ -316,8 +317,53 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "ad248ab92d1ffa9d570444cbe2102c4160fbc2066bcc72ad8f3b73b39ddbd388",
+      "e1e944557232e20a587048d81ae5fede8a2dd8a9dcd885f01da842a5abd1d1a0",
     );
+  });
+
+  it("supports only the measured OpenCode 1.18.x haiku 4.5 pair", () => {
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("supported");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.18.23",
+      }).reason,
+    ).toMatch(/scripted Anthropic-compatible upstream/);
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-4.5",
+        runtimeVersion: "1.17.0",
+      }).status,
+    ).toBe("unknown");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-haiku-3.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unknown");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "anthropic/claude-sonnet-4.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unknown");
+    expect(
+      harnessModelSupport({
+        harnessId: "opencode",
+        modelId: "openai/gpt-5.5",
+        runtimeVersion: "1.18.23",
+      }).status,
+    ).toBe("unsupported");
   });
 });
 
@@ -335,6 +381,7 @@ describe("harnessOrgUpstream", () => {
 
   it("is null for a harness on the customer's own account, or an unknown id", () => {
     expect(harnessOrgUpstream("cursor")).toBeNull();
+    expect(harnessOrgUpstream("opencode")).toBeNull();
     expect(harnessOrgUpstream("toString")).toBeNull();
     expect(harnessOrgUpstream("not-a-harness")).toBeNull();
   });
@@ -344,6 +391,7 @@ describe("harnessOrgUpstream", () => {
     expect(harnessRunsOnOrgProvider("claude-code", "openai")).toBe(false);
     expect(harnessRunsOnOrgProvider("codex", "openai")).toBe(true);
     expect(harnessRunsOnOrgProvider("cursor", "anthropic")).toBe(false);
+    expect(harnessRunsOnOrgProvider("opencode", "anthropic")).toBe(false);
     expect(harnessRunsOnOrgProvider("codex", undefined)).toBe(false);
   });
 });

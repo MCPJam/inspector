@@ -110,6 +110,11 @@ vi.mock("../host-executed-mcp-tools.js", async (importOriginal) => {
   return { ...actual, projectSelectedMcpServersAsHostTools: projectSpy };
 });
 
+const appToolsProjection = vi.hoisted(() => vi.fn(() => ({
+  app_01234567: { description: "Read the current app", inputSchema: {} },
+})));
+vi.mock("../app-tools", () => ({ harnessAppTools: appToolsProjection }));
+
 vi.mock("../resolve-sandbox.js", () => ({
   resolveHarnessSandbox: vi.fn(async () => ({
     computerId: "computer-1",
@@ -222,6 +227,13 @@ function forwardedToolOptions() {
 }
 
 describe("runHarnessTurn forwards host tool-construction options", () => {
+  it("projects the admitted app generation into actual Codex host tools", async () => {
+    const entries = [{ alias: "app_01234567", bridgeId: "generation", appName: "CAD", rawName: "read_view", parentToolCallId: "parent", serverId: "server", readOnly: true }];
+    await runHarnessTurn(baseOptions({ harnessAppTools: entries, chatSessionId: "chat", selectedServers: [] }) as never, "none");
+    expect(appToolsProjection).toHaveBeenCalledWith(expect.objectContaining({ entries, projectId: "project-1", chatSessionId: "chat" }));
+    expect(agentConstruction.last?.tools).toEqual(expect.objectContaining({ app_01234567: expect.objectContaining({ description: "Read the current app" }) }));
+  });
+
   it("uses the MCPJam projection for Claude on its normally native adapter", async () => {
     adapterDelivery.value = "native";
     const policy = { directContent: { image: true } };
@@ -603,6 +615,13 @@ it.each(["claude-code", "codex"] as const)("delivers %s App context per turn wit
   await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
   expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
   expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
+});
+
+
+it.each(["claude-code", "codex"] as const)("hands %s the turn's Browser reason as instructions", async (harness) => {
+  const systemPrompt = "Baseline\n\n## Browser\n\nBrowser is unavailable on this conversation's computer for this turn.";
+  await runHarnessTurn(baseOptions({ harness, agentLoop: harness, sourceType: "direct", selectedServers: [], systemPrompt }) as never, "none");
+  expect(agentConstruction.last?.instructions).toBe(systemPrompt);
 });
 
 

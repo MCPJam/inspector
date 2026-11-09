@@ -1,3 +1,4 @@
+import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -39,8 +40,6 @@ import {
 import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   hostedChatSchema,
-  authorizeProject,
-  callerContextFromHono,
   parseWithSchema,
   ErrorCode,
   WebRouteError,
@@ -63,13 +62,13 @@ import {
   externalAccountHostModelRefusalReason,
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
-import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { harnessSupportsSkills, harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
-import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../evals/route-helpers.js";
 import {
@@ -169,11 +168,12 @@ export async function resolveManagedTurnSetup(args: {
   }
   const authorized = isScenarioRequest
     ? undefined
-    : await authorizeProject(
-        callerContextFromHono(c),
-        bearerToken,
-        hostedBody.projectId,
-      );
+    : await authorizeManagedProject(c, bearerToken, {
+        projectId: hostedBody.projectId,
+        chatSessionId: hostedBody.chatSessionId,
+        target: executionTarget,
+        serverIds: selectedServerIds,
+      });
   const {
     mode: turnMode,
     hostRuntimeConfig,
@@ -189,6 +189,7 @@ export async function resolveManagedTurnSetup(args: {
     workspaceToolsBarred,
   } = await resolveHostedChatSetup({
     prepareChatTurn: authorized?.chatPreparation,
+    preparedChatTurn: authorized?.preparedChatTurn,
     target: executionTarget,
     access:
       executionTarget.kind === "scenario"
@@ -214,7 +215,7 @@ export async function resolveManagedTurnSetup(args: {
   if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
     const service = new BrowserSessionService();
     if (service.enabled) {
-      const state = await readWebConversationState(
+      const state = authorized?.conversationState ?? await readWebConversationState(
         (signal) =>
           service.agentRequest<{
             writable: boolean;
@@ -440,9 +441,14 @@ export async function resolveManagedTurnSetup(args: {
     harnessUsesExternalAccount(resolvedExecution.harness),
   );
   if (resolvedExecution.harness) {
+    // User Testing boxes never receive the org's vendor key: refused first.
+    if (externalAccountHarnessTurn && turnMode === "recorded") {
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+    }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      requestedModelId: String(modelDefinition.id),
     });
     if (hostModelRefusal) {
       throw new WebRouteError(
@@ -457,10 +463,7 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-  if (
-    (turnMode === "recorded" || externalAccountHarnessTurn) &&
-    hostRuntimeConfig &&
-    resolvedExecution.modelId &&
+  if (turnMode === "recorded" && hostRuntimeConfig && resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
   ) {
     const hostModelId = resolvedExecution.modelId;
@@ -485,6 +488,7 @@ export async function resolveManagedTurnSetup(args: {
     model: modelDefinition,
     hostWins: turnMode === "recorded",
     allowLocal: localIngress,
+    harnessId: resolvedExecution.harness,
   });
   if (!selected.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
@@ -726,6 +730,10 @@ export async function resolveManagedTurnSetup(args: {
   }
   return {
     value: {
+      authorizedOrganizationId: authorized?.organizationId,
+      // Only the backend's own answer for this turn's conversation counts; the
+      // `assert_web_writable` fallback and older backends never say bound.
+      executionBound: authorized?.conversationState?.executionBound === true,
       harnessHostCapabilities:
         resolvedExecution.harness && hostRuntimeConfig
           ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)

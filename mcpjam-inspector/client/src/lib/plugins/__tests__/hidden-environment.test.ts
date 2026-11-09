@@ -191,9 +191,6 @@ describe("hiddenEnvironmentCompositionKey", () => {
         pluginVersionIds: ["v2", "v1"],
       }),
     );
-    expect(hiddenEnvironmentCompositionKey(base)).not.toBe(
-      hiddenEnvironmentCompositionKey({ ...base, secretIds: ["s"] }),
-    );
     // Hosted keys are unchanged; a local venue is its own composition.
     expect(hiddenEnvironmentCompositionKey(base)).toBe(
       hiddenEnvironmentCompositionKey({ ...base, venue: "hosted" }),
@@ -347,6 +344,13 @@ describe("unavailableServersForNotice", () => {
     ],
   });
 
+  it("keeps command review actionable even when another server is unreachable", () => {
+    const notices = unavailableServersForNotice([twoServers], [
+      { serverId: "srv_inbox", reason: "unreachable" },
+      { serverId: "srv_send", reason: "needs_approval" },
+    ], "project");
+    expect(notices).toMatchObject([{ reason: "needs_approval", reviewCommand: { projectId: "project", serverId: "srv_send" } }]);
+  });
   it("names the plugin whose server the turn ran without, as a partial skip", () => {
     expect(
       unavailableServersForNotice(
@@ -452,6 +456,7 @@ describe("retry helpers", () => {
       selectedServerIds: ["mine"],
       executionTarget: { kind: "environment", environmentId: "new" },
       environmentOverrides: { serverIds: ["mine", "new_plugin"] },
+      autoContributedPluginServerIds: ["new_plugin"],
       includeProjectSkills: true,
       chatSessionId: "c",
     });

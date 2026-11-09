@@ -1,6 +1,7 @@
 export type HostFeatureVisibility = {
   claudeCode: boolean;
   codex: boolean;
+  copilotCli?: boolean;
   cursorCli: boolean;
 };
 
@@ -23,6 +24,7 @@ const FLAG_GATED_HOSTS: Partial<
   // The Cursor CLI host ONLY. The emulated `cursor` template (the IDE chat
   // panel) is deliberately absent: it is a different, ungated host that has
   // shipped for months, and gating it here would hide it from everyone.
+  "copilot-cli": "copilotCli",
   "cursor-cli": "cursorCli",
 };
 

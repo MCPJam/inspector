@@ -164,9 +164,9 @@ import {
   hostClientCapabilities,
 } from "../../services/host-connection-pins.js";
 import {
-  TERMINAL_ITERATION_STATUSES,
-  TERMINAL_RUN_STATUSES,
-} from "../../services/evals/run-status.js";
+  isEvalIterationTerminalStatus,
+  isEvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import {
   createEvalCasesInBatches,
@@ -233,6 +233,7 @@ import {
 } from "./convex-errors.js";
 import {
   classifyConvexReadError,
+  convexReadFetch,
   translateConvexReadError,
 } from "./convex-read-errors.js";
 import {
@@ -1150,7 +1151,7 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
       "Server missing CONVEX_URL configuration",
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(convexAuthToken);
   return client;
 }
@@ -2062,7 +2063,7 @@ function toIterationDto(
   // with the trial, so its duration is measurable (a setup failure has a real
   // elapsed time) and withholding it would report `durationMs: null` for the
   // one class of failure an operator is trying to time.
-  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
+  const isTerminal = isEvalIterationTerminalStatus(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -4409,6 +4410,8 @@ async function launchEvalRun(params: {
     undefined,
     params.hostConfig ? hostClientCapabilities(params.hostConfig) : undefined,
     {
+      // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
+      pluginComputerRuntime: false,
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's
@@ -5547,7 +5550,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled).
+// (completed | failed | cancelled | timed_out).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
@@ -5924,7 +5927,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     return v1Resource(c, toRunDto(run!));
   }
   // Completed/failed runs can't be cancelled — surface a clear 409.
-  if (TERMINAL_RUN_STATUSES.has(status)) {
+  if (isEvalRunTerminalStatus(status)) {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,

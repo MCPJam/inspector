@@ -9,6 +9,7 @@
  * artifact draining, and disposal.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PluginWorkspaceRecorder } from "../../utils/plugin-workspace-recorder.js";
 
 const renderMcpAppToolResult = vi.fn();
 const isRenderableMcpAppTool = vi.fn();
@@ -1227,4 +1228,44 @@ describe("view tool carry", () => {
     expect(execute).not.toHaveBeenCalled();
     await ctx.dispose();
   });
+});
+
+
+it("carries host recordings through rendered, computer and scripted artifact paths", async () => {
+  const recorder = new PluginWorkspaceRecorder();
+  recorder.open("private-test-key");
+  const recording = recorder.snapshot("chatgpt");
+  isRenderableMcpAppTool.mockReturnValue(true);
+  renderMcpAppToolResult.mockResolvedValue({
+    toolCallId: "recorded", toolName: "show_widget", serverId: "server",
+    status: "rendered", elapsedMs: 1, ts: 1, pluginWorkspace: recording,
+  });
+  const ctx = await createBrowserSessionContext({
+    model: CLAUDE_MODEL, enableComputerUse: true,
+    mcpClientManager: stubManager(),
+  });
+  await ctx.handleEngineToolResult({
+    toolCallId: "recorded", toolName: "show_widget", serverId: "server",
+    rawResult: { content: [] }, output: { content: [] }, isError: false,
+    stepIndex: 0, promptIndex: 0,
+  });
+  const harness = harnessInstances[0]!;
+  harness.getMountedWidgetId.mockReturnValue("recorded");
+  harness.executeAction.mockResolvedValue({
+    action: { action: "screenshot" }, widgetToolCalls: [], elapsedMs: 1,
+    pluginWorkspace: recording,
+  });
+  const computer = ctx.computerWidgetTools.computer as {
+    execute: (input: unknown, options: unknown) => Promise<unknown>;
+  };
+  await computer.execute({ action: "screenshot" }, {});
+  runScriptedStepImpl.mockResolvedValue({
+    ok: true, widgetToolCalls: [], followUps: [], elapsedMs: 1,
+    pluginWorkspace: recording,
+  });
+  await ctx.replayInteractStep("show_widget", { kind: "click", target: { role: { role: "button", name: "Apply" } } });
+  expect(ctx.widgetRenderObservations[0]?.pluginWorkspace).toEqual(recording);
+  expect(ctx.browserInteractionSteps).toHaveLength(2);
+  expect(ctx.browserInteractionSteps.every((step) => step.pluginWorkspace === recording)).toBe(true);
+  await ctx.dispose();
 });

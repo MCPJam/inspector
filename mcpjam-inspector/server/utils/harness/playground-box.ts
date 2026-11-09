@@ -11,8 +11,8 @@
  * environment, so a project's credentials never go there. The reasons a turn
  * takes a box:
  *
- *   `credential`   — the harness authenticates on the customer's own account
- *     (Cursor). Its key reaches only a box the project provisioned.
+ *   `credential`   — the harness authenticates on the organization's vendor
+ *     key (Cursor), which egress injects only on a box the project provisioned.
  *   `compare`      — a compare column. Every column runs the same host at the
  *     same time; each gets its own conversation's box so they cannot overwrite
  *     each other's files.
@@ -39,15 +39,8 @@ import {
 } from "./harness-box.js";
 import {
   ExternalAccountCredentialRefusal,
-  resolveExternalAccountCredentialPlan,
+  resolveOrgKeyCredentialPlan,
 } from "./external-account-credentials.js";
-import { convexListProjectSecretBindings } from "../computers/convex-secrets-client.js";
-import { createConvexClient } from "../../routes/v1/convex-client.js";
-import {
-  ExternalCredentialMissingError,
-  externalCredentialSecretSelection,
-  type ExternalCredentialSecret,
-} from "@/shared/external-credential-selection";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
 
 export type PlaygroundBoxReason = "credential" | "compare" | "conversation";
@@ -79,140 +72,23 @@ export interface PlaygroundBoxRefusal {
 }
 
 /**
- * The HIDDEN environment a Playground turn on a client that signs in with the
- * member's own account (Cursor) runs under, when the turn targets the client
- * itself rather than an environment — which is every such turn while the
- * environments UI is off.
- *
- * An environment is the backend's grant boundary for secrets: the box carries
- * a brokered key only if the environment named on its row selects it. So the
- * route mints (or, deduped by fingerprint, finds) an ad-hoc environment for
- * the client that selects the member's own usable key and nothing else, and
- * names it on the box. It selects no servers (`serverSelection: none`): the
- * turn keeps its client's live server selection exactly as before, and the
- * environment is never shown or targeted for anything but the grant.
- *
- * Refuses, BEFORE any box is booted, when the member has no usable key, with
- * copy that says where to add it in the UI they have. Never "use an
- * environment".
- */
-export async function resolvePlaygroundCredentialEnvironment(args: {
-  bearer: string;
-  projectId: string;
-  hostId: string;
-  harnessId: string;
-  chat?: boolean;
-  /** Test seams. */
-  listSecrets?: typeof convexListProjectSecretBindings;
-  ensureAdhocEnvironment?: (input: {
-    projectId: string;
-    hostId: string;
-    secretSelection: { mode: "explicit"; secretIds: string[] };
-  }) => Promise<{ environmentId: string }>;
-}): Promise<
-  | { ok: true; environmentId: string }
-  | { ok: false; status: 409 | 502; message: string }
-> {
-  const bearer = args.bearer.replace(/^Bearer\s+/i, "");
-  let secrets: ExternalCredentialSecret[];
-  try {
-    secrets = (await (args.listSecrets ?? convexListProjectSecretBindings)(
-      bearer,
-      { projectId: args.projectId },
-    )) as ExternalCredentialSecret[];
-  } catch (error) {
-    logger.warn("[playground-box] secret list failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      ok: false,
-      status: 502,
-      message:
-        "Couldn't read your project's secrets to find your key for this client. Try again in a moment.",
-    };
-  }
-  let secretSelection: { mode: "explicit"; secretIds: string[] } | undefined;
-  try {
-    secretSelection = externalCredentialSecretSelection(
-      { harness: args.harnessId },
-      secrets,
-    );
-  } catch (error) {
-    if (!(error instanceof ExternalCredentialMissingError)) throw error;
-    return {
-      ok: false,
-      status: 409,
-      message: `${error.message} Add or fix it under Project Settings → Secrets, then send again.`,
-    };
-  }
-  if (!secretSelection) {
-    return {
-      ok: false,
-      status: 409,
-      message: "This client needs no key of its own.",
-    };
-  }
-  try {
-    const ensure =
-      args.ensureAdhocEnvironment ??
-      (async (input) => {
-        const result = (await createConvexClient(bearer).mutation(
-          "projectEnvironments:ensureAdhocEnvironment" as never,
-          {
-            projectId: input.projectId,
-            hostId: input.hostId,
-            serverSelection: { mode: "none" },
-            secretSelection: input.secretSelection,
-            ...(args.chat ? { purpose: "chat" } : {}),
-          } as never,
-        )) as { environment: { environmentId: string } };
-        return { environmentId: result.environment.environmentId };
-      });
-    return {
-      ok: true,
-      ...(await ensure({
-        projectId: args.projectId,
-        hostId: args.hostId,
-        secretSelection,
-      })),
-    };
-  } catch (error) {
-    logger.warn("[playground-box] hidden environment failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      ok: false,
-      status: 502,
-      message:
-        "Couldn't attach your key to this conversation's computer. Try again in a moment.",
-    };
-  }
-}
-
-/**
  * The credential check a `credential` turn would fail inside `runHarnessTurn`,
  * run BEFORE the box is booted — the same function, the same inputs — so a
- * refused turn provisions nothing. The sentence on refusal, or null when the
- * credential is satisfiable (or the harness needs none).
- *
- * `boxKind: "sandbox"` because that is where the turn is about to run: only a
- * disposable box carries a brokered key.
+ * turn with no org key provisions nothing. The sentence on refusal, or null
+ * when the key is ready (or the harness needs none).
  */
 export async function playgroundCredentialRefusal(args: {
   harnessId: string;
-  secretEnv: Readonly<Record<string, string>> | undefined;
   bearer?: string;
   projectId?: string;
-  environmentId?: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   try {
-    await resolveExternalAccountCredentialPlan({
+    await resolveOrgKeyCredentialPlan({
       harness: getHarnessAdapter(args.harnessId),
-      secretEnv: args.secretEnv,
       ...(args.bearer ? { bearer: args.bearer } : {}),
       ...(args.projectId ? { projectId: args.projectId } : {}),
-      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
-      boxKind: "sandbox",
+      ...(args.signal ? { signal: args.signal } : {}),
     });
     return null;
   } catch (error) {

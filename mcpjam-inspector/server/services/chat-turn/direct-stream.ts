@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../turn-authorization.js";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -127,6 +128,7 @@ function formatStreamError(error: unknown, provider?: string): string {
  * headless terminal (`consumeDirectChatTurnHeadless`).
  */
 export function streamDirectChatWithLiveTrace(options: {
+  turnAuthorization?: TurnAuthorization;
   llmModel: RunDirectChatTurnOptions["llmModel"];
   modelId: string;
   provider?: string;
@@ -166,6 +168,7 @@ export function streamDirectChatWithLiveTrace(options: {
 }): Response {
   const {
     provider,
+    turnAuthorization,
     abortSignal,
     onStreamWriterReady,
     onPersist,
@@ -243,6 +246,7 @@ export function streamDirectChatWithLiveTrace(options: {
         settleSuspendedToolCall: settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
+      const traceEvents = buildDirectChatTraceCallbacks(writer);
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).
@@ -270,7 +274,10 @@ export function streamDirectChatWithLiveTrace(options: {
         // Trace-event factory shared with route 3 (local-org BYOK) so
         // both routes emit byte-identical SSE wire output. See
         // `server/utils/direct-chat-sse-callbacks.ts`.
-        traceEvents: buildDirectChatTraceCallbacks(writer),
+        traceEvents: { ...traceEvents, onTurnStart: (event) => {
+          turnAuthorization?.start(event.turnId, writer);
+          traceEvents.onTurnStart?.(event);
+        } },
       });
 
       // `streamText` finishes an empty last step as if it were a reply, which

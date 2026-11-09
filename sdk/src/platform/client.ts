@@ -1,4 +1,17 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
+import { widgetSessionPath } from "./widget-session-types.js";
+import type {
+  PlatformWidgetSessionTarget,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionClosed,
+  PlatformWidgetRenderBody,
+} from "./widget-session-types.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -168,6 +181,7 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
@@ -3329,6 +3343,8 @@ export class PlatformApiClient {
       idempotencyKey?: string;
       protocolVersion?: string;
       engineVersion?: string;
+      /** `saved`, the default, runs the server's saved conformance settings. */
+      settings?: "saved" | "none";
     },
     options?: RequestOptions
   ): Promise<PlatformConformanceRunReceipt> {
@@ -3339,18 +3355,21 @@ export class PlatformApiClient {
       idempotencyKey,
       protocolVersion,
       engineVersion,
+      settings,
     } = params;
     const body: Record<string, unknown> = {};
     if (suites !== undefined) body.suites = suites;
     if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
     if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
     if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    if (settings !== undefined) body.settings = settings;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId
       )}/conformance-runs`,
-      { body },
+      // The launch headers say which client started the run, as for evals.
+      { body, declareLaunch: true },
       options
     );
   }
@@ -3388,7 +3407,7 @@ export class PlatformApiClient {
   }
 
   getConformanceReport(
-    params: { projectId: string; runId: string },
+    params: { projectId: string; runId: string; cursor?: string },
     options?: RequestOptions
   ): Promise<PlatformConformanceReport> {
     return this.request(
@@ -3396,7 +3415,29 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
-      {},
+      params.cursor ? { query: { cursor: params.cursor } } : {},
+      options
+    );
+  }
+
+  /** One check of a stored run in full; `suite` only when an id is in two. */
+  getConformanceCheck(
+    params: {
+      projectId: string;
+      runId: string;
+      checkId: string;
+      suite?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformConformanceCheck> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/conformance-runs/${encodeURIComponent(
+        params.runId
+      )}/checks/${encodeURIComponent(params.checkId)}`,
+      params.suite ? { query: { suite: params.suite } } : {},
       options
     );
   }
@@ -3858,14 +3899,7 @@ export class PlatformApiClient {
    */
   renderServerWidget(
     params: ServerScope & {
-      body: {
-        toolName: string;
-        parameters?: Record<string, unknown>;
-        includeSnapshot?: boolean;
-        includeScreenshot?: boolean;
-        injectOpenAiCompat?: boolean;
-        viewport?: { width: number; height: number };
-      };
+      body: PlatformWidgetRenderBody;
     },
     options?: RequestOptions
   ): Promise<PlatformWidgetRender> {
@@ -3874,6 +3908,53 @@ export class PlatformApiClient {
       "widgets/render",
       options
     ) as Promise<PlatformWidgetRender>;
+  }
+
+  /** Retain a widget on a local Inspector; hosted deployments return 404. */
+  createServerWidgetSession(
+    params: ServerScope & { body: PlatformWidgetSessionCreateBody },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionCreated> {
+    return this.serverOp(params, "widget-sessions", options);
+  }
+
+  /** Read the retained widget's current accessibility tree. */
+  getServerWidgetSessionSnapshot(
+    params: PlatformWidgetSessionTarget,
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionSnapshot> {
+    const path = `${widgetSessionPath(params)}/snapshot`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Apply one coordinate action to the original local widget session. */
+  executeServerWidgetSessionAction(
+    params: PlatformWidgetSessionTarget & {
+      body: { action: PlatformWidgetAction };
+    },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionActionResult> {
+    const path = `${widgetSessionPath(params)}/action`;
+    return this.request("POST", path, { body: params.body }, options);
+  }
+
+  /** Apply a semantic action or assertion to the original local session. */
+  executeServerWidgetSessionStep(
+    params: PlatformWidgetSessionTarget & {
+      body: PlatformWidgetSessionStepBody;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionStepResult> {
+    const path = `${widgetSessionPath(params)}/scripted-step`;
+    return this.request("POST", path, { body: params.body }, options);
+  }
+
+  /** Dispose the original owner's retained browser; closing is idempotent. */
+  closeServerWidgetSession(
+    params: PlatformWidgetSessionTarget,
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionClosed> {
+    return this.request("DELETE", widgetSessionPath(params), {}, options);
   }
 
   /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */
@@ -6424,7 +6505,7 @@ export class PlatformApiClient {
   }
 
   private serverOp<T>(
-    params: ServerScope & { body?: Record<string, unknown> },
+    params: ServerScope & { body?: object },
     op: string,
     options?: RequestOptions
   ): Promise<T> {

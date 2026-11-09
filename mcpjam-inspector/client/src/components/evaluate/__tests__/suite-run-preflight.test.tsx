@@ -402,6 +402,32 @@ describe("RunPreflightNotices", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("asks a member for the org's Cursor key once, without the model hint", () => {
+    const key =
+      "Ask an org admin to add a Cursor key in Organization → AI providers.";
+    const notices = (orgKeyProblems: string[]) => (
+      <RunPreflightNotices
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: [],
+          disabledProviders: [],
+          orgKeyProblems,
+          serverName: (ref) => ref,
+        }}
+      />
+    );
+    const { rerender } = render(notices([key]));
+    expect(screen.getByText(key)).toBeInTheDocument();
+    expect(screen.queryByText(/if no organization model fits/)).toBeNull();
+    rerender(
+      notices([key, "Choose a judge model from an organization provider."]),
+    );
+    expect(
+      screen.getByText(/if no organization model fits/),
+    ).toBeInTheDocument();
+  });
+
   it("links a disabled provider to the org's model settings", async () => {
     const manageModels = vi.fn();
     render(

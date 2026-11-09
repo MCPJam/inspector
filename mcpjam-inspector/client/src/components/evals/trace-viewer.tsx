@@ -1057,6 +1057,7 @@ export function TraceViewer({
                   recordedSpans?.length ? 0 : traceMessages.length
                 }
                 transcriptMessages={traceMessages}
+                projectedMessages={!!trace && !Array.isArray(trace) && "projectedMessages" in trace && trace.projectedMessages === true}
                 traceStartedAtMs={traceStartedAtMs}
                 traceEndedAtMs={traceEndedAtMs}
                 onRevealInTranscript={

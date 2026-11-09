@@ -296,6 +296,11 @@ export type MCPLogLevel = (typeof MCP_LOG_LEVELS)[number];
 export interface MCPConformanceConfig {
   /** Cancel this run and its active requests. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
@@ -464,7 +469,13 @@ export interface MCPServerSurfaceSnapshot {
   resourceUris: string[];
   resourceTemplateUris: string[];
   serverCapabilities?: Record<string, unknown>;
+  /** Listings that failed, so their emptiness proves nothing. */
+  unlisted?: SurfaceListing[];
 }
+
+/** The four listings the client phase reads into the surface. */
+export type SurfaceListing =
+  "tools" | "prompts" | "resources" | "resourceTemplates";
 
 /** Readiness advice ids (Phase 7 §15.4). Never part of the pass/fail verdict. */
 export const MCP_READINESS_IDS = [
@@ -611,6 +622,8 @@ export interface MCPConformanceResult {
 
 export interface MCPConformanceSuiteConfig {
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   defaults?: Partial<Omit<MCPConformanceConfig, "serverUrl">>;
   runs: Array<
@@ -639,6 +652,8 @@ export interface MCPClientCheckContext {
   availablePrompts: string[];
   availableResources: string[];
   availableResourceTemplates: string[];
+  /** Listings that failed, so their emptiness proves nothing. */
+  unlisted?: SurfaceListing[];
 }
 
 export interface RawHttpCheckContext {
@@ -647,6 +662,8 @@ export interface RawHttpCheckContext {
   fetchFn: typeof fetch;
   /** Absent when the run selected raw-only checks and never connected. */
   surface?: MCPServerSurfaceSnapshot;
+  /** The check that carries a failed connect, for raw checks it blocked. */
+  connectFailedCheck?: { id: MCPCheckId; title: string };
   /**
    * The run-wide wire record every raw probe feeds (see
    * `wire-observations.ts`). Threaded on the CONTEXT rather than passed per

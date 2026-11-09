@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 
@@ -74,5 +74,29 @@ describe("LearningLandingPage — guided tours", () => {
     // "Getting Started" auto-opens at completionCount 0.
     const row = screen.getByText("Why MCP?").closest("button") as HTMLElement;
     expect(within(row).queryByText("Guided")).not.toBeInTheDocument();
+  });
+});
+
+describe("LearningLandingPage — with MCPJAM_PLATFORM_AGENT=off", () => {
+  afterEach(() => {
+    delete window.__MCP_RUNTIME_CONFIG__;
+  });
+
+  it("leaves out the guided tours, which need the agent's panel", () => {
+    window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+    renderPage();
+
+    expect(screen.queryByText("Guided tours")).not.toBeInTheDocument();
+    const totals = screen.getByText(/tracks ·/);
+    expect(totals.textContent).toContain("4 tracks");
+    expect(totals.textContent).toContain("11 lessons");
+  });
+
+  it("counts only the lessons it lists as completed", () => {
+    window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+    const done = new Set(["why-mcp", "tour-eval-suite"]);
+    renderPage({ isCompleted: (id) => done.has(id), completionCount: 2 });
+
+    expect(screen.getByText("1 of 11 completed")).toBeInTheDocument();
   });
 });

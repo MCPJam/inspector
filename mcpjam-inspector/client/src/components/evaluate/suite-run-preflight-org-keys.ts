@@ -16,7 +16,7 @@ import { CHOOSE_ORG_JUDGE_MODEL } from "@/components/evals/judge-model-picker";
 import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -25,7 +25,12 @@ import {
   harnessOrgUpstream,
   harnessRunsOnOrgProvider,
 } from "@/shared/harness-model-support";
+import {
+  ORG_KEY_MISSING_MESSAGE,
+  orgKeyHarnessName,
+} from "@/shared/org-key-surfaces";
 import type { EvalSuite } from "../evals/types";
+import type { OrgHarnessKeys } from "./use-org-harness-keys";
 
 export type PreflightModel = {
   model: string;
@@ -79,6 +84,8 @@ export type PreflightOrgConfig = {
   >;
   aiKeyPolicy?: OrgVisibleConfig["aiKeyPolicy"];
   aiReadiness?: OrgVisibleConfig["aiReadiness"];
+  /** The org's key readiness for each harness that runs on one (Cursor). */
+  harnessKeys?: OrgHarnessKeys;
 };
 
 /**
@@ -182,11 +189,25 @@ function orgModelVendor(
 }
 
 /**
- * A harness with no organization-key path (Cursor, which runs on the
- * customer's own Cursor account) can't run while the organization requires
- * its own keys, whatever its model, Cursor Auto included: the backend refuses
- * every such runtime (`org_runtime_unsupported`). One sentence per harness,
- * however many of its cells the launch has.
+ * A harness on the organization's own vendor key (Cursor, on the customer's
+ * own Cursor account) runs every model on that key, Cursor Auto included: the
+ * key is the organization's own key for it. Its one problem is a key that
+ * isn't ready, in the launch refusal's words (`cursor_key_missing`). A
+ * readiness not read yet is left to the launch.
+ */
+function orgVendorKeyProblem(
+  orgConfig: PreflightOrgConfig,
+  harnessId: string,
+): string | null {
+  const readiness = orgConfig.harnessKeys?.[harnessId];
+  return readiness && readiness !== "ready" ? ORG_KEY_MISSING_MESSAGE : null;
+}
+
+/**
+ * A harness with no organization-key path at all (OpenCode, platform-funded
+ * only) can't run while the organization requires its own keys, whatever its
+ * model: the backend refuses every such runtime (`org_runtime_unsupported`).
+ * One sentence per harness, however many of its cells the launch has.
  */
 function orgKeyRuntimeProblem(model: PreflightModel): string | null {
   const harnessId = model.harness;
@@ -201,7 +222,7 @@ function orgKeyRuntimeProblem(model: PreflightModel): string | null {
  * not one gets this problem, which names the vendor the harness needs. A
  * matching organization model gets none here: whether its connection can
  * run is `orgKeyModelProblem`'s to say. An emulated client never gets one,
- * and a harness on its own account (Cursor) gets `orgKeyRuntimeProblem`'s.
+ * and a harness on its own vendor key (Cursor) gets `orgVendorKeyProblem`'s.
  */
 function orgKeyHarnessProblem(
   orgConfig: PreflightOrgConfig,
@@ -242,8 +263,9 @@ function orgKeyJudgeProblem(
 
 /**
  * Every required dependency of a launch that can't run on the organization's
- * providers, once each: each model (a harness client's first: a harness
- * with no organization-key path, else the vendor it needs), then the judge.
+ * providers, once each: each model (a harness client's first: its vendor
+ * key, a harness with no organization-key path, else the vendor it needs),
+ * then the judge.
  */
 export function orgKeyProblemsOf(
   orgConfig: PreflightOrgConfig,
@@ -252,8 +274,13 @@ export function orgKeyProblemsOf(
 ): string[] {
   const problems = new Set<string>();
   for (const model of models) {
-    // Before the sentinel skip below: Cursor Auto names no model, and its
-    // runtime is refused all the same.
+    // Before the sentinel skip below: Cursor Auto names no model, and the
+    // key decides it all the same.
+    if (model.harness && orgKeyHarnessName(model.harness)) {
+      const keyProblem = orgVendorKeyProblem(orgConfig, model.harness);
+      if (keyProblem) problems.add(keyProblem);
+      continue;
+    }
     const runtimeProblem = orgKeyRuntimeProblem(model);
     if (runtimeProblem) {
       problems.add(runtimeProblem);
@@ -262,7 +289,7 @@ export function orgKeyProblemsOf(
     if (
       !model.provider ||
       model.provider === "none" ||
-      isRuntimeChosenModelSentinel(model.model)
+      isRuntimeAccountModel(model.model)
     )
       continue;
     const problem =

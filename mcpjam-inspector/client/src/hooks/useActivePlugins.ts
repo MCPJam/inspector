@@ -119,7 +119,7 @@ export function activePluginsRuntimeVenue(): "hosted" | "local" {
  */
 export function useActivePlugins(
   projectId: string | null | undefined,
-  options?: { runtimeVenue?: "hosted" | "local" },
+  options?: { runtimeVenue?: "hosted" | "local" | "computer" },
 ): ActivePluginsState {
   const flagEnabled = usePluginsEnabled();
   const { isAuthenticated } = useConvexAuth();

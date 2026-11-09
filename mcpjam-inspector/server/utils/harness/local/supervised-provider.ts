@@ -54,9 +54,10 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type {
-  HarnessV1NetworkSandboxSession,
-  HarnessV1SandboxProvider,
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1NetworkSandboxSession,
+  type HarnessV1SandboxProvider,
 } from "@ai-sdk/harness";
 import { logger } from "../../logger.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -529,7 +530,7 @@ export function createSupervisedLocalHarnessProvider(
   // The framework requires the agent's working directory to be a proper
   // SUBDIRECTORY of the session's default working directory ("." and absolute
   // paths are both rejected), and it puts its own `.agent-runs/<session>` and
-  // `.harness-bootstrap` references under that default directory too.
+  // `.harness-bootstrap` references under `$HOME/.ai-sdk-harness`.
   //
   // Making the granted workspace the default working directory therefore had
   // two consequences, both wrong: the agent ran in
@@ -697,11 +698,11 @@ export function createSupervisedLocalHarnessProvider(
 
     const translationContext: CommandTranslationContext = {
       harnessId: opts.harnessId,
-      // Resolved exactly as the framework resolves it — against the session's
-      // default working directory — so the translator matches the string the
+      // Resolved exactly as the framework resolves it — against
+      // `$HOME/.ai-sdk-harness` — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        adapterWorkRoot,
+        harnessStateDirectoryPath({ sandboxHomeDir: adapterHome }),
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,

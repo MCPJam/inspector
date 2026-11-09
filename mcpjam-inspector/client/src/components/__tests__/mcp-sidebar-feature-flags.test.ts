@@ -604,3 +604,24 @@ describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", (
     }
   });
 });
+
+
+describe("Events rollout navigation", () => {
+  it.each([
+    { sections: navigationSections },
+    { sections: getHostedNavigationSections(navigationSections) },
+  ])(
+    "shows Events and Triggers only with mcp-events-enabled",
+    ({ sections }) => {
+      const eventUrls = (flags: Record<string, boolean>) =>
+        filterByFeatureFlags(sections, flags)
+          .flatMap((section) => section.items)
+          .filter((item) => item.url === "/events" || item.url === "/triggers")
+          .map((item) => item.url);
+
+      expect(eventUrls({})).toEqual([]);
+      expect(eventUrls({ "mcp-events-enabled": false })).toEqual([]);
+      expect(eventUrls({ "mcp-events-enabled": true })).toEqual(["/triggers", "/events"]);
+    },
+  );
+});

@@ -1,3 +1,5 @@
+import turnAuthorization from "./turn-authorization.js";
+import chatPersistence from "./chat-persistence.js";
 import pluginFormAnswers from "./plugin-form-answers.js";
 import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
@@ -24,10 +26,12 @@ import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
 import tasksWeb from "./tasks.js";
+import eventsWeb from "./events.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
+import { platformAgentGate } from "../../middleware/platform-agent-gate.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
@@ -48,6 +52,7 @@ import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
+import conformanceShareCard from "./conformance-share-card.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -79,6 +84,10 @@ web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tasks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// MCP Events (hosted): discovery/poll dial the caller's server; viewer-token,
+// simulate and slot-state re-check project membership with the caller's
+// bearer before touching the inbox with the admin token.
+web.use("/events/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/scenarios/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Swarm (journey-execution) launch route — member-gated. The runner-control
@@ -99,6 +108,9 @@ web.use(
   // A plugin onboarding turn records its phases; any other passes through.
   onboardingTurnTraceMiddleware,
 );
+// MCPJAM_PLATFORM_AGENT=off answers every agent route here, ahead of auth.
+web.use("/mcpjam-agent", platformAgentGate);
+web.use("/mcpjam-agent/*", platformAgentGate);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/mcpjam-agent/widget-content",
@@ -220,6 +232,8 @@ web.use(
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+web.use("/apps/mcp-apps/view-admissions", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/apps/mcp-apps/view-admissions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 // MJ-012. The rate limit for signed-in callers on this family.
 //
@@ -261,6 +275,7 @@ for (const family of [
   "resources",
   "prompts",
   "tasks",
+  "events",
   "apps/plugin-instances",
 ] as const) {
   web.use(`/${family}/*`, mcpOperationRateLimit(family));
@@ -270,6 +285,7 @@ web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
 web.route("/tasks", tasksWeb);
+web.route("/events", eventsWeb);
 web.route("/prompts", prompts);
 web.route("/scenarios", scenarios);
 web.route("/swarm", swarmRuns);
@@ -284,6 +300,8 @@ web.route("/export", exporter);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat-persistence", chatPersistence);
+web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.
@@ -358,6 +376,9 @@ web.route("/bench", bench);
 // as `/score`: the token is the credential, and the backend only returns the
 // redacted public artifact.
 web.route("/conformance-shared", conformanceShared);
+// The og:image of a shared run's link. Same no-session contract: crawlers
+// carry no bearer, and the backend answers only for links anyone may open.
+web.route("/conformance-share-card", conformanceShareCard);
 web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this

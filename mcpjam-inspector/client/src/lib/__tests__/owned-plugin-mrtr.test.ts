@@ -16,6 +16,7 @@ const pending = (round = 1) => ({
   continuationId: "disposable-continuation",
   version: 1,
   serverId: "server",
+  serverName: "Named server",
   method: "tools/call",
   round,
   inputRequests: [
@@ -50,11 +51,17 @@ describe("owned private MRTR browser driver", () => {
       .mockResolvedValueOnce({ status: "completed", result: { content: [] } });
     const controller = new AbortController(),
       cancel = vi.fn(async () => {});
+    const waiting = vi.fn();
     const result = driveOwnedPluginMrtr(pending(), {
       signal: controller.signal,
       submit,
       cancel,
+      onInputPending: waiting,
     });
+    expect(waiting).toHaveBeenLastCalledWith(true);
+    expect(useHostedMrtrStore.getState().rounds[0]?.serverName).toBe(
+      "Named server",
+    );
     const answer = Object.fromEntries([
       ["constructor", { action: "accept", content: { typed: [false, 0] } }],
     ]);
@@ -64,6 +71,7 @@ describe("owned private MRTR browser driver", () => {
         .submit("disposable-continuation:1", answer as never),
     ).rejects.toThrow("lost ACK");
     expect(useHostedMrtrStore.getState().rounds).toHaveLength(1);
+    expect(waiting).toHaveBeenLastCalledWith(true);
     await useHostedMrtrStore
       .getState()
       .submit("disposable-continuation:1", answer as never);
@@ -78,6 +86,7 @@ describe("owned private MRTR browser driver", () => {
       status: "completed",
       result: { content: [] },
     });
+    expect(waiting).toHaveBeenLastCalledWith(false);
     expect(upload).toHaveBeenCalledTimes(2);
     expect(cancel).not.toHaveBeenCalled();
     expect(ack).toHaveBeenCalledWith("disposable-continuation");

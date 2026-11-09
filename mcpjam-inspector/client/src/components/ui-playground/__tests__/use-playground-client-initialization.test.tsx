@@ -14,13 +14,21 @@ import {
 } from "../use-playground-client-initialization";
 import { playgroundClientInitNotice } from "../playground-client-init-notice";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
+
+// The lineup as the client chips read it: each pane's client, in order.
+const loadSelectedHostIds = (projectId: string) =>
+  paneHostIds(loadComparePanes(projectId));
+const saveSelectedHostIds = (projectId: string, hostIds: string[]) =>
+  saveComparePanes(projectId, panesForHostIds([], hostIds));
 
 const mocks = vi.hoisted(() => ({
   ensure: vi.fn(),

@@ -11,7 +11,7 @@ import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 describe("guest access to harness metadata", () => {
   it("allows the canonical GET for every harness id", () => {
-    for (const id of ["claude-code", "codex", "cursor"]) {
+    for (const id of ["claude-code", "codex", "cursor", "opencode"]) {
       expect(
         isGuestAllowedV1Request("GET", `/api/v1/harness/${id}/capabilities`),
       ).toBe(true);

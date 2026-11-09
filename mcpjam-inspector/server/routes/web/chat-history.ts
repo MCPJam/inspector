@@ -157,7 +157,7 @@ chatHistory.get("/list", async (c) =>
 chatHistory.get("/detail", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { sessionId, chatSessionId, projectId } = c.req.query();
+    const { sessionId, chatSessionId, projectId, view } = c.req.query();
     if (!sessionId && !chatSessionId) {
       throw new WebRouteError(
         400,
@@ -169,6 +169,7 @@ chatHistory.get("/detail", async (c) =>
       sessionId,
       chatSessionId,
       projectId,
+      ...(view === "state" ? { view } : {}),
     });
     // The detail carries short-lived artifact links minted for this caller;
     // nothing between here and the browser may keep a copy.

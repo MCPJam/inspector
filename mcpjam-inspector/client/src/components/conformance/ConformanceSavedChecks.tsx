@@ -88,7 +88,7 @@ export function SuiteReportCases({
           }
         >
           {onlyMissingInput
-            ? "Select the missing tool inputs in setup, then run again."
+            ? "Change your setup as each check says, then run again."
             : incompleteReason}
         </p>
       ) : null}

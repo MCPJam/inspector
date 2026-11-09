@@ -7,6 +7,11 @@ import type {
 } from "./types.js";
 import { CHECK_ERAS } from "./types.js";
 import {
+  blockedByDetails,
+  stoppedAnsweringMessage,
+} from "../conformance-blocked.js";
+import {
+  blockedResult,
   couldNotRunResult,
   eraSkipMessage,
   errorMessage,
@@ -54,11 +59,14 @@ export async function runSelectedClientChecks(
 ): Promise<MCPCheckResult[]> {
   const config = ctx.config;
   const results: MCPCheckResult[] = [];
-  let connectionLost = false;
+  /** The check whose error broke the session; every later check names it. */
+  let connectionLostBy: MCPClientCheckDefinition | undefined;
   // Checks in a row that ran out of time. A timeout leaves the session
   // usable, but at this many the server has stopped answering, and each
   // check after would wait out the full limit for the same silence.
   let timeoutStreak = 0;
+  /** The checks in the current streak, named in the skips that follow. */
+  let timedOut: MCPClientCheckDefinition[] = [];
 
   for (const check of selectedClientChecks) {
     config.signal?.throwIfAborted();
@@ -71,13 +79,8 @@ export async function runSelectedClientChecks(
       continue;
     }
 
-    if (connectionLost) {
-      results.push(
-        couldNotRunResult(
-          check,
-          "Skipping check because the MCP client session is no longer healthy"
-        )
-      );
+    if (connectionLostBy) {
+      results.push(blockedResult(check, connectionLostBy));
       continue;
     }
 
@@ -85,7 +88,8 @@ export async function runSelectedClientChecks(
       results.push(
         couldNotRunResult(
           check,
-          "Skipped because the server stopped responding."
+          stoppedAnsweringMessage(timedOut.map((entry) => entry.title)),
+          timedOut.length > 0 ? blockedByDetails(timedOut[0]!.id) : undefined
         )
       );
       continue;
@@ -100,25 +104,29 @@ export async function runSelectedClientChecks(
       );
       config.signal?.throwIfAborted();
       // Only an answer ends the streak; a skip asked the server nothing.
-      if (isTimedOutCheck(result)) timeoutStreak += 1;
-      else if (
+      if (isTimedOutCheck(result)) {
+        timeoutStreak += 1;
+        timedOut.push(check);
+      } else if (
         result.status !== "skipped" &&
         !CONNECTION_DATA_CHECK_IDS.has(check.id)
       ) {
         timeoutStreak = 0;
+        timedOut = [];
       }
       results.push(result);
     } catch (error) {
       config.signal?.throwIfAborted();
       if (isRequestTimeoutError(error)) {
         timeoutStreak += 1;
+        timedOut.push(check);
         results.push(timedOutResult(check, config.checkTimeout));
         continue;
       }
       results.push(
         failedResult(check, 0, errorMessage(error), undefined, error)
       );
-      connectionLost = true;
+      connectionLostBy = check;
     }
   }
   return results;

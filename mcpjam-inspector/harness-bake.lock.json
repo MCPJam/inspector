@@ -8,20 +8,50 @@
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "345e061cb401da33",
-      "runtimeVersion": "2.1.245"
+      "identity": "8d7f33fc63a62912",
+      "runtimeVersion": "2.1.290"
+    },
+    {
+      "harnessId": "claude-code",
+      "bootstrapDir": ".harness-bootstrap/claude-code",
+      "identity": "c617c3d9c87a9767",
+      "runtimeVersion": "2.1.290"
     },
     {
       "harnessId": "codex",
       "bootstrapDir": ".harness-bootstrap/codex-appserver",
-      "identity": "cf6f4025fcd1bf51",
+      "identity": "4ffece006f2eed00",
       "runtimeVersion": "0.163.0"
+    },
+    {
+      "harnessId": "codex",
+      "bootstrapDir": ".harness-bootstrap/codex-appserver",
+      "identity": "7c24f890cdcb095a",
+      "runtimeVersion": "0.163.0"
+    },
+    {
+      "harnessId": "copilot-cli",
+      "bootstrapDir": ".harness-bootstrap/copilot-cli",
+      "identity": "9ce68108cee6ca1a",
+      "runtimeVersion": "1.0.92"
+    },
+    {
+      "harnessId": "copilot-cli",
+      "bootstrapDir": ".harness-bootstrap/copilot-cli",
+      "identity": "37a93ca2251ad1c5",
+      "runtimeVersion": "1.0.92"
     },
     {
       "harnessId": "cursor",
       "bootstrapDir": ".harness-bootstrap/cursor",
-      "identity": "1cd3c8b5f9bfa1d3",
+      "identity": "ae5c15ad65d2829c",
       "runtimeVersion": "2026.11.05-86047df"
+    },
+    {
+      "harnessId": "opencode",
+      "bootstrapDir": ".harness-bootstrap/opencode",
+      "identity": "cf54ba0da1f51ac6",
+      "runtimeVersion": "1.18.23"
     }
   ]
 }

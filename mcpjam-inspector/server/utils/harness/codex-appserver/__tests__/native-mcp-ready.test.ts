@@ -130,3 +130,19 @@ it.each(["timeout", "abort"])(
     await failed;
   },
 );
+
+it("waits until a removed tool server disappears from every inventory page", async () => {
+  const f = fixture();
+  f.runtime.request
+    .mockResolvedValueOnce({ data: [], nextCursor: "next" })
+    .mockResolvedValueOnce({ data: [{ ...ready.data[0], name: "removed" }] })
+    .mockResolvedValueOnce({ data: [], nextCursor: "next" })
+    .mockResolvedValueOnce({ data: [] });
+  const waiting = waitForNativeMcpServers({ ...f.options, serverNames: [], removedServerNames: ["removed"] });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.runtime.request).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(100);
+  await waiting;
+  expect(f.runtime.request).toHaveBeenCalledTimes(4);
+  expect(f.runtime.request.mock.calls[3][1]).toMatchObject({ cursor: "next" });
+});

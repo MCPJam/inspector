@@ -49,17 +49,13 @@ const LOOP_CONTROLS: Record<
       note: "Codex does its own tool discovery.",
     },
   },
+  "copilot-cli": {
+    modelId: ENFORCED, requireToolApproval: ENFORCED,
+    temperature: { enforced: false, note: "GitHub Copilot CLI controls temperature." },
+    progressiveToolDiscovery: { enforced: false, note: "GitHub Copilot CLI receives the selected tools at turn start." },
+  },
   cursor: {
-    // The one harness whose MODEL is not MCPJam's to choose. It authenticates
-    // with the customer's own Cursor account and that account picks the model
-    // (Cursor Auto), so a selection here would persist onto the host, show in
-    // the editor, and reach nothing — a saved setting that silently lies about
-    // what ran. The host carries the `cursor/auto` sentinel instead, which is
-    // what the runtime actually resolves to.
-    modelId: {
-      enforced: false,
-      note: "The Cursor CLI runs on your Cursor account, which chooses the model itself.",
-    },
+    modelId: ENFORCED,
     // Permanent for the same reason: Cursor's CLI takes no temperature either.
     temperature: {
       enforced: false,
@@ -83,12 +79,28 @@ const LOOP_CONTROLS: Record<
       note: "The Cursor CLI does its own tool discovery.",
     },
   },
+  opencode: {
+    // Brokered Anthropic, same as Claude Code — the selected model is the
+    // model the runtime is launched with, including title/compaction pins.
+    modelId: ENFORCED,
+    temperature: {
+      enforced: false,
+      note: "OpenCode runs its own loop and ignores temperature.",
+    },
+    // OpenCode pauses on native built-ins, and MCPJam host-executed tools
+    // go through HarnessAgent's toolApproval before they run.
+    requireToolApproval: ENFORCED,
+    progressiveToolDiscovery: {
+      enforced: false,
+      note: "OpenCode does its own tool discovery.",
+    },
+  },
 };
 
 /** Runtime facts shared by the adapters, admission gates and client controls. */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
-    displayName: "Claude Code", runtimeVersion: "2.1.245", mcpClient: "harness",
+    displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
     modelAccess: "broker", local: true, guest: true,
     orgUpstream: { provider: "anthropic", profile: "anthropic-native" },
     protocol: "anthropic-messages", credential: null,
@@ -101,6 +113,13 @@ export const HARNESS_DESCRIPTORS = {
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
+  "copilot-cli": {
+    displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: { provider: "openai", profile: "openai-native" },
+    protocol: "openai-responses", credential: null,
+    controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
+  },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
@@ -109,11 +128,25 @@ export const HARNESS_DESCRIPTORS = {
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
+  opencode: {
+    displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false,
+    orgUpstream: null,
+    protocol: "anthropic-messages", credential: null,
+    controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
+  },
 } as const satisfies Record<Harness, object>;
 
 export const LOCAL_HARNESS_IDS = HARNESS_IDS.filter(
   (id): id is "claude-code" | "codex" => HARNESS_DESCRIPTORS[id].local,
 );
+
+/** The harness a client config runs: its agent loop when set, else its harness. */
+export function effectiveHarnessId(
+  config: { agentLoop?: string | null; harness?: string | null } | null | undefined,
+): string | null {
+  return config?.agentLoop ?? config?.harness ?? null;
+}
 
 /** Missing/unknown selectors never gain MCPJam-owned extension authority. */
 export function usesMcpjamClient(input: { agentLoop?: string | null; harness?: string | null }): boolean {
