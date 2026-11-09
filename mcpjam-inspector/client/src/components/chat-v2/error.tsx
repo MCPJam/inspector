@@ -176,7 +176,7 @@ export function ErrorBox({
     const canManage = !!onManageOrgProviders;
     const described = missingSharedModel
       ? {
-          title: "No shared model configured",
+          title: "Choose an organization model",
           body: canManage
             ? "Choose an organization model or add a provider in AI providers."
             : "Choose an organization model or ask an organization admin to add a provider.",
