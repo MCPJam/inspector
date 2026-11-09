@@ -21,6 +21,14 @@ describe("startup authorization facts", () => {
       conversationState.writable === false ? conversationState : undefined,
     );
   });
+  it.each([
+    [{ conversationId: "chat", writable: true, executionBound: true }, true],
+    [{ conversationId: "chat", writable: true, executionBound: "yes" }, false],
+  ])("keeps the backend's bound answer only when it is well formed", async (conversationState, kept) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, conversationState })));
+    const result = await authorizeProject({}, "test-bearer", "project", "chat");
+    expect(result.conversationState).toEqual(kept ? conversationState : undefined);
+  });
   it("includes preparation in the authorized HTTPS request and preserves its result", async () => {
     const preparedChatTurn = { kind: "resolved", environment: {}, harness: null };
     const request = { projectId: "project", hostId: "host", serverOverrideIds: [] };

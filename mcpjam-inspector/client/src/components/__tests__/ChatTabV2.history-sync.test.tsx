@@ -640,7 +640,8 @@ describe("ChatTabV2 history sync", () => {
     mockGetChatHistoryDetail.mockClear();
     mockGetChatHistoryState.mockClear();
     mockReadHistory.mockResolvedValue({ ok: true, session: {
-      _id: "history-1", directVisibility: "private", version: 9,
+      _id: "history-1", chatSessionId: "chat-session-1",
+      directVisibility: "private", version: 9,
     } });
     fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
     fireEvent.click(screen.getByRole("button", { name: "Test send" }));
@@ -649,6 +650,106 @@ describe("ChatTabV2 history sync", () => {
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(9);
     expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+  });
+
+  it("sends without a state read when the live session already holds the thread's version", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    expect(mockUseChatSession.resumedVersion).toBe(mockHistorySession.version);
+    mockReactiveHistoryState.session = { ...mockHistorySession };
+    mockReactiveHistoryState.widgetSnapshots = [];
+    mockGetChatHistoryState.mockClear();
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test send" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).not.toHaveBeenCalled();
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+  });
+
+  it("reads the state before sending when the live session's visibility changed without a version bump", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, directVisibility: "project", messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    // The owner unshared the thread elsewhere: same version, now private.
+    mockReactiveHistoryState.session = {
+      ...mockHistorySession, directVisibility: "private",
+    };
+    mockReactiveHistoryState.widgetSnapshots = [];
+    mockGetChatHistoryState.mockClear();
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      _id: "history-1", chatSessionId: "chat-session-1",
+      directVisibility: "private", version: mockHistorySession.version,
+    } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test send" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+  });
+
+  it("ignores a state read that lands after another thread opened, and drops that send", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    const view = render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    const late = createDeferred<unknown>();
+    mockReadHistory.mockReturnValue(late.promise);
+    mockUseChatSession.syncResumedVersion.mockClear();
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), { target: { value: "Next message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test send" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).toHaveBeenCalled();
+    // Another conversation is now the open one.
+    mockUseChatSession.chatSessionId = "chat-session-2";
+    view.rerender(<ChatTabV2 {...defaultProps} />);
+    late.resolve({ ok: true, session: {
+      _id: "history-1", chatSessionId: "chat-session-1",
+      directVisibility: "private", version: 99,
+    } });
+    await flushMicrotasks();
+    expect(mockUseChatSession.syncResumedVersion).not.toHaveBeenCalledWith(99);
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the open thread when a share refresh lands after another thread opened", async () => {
+    mockReadHistory.mockResolvedValue({ ok: true, session: {
+      ...mockHistorySession, messagesBlobUrl: null,
+    }, widgetSnapshots: [] });
+    const view = render(<ChatTabV2 {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+    const late = createDeferred<unknown>();
+    mockReadHistory.mockReturnValue(late.promise);
+    mockGetChatHistoryState.mockClear();
+    mockToastError.mockClear();
+    mockUseChatSession.detachToLocalFork.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Share active thread" }));
+    await flushMicrotasks();
+    expect(mockGetChatHistoryState).toHaveBeenCalledTimes(1);
+    // Another conversation is now the open one.
+    mockUseChatSession.chatSessionId = "chat-session-2";
+    view.rerender(<ChatTabV2 {...defaultProps} />);
+    late.resolve({ ok: true, session: {
+      _id: "history-1", chatSessionId: "chat-session-1",
+      directVisibility: "project", version: 99,
+    } });
+    await flushMicrotasks();
+    // The thread that is open now was not detached or forked away.
+    expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   it("asks before discarding a draft when switching threads", async () => {

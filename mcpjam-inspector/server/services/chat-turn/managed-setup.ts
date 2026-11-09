@@ -728,6 +728,9 @@ export async function resolveManagedTurnSetup(args: {
   return {
     value: {
       authorizedOrganizationId: authorized?.organizationId,
+      // Only the backend's own answer for this turn's conversation counts; the
+      // `assert_web_writable` fallback and older backends never say bound.
+      executionBound: authorized?.conversationState?.executionBound === true,
       harnessHostCapabilities:
         resolvedExecution.harness && hostRuntimeConfig
           ? qualifyHarnessHostCapabilities(hostRuntimeConfig, HOSTED_APP_HANDLERS)

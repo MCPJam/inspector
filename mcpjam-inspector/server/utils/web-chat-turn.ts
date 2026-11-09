@@ -1,4 +1,6 @@
 import type { TurnAuthorization } from "../services/turn-authorization.js";
+import type { TurnTiming } from "./turn-timing.js";
+import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
@@ -9,7 +11,7 @@ import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
-import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertConversationExecution, conversationExecutionArgs } from './harness/conversation-execution.js';
 import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
@@ -574,6 +576,10 @@ export interface WebChatTurnPrepareInputs {
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
   turnAuthorization?: TurnAuthorization;
+  /** This turn's stage timing; the harness adds its stages and first text. */
+  turnTiming?: TurnTiming;
+  /** The execution-binding check, when the route already started it. */
+  executionBinding?: EarlyStart<void>;
   localScopeStepUp?: {
     bindingKey: string;
     resumeRequest?: ScopeStepUpResumeRequest;
@@ -1198,15 +1204,10 @@ export async function streamChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
-  await assertConversationExecution({
-    mcpClientManager: manager,
-    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
-    origin: persist.scenarioId ? "scenario" : "playground",
-    executionBindingVersion: persist.executionBindingVersion,
-    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
-    harness: persist.harness, agentLoop: persist.agentLoop,
-    authHeader: runtime.authHeader, signal: runtime.abortSignal,
-  });
+  if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
+  else await assertConversationExecution(conversationExecutionArgs({
+    manager, scope: persist, authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  }));
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1982,6 +1983,7 @@ export async function streamChatTurn(
     harnessHostCapabilities: prepare.harnessHostCapabilities,
     harnessStartupRequestId: prepare.harnessStartupRequestId,
     turnAuthorization: runtime.turnAuthorization,
+    ...(runtime.turnTiming ? { turnTiming: runtime.turnTiming } : {}),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
