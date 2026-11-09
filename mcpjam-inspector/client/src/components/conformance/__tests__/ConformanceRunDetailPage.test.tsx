@@ -633,7 +633,7 @@ describe("ConformanceRunDetailPage", () => {
       expect(screen.getByText(hint).closest("[inert]")).toBeNull();
       expect(screen.getByText("Not run")).toHaveAttribute(
         "title",
-        "This check needs an input before it can run.",
+        "This check needs a setup change before it can run.",
       );
       expect(screen.queryByTitle(/Not scored/)).not.toBeInTheDocument();
       expect(screen.queryByText(raw)).not.toBeInTheDocument();

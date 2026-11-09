@@ -119,7 +119,7 @@ describe("ConformanceSharedPage", () => {
     render(<ConformanceSharedPage token="tok" />);
     expect(screen.getByText("Not run")).toHaveAttribute(
       "title",
-      "This check needs an input before it can run.",
+      "This check needs a setup change before it can run.",
     );
     const row = screen.getByRole("button", { name: /Result Type Discipline/ });
     const hint = "Select a tool that creates a task in setup, then run again.";

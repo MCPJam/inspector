@@ -32,6 +32,7 @@ import {
   serverConfigFetch,
   unresolvedVersionReport,
 } from "./conformance-run-version.js";
+import { credentialsFromServerConfig } from "./conformance-login.js";
 import type { MCPTasksConformanceConfig } from "./tasks-conformance/types.js";
 import {
   buildConformanceRunReport,
@@ -232,7 +233,11 @@ export async function runConformance(
     for (const kind of requestedSuites.filter(
       (kind) => kind !== "oauth" || !canRunOAuth
     )) {
-      const report = unresolvedVersionReport(kind, error);
+      const report = unresolvedVersionReport(
+        kind,
+        error,
+        credentialsFromServerConfig(config.server)
+      );
       reports[kind] = report;
       await config.onProgress?.({
         suiteKind: kind,

@@ -5,10 +5,14 @@ import {
 } from "../conformance-outcome.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
-  authorizationRequiredDetails,
   isAuthorizationRefusal,
   isUnauthorizedProbe,
 } from "../conformance-authorization.js";
+import { isMissingInputCheck } from "../conformance-input.js";
+import {
+  loginRequiredDetails,
+  type ConformanceCredentialSource,
+} from "../conformance-login.js";
 import { PROTOCOL_CHECK_CATALOG } from "../conformance-catalog.js";
 import { captureConformanceRun } from "../telemetry.js";
 import {
@@ -34,6 +38,7 @@ import { runWireSchemaCheck, WIRE_SCHEMA_CHECK_ID } from "./checks/wire.js";
 import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
+  blockedResult,
   errorMessage,
   failedResult,
   couldNotRunResult,
@@ -50,6 +55,7 @@ import type {
   MCPConformanceResult,
   MCPReadinessWarning,
   MCPServerSurfaceSnapshot,
+  SurfaceListing,
   NormalizedMCPConformanceConfig,
   RawHttpCheckContext,
 } from "./types.js";
@@ -219,7 +225,8 @@ function createServerConfig(
 
 async function safeListResourceTemplates(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onFailed?: () => void
 ): Promise<string[]> {
   try {
     // Conformance is a raw-evidence surface: bypass the SEP-2549 response
@@ -231,17 +238,20 @@ async function safeListResourceTemplates(
     );
     return (result.resourceTemplates ?? []).map((template) => template.uriTemplate);
   } catch {
+    onFailed?.();
     return [];
   }
 }
 
 async function safeListTools(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onFailed?: () => void
 ) {
   try {
     return await listTools(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
+    onFailed?.();
     return {
       tools: [],
       nextCursor: undefined,
@@ -251,11 +261,13 @@ async function safeListTools(
 
 async function safeListPrompts(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onFailed?: () => void
 ) {
   try {
     return await listPrompts(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
+    onFailed?.();
     return {
       prompts: [],
       nextCursor: undefined,
@@ -265,11 +277,13 @@ async function safeListPrompts(
 
 async function safeListResources(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onFailed?: () => void
 ) {
   try {
     return await listResources(ctx.manager, { serverId: ctx.serverId, signal });
   } catch {
+    onFailed?.();
     return {
       resources: [],
       nextCursor: undefined,
@@ -293,6 +307,8 @@ async function runClientChecks(
    * guessed era.
    */
   authorizationRefused?: true;
+  /** The check that carries a failed connect, for checks blocked by it. */
+  connectFailedCheck?: { id: MCPCheckId; title: string };
 }> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
@@ -345,16 +361,27 @@ async function runClientChecks(
             : config;
         negotiationProbes.settle(effectiveConfig.era);
 
+        // A listing that failed is not an empty listing: checks that would
+        // call "nothing to test" on an empty one must know the difference.
+        const unlisted: SurfaceListing[] = [];
         const [
           toolsResult,
           promptsResult,
           resourcesResult,
           availableResourceTemplates,
         ] = await Promise.all([
-          safeListTools({ manager, serverId }, config.signal),
-          safeListPrompts({ manager, serverId }, config.signal),
-          safeListResources({ manager, serverId }, config.signal),
-          safeListResourceTemplates({ manager, serverId }, config.signal),
+          safeListTools({ manager, serverId }, config.signal, () =>
+            unlisted.push("tools")
+          ),
+          safeListPrompts({ manager, serverId }, config.signal, () =>
+            unlisted.push("prompts")
+          ),
+          safeListResources({ manager, serverId }, config.signal, () =>
+            unlisted.push("resources")
+          ),
+          safeListResourceTemplates({ manager, serverId }, config.signal, () =>
+            unlisted.push("resourceTemplates")
+          ),
         ]);
 
         config.signal?.throwIfAborted();
@@ -375,6 +402,7 @@ async function runClientChecks(
           serverCapabilities: initializationInfo?.serverCapabilities as
             | Record<string, unknown>
             | undefined,
+          unlisted,
         };
 
         const ctx: MCPClientCheckContext = {
@@ -388,6 +416,7 @@ async function runClientChecks(
           availablePrompts: surface.promptNames,
           availableResources: surface.resourceUris,
           availableResourceTemplates,
+          unlisted,
         };
 
         // Readiness is advisory and must not perturb the verdict, so it is
@@ -439,7 +468,7 @@ async function runClientChecks(
               ...PROTOCOL_CHECK_CATALOG[id],
             },
             AUTHORIZATION_REQUIRED_MESSAGE,
-            authorizationRequiredDetails(error),
+            loginRequiredDetails(error, protocolCredentials(config)),
           ),
         ),
         config,
@@ -480,7 +509,7 @@ async function runClientChecks(
         couldNotRunResult(
           check,
           AUTHORIZATION_REQUIRED_MESSAGE,
-          authorizationRequiredDetails(error),
+          loginRequiredDetails(error, protocolCredentials(config)),
         );
       return {
         checks: selectedClientChecks.map((check, index) =>
@@ -504,6 +533,7 @@ async function runClientChecks(
     // (every check applies to `legacy`, so `firstApplicableCheck` is always
     // defined), keeping the legacy path byte-identical to pre-era-awareness.
     if (!firstApplicableCheck) {
+      const anchor = selectedClientChecks[0]!;
       return {
         checks: selectedClientChecks.map((check, index) =>
           index === 0
@@ -515,13 +545,11 @@ async function runClientChecks(
                 error,
               )
             : (eraGate(check, config.era, config.protocolVersion) ??
-              couldNotRunResult(
-                check,
-                "Skipping check because the MCP client session could not be established",
-              )),
+              blockedResult(check, anchor)),
         ),
         config,
         readiness: [],
+        connectFailedCheck: { id: anchor.id, title: anchor.title },
       };
     }
 
@@ -546,34 +574,55 @@ async function runClientChecks(
           ),
         );
       } else {
-        checks.push(
-          couldNotRunResult(
-            check,
-            "Skipping check because the MCP client session could not be established",
-          ),
-        );
+        checks.push(blockedResult(check, firstApplicableCheck));
       }
     }
 
-    return { checks, config, readiness: [] };
+    return {
+      checks,
+      config,
+      readiness: [],
+      connectFailedCheck: {
+        id: firstApplicableCheck.id,
+        title: firstApplicableCheck.title,
+      },
+    };
   }
 }
 
+/** What the protocol suite sends to authenticate. */
+function protocolCredentials(
+  config: NormalizedMCPConformanceConfig,
+): ConformanceCredentialSource {
+  return { accessToken: config.accessToken, headers: config.customHeaders };
+}
+
 /**
- * A raw probe that "failed" on a 401 graded the authorization layer, not the
- * MCP behaviour it names (a missing JSON-RPC error object, an initialize that
- * did not return a session). Same rule the transport checks already apply to
- * a gateway's 401 page: the run establishes nothing there, so it could not
- * run. The original failure message stays in `details` for the record.
+ * A raw probe that "failed" or could not run on a 401 graded the authorization
+ * layer, not the MCP behaviour it names (a missing JSON-RPC error object, an
+ * initialize that did not return a session). The server asked for a login,
+ * which is the caller's setup to fix, so the check is "Not run" at no cost.
+ * The original message stays in `details` for the record.
  */
-function reclassifyUnauthorizedProbe(check: MCPCheckResult): MCPCheckResult {
-  if (check.status !== "failed" || !isUnauthorizedProbe(check.details)) {
+function reclassifyUnauthorizedProbe(
+  check: MCPCheckResult,
+  credentials: ConformanceCredentialSource,
+): MCPCheckResult {
+  if (check.status === "passed" || !isUnauthorizedProbe(check.details)) {
+    return check;
+  }
+  if (
+    check.status === "skipped" &&
+    (check.skipReason !== "could-not-run" || isMissingInputCheck(check))
+  ) {
     return check;
   }
   return couldNotRunResult(check, AUTHORIZATION_REQUIRED_MESSAGE, {
     ...check.details,
-    ...authorizationRequiredDetails(),
-    probeFailure: check.error?.message,
+    ...loginRequiredDetails(undefined, credentials),
+    ...(check.status === "failed"
+      ? { probeFailure: check.error?.message }
+      : { probeReason: check.error?.message }),
   });
 }
 
@@ -610,6 +659,7 @@ export class MCPConformanceTest {
       fetchFn: clientRun.config.fetchFn,
       surface: clientRun.surface,
       recorder,
+      connectFailedCheck: clientRun.connectFailedCheck,
     };
 
     // A refused Auto run already reported every selected check as
@@ -653,7 +703,9 @@ export class MCPConformanceTest {
       ...transportChecks,
       ...modernChecks,
       ...wireSchema.results,
-    ].map(reclassifyUnauthorizedProbe);
+    ].map((check) =>
+      reclassifyUnauthorizedProbe(check, protocolCredentials(this.config)),
+    );
     // The tally reports EVERYTHING that ran, pending checks included: a report
     // that hid them would misstate what the run did. Only the VERDICT is
     // narrowed to the scored set, below.
