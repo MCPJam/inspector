@@ -3342,6 +3342,8 @@ export class PlatformApiClient {
       idempotencyKey?: string;
       protocolVersion?: string;
       engineVersion?: string;
+      /** `saved`, the default, runs the server's saved conformance settings. */
+      settings?: "saved" | "none";
     },
     options?: RequestOptions
   ): Promise<PlatformConformanceRunReceipt> {
@@ -3352,12 +3354,14 @@ export class PlatformApiClient {
       idempotencyKey,
       protocolVersion,
       engineVersion,
+      settings,
     } = params;
     const body: Record<string, unknown> = {};
     if (suites !== undefined) body.suites = suites;
     if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
     if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
     if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    if (settings !== undefined) body.settings = settings;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
