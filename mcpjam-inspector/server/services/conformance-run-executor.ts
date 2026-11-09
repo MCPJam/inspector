@@ -11,8 +11,6 @@
  */
 
 import {
-  isHttpServerConfig,
-  isKnownProtocolVersion,
   redactConformanceReportForSharing,
   runConformance,
   type ConformanceReport,
@@ -36,11 +34,10 @@ import {
   runWithConformanceSignal,
 } from "../routes/shared/conformance-deadline.js";
 import { convexErrorData } from "../routes/v1/convex-errors.js";
-import { isSelected } from "../../shared/conformance-settings.js";
 import { startConformanceRunLifecycle } from "./conformance-run-lifecycle.js";
 import {
-  suiteConfigsForRun,
   type ConformanceRunSettings,
+  type ConformanceSuiteConfigs,
 } from "./conformance-run-settings.js";
 import { isAnalyticsDisabled } from "../utils/analytics.js";
 import { resolveEnvironment } from "../utils/log-events.js";
@@ -125,6 +122,11 @@ export type ExecutePersistedConformanceArgs = {
    * check with no tool inputs, the way the GitHub and benchmark workers run.
    */
   settings?: ConformanceRunSettings;
+  /**
+   * Each suite's config for those settings, at the protocol version the start
+   * resolved before the run existed. Absent: every suite's SDK defaults.
+   */
+  suiteConfigs?: ConformanceSuiteConfigs;
   /** The run's time budget. Absent: no deadline beyond the backend's sweep. */
   runTimeoutSeconds?: number;
   /** What the launching client declared it was, stored on the run as is. */
@@ -566,33 +568,13 @@ export async function executePersistedConformanceRun(
       server: args.server,
       oauth: args.oauth,
     });
-    const requestedVersion =
-      args.protocolVersion && isKnownProtocolVersion(args.protocolVersion)
-        ? args.protocolVersion
-        : undefined;
-    const configs =
-      args.settings && refusal === null && isHttpServerConfig(guarded.server)
-        ? await suiteConfigsForRun(
-            args.settings,
-            guarded.server,
-            requestedVersion,
-            lifecycle.signal
-          )
-        : undefined;
-    // A suite whose saved checks all fall outside the version the run
-    // resolved to has nothing to run; the app leaves it out the same way.
-    const runSuites = configs?.selection
-      ? executionSuites.filter(
-          (kind) =>
-            kind === "oauth" || isSelected(configs.selection?.[kind])
-        )
-      : executionSuites;
+    const configs = args.suiteConfigs;
     const report =
-      runSuites.length > 0 && refusal === null
+      executionSuites.length > 0 && refusal === null
         ? await runWithConformanceSignal(lifecycle.signal, () =>
             runConformance({
               server: stopWithRun(guarded.server, lifecycle.signal),
-              suites: runSuites,
+              suites: executionSuites,
               protocolVersion: (configs?.protocolVersion ??
                 args.protocolVersion) as never,
               engineVersion: args.engineVersion,
@@ -676,16 +658,9 @@ export async function executePersistedConformanceRun(
         await recordIncomplete(suiteKind, refusal);
       }
     }
-    for (const suiteKind of executionSuites) {
-      if (runSuites.includes(suiteKind)) continue;
-      await recordIncomplete(
-        suiteKind,
-        `None of this suite's saved checks apply to MCP protocol version ${configs?.protocolVersion ?? "auto"}, so it did not run.`
-      );
-    }
     if (lifecycle.signal.aborted && !lifecycle.cancelled()) {
       const reason = lifecycle.signal.reason;
-      for (const suiteKind of runSuites) {
+      for (const suiteKind of executionSuites) {
         if (persisted.has(suiteKind)) continue;
         await recordIncomplete(
           suiteKind,
