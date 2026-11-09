@@ -24,6 +24,7 @@ import {
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
 import { sessionForwardingHeaders } from "./session-forwarding.js";
+import { createApprovalBindings } from "./approval-bindings.js";
 import type { HarnessSessionTurn } from "../session-mcp-config.js";
 import { nativePolicyDigest, forwardingToolPolicy } from "./native-policy.js";
 import { readNativeToolResult } from "./native-results.js";
@@ -118,7 +119,7 @@ export async function prepareNativeForwarding(args: {
     rawToolName: string;
     input: unknown;
     keyToServerId: Record<string, string>;
-  }) => { serverId?: string };
+  }) => { serverId?: string; toolName: string };
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -212,6 +213,12 @@ export async function prepareNativeForwarding(args: {
     delivery: args.delivery ?? "native",
     policyDigest,
     keyToServerId,
+    approvals: createApprovalBindings({
+      owners: args.owners,
+      keyToServerId,
+      attributeToolCall: args.attributeToolCall,
+      grantTurnId: args.turnId,
+    }),
     readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
       // A session-stable runtime's requests name no tool call, so no receipt
       // matches this one: the runtime's own result stands.
