@@ -259,6 +259,33 @@ describe("buildFrozenScreenshotOverrides", () => {
       expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/page.png");
     });
 
+    it.each([
+      ["an assert screenshot", { action: "screenshot" as const }],
+      ["a wait", { action: "wait" as const }],
+      ["a mouse move", { action: "mouse_move" as const }],
+      ["a failed click", { action: "left_click" as const, ok: false }],
+      [
+        "a skipped click",
+        { action: "left_click" as const, note: "step_budget_exceeded" as const },
+      ],
+    ])("keeps the live App when the only step is %s", (_label, step) => {
+      const base = savedCopy();
+      const out = buildFrozenScreenshotOverrides(
+        base,
+        [obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" })],
+        [
+          interaction({
+            toolCallId: "tc1",
+            ts: 50,
+            screenshotUrl: "https://s/step.png",
+            ...step,
+          }),
+        ],
+      );
+      expect(out).toBe(base);
+      expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+    });
+
     it("keeps the live App when the run clicked but recorded no picture", () => {
       const base = savedCopy();
       const out = buildFrozenScreenshotOverrides(

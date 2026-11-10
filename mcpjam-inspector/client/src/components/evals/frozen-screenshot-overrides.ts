@@ -1,8 +1,34 @@
 import type {
+  EvalTraceBrowserAction,
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+
+/**
+ * Actions that can move the App away from its opening state. `screenshot`
+ * (also what scripted asserts map to), `mouse_move` and `wait` only look, so
+ * the saved copy still matches what the run saw.
+ */
+const APP_STATE_CHANGING_ACTIONS: ReadonlySet<EvalTraceBrowserAction> =
+  new Set([
+    "left_click",
+    "double_click",
+    "right_click",
+    "type",
+    "key",
+    "scroll",
+  ]);
+
+/** A step that actually acted on the App: a state-changing action that did
+ *  not fail and was not skipped (a `note` marks a step that never ran). */
+function changedAppState(step: EvalTraceBrowserInteractionStepView): boolean {
+  return (
+    APP_STATE_CHANGING_ACTIONS.has(step.action) &&
+    step.ok !== false &&
+    !step.note
+  );
+}
 
 /**
  * Build `frozenScreenshotUrl` tool-render overrides from a run's recorded
@@ -73,7 +99,7 @@ export function buildFrozenScreenshotOverrides(
   // each click), so they win on `ts` — surfacing the post-interaction state.
   const clickedToolCallIds = new Set<string>();
   for (const step of interactionSteps) {
-    clickedToolCallIds.add(step.toolCallId);
+    if (changedAppState(step)) clickedToolCallIds.add(step.toolCallId);
     consider(step.toolCallId, step.screenshotUrl, step.ts);
   }
   // Keep the live App (saved copy) unless the run clicked in it.
