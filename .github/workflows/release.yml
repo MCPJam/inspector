@@ -23,7 +23,7 @@ on:
         default: false
         type: boolean
       skip_verify:
-        description: "Skip the verification gates: green CI (Tests + Build and Test), and the Ask MCPJam smoke"
+        description: "Skip the verification gates: green CI (Tests + Build and Test) and a green staging deploy"
         required: false
         default: false
         type: boolean
@@ -569,6 +569,12 @@ jobs:
         if: fromJSON(needs.preflight.outputs.publish_inspector)
         run: node .github/scripts/assert-client-sourcemaps-processed.mjs
 
+      # For the Inspector this includes one signed-in Ask MCPJam turn through
+      # the packed tarball with no INSPECTOR_SERVICE_TOKEN, against a local
+      # stand-in backend and WorkOS (.github/scripts/ask-mcpjam-smoke.mjs).
+      # v3.12.2 shipped an Inspector whose agent refused every turn in exactly
+      # that configuration. No account or secret is involved, so unlike the
+      # gates above it is not behind `skip_verify`.
       - name: Smoke packed npm packages
         run: node .github/scripts/smoke-packed-npm-packages.mjs
         env:
@@ -593,49 +599,12 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # One signed-in Ask MCPJam turn through THIS release's packed Inspector,
-  # self-hosted and with no INSPECTOR_SERVICE_TOKEN — what every npx, Docker
-  # and desktop user runs — against staging. Gates publish-packages: v3.12.2
-  # shipped an Inspector whose agent refused every turn on exactly that
-  # configuration, and nothing we ran before publishing looked like it.
-  # Ordered after the backend deploy so a backend that does not accept the
-  # claim yet never meets a client that sends it.
-  ask-mcpjam-smoke-staging:
-    needs:
-      - preflight
-      - build-packages
-      - deploy-backend-prod
-    # `skip_verify` skips it outright, like the other verification gates, so a
-    # staging problem can never hold a release hostage; publish-packages then
-    # accepts it as skipped.
-    if: |
-      always() &&
-      !fromJSON(inputs.skip_verify) &&
-      needs.preflight.result == 'success' &&
-      needs.build-packages.result == 'success' &&
-      needs.preflight.outputs.publish_inspector == 'true' &&
-      (
-        !fromJSON(inputs.deploy_backend_prod) ||
-        needs.deploy-backend-prod.result == 'success'
-      )
-    uses: ./.github/workflows/ask-mcpjam-smoke.yml
-    with:
-      source: artifact
-      # A gate that passes because nothing ran is not a gate.
-      require_canary: true
-    # Only what the smoke needs. The canary's own settings live on the
-    # ask-mcpjam-smoke-staging environment.
-    secrets:
-      STAGING_WORKOS_API_KEY: ${{ secrets.STAGING_WORKOS_API_KEY }}
-      SLACK_ALERTS_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
-
   publish-packages:
     needs:
       - preflight
       - local-harness-contract
       - build-packages
       - deploy-backend-prod
-      - ask-mcpjam-smoke-staging
     # Publishing is gated on the backend deployment because a released client
     # can start sending a new field the moment it lands on npm. Shipping the
     # Convex schema first means the window where a fresh client talks to a
@@ -662,11 +631,6 @@ jobs:
       ) &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
-      (
-        needs.preflight.outputs.publish_inspector != 'true' ||
-        fromJSON(inputs.skip_verify) ||
-        needs.ask-mcpjam-smoke-staging.result == 'success'
-      ) &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
