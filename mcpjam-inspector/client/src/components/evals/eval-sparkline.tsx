@@ -33,6 +33,9 @@ function buildSparklineGeometry(
   }));
 }
 
+const SPARKLINE_WIDTH = 120;
+const SPARKLINE_PAD = 3;
+
 function resolveHoverIndex(
   clientX: number,
   rect: DOMRect,
@@ -40,7 +43,10 @@ function resolveHoverIndex(
   bars = false,
 ): number {
   if (pointCount < 2) return 0;
-  const ratio = (clientX - rect.left) / rect.width;
+  // Points and bars sit inside the padded plot area, so measure the pointer
+  // against that area; the full width puts each bar's right edge in the next slot.
+  const padPx = (SPARKLINE_PAD / SPARKLINE_WIDTH) * rect.width;
+  const ratio = (clientX - rect.left - padPx) / (rect.width - padPx * 2);
   const index = bars
     ? Math.floor(ratio * pointCount)
     : Math.round(ratio * (pointCount - 1));
@@ -146,9 +152,9 @@ export function EvalSparkline({
   tooltipPlacement?: "above" | "below";
   bars?: boolean;
 }) {
-  const w = 120;
+  const w = SPARKLINE_WIDTH;
   const h = height;
-  const pad = 3;
+  const pad = SPARKLINE_PAD;
   const geometry = useMemo(() => {
     if (points.length < 2) return [];
     return buildSparklineGeometry(points, w, h, pad, bars);
@@ -289,9 +295,9 @@ export function EvalDualSparkline({
   tooltipPlacement?: "above" | "below";
   bars?: boolean;
 }) {
-  const w = 120;
+  const w = SPARKLINE_WIDTH;
   const h = height;
-  const pad = 3;
+  const pad = SPARKLINE_PAD;
   const { primaryGeometry, secondaryGeometry } = useMemo(() => {
     if (primary.length < 2 || secondary.length < 2) {
       return { primaryGeometry: [], secondaryGeometry: [] };

@@ -263,6 +263,28 @@ describe("MetricStrip bars", () => {
     vi.restoreAllMocks();
   });
 
+  it("selects the bar under the pointer across the padded plot area", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 120,
+      bottom: 24,
+      width: 120,
+      height: 24,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const series = Array.from({ length: 20 }, () => sampleData.series[1]);
+    render(<MetricStrip bars data={{ ...sampleData, series }} />);
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    // x=7 is on the first P95 bar, past the unpadded slot boundary at x=6.
+    fireEvent.mouseMove(latency, { clientX: 7 });
+    expect(within(latency).getByText("Run 1")).toBeInTheDocument();
+    expect(latency.querySelector("svg > g")).toHaveAttribute("opacity", "1");
+    vi.restoreAllMocks();
+  });
+
   it("keeps zero values at the baseline", () => {
     render(
       <MetricStrip
