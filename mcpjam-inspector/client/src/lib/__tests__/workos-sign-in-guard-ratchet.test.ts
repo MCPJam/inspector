@@ -15,7 +15,8 @@ import { fileURLToPath } from "url";
 
 const CLIENT_SRC = resolve(fileURLToPath(import.meta.url), "../../..");
 
-const AUTHKIT_IMPORT = /from\s+["']@workos-inc\/authkit-(?:react|js)["']/;
+const AUTHKIT_IMPORT =
+  /(?:from\s+|import\(\s*)["']@workos-inc\/authkit-(?:react|js)["']/;
 const AUTH_START =
   /\b(?:signIn|signUp|switchToOrganization|getSignInUrl|getSignUpUrl)\b/;
 /** AuthKit entry points that also hash, and that the guarded hook does not wrap. */
@@ -76,6 +77,7 @@ describe("WorkOS sign-in guard ratchet (PLB-506)", () => {
       'import { useAuth } from "@workos-inc/authkit-react";\nconst { user, signIn } = useAuth();',
       'import { useAuth as useWorkOS } from "@workos-inc/authkit-react";\nconst auth = useWorkOS();\nawait auth.signUp();',
       'import { createClient } from "@workos-inc/authkit-js";\nlocation.assign(await client.getSignInUrl());',
+      'const { createClient } = await import("@workos-inc/authkit-js");\nawait (await createClient(id)).signIn();',
     ]) {
       expect(startsAuthUnguarded(sample), sample).toBe(true);
     }
