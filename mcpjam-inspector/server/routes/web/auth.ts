@@ -134,6 +134,7 @@ import {
 } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
@@ -663,7 +664,8 @@ function stripStdioFieldsFromHostedConfig<
  *
  * - For session/guest JWTs (the default): forward the caller's bearer
  *   verbatim. Convex sees the same identity it always has.
- * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
+ * - For org-bound credentials (`isOrgBoundCredential`: WorkOS API keys and
+ *   auth.md agents): exchange
  *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
  *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
  *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
@@ -690,7 +692,7 @@ function stripStdioFieldsFromHostedConfig<
  * `caller-context.test.ts`).
  */
 export interface ManagerCallerContext {
-  /** "workos_api_key" switches to the service-token + acting-as exchange. */
+  /** An org-bound credential switches to the service-token + acting-as exchange. */
   authMethod?: string;
   /** WorkOS user id (Convex `externalId`) for the delegated exchange. */
   workosUserId?: string;
@@ -720,7 +722,7 @@ export function buildConvexAuthHeaders(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (caller.authMethod === "workos_api_key") {
+  if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
@@ -2272,7 +2274,7 @@ export async function createAuthorizedManager(
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
               workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
+                isOrgBoundCredential(caller.authMethod) &&
                 caller.workosUserId &&
                 caller.mcpjamOrganizationId
                   ? {
@@ -2553,7 +2555,7 @@ export async function createAuthorizedManager(
                 // as `authorizeBatch` — otherwise Convex would see the
                 // service token without an acting-as user.
                 workosApiKeyActingAs:
-                  caller.authMethod === "workos_api_key" &&
+                  isOrgBoundCredential(caller.authMethod) &&
                   caller.workosUserId &&
                   caller.mcpjamOrganizationId
                     ? {

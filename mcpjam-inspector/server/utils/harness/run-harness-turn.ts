@@ -117,7 +117,8 @@ import {
   buildBrokerDummyAuth,
   type HarnessAuth,
 } from "./registry.js";
-import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
+import type { HarnessV1PermissionMode, HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
+import { destroySuspendedBridge, forceDestroySessionBridge } from "./destroy-suspended-bridge.js";
 import {
   revokeHarnessModelBroker,
   releaseHarnessBoxReservation,
@@ -980,6 +981,8 @@ export async function runHarnessTurn(
         }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
       }
     | undefined;
+  let cleanupSandbox: import("@ai-sdk/provider-utils").Experimental_SandboxSession | undefined;
+  let bridgeEndpoint: HarnessV1NetworkSandboxSession["getPortEndpoint"] | undefined;
   // Cleanup uses its own deadline: cancelling the turn must not cancel removal.
   let runtimeCredentialsRemoved = false;
   let cursorLogin: ReturnType<typeof cursorRuntimeLogin> | undefined;
@@ -2968,6 +2971,10 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
+          cleanupSandbox = session;
+          const networkSession = session as Partial<HarnessV1NetworkSandboxSession>;
+          if (typeof networkSession.getPortEndpoint === "function")
+            bridgeEndpoint = networkSession.getPortEndpoint.bind(session);
           await cursorLogin?.install();
           // NATIVE delivery only: write the host's MCP servers into the session
           // before the runtime starts, via the adapter's own strategy (Claude
@@ -3381,6 +3388,15 @@ export async function runHarnessTurn(
       }
       reportStartup("agent");
       let session: Awaited<ReturnType<typeof agent.createSession>>;
+      let suspendedState: unknown;
+      let suspensionStarted = false;
+      const destroySuspension = async () => {
+        if (suspendedState && bridgeEndpoint) {
+          try { await destroySuspendedBridge(suspendedState, bridgeEndpoint); return; }
+          catch (error) { logger.warn("[harness] bridge cleanup unconfirmed; stopping session processes", { error }); }
+        }
+        if (cleanupSandbox) await forceDestroySessionBridge(session.sessionId, cleanupSandbox);
+      };
       if (resumeFromApproval && resumable) {
         if (warmAgentPilot && approvalPolicyStamp) assertPendingPolicy(resumable.resumeState, approvalPolicyStamp);
         // No fresh fallback here: if the paused continuation is stale (computer
@@ -4705,7 +4721,9 @@ export async function runHarnessTurn(
             // this commit has already advanced the state version and released
             // the lease, so an ingest carrying it would be refused.
             effectiveAbortSignal.throwIfAborted();
+            suspensionStarted = true;
             const continueState = await session.suspendTurn();
+            suspendedState = continueState;
             effectiveAbortSignal.throwIfAborted();
             const ok = await commitHarnessSessionState({
               owner: continuity.owner,
@@ -4729,7 +4747,11 @@ export async function runHarnessTurn(
             effectiveAbortSignal.throwIfAborted();
             localStateCommitted = ok;
             retainLocalState ||= ok;
-            if (!ok && !localPrepared) await releaseHarnessLease?.();
+            if (!ok && !localPrepared) {
+              await destroySuspension();
+              suspendedState = undefined;
+              await releaseHarnessLease?.();
+            }
             // A runtime whose pending approval lives in its process (Codex
             // app-server) is PARKED rather than torn down: the decision has to
             // reach this exact process. Model traffic is held and the lease
@@ -4792,6 +4814,13 @@ export async function runHarnessTurn(
           // stop()/destroy() threw → no resume payload to commit. Drop any
           // half-built commit and free the lane so the next turn can claim.
           capturedHarnessCommit = undefined;
+          if (suspensionStarted && !localPrepared) {
+            try {
+              await destroySuspension();
+            } catch (error) {
+              logger.warn("[harness] suspended runtime cleanup failed", { error });
+            }
+          }
           if (!localPrepared) await releaseHarnessLease?.();
         }
         if (credentialCleanupError) throw credentialCleanupError;

@@ -171,6 +171,7 @@ async function mintDelegatedToken(
  */
 const DELEGATED_AUTH_METHODS = new Set([
   "workos_api_key",
+  "workos_agent",
   "slack_service",
   "discord_service",
 ]);
