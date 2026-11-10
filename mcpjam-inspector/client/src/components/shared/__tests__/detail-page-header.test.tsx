@@ -168,9 +168,15 @@ describe("DetailPageHeader", () => {
       .closest("div.flex.justify-between");
     expect(header).toHaveClass("@container/detail-header");
     expect(row).toHaveClass("flex-col", "@3xl/detail-header:flex-row");
-    expect(
-      row?.contains(screen.getByRole("button", { name: "Run again" })),
-    ).toBe(true);
+    const runAgain = screen.getByRole("button", { name: "Run again" });
+    expect(row?.contains(runAgain)).toBe(true);
+    // The actions row can shrink to the header and wrap while stacked.
+    expect(runAgain.parentElement).toHaveClass(
+      "min-w-0",
+      "shrink",
+      "flex-wrap",
+      "@3xl/detail-header:shrink-0",
+    );
 
     // Other detail pages keep their single row.
     rerender(

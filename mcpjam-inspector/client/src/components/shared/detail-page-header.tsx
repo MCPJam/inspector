@@ -206,9 +206,12 @@ export function DetailPageHeader<T extends string>({
             {actions ? (
               <div
                 className={cn(
-                  "flex shrink-0 items-center gap-2",
-                  // On its own line, a row still wider than a phone wraps.
-                  stackWhenNarrow && "flex-wrap",
+                  "flex items-center gap-2",
+                  // On its own line, a row still wider than a phone shrinks
+                  // to the header and wraps; from 48rem up it keeps its width.
+                  stackWhenNarrow
+                    ? "min-w-0 shrink flex-wrap @3xl/detail-header:shrink-0"
+                    : "shrink-0",
                 )}
               >
                 {actions}
