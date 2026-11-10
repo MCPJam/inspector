@@ -1761,9 +1761,11 @@ describe("ConformanceTab", () => {
     const list = screen.getByRole("list", { name: "Servers" });
     expect(starting).toBeDisabled();
     expect(starting).toHaveTextContent("Starting...");
-    expect(
-      within(list).getByRole("button", { name: "Run beta" }),
-    ).toHaveTextContent(/^Run$/);
+    // alpha still reports "disconnected" here; the other Run stays off anyway,
+    // since it would replace the run that is connecting.
+    const other = within(list).getByRole("button", { name: "Run beta" });
+    expect(other).toBeDisabled();
+    expect(other).toHaveTextContent(/^Run$/);
 
     await act(async () => connected.resolve("ready"));
   });

@@ -452,8 +452,13 @@ export function ConformanceTab({
     const run = lastRuns?.[offered.name];
     return run ? [{ serverName: offered.name, run }] : [];
   });
+  // A run connecting its server holds every Run off, even before the server
+  // itself reports "connecting": a second Run would replace the pending one.
   const cardsDisabled =
-    !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
+    !serverDefaultsLoaded ||
+    loadingDefaults ||
+    selectionIsReconnecting ||
+    connectingServer !== null;
   const runServer = (serverName: string) => {
     setRunFrom("overview");
     if (onLoadServerDefaults) void requestDefaults(serverName, "auto");
