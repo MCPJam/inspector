@@ -16,3 +16,8 @@ calling. Token counting maps the four ids, bare or `openai/`-prefixed, to GPT-5,
 the closest id ai-tokenizer knows. The server's catalog lookup
 (`buildSyntheticModelDefinition`, used by host-pinned evals and swarms) now
 reads these bare ids as OpenAI instead of falling through to Ollama.
+
+As on GPT-5, the temperature control is off for these own-key rows. The AI SDK
+drops `temperature` at the default reasoning effort, so a saved eval or swarm
+temperature on them is refused instead of being recorded as applied. The hosted
+`openai/gpt-6-*` rows keep their catalog's answer.

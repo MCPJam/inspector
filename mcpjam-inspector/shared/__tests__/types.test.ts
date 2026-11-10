@@ -235,6 +235,15 @@ describe("modelSupportsTemperature", () => {
     expect(modelSupportsTemperature("gpt-5.6-terra")).toBe(false);
   });
 
+  it("strips temperature for own-key GPT-6 rows, not their hosted twins", () => {
+    // Own-key ids reach OpenAI through the AI SDK, which drops temperature at
+    // the default effort. Hosted rows answer from their catalog instead.
+    for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]) {
+      expect(modelSupportsTemperature(id)).toBe(false);
+      expect(modelSupportsTemperature(`openai/${id}`)).toBe(true);
+    }
+  });
+
   it("strips temperature for a hosted GPT-5 too", () => {
     // Hosted ids used to be exempt on the grounds that the backend owns the
     // body it sends upstream. It substitutes 0.7 rather than stripping, so the

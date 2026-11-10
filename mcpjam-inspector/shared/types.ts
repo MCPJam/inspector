@@ -254,8 +254,8 @@ export const isMCPJamGuestAllowedModel = (
  * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
  * ({@link modelRejectsTemperature}) rather than here, because the SDK's
  * `HostRunner` builds its own provider request and needs the same answer. The
- * GPT-5 carve-out stays inspector-side: it is not a Claude family, so the SDK
- * predicate has nothing to say about it.
+ * GPT-5 and own-key GPT-6 carve-outs stay inspector-side: neither is a Claude
+ * family, so the SDK predicate has nothing to say about them.
  *
  * Hosted (MCPJam-provided) ids answer the same way as own-provider ones. They
  * used to be exempted on the grounds that the backend owns the request body it
@@ -266,7 +266,9 @@ export const isMCPJamGuestAllowedModel = (
  */
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  if (id.includes("gpt-5")) {
+  // Bare GPT-6 ids reach OpenAI through the AI SDK, which drops temperature at
+  // the default effort; hosted `openai/gpt-6-*` rows answer from their catalog.
+  if (id.includes("gpt-5") || id.startsWith("gpt-6")) {
     return false;
   }
   return !modelRejectsTemperature(id);
@@ -282,7 +284,7 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
  * claiming `temperature` for one of those is stale, not news. What the metadata
  * adds is the models no id pattern covers: the reasoning families that reject
  * sampling for reasons unrelated to being Claude, which today only `gpt-5`
- * catches by name.
+ * and bare `gpt-6` ids catch by name.
  *
  * Only a COMPLETE parameter list may withdraw it
  * (`supportedParametersComplete`, set when the backend read the Gateway's full
