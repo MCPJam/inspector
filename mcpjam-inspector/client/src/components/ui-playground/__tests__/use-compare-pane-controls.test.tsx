@@ -60,6 +60,8 @@ function client(hostId: string, harness: string, modelId: string): HostDetail {
   };
 }
 
+catalog.push({ id: "cursor/auto", name: "Cursor Auto", provider: "cursor", hosted: false }, { id: "cursor/mini", name: "Cursor Mini", provider: "cursor", hosted: false });
+
 const codex = client("codex", "codex", "openai/gpt-5.5");
 const cursor = client("cursor", "cursor", "cursor/auto");
 const panes: RecoveryPane[] = [
@@ -235,11 +237,11 @@ describe("Compare pane settings", () => {
     expect(calls.restorePanes).toHaveBeenCalledWith([panes[1], panes[0]]);
   });
 
-  it("shows Cursor Auto as fixed, with no model menu or effort", async () => {
+  it("shows Cursor account models in the model menu without unsupported effort", async () => {
     const user = userEvent.setup();
     render(<Harness paneId="cursor" spies={spies()} />);
     expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
-      "Chosen by Cursor CLI",
+      "Cursor Auto",
     );
     await user.click(
       screen.getByRole("button", { name: "Pane settings for cursor" }),
@@ -247,8 +249,8 @@ describe("Compare pane settings", () => {
     const settings = screen.getByTestId("compare-pane-settings");
     expect(within(settings).getByText("Cursor Auto")).toBeInTheDocument();
     expect(
-      within(settings).queryByRole("button", { name: "Model for cursor" }),
-    ).toBeNull();
+      within(settings).getByRole("button", { name: "Model for cursor" }),
+    ).toBeInTheDocument();
   });
 
   it("offers only the rows the pane's harness runs, and picks one for that pane", async () => {

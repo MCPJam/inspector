@@ -1,3 +1,5 @@
+import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
  * Harness runtime registry — the ONLY place that knows an adapter is "Claude
@@ -20,6 +22,7 @@ import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
 export {
   CURSOR_CLI_CHECKSUMS,
@@ -383,6 +386,7 @@ type HarnessRuntimeAdapterBase = {
   /** Can host-executed AI SDK tools (run on MCPJam's server) be approval-gated?
    *  Modeled separately; false for v1 (not wired/tested in MCPJam yet). */
   supportsHostExecutedToolApproval: boolean;
+  hostToolApprovalAtRuntime?: boolean;
   /** HOW this adapter gets the host's selected MCP servers to the model — see
    *  `HarnessMcpDelivery`. Every adapter delivers them one way or the other, so
    *  there is no "MCP unsupported" arm and no MCP pre-flight refusal. */
@@ -551,7 +555,6 @@ export type HarnessCreateArgs = {
 type BrokeredModelAccessArm = {
   modelAccess: "broker";
   externalAccountCredentialEnv?: never;
-  externalAccountBrokerBinding?: never;
 };
 
 /** External-account model access: the runtime authenticates with the
@@ -559,57 +562,21 @@ type BrokeredModelAccessArm = {
 type ExternalAccountModelAccessArm = {
   modelAccess: "external-account";
   /**
-   * The environment variable names this runtime needs from the project's
-   * secrets, e.g. `["CURSOR_API_KEY"]` (which is exactly what
-   * `@ai-sdk/harness-cursor` declares as its own `credentialEnv`).
+   * The environment variable names the runtime authenticates with, e.g.
+   * `["CURSOR_API_KEY"]` (which is exactly what `@ai-sdk/harness-cursor`
+   * declares as its own `credentialEnv`).
    *
    * REQUIRED on this arm, and that is the point: an external-account harness
    * that did not name its credential would have the turn runner silently start
    * it with no auth at all, and the failure would surface as an opaque error
-   * from inside the box. A missing secret is refused up front instead, with
-   * copy that names the variable and where to set it.
+   * from inside the box. A turn whose organization has no ready key is refused
+   * up front instead.
    *
-   * The turn runner treats every name here as required, pulls them OUT of the
-   * box's session env (so they are not also handed to every other command that
-   * runs there) and passes them to the adapter as its auth environment.
+   * The turn runner hands the adapter a placeholder under each name (the
+   * backend's egress injects the organization's key on the vendor's hosts)
+   * and keeps a project secret of the same name out of the box's session env.
    */
   externalAccountCredentialEnv: readonly [string, ...string[]];
-  /**
-   * How each credential above can be satisfied by a BROKERED project secret
-   * instead of a materialized one — the binding the row has to carry for the
-   * backend's egress transform to actually deliver it.
-   *
-   * Keyed by the same env-var name. A name with no entry here can only ever be
-   * satisfied materialized, which is the honest default: brokering works only
-   * when the runtime authenticates by putting the credential in a HEADER, on a
-   * host we can name up front.
-   *
-   * These values are not a guess. They are read off the adapter's own
-   * `credentialBrokering` declaration — the request it says carries the key —
-   * so a runtime that changes where it authenticates changes this too, rather
-   * than silently brokering nothing.
-   */
-  externalAccountBrokerBinding?: Readonly<
-    Record<string, HarnessExternalAccountBrokerBinding>
-  >;
-};
-
-/**
- * The project-secret binding that makes one external-account credential
- * deliverable by MCPJam's egress proxy rather than as a value in the box.
- *
- * Mirrors the backend's `projectSecrets` broker triple exactly
- * (`brokerHosts` / `brokerHeader` / `brokerTemplate`), because that is what a
- * user has to type into Project Settings → Secrets and what the refusal copy
- * has to be able to quote back at them.
- */
-export type HarnessExternalAccountBrokerBinding = {
-  /** Exact hostnames the credential header must be injected on. */
-  hosts: readonly [string, ...string[]];
-  /** HTTP header name, LOWERCASE — the backend canonicalizes rows that way. */
-  header: string;
-  /** Header value template; `{}` is where the plaintext is substituted. */
-  template: string;
 };
 
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
@@ -1166,37 +1133,11 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // throws if anything asks it for one.
   modelAccess: HARNESS_DESCRIPTORS["cursor"].modelAccess,
   // The name the CLI itself reads — `@ai-sdk/harness-cursor` declares exactly
-  // this as its `credentialEnv`. Delivered as a PROJECT SECRET: one key per
-  // environment, set once by an admin under Project Settings → Secrets.
-  // Missing ⇒ the turn is refused up front with copy that says so, never
-  // defaulted.
+  // this as its `credentialEnv`. The ORGANIZATION's key, added once by an org
+  // admin under Organization → AI providers; the box gets a placeholder and
+  // the backend's egress injects the key. No ready key ⇒ the turn is refused
+  // up front, never defaulted.
   externalAccountCredentialEnv: [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env],
-  // …and it can be BROKERED, which is the preferred delivery and the only
-  // one hosted evals and swarms accept at all (they refuse an environment that
-  // selects materialized secrets — `evalSandboxes.ts`'s
-  // `materialized_secrets_unsupported`, `journeyRuns.ts`'s
-  // `ENV_MATERIALIZED_SECRETS_UNSUPPORTED` — because only the chat path
-  // resolves and injects a materialized value, so on a runner-claimed attempt
-  // it would be silently absent).
-  //
-  // The triple is READ OFF THE ADAPTER, not invented: `@ai-sdk/harness-cursor`
-  // declares its own `credentialBrokering` against
-  // `POST https://api2.cursor.sh/auth/exchange_user_api_key` carrying
-  // `Authorization: Bearer <CURSOR_API_KEY>`. MCPJam's egress transform is
-  // host-scoped rather than path-scoped, so brokering the host covers that
-  // exchange and any sibling call that authenticates the same way.
-  //
-  // Declared in `shared/external-credential-selection.ts` so the composer and
-  // the setup step that creates the secret use the SAME binding. (Lowercase
-  // header: `validateBrokerBinding` canonicalizes stored rows that way, so this
-  // is what a saved secret compares equal to.)
-  externalAccountBrokerBinding: {
-    [EXTERNAL_ACCOUNT_CREDENTIALS.cursor.env]: {
-      hosts: [...EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.hosts],
-      header: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.header,
-      template: EXTERNAL_ACCOUNT_CREDENTIALS.cursor.binding.template,
-    },
-  },
   defaultPermissionMode: "allow-all",
   // The ACP bridge routes every tool call through `session/request_permission`
   // and emits `tool-approval-request` for anything it does not auto-approve,
@@ -1231,8 +1172,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `requireToolApproval` and a selected MCP server is observed pausing on the
   // MCP call.
   supportsMcpToolApproval: false,
-  // Not wired or tested for this adapter; same posture as Codex.
-  supportsHostExecutedToolApproval: false,
+  // The ACP permission grant authorizes one host execution before dispatch.
+  supportsHostExecutedToolApproval: true,
+  hostToolApprovalAtRuntime: true,
   // NATIVE: the CLI's own MCP client dials MCPJam's signed per-server proxy, so
   // every `tools/call` crosses the seam where firsthand evidence is captured.
   // Read from the shared declaration, which the client's Behavior tab derives
@@ -1259,17 +1201,12 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // The ACP wrapper carries a static builtin catalog (31 tools), so the generic
   // `/v1/harness/:id/builtin-tools` route works with no per-harness edits.
   listBuiltinTools: memoizedBuiltinTools(() => createCursor()),
-  // AUTO. The adapter passes no model, so Cursor picks — which is the only
-  // honest thing to do while MCPJam has no view of the account's entitlements
-  // (a plan-gated model does not error; it answers "Upgrade your plan to
-  // continue" in a normal end_turn, which the turn runner detects separately).
-  toNativeModel: () => undefined,
-  // Never consulted by the gates: `runHarnessTurn` and the preflight skip every
-  // model gate for an external-account harness, because the model MCPJam knows
-  // about is not the model that runs (the sentinel rule replaces them). Read
-  // from the same table anyway — it says `cursor/auto` only — so a picker that
-  // asks gets the same answer. The CLI build is pinned (see
-  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
+  // Auto delegates to the account default; explicit catalog IDs stay explicit.
+  toNativeModel: (modelId) => isRuntimeAccountModel(modelId)
+    ? modelId === "cursor/auto" ? "default" : modelId.slice("cursor/".length)
+    : undefined,
+  // Namespace compatibility is checked here; current account membership is
+  // rechecked by the backend before installing the runtime login.
   pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
   modelSupport: modelSupportFor("cursor"),
   supportsModel: supportsModelFor("cursor"),
@@ -1299,21 +1236,20 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return pinCursorHarnessBootstrap(
+    return withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
       createCursor({
-        // The customer's own CURSOR_API_KEY, as the environment arm of
-        // HarnessV1Authentication. Passing an explicit env map (rather than
-        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
-        // the SERVER's process env for a credential — and the routing modes
-        // would only produce a warning here anyway, since Cursor cannot be
-        // re-routed.
+        // An explicit empty key prevents ambient credential lookup. The backend
+        // installs the temporary login before the runtime process starts.
         auth,
+        // The framework replaces even empty keys with placeholders by default.
+        // Keep the CLI on its installed login instead of trying a fake API key.
+        credentialForwarding: () => "",
         // REQUIRED by this arm's signature: `session-config` delivery has no
         // other channel, so a construction that forgot the servers would be a
         // silently tool-less turn. The type makes that unwritable.
         mcpServers: toAcpMcpServers(mcpJson),
       }) as unknown as HarnessAgentAdapter,
-    );
+    )));
   },
 };
 

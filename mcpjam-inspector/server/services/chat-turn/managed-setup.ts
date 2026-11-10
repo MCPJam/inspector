@@ -1,3 +1,4 @@
+import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
 import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
@@ -33,10 +34,7 @@ import {
   parseChatReasoningEffort,
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
-import {
-  checkAgentLoopGuard,
-  refuseAgentLoop,
-} from "../../utils/agent-loop-guard.js";
+import { checkAgentLoopGuard, refuseAgentLoop } from "../../utils/agent-loop-guard.js";
 import { DEFAULT_TURN_MAX_STEPS } from "@/shared/turn-step-budget";
 import {
   hostedChatSchema,
@@ -62,13 +60,13 @@ import {
   externalAccountHostModelRefusalReason,
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
-import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { harnessSupportsSkills, harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
-import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../evals/route-helpers.js";
 import {
@@ -86,9 +84,7 @@ import {
 } from "../environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
-import {
-  resolveTurnBuiltInToolIds,
-} from "../../utils/built-in-tools/built-in-tool-policy.js";
+import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { logger } from "../../utils/logger.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
 import { readLocalBrowserSetting } from "../../utils/computers/local-browser-settings.js";
@@ -441,9 +437,14 @@ export async function resolveManagedTurnSetup(args: {
     harnessUsesExternalAccount(resolvedExecution.harness),
   );
   if (resolvedExecution.harness) {
+    // User Testing boxes never receive the org's vendor key: refused first.
+    if (externalAccountHarnessTurn && turnMode === "recorded") {
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+    }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,
       modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      requestedModelId: String(modelDefinition.id),
     });
     if (hostModelRefusal) {
       throw new WebRouteError(
@@ -459,7 +460,7 @@ export async function resolveManagedTurnSetup(args: {
     }
   }
   if (
-    (turnMode === "recorded" || externalAccountHarnessTurn) &&
+    turnMode === "recorded" &&
     hostRuntimeConfig &&
     resolvedExecution.modelId &&
     resolvedExecution.modelId !== modelDefinition.id
@@ -486,6 +487,7 @@ export async function resolveManagedTurnSetup(args: {
     model: modelDefinition,
     hostWins: turnMode === "recorded",
     allowLocal: localIngress,
+    harnessId: resolvedExecution.harness,
   });
   if (!selected.ok) {
     throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, selected.error);
@@ -592,6 +594,7 @@ export async function resolveManagedTurnSetup(args: {
   }
   if (resolvedExecution.harness) {
     const availability = checkHarnessRuntimeAvailable({
+      mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
