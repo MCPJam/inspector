@@ -239,7 +239,9 @@ export function EvalSparkline({
             />
           </>
         )}
-        {hoverIndex != null && active ? (
+        {/* Bars mark the hover by opacity alone: the stretched viewBox turns
+            circles into ellipses that sit on top of the bars. */}
+        {bars ? null : hoverIndex != null && active ? (
           <>
             <line
               x1={active.x}
@@ -258,7 +260,7 @@ export function EvalSparkline({
               strokeWidth={1.5}
             />
           </>
-        ) : active && !bars ? (
+        ) : active ? (
           <circle cx={active.x} cy={active.y} r={2} fill="currentColor" />
         ) : null}
       </svg>
@@ -371,7 +373,10 @@ export function EvalDualSparkline({
             const width = slotWidth * 0.24;
             const pairGap = slotWidth * 0.06;
             return (
-              <g key={index}>
+              <g
+                key={index}
+                opacity={hoverIndex == null || hoverIndex === index ? 1 : 0.6}
+              >
                 <rect
                   data-chart-bar="p50"
                   x={point.x - pairGap / 2 - width}
@@ -419,7 +424,7 @@ export function EvalDualSparkline({
             strokeLinejoin="round"
           />
         )}
-        {hoverIndex != null && activePrimary ? (
+        {bars ? null : hoverIndex != null && activePrimary ? (
           <>
             <line
               x1={activePrimary.x}
@@ -447,7 +452,7 @@ export function EvalDualSparkline({
               />
             ) : null}
           </>
-        ) : !bars ? (
+        ) : (
           <>
             {activePrimary ? (
               <circle
@@ -466,7 +471,7 @@ export function EvalDualSparkline({
               />
             ) : null}
           </>
-        ) : null}
+        )}
       </svg>
     </div>
   );

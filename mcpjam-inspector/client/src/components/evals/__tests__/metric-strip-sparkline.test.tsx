@@ -235,6 +235,34 @@ describe("MetricStrip bars", () => {
     );
   });
 
+  it("marks the hovered bar by opacity, without a guide line or dots", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 120,
+      bottom: 24,
+      width: 120,
+      height: 24,
+      toJSON: () => ({}),
+    } as DOMRect);
+    render(<MetricStrip bars data={sampleData} />);
+    for (const metric of ["latency", "pass-rate", "tokens", "tool-calls"]) {
+      const chart = screen.getByTestId(`metric-sparkline-${metric}`);
+      fireEvent.mouseMove(chart, { clientX: 0 });
+      expect(chart.querySelector("circle")).toBeNull();
+      expect(chart.querySelector("line[stroke-dasharray]")).toBeNull();
+    }
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    const pairs = [...latency.querySelectorAll("svg > g")];
+    expect(pairs.map((pair) => pair.getAttribute("opacity"))).toEqual([
+      "1",
+      "0.6",
+    ]);
+    vi.restoreAllMocks();
+  });
+
   it("keeps zero values at the baseline", () => {
     render(
       <MetricStrip
