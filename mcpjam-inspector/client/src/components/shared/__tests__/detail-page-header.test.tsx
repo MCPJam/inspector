@@ -146,4 +146,49 @@ describe("DetailPageHeader", () => {
       screen.getByRole("button", { name: "Insights" }),
     );
   });
+
+  it("stacks the actions under back and title on a narrow header when asked", () => {
+    // jsdom has no layout: this pins the container query that moves the
+    // actions to their own line below 48rem instead of over the title.
+    const { rerender } = render(
+      <DetailPageHeader
+        backLabel="Conformance"
+        onBack={() => {}}
+        title={<h1>prober-2026</h1>}
+        actions={<button type="button">Run again</button>}
+        testId="header"
+        stackWhenNarrow
+      />,
+    );
+
+    const header = screen.getByTestId("header");
+    // Stacked, the row centers its items only from 48rem up.
+    const row = screen
+      .getByRole("heading", { name: "prober-2026" })
+      .closest("div.flex.justify-between");
+    expect(header).toHaveClass("@container/detail-header");
+    expect(row).toHaveClass("flex-col", "@3xl/detail-header:flex-row");
+    expect(
+      row?.contains(screen.getByRole("button", { name: "Run again" })),
+    ).toBe(true);
+
+    // Other detail pages keep their single row.
+    rerender(
+      <DetailPageHeader
+        backLabel="Swarms"
+        onBack={() => {}}
+        title={<h1>Swarm abc</h1>}
+        actions={<button type="button">Run again</button>}
+        testId="header"
+      />,
+    );
+    expect(screen.getByTestId("header")).not.toHaveClass(
+      "@container/detail-header",
+    );
+    expect(
+      screen
+        .getByRole("heading", { name: "Swarm abc" })
+        .closest("div.flex.items-center.justify-between"),
+    ).not.toHaveClass("flex-col");
+  });
 });

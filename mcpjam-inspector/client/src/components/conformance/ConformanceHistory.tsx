@@ -448,6 +448,7 @@ export function ConformanceRunDetailPage({
         backLabel={back.label}
         onBack={back.onBack}
         backTestId="conformance-saved-run-back"
+        stackWhenNarrow
         title={
           <h1
             className="truncate text-xl font-bold tracking-tight text-foreground"
