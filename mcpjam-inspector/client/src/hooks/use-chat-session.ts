@@ -6281,12 +6281,25 @@ export function useChatSession(
         // cached snapshot HTML so the widget re-renders against the active
         // host's current CSP / bridge state. The cached path is kept for
         // OpenAI Apps and degenerate mcp-apps snapshots that can't live-fetch.
-        overrides = {
-          ...rawResultOverrides,
-          ...buildToolRenderOverridesFromSnapshots(traceSnapshots, {
-            preferLiveWhenPossible: true,
-          }),
-        };
+        const snapshotOverrides = buildToolRenderOverridesFromSnapshots(
+          traceSnapshots,
+          { preferLiveWhenPossible: true },
+        );
+        overrides = { ...rawResultOverrides };
+        for (const [toolCallId, snapshotOverride] of Object.entries(
+          snapshotOverrides,
+        )) {
+          // A snapshot whose saved output could not be fetched keeps its
+          // settings but still gives the App the raw result.
+          overrides[toolCallId] =
+            snapshotOverride.toolOutput === undefined &&
+            rawResultOverrides[toolCallId]
+              ? {
+                  ...snapshotOverride,
+                  toolOutput: rawResultOverrides[toolCallId].toolOutput,
+                }
+              : snapshotOverride;
+        }
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
