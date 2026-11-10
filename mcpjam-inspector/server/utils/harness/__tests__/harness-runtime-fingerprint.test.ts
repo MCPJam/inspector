@@ -4,6 +4,7 @@ import {
   warmHarnessRuntimeFingerprint,
   toToolResultOutput,
 } from "../run-harness-turn";
+import { harnessToolOutputError } from "../tool-result-output";
 import {
   LOCAL_UNATTENDED_SANDBOX_POLICY,
   sandboxPolicyFingerprint,
@@ -305,6 +306,26 @@ describe("toToolResultOutput", () => {
       type: "error-text",
       value: JSON.stringify({ msg: "boom" }),
     });
+  });
+
+  it("renders an ACP runtime's `{ error }` result as that error's text", () => {
+    const timeout = "MCP error -32001: Request timed out";
+    expect(toToolResultOutput({ error: timeout }, true)).toEqual({
+      type: "error-text",
+      value: timeout,
+    });
+    expect(harnessToolOutputError({ error: timeout })).toBe(timeout);
+    // Only that exact shape: a result that merely carries an `error` field is
+    // not a failure report.
+    for (const output of [
+      { error: "" },
+      { error: { message: timeout } },
+      { error: timeout, content: [] },
+      [timeout],
+      timeout,
+      { success: true },
+    ])
+      expect(harnessToolOutputError(output)).toBeUndefined();
   });
 
   it("does not treat a bare {type} (no value) as already-typed", () => {

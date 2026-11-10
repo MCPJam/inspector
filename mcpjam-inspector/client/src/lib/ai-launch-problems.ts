@@ -9,10 +9,11 @@
  * Each problem's `reason` is the backend's own sentence. A dependency that
  * can't run on organization keys at all yet (the simulated user) arrives as
  * `org_runtime_unsupported`, whose reason names no fix. A harness runtime
- * (Claude Code, Codex) runs on an organization connection to its own vendor,
- * so it is a problem only when the selection isn't one: another vendor, an
- * MCPJam-provided or personal model, or a connection the harness can't use
- * (a custom base URL, a local runtime). A built-in tool the client enables
+ * runs on an organization connection that serves its API (its vendor's own,
+ * or a gateway), so it is a problem only when the selection isn't one:
+ * another vendor, an MCPJam-provided or personal model, or a connection the
+ * harness can't use (a gateway without its API, an unmapped gateway model, a
+ * local runtime). A built-in tool the client enables
  * (web search) is a problem while it can't run on the organization's
  * providers: the run would otherwise lose a tool it was configured with.
  */

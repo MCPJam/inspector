@@ -22,6 +22,7 @@ import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { withAcpPermissionCallInput } from "./acp-permission-input.js";
 import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
 export {
@@ -57,6 +58,7 @@ import {
   toOpenCodeNativeModel,
   type HarnessNativeUpstream,
 } from "./runtime-model-ids.js";
+import { claudeCodeOrgGatewayPins } from "./org-gateway-model-ids.js";
 import {
   HARNESS_MCP_DELIVERY,
   type HarnessMcpDelivery,
@@ -393,6 +395,9 @@ type HarnessRuntimeAdapterBase = {
   mcpDelivery: HarnessMcpDelivery;
   /** Qualified vendor continuation hook for the shared forwarding route. */
   forwardingRuntime?: ForwardingRuntimeContract;
+  /** The runtime refuses to resume when its MCP config changes, so each lane
+   *  gets session handles in place of per-turn tokens. */
+  sessionStableMcpConfig?: boolean;
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -778,7 +783,9 @@ function claudeCodeTurnEnv(
   return {
     ...(upstream?.profile === "anthropic-native"
       ? claudeCodeNativeModelPins(upstream.nativeModelId)
-      : claudeCodeModelPins(modelId)),
+      : upstream?.profile === "org-gateway"
+        ? claudeCodeOrgGatewayPins(upstream.nativeModelId)
+        : claudeCodeModelPins(modelId)),
     ...(permissionMode === "allow-all"
       ? {}
       : { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
@@ -944,8 +951,9 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
       // changing whose key pays never changes the effort a turn runs at.
       //
       // On the organization's own Anthropic key the runtime talks to
-      // Anthropic natively, so with no effort the CLI's defaults stand. On the
-      // AI Gateway they are pinned instead:
+      // Anthropic natively, so with no effort the CLI's defaults stand. Its
+      // gateway gets the same: a gateway that serves Anthropic Messages takes
+      // Anthropic's request shape. On the AI Gateway they are pinned instead:
       //  - Unset, Claude Code defaults to ADAPTIVE thinking, a first-party
       //    Anthropic API shape the Gateway's Anthropic-compat schema rejects
       //    (400: expected 'disabled' | 'enabled'). (`"off"` on the canary
@@ -972,7 +980,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
             thinking: { type: "adaptive" as const },
             env: { ...env, CLAUDE_CODE_EFFORT_LEVEL: reasoningEffort },
           }
-        : upstream?.profile === "anthropic-native"
+        : upstream?.profile === "anthropic-native" ||
+            upstream?.profile === "org-gateway"
           ? { env }
           : {
               thinking: { type: "disabled" as const },
@@ -1152,26 +1161,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // work while leaving reads free: the faithful mapping to the emulated engine,
   // which gates tool CALLS and never reads.
   approvalPermissionMode: "allow-reads",
-  // FALSE pending a live measurement, and deliberately not inferred.
-  //
-  // The mechanism is clearly there — an MCP call reaches the same
-  // `requestPermission` path as a native one, and the bridge's
-  // `claimHostToolPermission` short-circuit covers only HarnessAgent's OWN tool
-  // channel, not the host's servers. What is NOT established is the one fact
-  // that decides the answer: which ACP `toolCall.kind` cursor-agent reports for
-  // an MCP tool. `other`/`execute` would pause under "allow-reads"; a kind of
-  // read/search/fetch/think would be auto-approved and the call would run with
-  // no prompt at all.
-  //
-  // Claiming `true` on the strength of the mechanism would mean a host that
-  // explicitly asked for approval could silently execute MCP tools unapproved —
-  // the one failure this flag exists to prevent. At `false`, such a host is
-  // refused at preflight with a message that says why
-  // (`harnessToolApprovalRefusalReason`), and approval-free Cursor hosts are
-  // unaffected. Flip this to `true` — a one-line change — once a live run with
-  // `requireToolApproval` and a selected MCP server is observed pausing on the
-  // MCP call.
-  supportsMcpToolApproval: false,
+  // Cursor pauses MCP calls and binds forwarded approvals to one request.
+  supportsMcpToolApproval: true,
   // The ACP permission grant authorizes one host execution before dispatch.
   supportsHostExecutedToolApproval: true,
   hostToolApprovalAtRuntime: true,
@@ -1184,6 +1175,24 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // servers are a CONSTRUCTOR setting (see createHarness). Same mode, different
   // mechanism — which is exactly the distinction this field carries.
   mcpNativeDelivery: "session-config",
+  // The ACP adapter fingerprints its MCP servers, headers included, on every
+  // resume, so a per-turn token there would end the session each turn.
+  sessionStableMcpConfig: true,
+  // Pass-through only: Cursor's client talks to the server and MCPJam renders
+  // nothing. Approval bindings correlate calls (no tool-call id reaches the
+  // server), Cursor declines elicitation itself, and the session-stable config
+  // never changes between turns, so there is nothing to refresh.
+  forwardingRuntime: {
+    runtimeVersion: "2026.11.05-86047df",
+    configurationVersion: "acp-forward-v1",
+    ownedInput: false,
+    passThroughOnly: true,
+    boundApprovals: true,
+    // Measured on this runtime: `initialize` at 2025-11-25 on every server,
+    // and `server/discover` at 2026-07-28 only after a `-32022` naming it.
+    nativeVersionNegotiation: "legacy-first",
+    refresh: (runtime) => runtime,
+  },
   // OFF for v1. ACP supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this
   // is a scope decision rather than a capability wall: shipping skills means
   // owning the same delivery/reconcile/adopt passes the other two adapters
@@ -1236,7 +1245,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
+    return withAcpPermissionCallInput(withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
       createCursor({
         // An explicit empty key prevents ambient credential lookup. The backend
         // installs the temporary login before the runtime process starts.
@@ -1249,7 +1258,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
         // silently tool-less turn. The type makes that unwritable.
         mcpServers: toAcpMcpServers(mcpJson),
       }) as unknown as HarnessAgentAdapter,
-    )));
+    ))));
   },
 };
 

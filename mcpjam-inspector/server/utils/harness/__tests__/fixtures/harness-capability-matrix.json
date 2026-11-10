@@ -52,10 +52,6 @@
       "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "anthropic-native",
-        "provider": "anthropic"
-      },
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "2.1.290"
@@ -122,10 +118,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [
         "low",
@@ -187,10 +179,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [],
       "runtimeVersion": "1.0.92"
@@ -205,6 +193,14 @@
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "forwardingRuntime": {
+        "boundApprovals": true,
+        "configurationVersion": "acp-forward-v1",
+        "nativeVersionNegotiation": "legacy-first",
+        "ownedInput": false,
+        "passThroughOnly": true,
+        "runtimeVersion": "2026.11.05-86047df"
+      },
       "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",
@@ -213,13 +209,14 @@
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "promptImageInput": true,
       "requiresComputer": true,
+      "sessionStableMcpConfig": true,
       "skillsBaseDir": "/home/user/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
       "skillsWriteOptions": {
         "trailingNewline": false
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
-      "supportsMcpToolApproval": false,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
       "supportsSkills": false
@@ -258,7 +255,6 @@
       "mcpClient": "harness",
       "modelAccess": "external-account",
       "orgKeys": false,
-      "orgUpstream": null,
       "protocol": null,
       "reasoningEfforts": [],
       "runtimeVersion": "2026.11.05-86047df"
@@ -311,8 +307,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
-      "orgKeys": false,
-      "orgUpstream": null,
+      "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "1.18.34"

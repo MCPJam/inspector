@@ -547,6 +547,7 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
@@ -594,7 +595,7 @@ export type SystemEventMap = {
     surface: string;
     serverId: string;
     transport: "http" | "stdio";
-    configuredMode: "auto" | "modern-pin" | "legacy";
+    configuredMode: "auto" | "modern-pin" | "legacy" | "legacy-first";
     outcome: "connected" | "failed";
     negotiatedEra?: "legacy" | "modern";
     negotiatedProtocolVersion?: string;

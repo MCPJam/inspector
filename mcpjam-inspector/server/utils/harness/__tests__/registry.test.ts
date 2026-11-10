@@ -14,10 +14,8 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import {
-  harnessOrgUpstream,
-  HARNESS_PINNED_VERSIONS,
-} from "@/shared/harness-model-support";
+import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
 import { PINNED_CODEX_VERSION } from "../codex-appserver/bridge/app-server-protocol";
 import {
   buildBrokerDummyAuth,
@@ -347,6 +345,13 @@ describe("harness registry", () => {
     expect(
       withEnv("claude-sonnet-4-5", {
         MCPJAM_HARNESS_UPSTREAM_PROFILE: "anthropic-native",
+      }),
+    ).toBeUndefined();
+    // Nor on its gateway, whose names are its own.
+    expect(
+      withEnv("haiku", {
+        MCPJAM_HARNESS_UPSTREAM_PROFILE: "org-gateway",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
       }),
     ).toBeUndefined();
     expect(
@@ -1295,11 +1300,8 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // built-ins under "allow-reads".
     expect(cursor.supportsNativeToolApproval).toBe(true);
     expect(cursor.approvalPermissionMode).toBe("allow-reads");
-    // NOT claimed, pending a live MCP-approval measurement. False means an
-    // approval host with servers attached is REFUSED at preflight rather than
-    // run with some MCP calls unapproved — the conservative direction, and the
-    // one this flag exists to protect.
-    expect(cursor.supportsMcpToolApproval).toBe(false);
+    expect(cursor.supportsMcpToolApproval).toBe(true);
+    expect(cursor.forwardingRuntime?.boundApprovals).toBe(true);
     expect(cursor.supportsHostExecutedToolApproval).toBe(true);
     expect(cursor.hostToolApprovalAtRuntime).toBe(true);
   });
@@ -1546,17 +1548,17 @@ describe("the organization's own key (native upstream profiles)", () => {
   };
   const mcpJson = { mcpServers: {} };
 
-  it("only Claude Code and Codex admit an organization key", () => {
-    expect(harnessOrgUpstream("claude-code")).toEqual({
-      provider: "anthropic",
-      profile: "anthropic-native",
-    });
-    expect(harnessOrgUpstream("codex")).toEqual({
-      provider: "openai",
-      profile: "openai-native",
-    });
-    expect(harnessOrgUpstream("cursor")).toBeNull();
-    expect(harnessOrgUpstream("opencode")).toBeNull();
+  it("every harness with an organization path runs on its API's native profile", () => {
+    expect(
+      harnessOrgUpstreamProfile("claude-code", "anthropic/claude-sonnet-4.5"),
+    ).toBe("anthropic-native");
+    expect(harnessOrgUpstreamProfile("codex", "openai/gpt-5.5")).toBe(
+      "openai-native",
+    );
+    expect(
+      harnessOrgUpstreamProfile("opencode", "anthropic/claude-haiku-4.5"),
+    ).toBe("anthropic-native");
+    expect(harnessOrgUpstreamProfile("cursor", "cursor/auto")).toBeUndefined();
   });
 
   it("Claude Code runs the leased native id on the native profile, the alias on the Gateway", () => {
@@ -1655,6 +1657,64 @@ describe("the organization's own key (native upstream profiles)", () => {
     }
   });
 
+  it("on an org gateway, Claude Code pins every model to the leased name with no vendor overrides", () => {
+    const leased = "anthropic/claude-sonnet-4-5";
+    const adapter = getHarnessAdapter("claude-code");
+    const upstream = { profile: "org-gateway" as const, nativeModelId: leased };
+    // The turn's model id names the gateway; the leased name is what runs.
+    expect(adapter.toNativeModel?.("custom:litellm/claude", upstream)).toBe(leased);
+    expect(
+      adapter.toNativeModel?.("custom:litellm/haiku", {
+        profile: "org-gateway",
+        nativeModelId: "claude-haiku-4-5",
+      }),
+    ).toBe("haiku");
+    vi.mocked(createClaudeCodeHarness).mockClear();
+    adapter.createHarness({
+      modelId: "custom:litellm/claude",
+      auth: {},
+      mcpJson,
+      upstream,
+    } as never);
+    const settings = lastClaudeCodeSettings();
+    // Thinking and effort stay as on the vendor-native profile.
+    expect(settings?.thinking).toBeUndefined();
+    expect(settings?.env?.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    expect(settings?.env).toMatchObject({
+      MCPJAM_HARNESS_UPSTREAM_PROFILE: "org-gateway",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: leased,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: leased,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: leased,
+      ANTHROPIC_SMALL_FAST_MODEL: leased,
+      CLAUDE_CODE_SUBAGENT_MODEL: leased,
+    });
+  });
+
+  it("on an org gateway, Codex, Copilot CLI and OpenCode run the leased name as is", () => {
+    const upstream = {
+      profile: "org-gateway" as const,
+      nativeModelId: "openai/gpt-5.5",
+    };
+    for (const id of ["codex", "copilot-cli"] as const) {
+      expect(
+        getHarnessAdapter(id).toNativeModel?.("custom:litellm/openai/gpt-5.5", upstream),
+      ).toBe("openai/gpt-5.5");
+    }
+    expect(
+      getHarnessAdapter("opencode").toNativeModel?.("custom:litellm/claude", {
+        profile: "org-gateway",
+        nativeModelId: "anthropic/claude-haiku-4.5",
+      }),
+    ).toBe("anthropic/anthropic/claude-haiku-4.5");
+    // The vendor-native profile keeps OpenCode's hyphenated spelling.
+    expect(
+      getHarnessAdapter("opencode").toNativeModel?.("anthropic/claude-haiku-4.5", {
+        profile: "anthropic-native",
+        nativeModelId: "claude-haiku-4.5",
+      }),
+    ).toBe("anthropic/claude-haiku-4-5");
+  });
+
   it("the Gateway profile is unchanged: no native pins, no profile marker", () => {
     vi.mocked(createClaudeCodeHarness).mockClear();
     getHarnessAdapter("claude-code").createHarness({
@@ -1676,6 +1736,17 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   }
   expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
   expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
-  expect(getHarnessAdapter("cursor").forwardingRuntime).toBeUndefined();
+  // Cursor forwards on pass-through only: approval bindings correlate its
+  // calls, it declines elicitation itself, and its config never changes.
+  const cursor = getHarnessAdapter("cursor").forwardingRuntime;
+  expect(cursor).toMatchObject({
+    runtimeVersion: getHarnessAdapter("cursor").pinnedRuntimeVersion,
+    configurationVersion: "acp-forward-v1",
+    ownedInput: false,
+    passThroughOnly: true,
+  });
+  expect(cursor).not.toHaveProperty("correlationKey");
+  const runtime = { harnessId: "cursor" } as never;
+  expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });

@@ -72,7 +72,7 @@ export function patchAcp(source) {
   );
 }
 
-export default function installApprovalPatch() {
+export function installApprovalPatch() {
   const require = createRequire(import.meta.url);
   for (const [name, version, relativePath, patch] of [
     ["@ai-sdk/harness", "1.0.158", "dist/agent/index.js", patchAgent],
@@ -89,6 +89,8 @@ export default function installApprovalPatch() {
     if (next !== original) writeFileSync(path, next);
   }
 }
+
+export default installApprovalPatch;
 
 if (
   process.argv[1] &&

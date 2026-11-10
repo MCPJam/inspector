@@ -3277,8 +3277,8 @@ export function useChatSession(
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
   // and every caller that mirrors the selection back) reads this list. Under
-  // the organization's key policy that is only organization models on the
-  // harness's own vendor (Claude Code: Anthropic, Codex: OpenAI).
+  // the organization's key policy that is only organization models on
+  // connections that serve the harness's API.
   const harnessId = harnessModelTarget?.harnessId ?? null;
   const harnessRuntimeVersion = harnessModelTarget?.runtimeVersion ?? null;
   const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
@@ -3338,8 +3338,12 @@ export function useChatSession(
             preferredModelId,
           )
         : undefined) ??
+      // A harness host lists the rows it can't run, disabled; none is a
+      // default.
       getDefaultModel(
-        selectableModels.length > 0 ? selectableModels : availableModels,
+        selectableModels.length > 0 || harnessId
+          ? selectableModels
+          : availableModels,
       ) ??
       // Nothing to offer at all: a disabled stand-in, never `undefined`
       // (INSPECTOR-CLIENT-222), which every reader below dereferences. The

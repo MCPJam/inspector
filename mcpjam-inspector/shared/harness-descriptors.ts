@@ -64,14 +64,8 @@ const LOOP_CONTROLS: Record<
     // The ACP bridge pauses on its own built-ins: every tool call goes through
     // `session/request_permission`, and under the adapter's "allow-reads" mode
     // anything outside read/search/think/fetch emits a `tool-approval-request`
-    // the turn waits on. Verified against a live cursor-agent.
-    //
-    // ENFORCED describes the NATIVE surface, which is what this control means
-    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
-    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
-    // so a host that requires approval AND selects servers is refused outright
-    // rather than run with some calls unapproved. Refused, never silently
-    // un-enforced.
+    // the turn waits on. Verified against a live cursor-agent, MCP-server
+    // tools included: Cursor asks (kind `other`) before it sends the call.
     requireToolApproval: ENFORCED,
     // The real Cursor CLI owns its own tool discovery, same as the other two.
     progressiveToolDiscovery: {
@@ -105,37 +99,33 @@ const LOOP_CONTROLS: Record<
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
     displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
-    modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "anthropic", profile: "anthropic-native" }, orgKeys: true,
+    modelAccess: "broker", local: true, guest: true, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS["claude-code"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   },
   codex: {
     displayName: "Codex", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
-    modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "openai", profile: "openai-native" }, orgKeys: true,
+    modelAccess: "broker", local: true, guest: true, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
     displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false,
-    orgUpstream: { provider: "openai", profile: "openai-native" }, orgKeys: true,
+    modelAccess: "broker", local: false, guest: false, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
-    orgUpstream: null, orgKeys: false, protocol: null,
+    orgKeys: false, protocol: null,
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
   opencode: {
     displayName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false,
-    orgUpstream: null, orgKeys: false,
+    modelAccess: "broker", local: false, guest: false, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },

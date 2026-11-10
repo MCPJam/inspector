@@ -45,7 +45,7 @@ async function assertAllowed(url: string, resolver?: EgressHostResolver) {
       hosted: true,
       resolver: resolver ?? exploding,
     })
-  ).resolves.toBeUndefined();
+  ).resolves.toEqual(expect.any(Array));
 }
 
 describe("assertAllowedHostedTargetUrl — literal hosts", () => {
@@ -216,6 +216,28 @@ describe("assertAllowedHostedTargetUrl — DNS rebinding", () => {
   });
 });
 
+describe("assertAllowedHostedTargetUrl — checked addresses", () => {
+  it("returns the literal for an IP host and every resolved address for a name", async () => {
+    const check = (url: string, resolver: EgressHostResolver) =>
+      assertAllowedHostedTargetUrl(url, "Server URL", {
+        hosted: true,
+        resolver,
+      });
+    await expect(check("http://93.184.216.34/mcp", exploding)).resolves.toEqual(
+      ["93.184.216.34"],
+    );
+    await expect(
+      check("http://[2606:2800:220:1::1]/mcp", exploding),
+    ).resolves.toEqual(["2606:2800:220:1::1"]);
+    await expect(
+      check(
+        "https://mcp.example.com/mcp",
+        resolvesTo("93.184.216.34", "2606:2800:220:1::1"),
+      ),
+    ).resolves.toEqual(["93.184.216.34", "2606:2800:220:1::1"]);
+  });
+});
+
 describe("assertAllowedHostedTargetUrl — local mode", () => {
   it("is a no-op outside hosted mode, localhost very much included", async () => {
     // Testing a server on localhost is the inspector's whole job locally.
@@ -230,7 +252,7 @@ describe("assertAllowedHostedTargetUrl — local mode", () => {
           hosted: false,
           resolver: exploding,
         })
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual([]);
     }
   });
 });
