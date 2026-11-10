@@ -134,8 +134,6 @@ export interface UseConformanceRunResult {
    * started: they ran, and read as unscored.
    */
   oauthUnscored: readonly string[];
-  /** True when OAuth produced a score object with nothing applicable in it. */
-  oauthNotScored: boolean;
   isRunning: boolean;
 }
 
@@ -795,7 +793,6 @@ export function useConformanceRun({
     oauthScore,
     pooledScore,
     oauthUnscored,
-    oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };
 }

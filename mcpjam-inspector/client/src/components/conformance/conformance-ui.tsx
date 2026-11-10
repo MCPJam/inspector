@@ -43,6 +43,28 @@ export function notApplicableSubtitle(title: string, noLogin = false): string {
 }
 
 /**
+ * The same subtitle for a saved suite. A saved OAuth report that ran and
+ * scored nothing is the no-login case; a skipped one never reached the server.
+ * A reason the report saved speaks for it.
+ */
+export function savedNotApplicableSubtitle(
+  report: {
+    suiteKind: string;
+    status: string;
+    incompleteReason: string | null;
+  },
+  title: string,
+): string {
+  return (
+    report.incompleteReason ??
+    notApplicableSubtitle(
+      title,
+      report.suiteKind === "oauth" && report.status !== "skipped",
+    )
+  );
+}
+
+/**
  * Animates open and closed by transitioning the grid row from 0fr to 1fr, so
  * the content slides to its natural height without measuring it. Children
  * stay mounted while closed so the closing slide has something to show;
