@@ -93,6 +93,23 @@ function Harness({
     />
   );
 }
+describe("Settings header", () => {
+  it.each([false, true])(
+    "uses the same Back as a run's page (saved: %s)",
+    (saved) => {
+      render(<Harness saved={saved} onSave={vi.fn(async () => {})} />);
+      // The shared detail header's Back: bordered, with an arrow, not a
+      // bare text link.
+      const back = screen.getByTestId("conformance-settings-back");
+      expect(back).toBe(screen.getByRole("button", { name: "Back" }));
+      expect(back).toHaveClass("border");
+      expect(
+        screen.getByRole("heading", { name: "alpha Conformance Settings" }),
+      ).toBeInTheDocument();
+    },
+  );
+});
+
 describe("Settings inputs", () => {
   it("keeps a saved output tool visible when no tool declares an output schema", async () => {
     toolsMock.outputSchema = false;
@@ -403,5 +420,96 @@ describe("Settings inputs", () => {
     expect(
       screen.getByRole("heading", { name: "alpha Conformance Settings" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Settings run timeout", () => {
+  it("shows the saved run's timeout and saves a change from its Settings", async () => {
+    const saveTimeout = vi.fn(
+      async (_name: string, _seconds: number | null) => {},
+    );
+    render(
+      <SavedRunSettings
+        serverName="alpha"
+        onBack={vi.fn()}
+        settings={{
+          loaded: true,
+          defaults: { alpha: {} },
+          inputs: { alpha: {} },
+          servers: { alpha: server },
+          save: vi.fn(async () => {}),
+          timeouts: { alpha: 120 },
+          saveTimeout,
+        }}
+      />,
+    );
+    // Run Timeout comes first, above Default Checks.
+    expect(
+      screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+    ).toEqual(["Run Timeout", "Default Checks"]);
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    expect(field).toHaveValue(120);
+    fireEvent.change(field, { target: { value: "60" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 60));
+  });
+
+  it("holds Back while the timeout is invalid", async () => {
+    render(
+      <ConformanceSettings
+        serverName="alpha"
+        server={server}
+        defaults={{}}
+        inputs={{}}
+        onSave={vi.fn(async () => {})}
+        onSaveTimeout={vi.fn(async () => {})}
+        onBack={vi.fn()}
+      />,
+    );
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    fireEvent.change(field, { target: { value: "0" } });
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeDisabled(),
+    );
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
+  });
+
+  it("leaves on the first Back click straight from an edited timeout", async () => {
+    // Pressing Back blurs the field, which starts the save; Back must not
+    // turn off under the click.
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    let finish: () => void = () => {};
+    const onSaveTimeout = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    render(
+      <ConformanceSettings
+        serverName="alpha"
+        server={server}
+        defaults={{}}
+        inputs={{}}
+        onSave={vi.fn(async () => {})}
+        onSaveTimeout={onSaveTimeout}
+        onBack={onBack}
+      />,
+    );
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    await user.clear(field);
+    await user.type(field, "90");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(onSaveTimeout).toHaveBeenCalledWith(90);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
+  it("has no timeout section where the timeout cannot be saved", () => {
+    render(<Harness saved={false} onSave={vi.fn(async () => {})} />);
+    expect(screen.queryByRole("heading", { name: "Run Timeout" })).toBeNull();
   });
 });

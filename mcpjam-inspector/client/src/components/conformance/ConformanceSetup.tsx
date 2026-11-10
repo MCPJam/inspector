@@ -5,7 +5,6 @@
  */
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ConformanceTimeout } from "./ConformanceTimeout";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -51,8 +50,6 @@ export function ConformanceSetup({
   initialVersionPin,
   initialSelection,
   defaultsFor,
-  timeoutFor,
-  onSaveTimeout,
   defaultsLoaded = true,
   onConnectServer,
   onEditServer,
@@ -79,8 +76,6 @@ export function ConformanceSetup({
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
   /** False while the saved defaults are still loading: step 2 waits. */
   defaultsLoaded?: boolean;
-  timeoutFor?: (serverName: string) => number | undefined;
-  onSaveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
   /** Connects a server from the picker; the steps go on once it is. */
   onConnectServer?: ConformanceConnectServer;
   /** Opens a server's connection settings, offered when a connect fails. */
@@ -403,18 +398,10 @@ export function ConformanceSetup({
         ) : (
           <>
             {protocolNotice}
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <h2 className="text-2xl font-semibold tracking-[-0.02em]">
-                Set what you'd like to test
-              </h2>
-              {serverName && onSaveTimeout && (
-                <ConformanceTimeout
-                  key={serverName}
-                  seconds={timeoutFor?.(serverName)}
-                  onSave={(seconds) => onSaveTimeout(serverName, seconds)}
-                />
-              )}
-            </div>
+            {/* The run timeout lives in the server's Settings, not here. */}
+            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
+              Set what you'd like to test
+            </h2>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
               Pick the suites and checks this run covers.
             </p>

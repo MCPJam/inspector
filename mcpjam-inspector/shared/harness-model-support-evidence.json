@@ -152,17 +152,17 @@
     {
       "harness": "cursor",
       "versionRange": "*",
-      "familyPattern": "^cursor/auto$",
+      "familyPattern": "^cursor/.+$",
       "status": "supported",
-      "evidence": "Cursor's agent CLI selects its own model; cursor/auto is the only selectable id.",
-      "observedAt": "2026-09-25"
+      "evidence": "Cursor ACP accepts Auto and explicit account model IDs; each selected ID requires active organization catalog admission.",
+      "observedAt": "2026-11-08"
     },
     {
       "harness": "cursor",
       "versionRange": "*",
       "familyPattern": ".*",
       "status": "unsupported",
-      "evidence": "Cursor's agent CLI does not accept an explicit model id.",
+      "evidence": "Cursor requires a model from the organization Cursor account namespace.",
       "observedAt": "2026-09-25"
     },
     {

@@ -4,7 +4,6 @@ import {
   HARNESS_DESCRIPTORS,
   LOCAL_HARNESS_IDS,
   effectiveHarnessId,
-  harnessAccountChoosesModel,
   usesMcpjamClient,
 } from "../harness-descriptors";
 import { HARNESS_MCP_DELIVERY } from "../harness-mcp-delivery";
@@ -47,14 +46,8 @@ describe("harness descriptors", () => {
     expect(effectiveHarnessId({ agentLoop: "codex" })).toBe("codex");
     expect(effectiveHarnessId({ agentLoop: "codex", harness: "claude-code" })).toBe("codex");
   });
-  it("knows which harness's account picks the model", () => {
-    for (const id of HARNESS_IDS) {
-      expect(harnessAccountChoosesModel(id)).toBe(
-        HARNESS_DESCRIPTORS[id].modelAccess === "external-account",
-      );
-    }
-    expect(harnessAccountChoosesModel("cursor")).toBe(true);
-    expect(harnessAccountChoosesModel(null)).toBe(false);
-    expect(harnessAccountChoosesModel("constructor")).toBe(false);
+  it("enforces the model selected for a Cursor account", () => {
+    expect(HARNESS_DESCRIPTORS.cursor.controls.modelId.enforced).toBe(true);
+    expect(HARNESS_DESCRIPTORS.cursor.modelAccess).toBe("external-account");
   });
 });

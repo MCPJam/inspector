@@ -298,8 +298,13 @@ export function createE2BHarnessSandboxProvider(
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
-    if (!sessionEnv) return env;
-    return { ...sessionEnv, ...(env ?? {}) };
+    // E2B installs its egress proxy CA in the system trust store. Node uses
+    // its bundled roots, so Node-based CLIs need that CA explicitly too.
+    return {
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      ...sessionEnv,
+      ...env,
+    };
   };
 
   // Connect to the host's persistent computer and build a session bound to it.

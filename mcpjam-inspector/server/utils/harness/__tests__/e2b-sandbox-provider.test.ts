@@ -253,6 +253,27 @@ describe("abort plumbing", () => {
     );
   });
 
+  it("trusts the E2B proxy CA while preserving explicit certificate configuration", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    await session.run({ command: "node client.mjs" });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node client.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      }) }),
+    );
+    await session.run({ command: "node custom.mjs", env: {
+      NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+    } });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node custom.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+      }) }),
+    );
+  });
+
   describe("the session-env delivery stamp", () => {
     // `lastDeliveredAt` is read before deleting a credential believed dormant,
     // so it has to mean "something received this", not "a turn got far enough

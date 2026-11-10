@@ -16,7 +16,7 @@ import {
   type PaneOverrides,
 } from "@/lib/compare-pane-overrides";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 
 // Per project, like the lineup: opening another project must not inherit this
 // one's Compare state.
@@ -40,7 +40,7 @@ export interface UseComparePanesReturn {
   /** Picks a model for one pane, or `undefined` to follow its client again. */
   setPanePick: (
     paneId: string,
-    pickedSelection: ModelSelection | undefined,
+    pickedSelection: RequestedModelSelection | undefined,
   ) => void;
   /** Each client pane's client, in order: what the client chips show. */
   selectedHostIds: string[];
@@ -175,7 +175,7 @@ export function useComparePanes(
     [panes, setPreviewedHostId],
   );
   const setPanePick = useCallback(
-    (paneId: string, pickedSelection: ModelSelection | undefined) =>
+    (paneId: string, pickedSelection: RequestedModelSelection | undefined) =>
       updatePane(paneId, { pickedSelection }),
     [updatePane],
   );
