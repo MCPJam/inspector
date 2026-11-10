@@ -393,6 +393,9 @@ type HarnessRuntimeAdapterBase = {
   mcpDelivery: HarnessMcpDelivery;
   /** Qualified vendor continuation hook for the shared forwarding route. */
   forwardingRuntime?: ForwardingRuntimeContract;
+  /** The runtime refuses to resume when its MCP config changes, so each lane
+   *  gets session handles in place of per-turn tokens. */
+  sessionStableMcpConfig?: boolean;
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -1184,6 +1187,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // servers are a CONSTRUCTOR setting (see createHarness). Same mode, different
   // mechanism — which is exactly the distinction this field carries.
   mcpNativeDelivery: "session-config",
+  // The ACP adapter fingerprints its MCP servers, headers included, on every
+  // resume, so a per-turn token there would end the session each turn.
+  sessionStableMcpConfig: true,
   // OFF for v1. ACP supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this
   // is a scope decision rather than a capability wall: shipping skills means
   // owning the same delivery/reconcile/adopt passes the other two adapters

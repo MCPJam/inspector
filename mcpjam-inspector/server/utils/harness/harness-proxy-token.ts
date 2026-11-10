@@ -64,17 +64,10 @@ function getSecret(): string {
   return secret;
 }
 
-/**
- * Verify a Convex-minted token and that it was minted for exactly `serverId`.
- * Returns the claims, or `null` for anything wrong (missing/weak secret,
- * malformed, tampered signature, wrong issuer/purpose, wrong serverId, expired).
- * Never throws.
- */
-export function verifyHarnessProxyToken(
+/** The HS256 payload of a Convex-minted token, or `null` when the signature fails. */
+function verifiedPayload(
   token: string | undefined | null,
-  serverId: string,
-  opts: { nowMs?: number } = {},
-): HarnessMcpProxyClaims | null {
+): Record<string, unknown> | null {
   if (!token) return null;
   let secret: string;
   try {
@@ -98,12 +91,31 @@ export function verifyHarnessProxyToken(
     return null;
   }
 
-  let payload: Record<string, unknown>;
   try {
-    payload = JSON.parse(Buffer.from(p, "base64url").toString("utf8"));
+    const payload: unknown = JSON.parse(
+      Buffer.from(p, "base64url").toString("utf8"),
+    );
+    return payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Verify a Convex-minted token and that it was minted for exactly `serverId`.
+ * Returns the claims, or `null` for anything wrong (missing/weak secret,
+ * malformed, tampered signature, wrong issuer/purpose, wrong serverId, expired).
+ * Never throws.
+ */
+export function verifyHarnessProxyToken(
+  token: string | undefined | null,
+  serverId: string,
+  opts: { nowMs?: number } = {},
+): HarnessMcpProxyClaims | null {
+  const payload = verifiedPayload(token);
+  if (!payload) return null;
   if (payload.iss !== ISSUER || payload.purpose !== PURPOSE) return null;
   for (const k of ["sub", "ext", "org", "projectId", "serverId"] as const) {
     if (typeof payload[k] !== "string" || (payload[k] as string).length === 0) {
@@ -132,5 +144,62 @@ export function verifyHarnessProxyToken(
     projectId: payload.projectId as string,
     serverId: payload.serverId as string,
     ...evalScope,
+  };
+}
+
+const SESSION_PURPOSE = "harness-mcp-session";
+
+/** A lane's session handle for one server: identity only, no turn authority. */
+export interface HarnessMcpSessionClaims {
+  userId: string;
+  externalId: string;
+  orgId: string;
+  projectId: string;
+  serverId: string;
+  laneId: string;
+  connectionId?: string;
+}
+
+/**
+ * Verify a lane's session handle (`/web/harness/session-state/bind-turn`).
+ *
+ * It carries no expiry on purpose: a runtime that fingerprints its MCP
+ * configuration must see the same handle on every turn. So it proves identity
+ * only, and every request it rides on must also find the lane's live turn.
+ */
+export function verifyHarnessSessionHandle(
+  token: string | undefined | null,
+  serverId: string,
+): HarnessMcpSessionClaims | null {
+  const payload = verifiedPayload(token);
+  if (
+    !payload ||
+    payload.iss !== ISSUER ||
+    payload.purpose !== SESSION_PURPOSE ||
+    payload.serverId !== serverId
+  )
+    return null;
+  const field = (key: string) => {
+    const value = payload[key];
+    return typeof value === "string" && value.length > 0 ? value : null;
+  };
+  const [userId, externalId, orgId, projectId, laneId] = [
+    "sub",
+    "ext",
+    "org",
+    "projectId",
+    "lane",
+  ].map(field);
+  if (!userId || !externalId || !orgId || !projectId || !laneId) return null;
+  const connectionId = payload.acct === undefined ? undefined : field("acct");
+  if (connectionId === null) return null;
+  return {
+    userId,
+    externalId,
+    orgId,
+    projectId,
+    serverId,
+    laneId,
+    ...(connectionId ? { connectionId } : {}),
   };
 }
