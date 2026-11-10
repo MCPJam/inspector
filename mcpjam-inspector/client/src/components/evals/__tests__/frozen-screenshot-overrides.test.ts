@@ -79,9 +79,12 @@ describe("buildFrozenScreenshotOverrides", () => {
     const base: Record<string, ToolRenderOverride> = {
       tc1: { cachedWidgetHtmlUrl: "https://s/html", serverId: "srv" },
     };
-    const out = buildFrozenScreenshotOverrides(base, [
-      obs({ toolCallId: "tc1", screenshotUrl: "https://s/a.png" }),
-    ]);
+    const out = buildFrozenScreenshotOverrides(
+      base,
+      [obs({ toolCallId: "tc1", screenshotUrl: "https://s/a.png" })],
+      // A click inside the App is what makes the picture win over the saved copy.
+      [interaction({ toolCallId: "tc1", ts: 0, screenshotUrl: null })],
+    );
     expect(out["tc1"]).toMatchObject({
       cachedWidgetHtmlUrl: "https://s/html",
       serverId: "srv",
@@ -197,5 +200,74 @@ describe("buildFrozenScreenshotOverrides", () => {
       [interaction({ toolCallId: "tc1", ts: 50, screenshotUrl: null })],
     );
     expect(out["tc1"]?.frozenScreenshotUrl).toBe("https://s/initial.png");
+  });
+
+  describe("live App vs recorded picture", () => {
+    const savedCopy = (): Record<string, ToolRenderOverride> => ({
+      tc1: {
+        cachedWidgetHtmlUrl: "https://s/app.html",
+        toolMetadata: { ui: { resourceUri: "ui://squad/show.html" } },
+      },
+    });
+
+    it("shows the live App from its saved copy when the run did not click in it", () => {
+      const base = savedCopy();
+      const out = buildFrozenScreenshotOverrides(base, [
+        obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" }),
+      ]);
+      expect(out).toBe(base);
+      expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+      expect(out.tc1?.cachedWidgetHtmlUrl).toBe("https://s/app.html");
+    });
+
+    it("shows the recorded picture when the run clicked inside the App", () => {
+      const out = buildFrozenScreenshotOverrides(
+        savedCopy(),
+        [obs({ toolCallId: "tc1", ts: 1, screenshotUrl: "https://s/page.png" })],
+        [
+          interaction({
+            toolCallId: "tc1",
+            ts: 50,
+            screenshotUrl: "https://s/after-click.png",
+          }),
+        ],
+      );
+      expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/after-click.png");
+    });
+
+    it("only switches the clicked tool call to a picture", () => {
+      const base: Record<string, ToolRenderOverride> = {
+        ...savedCopy(),
+        tc2: { cachedWidgetHtmlUrl: "https://s/other.html" },
+      };
+      const out = buildFrozenScreenshotOverrides(
+        base,
+        [
+          obs({ toolCallId: "tc1", screenshotUrl: "https://s/one.png" }),
+          obs({ toolCallId: "tc2", screenshotUrl: "https://s/two.png" }),
+        ],
+        [interaction({ toolCallId: "tc1", screenshotUrl: null })],
+      );
+      expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/one.png");
+      expect(out.tc2?.frozenScreenshotUrl).toBeUndefined();
+    });
+
+    it("falls back to the picture when there is no saved App copy", () => {
+      const out = buildFrozenScreenshotOverrides({ tc1: { serverId: "srv" } }, [
+        obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" }),
+      ]);
+      expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/page.png");
+    });
+
+    it("keeps the live App when the run clicked but recorded no picture", () => {
+      const base = savedCopy();
+      const out = buildFrozenScreenshotOverrides(
+        base,
+        [obs({ toolCallId: "tc1", screenshotUrl: null })],
+        [interaction({ toolCallId: "tc1", screenshotUrl: null })],
+      );
+      expect(out).toBe(base);
+      expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+    });
   });
 });

@@ -89,6 +89,24 @@ export interface TraceWidgetSnapshot {
 }
 
 /**
+ * Rebuild the tool metadata a saved snapshot implies, so detectUIType returns
+ * the correct widget type. Without this, PartSwitch won't enter the widget
+ * rendering path.
+ */
+function snapshotToolMetadata(
+  protocol: unknown,
+  resourceUri: unknown,
+): Record<string, unknown> {
+  return protocol === "mcp-apps" &&
+    typeof resourceUri === "string" &&
+    resourceUri
+    ? { ui: { resourceUri } }
+    : protocol === "openai-apps"
+      ? { "openai/outputTemplate": "__cached__" }
+      : {};
+}
+
+/**
  * Convert raw SharedChatWidgetSnapshot records (from Convex) into the
  * TraceWidgetSnapshot shape used by the trace viewer adapter.
  */
@@ -110,14 +128,7 @@ export function snapshotsToTraceWidgetSnapshots(
   }>,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
-    // Reconstruct toolMetadata so detectUIType returns the correct widget type.
-    // Without this, PartSwitch won't enter the widget rendering path.
-    const toolMetadata: Record<string, unknown> =
-      snap.uiType === "mcp-apps" && snap.resourceUri
-        ? { ui: { resourceUri: snap.resourceUri } }
-        : snap.uiType === "openai-apps"
-          ? { "openai/outputTemplate": "__cached__" }
-          : {};
+    const toolMetadata = snapshotToolMetadata(snap.uiType, snap.resourceUri);
 
     return {
       toolCallId: snap.toolCallId,
@@ -325,7 +336,21 @@ function resolveTraceMessages(
   ) {
     messages = trace.messages as TraceSourceMessage[];
     if ("widgetSnapshots" in trace && Array.isArray(trace.widgetSnapshots)) {
-      widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
+      // Eval trace envelopes carry `protocol` + `resourceUri` but no
+      // `toolMetadata`; rebuild it the same way snapshotsToTraceWidgetSnapshots
+      // does so the saved App is recognised as a widget.
+      widgetSnapshots = (trace.widgetSnapshots as TraceWidgetSnapshot[]).map(
+        (snapshot) =>
+          isRecord(snapshot) && !isRecord(snapshot.toolMetadata)
+            ? {
+                ...snapshot,
+                toolMetadata: snapshotToolMetadata(
+                  snapshot.protocol,
+                  snapshot.resourceUri,
+                ),
+              }
+            : snapshot,
+      );
     }
   } else if (isRecord(trace) && typeof trace.role === "string") {
     messages = [trace as unknown as TraceSourceMessage];

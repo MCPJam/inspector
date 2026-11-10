@@ -639,9 +639,9 @@ export function TraceViewer({
     [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
-  // Frozen replay: when simply VIEWING a completed run, show each widget's
-  // RECORDED screenshot instead of a live re-render — which drifts to the
-  // widget's default state once its MCP server is gone. While a widget is armed
+  // Frozen replay: when simply VIEWING a completed run, show the live App from
+  // its saved copy, and the RECORDED screenshot only when the run clicked inside
+  // that App (or there is no saved copy). While a widget is armed
   // for recording, keep widgets live: the record flow needs the real widget and
   // a reachable server (which then shows real data, so no drift). Non-eval
   // surfaces carry no `browserObservations`, so this is a no-op there.

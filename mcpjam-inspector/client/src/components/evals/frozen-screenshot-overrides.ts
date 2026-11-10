@@ -6,19 +6,23 @@ import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render
 
 /**
  * Build `frozenScreenshotUrl` tool-render overrides from a run's recorded
- * captures, so the Chat tab shows the captured widget instead of a live
- * re-render (which drifts to the widget's default state once its MCP server is
- * gone). See [[project_eval_chat_frozen_replay]].
+ * captures. See [[project_eval_chat_frozen_replay]].
  *
- * Merged onto `base` (the snapshot-derived overrides) keyed by `toolCallId` —
- * the SAME id the transcript tool part carries (`adaptTraceToUiMessages` re-keys
- * the message id but leaves the tool part's `toolCallId`).
+ * By default the Chat tab shows the REAL App, loaded from the run's saved copy
+ * (`cachedWidgetHtmlUrl` on the snapshot-derived `base` override). The recorded
+ * picture is a screenshot of the whole headless test page, not the App, so it
+ * is used only when:
+ * - the run clicked inside that App (it has interaction steps), because the
+ *   saved copy would re-open at its default state, not where the run left it; or
+ * - there is no saved copy to load, as a backup.
+ *
+ * Merged onto `base` keyed by `toolCallId` — the SAME id the transcript tool
+ * part carries (`adaptTraceToUiMessages` re-keys the message id but leaves the
+ * tool part's `toolCallId`).
  *
  * Picks the LATEST screenshot per tool call across BOTH the initial render
- * observation AND every subsequent interaction-step capture (each `interact`
- * click screenshots the widget after the action). So the Chat tab shows the
- * widget's FINAL post-interaction state — e.g. after "Add to cart" / opening the
- * cart — not just the opening render. Sorting by `ts` means a re-render or a
+ * observation AND every interaction-step capture, so a picture shows the
+ * widget's FINAL post-interaction state. Sorting by `ts` means a re-render or a
  * later failed attempt can't shadow the good capture. Returns `base` unchanged
  * when there's nothing to add.
  */
@@ -67,8 +71,19 @@ export function buildFrozenScreenshotOverrides(
   }
   // Interaction-step captures are later than the initial render (they happen on
   // each click), so they win on `ts` — surfacing the post-interaction state.
+  const clickedToolCallIds = new Set<string>();
   for (const step of interactionSteps) {
+    clickedToolCallIds.add(step.toolCallId);
     consider(step.toolCallId, step.screenshotUrl, step.ts);
+  }
+  // Keep the live App (saved copy) unless the run clicked in it.
+  for (const toolCallId of [...latestByTool.keys()]) {
+    if (
+      !clickedToolCallIds.has(toolCallId) &&
+      base[toolCallId]?.cachedWidgetHtmlUrl
+    ) {
+      latestByTool.delete(toolCallId);
+    }
   }
   if (latestByTool.size === 0) return base;
   const merged = { ...base };
