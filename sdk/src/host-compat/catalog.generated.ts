@@ -2682,13 +2682,107 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
     },
-    "cursor-cli": {
-      id: "cursor-cli",
-      label: "Cursor CLI",
+    "copilot-cli": {
+      id: "copilot-cli",
+      label: "GitHub Copilot CLI",
       provenance: "assumed",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1788220800000,
+      verifiedAt: 1794009600000,
+      modelVisibleMcpToolResults: {
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      mcpToolResultImageRendering: {
+        placement: "none",
+        directContent: {
+          image: false,
+        },
+        embeddedResources: {
+          blob: {
+            image: false,
+          },
+        },
+        linkedResources: {
+          blob: {
+            image: false,
+          },
+        },
+      },
+      hostStyle: "copilot-cli",
+      modelId: "openai/gpt-5.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: true,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "copilot-cli",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: {
+            name: "MCPJam",
+            version: "1.0",
+          },
+        },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: false,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: false,
+            serverTools: false,
+            serverResources: false,
+            logging: false,
+            updateModelContext: false,
+            message: false,
+            sandboxPermissions: false,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: false,
+            requestTeardown: false,
+            safeAreaInsets: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
+    },
+    "cursor-cli": {
+      id: "cursor-cli",
+      label: "Cursor CLI",
+      provenance: "probe",
+      rendersMcpApps: false,
+      supportedProtocolVersions: ["2025-11-25"],
+      verifiedAt: 1794096000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2725,7 +2819,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       systemPrompt: "",
       temperature: 1,
       requireToolApproval: false,
-      respectToolVisibility: true,
+      respectToolVisibility: false,
       progressiveToolDiscovery: false,
       serverIds: [],
       optionalServerIds: [],
@@ -2736,27 +2830,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       harness: "cursor",
       connectionDefaults: {
         headers: {},
-        requestTimeout: 10000,
+        requestTimeout: 300000,
       },
-      clientCapabilities: {
-        roots: {
-          listChanged: true,
-        },
-        elicitation: {},
-      },
+      clientCapabilities: {},
       hostContext: {},
       mcpProfile: {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: {
-            name: "cursor-agent",
-            title: "Cursor CLI",
-            version: "2026.08.31-4057e58",
-            description: "Cursor's agentic coding CLI",
-            websiteUrl: "https://cursor.com/cli",
-          },
-        },
         apps: {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
