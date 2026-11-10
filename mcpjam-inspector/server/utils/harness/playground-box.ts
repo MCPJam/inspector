@@ -1,9 +1,9 @@
 /**
  * The Playground's throwaway-computer path.
  *
- * Every CLOUD harness turn runs on a disposable, per-conversation box: killed
- * after 30 idle minutes, capped at 4 hours of age, and limited to 4 live boxes
- * per user and 12 per org. There is no persistent machine in this path, so a
+ * Every CLOUD harness turn runs on a per-conversation box: paused once it has
+ * been idle for the backend's window and woken by the next turn, capped at 4
+ * hours of continuous use, and limited to 4 live boxes per user and 12 per org. There is no persistent machine in this path, so a
  * Claude Code / Codex / Cursor client needs only its own harness flag.
  *
  * Why a box rather than the member's personal computer: a personal computer is
@@ -27,7 +27,6 @@
 import { logger } from "../logger.js";
 import {
   provisionPlaygroundTerminalSandbox,
-  touchSandbox,
   type ControlPlaneResult,
   type PlaygroundTerminalSandbox,
 } from "../computers/control-plane-client.js";
@@ -98,15 +97,10 @@ export async function playgroundCredentialRefusal(args: {
 }
 
 /**
- * Hold this conversation's disposable shell for the turn. The heartbeat keeps
- * its idle clock running for as long as the turn does; `release()` stops it and
- * leaves the box, so the conversation's next turn reattaches to the same files.
- *
- * `release()` also sends the turn's FINAL touch (`ended`), which tells the
- * control plane no turn holds the box any more: at the member's cap, an idle
- * box is evicted to make room instead of refusing a new conversation (a compare
- * reset mints one per column). Best-effort — a lost end touch only means the
- * box becomes evictable two heartbeats later instead of now.
+ * Hold this conversation's box for the turn. The heartbeat keeps its idle
+ * clock running for as long as the turn does; `release()` stops it, sends the
+ * turn's final touch and leaves the box, so the conversation's next turn
+ * reattaches to the same files (see `harness-box.ts`).
  */
 export async function acquirePlaygroundHarnessBox(args: {
   bearer: string;
@@ -118,7 +112,7 @@ export async function acquirePlaygroundHarnessBox(args: {
   harness?: string;
   signal?: AbortSignal;
 }): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
-  const acquired = await acquireHarnessBox<PlaygroundBoxRefusal>({
+  return acquireHarnessBox<PlaygroundBoxRefusal>({
     surface: "playground",
     // The turn's signal: a stopped or abandoned turn stops beating, and the
     // box idles out on its own clock (it is never torn down by the turn).
@@ -167,33 +161,11 @@ export async function acquirePlaygroundHarnessBox(args: {
           sandboxRowId: result.value.sandboxRowId,
           sandboxId: result.value.sandboxId,
           ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
+          ...(result.value.idleMs ? { idleMs: result.value.idleMs } : {}),
         },
       };
     },
   });
-  if (!acquired.ok) return acquired;
-  const box = acquired.box;
-  let ended: Promise<void> | null = null;
-  return {
-    ok: true,
-    box: {
-      ...box,
-      release: () =>
-        (ended ??= (async () => {
-          await box.release();
-          try {
-            await touchSandbox({
-              sandboxRowId: box.binding.sandboxRowId,
-              sandboxId: box.binding.sandboxId,
-              ended: true,
-              signal: AbortSignal.timeout(10_000),
-            });
-          } catch {
-            // Best-effort; see above.
-          }
-        })()),
-    },
-  };
 }
 
 /** Can this server hold the box at all? Null when it can. */
