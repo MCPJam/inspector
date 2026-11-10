@@ -95,10 +95,8 @@ vi.mock("../harness-proxy-token-client.js", () => ({
 
 vi.mock("../external-account-credentials.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../external-account-credentials.js")>()),
-  resolveExternalAccountCredentialPlan: vi.fn(async () => ({
+  resolveOrgKeyCredentialPlan: vi.fn(async () => ({
     auth: { VENDOR_API_KEY: "mcpjam-brokered-credential" },
-    materializedNames: [],
-    brokeredNames: ["VENDOR_API_KEY"],
   })),
 }));
 

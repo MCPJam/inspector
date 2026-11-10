@@ -150,22 +150,22 @@ describe("controlled sandbox attachment", () => {
     expect(connection).not.toHaveProperty("trafficAccessToken");
     expect(control.token).not.toHaveBeenCalled();
   });
-  it.each([
-    ["an ordinary attach", runningSandboxConnection],
-    ["a broker-prepared attach", attachBrokerPreparedSandbox],
-  ] as const)("reads a private box's traffic token on %s", async (_label, attach) => {
-    responseBody = { ...data, network: { ...data.network, allowPublicTraffic: false } };
-    control.token.mockResolvedValue({ ok: true, value: { trafficAccessToken: "traffic-token" } });
-    const attached = await attach("box-1", opts);
-    expect(attached.trafficAccessToken).toBe("traffic-token");
-    expect(control.token).toHaveBeenCalledWith(expect.objectContaining({ providerComputerId: "box-1" }));
-  });
-  it("refuses a private box whose token the backend cannot give", async () => {
+  it.each([attachRunningSandbox, attachBrokerPreparedSandbox])(
+    "retains envd on a private workspace without fetching an ingress credential",
+    async (attach) => {
+      responseBody = { ...data, network: { allowPublicTraffic: false } };
+      const box = await attach("box-1", opts);
+      expect(box).toMatchObject({ privateAppPorts: true });
+      expect(box.trafficAccessToken).toBeFalsy();
+      expect(control.token).not.toHaveBeenCalled();
+    },
+  );
+  it("refuses a private desktop before giving out connection details", async () => {
     responseBody = { ...data, network: { allowPublicTraffic: false } };
-    control.token.mockResolvedValue({ ok: true, value: {} });
-    await expect(runningSandboxConnection("box-1", opts)).rejects.toMatchObject({ code: "sandbox_attach_failed" });
-    control.token.mockResolvedValue({ ok: false, status: 404, error: "gone" });
-    await expect(runningSandboxConnection("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
+    await expect(runningSandboxConnection("box-1", opts)).rejects.toThrow(
+      "private desktop",
+    );
+    expect(control.token).not.toHaveBeenCalled();
   });
   it("refuses a quarantine before calling prepare or the vendor", async () => {
     control.status.mockResolvedValue({

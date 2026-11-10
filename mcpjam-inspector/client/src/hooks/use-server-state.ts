@@ -37,6 +37,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
+  AgentServerInfo,
   AppAction,
   AppState,
   ServerWithName,
@@ -6719,7 +6720,22 @@ export function useServerState({
     try {
       const result = await listServers();
       if (result?.success && Array.isArray(result.servers)) {
-        dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
+        const servers: AgentServerInfo[] = result.servers;
+        dispatch({ type: "SYNC_AGENT_STATUS", servers });
+        // The status list carries no handshake details. After a page reload
+        // the browser has none either, so a server that stayed connected
+        // showed no version and an empty Overview. Skip in-flight connects:
+        // their own result stores fresher details than this lookup would.
+        for (const agentServer of servers) {
+          const current = appStateServersRef.current[agentServer.id];
+          if (
+            agentServer.status === "connected" &&
+            current?.connectionStatus !== "connecting" &&
+            !current?.initializationInfo
+          ) {
+            void fetchAndStoreInitInfo(agentServer.id);
+          }
+        }
       }
       return result;
     } catch (error) {
@@ -6728,7 +6744,7 @@ export function useServerState({
       });
       throw error;
     }
-  }, [logger, dispatch]);
+  }, [logger, dispatch, fetchAndStoreInitInfo]);
 
   useEffect(() => {
     if (isLoading) return;

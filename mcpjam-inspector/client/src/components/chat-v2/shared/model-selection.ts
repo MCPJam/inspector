@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 /**
  * Picker row → saved {@link ModelSelection}.
  *
@@ -190,7 +191,7 @@ export function modelSelectionFromDefinition(
   purpose: ModelSelectionPurpose,
 ): ModelSelection | null {
   const modelId = canonicalSelectionModelId(model);
-  if (!modelId) return null;
+  if (!modelId || isRuntimeAccountModel(modelId)) return null;
   const fallback = defaultFallbackForPurpose(purpose);
 
   let candidate: ModelSelection;

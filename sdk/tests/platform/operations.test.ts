@@ -2410,6 +2410,7 @@ describe("operation catalog consistency", () => {
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
     get_conformance_report: { run: "r" },
+    get_conformance_check: { run: "r", check: "c" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     list_eval_suite_revisions: { suite: "s" },

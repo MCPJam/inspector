@@ -17,7 +17,7 @@ import {
 const KEY = "b".repeat(64);
 
 describe("parsePreviewGrant", () => {
-  const valid = { port: 5173, upstreamUrl: "wss://41000-ws1.e2b.app", upstreamHeaders: { "e2b-traffic-access-token": "t" }, key: KEY };
+  const valid = { port: 5173, upstreamUrl: "wss://41000-ws1.e2b.app", upstreamHeaders: { "E2b-Sandbox-Id": "ws1", "E2b-Sandbox-Port": "41000" }, key: KEY };
 
   it("accepts exactly what the tunnel needs", () => {
     expect(parsePreviewGrant(valid)).toEqual({ ...valid, upstreamUrl: "wss://41000-ws1.e2b.app/" });
@@ -28,7 +28,8 @@ describe("parsePreviewGrant", () => {
     ["a short key", { ...valid, key: "abc" }],
     ["an http upstream", { ...valid, upstreamUrl: "https://41000-ws1.e2b.app" }],
     ["upstream credentials", { ...valid, upstreamUrl: "wss://u:p@41000-ws1.e2b.app" }],
-    ["a header with a newline", { ...valid, upstreamHeaders: { x: "a\r\nb" } }],
+    ["a sandbox-wide credential", { ...valid, upstreamHeaders: { "E2B-Traffic-Access-Token": "secret" } }],
+    ["a header with a newline", { ...valid, upstreamHeaders: { "E2b-Sandbox-Id": "a\r\nb" } }],
     ["no body", null],
   ])("refuses %s", (_label, body) => {
     expect(parsePreviewGrant(body)).toBeUndefined();

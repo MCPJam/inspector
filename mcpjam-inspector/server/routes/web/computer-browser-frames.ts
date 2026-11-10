@@ -353,7 +353,7 @@ export function createComputerBrowserFramesWsHandler(
           info.value.projectId !== claims.projectId
         ) {
           refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
-        } else if (info.value.status !== "ready") {
+        } else if (info.value.status !== (claims.computerId ? "ready" : "live")) {
           // Free: the status came back in the read we already made for the
           // ownership check. A paused box has no daemon answering, so opening
           // the upstream would fail anyway — this just says WHY, so the pane

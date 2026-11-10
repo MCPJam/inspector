@@ -21,6 +21,15 @@ export function formatOrgKeysRefusalEnvelope(
   message: string,
   details: string | undefined,
 ): FormattedError | undefined {
+  if (parsed.code === "mcpjam_config_error" && parsed.remediation === "choose_org_model") {
+    return {
+      code: "shared_models_unconfigured",
+      message,
+      details,
+      isRetryable: false,
+      isMCPJamPlatformError: false,
+    };
+  }
   const code = orgKeysRefusalCodeOf(parsed.code);
   if (!code) return undefined;
   const remediation =

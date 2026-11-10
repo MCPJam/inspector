@@ -547,12 +547,23 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
   "harness.timing": {
     harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
     harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
     harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
     harnessTurn?: "failed";
+    /**
+     * `TurnTiming` (`turn-timing.ts`), in whole milliseconds: each route stage
+     * before the model stream, and the request's time to its first text.
+     */
+    setupMs?: number;
+    turnAuthorizationMs?: number;
+    connectionsMs?: number;
+    toolsMs?: number;
+    streamPreparationMs?: number;
+    firstTextMs?: number;
   };
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;

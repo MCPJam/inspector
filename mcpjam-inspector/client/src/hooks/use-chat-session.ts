@@ -1,3 +1,5 @@
+import { useCursorModels } from "./use-cursor-models";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
@@ -370,8 +372,7 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 import * as AppStateContext from "@/state/app-state-context";
-import { findProjectByAnyId, type AppState } from "@/state/app-types";
-import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
+import { type AppState } from "@/state/app-types";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { isEmbeddedPreview } from "@/lib/embedded-preview";
 import {
@@ -3240,7 +3241,8 @@ export function useChatSession(
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
-  const composedModels = useMemo(
+  const cursorCatalog = useCursorModels(hostedProjectId, !isHostedGuest, [...savedModelIds, initialModelId ?? "", preferredModelId ?? ""]);
+  const baseModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
@@ -3271,6 +3273,7 @@ export function useChatSession(
       savedModelIds,
     ],
   );
+  const composedModels = useMemo(() => [...baseModels, ...cursorCatalog.models], [baseModels, cursorCatalog.models]);
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
   // and every caller that mirrors the selection back) reads this list. Under
@@ -3282,13 +3285,13 @@ export function useChatSession(
   const availableModels = useMemo(
     () =>
       harnessPickerModels(
-        composedModels,
+        harnessId ? composedModels : baseModels,
         harnessId
           ? { harnessId, runtimeVersion: harnessRuntimeVersion }
           : null,
         { requireOrgKeys },
       ),
-    [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+    [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -3371,6 +3374,7 @@ export function useChatSession(
           // a saved choice either. Other locks (guest, ollama-no-tools)
           // stay unselectable.
           !model.disabled ||
+          isRuntimeAccountModel(String(model.id)) ||
           model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
           isOrgPolicyLockReason(model.disabledReason),
       );
@@ -3610,24 +3614,6 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel],
   );
-  const hasLocalOnlySelectedServer = useMemo(() => {
-    if (!appState || selectedServers.length === 0) return false;
-    const activeProject = findProjectByAnyId(
-      appState.projects,
-      hostedProjectId ?? appState.activeProjectId,
-    );
-    return selectedServers.some((serverName) => {
-      const server =
-        appState.servers?.[serverName] ?? activeProject?.servers?.[serverName];
-      // Fail CLOSED when a selected server's config can't be resolved (state
-      // not yet loaded, name mismatch): treat it as local-only. The local
-      // engine reaches public servers fine, but routing a stdio server to the
-      // cloud reproduces the exact "STDIO not supported" failure this flag
-      // exists to prevent.
-      if (!server?.config) return true;
-      return isLocalOnlyMcpServerConfig(server.config);
-    });
-  }, [appState, hostedProjectId, selectedServers]);
   // Managed local and service turns share environment composition. The
   // process role, rather than the selected model or transport, owns execution.
   const hiddenEnvironmentActive = !!hostedHiddenEnvironment;
@@ -3648,10 +3634,6 @@ export function useChatSession(
   // servers by Convex id.
   const hostedRequiresWebChatApi =
     explicitRequiresWebChatApi || hiddenEnvironmentActive;
-  const localMcpRuntimeRequired =
-    !HOSTED_MODE &&
-    selectedModelUsesOrgRuntime &&
-    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -3681,12 +3663,13 @@ export function useChatSession(
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
     allowLocal: !HOSTED_MODE,
+    harnessId,
     temperature: temperatureOverride,
     effortLevels: reasoningEffortOptions(selectedModel,
       reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
     effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
       effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
-  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig, harnessId,
     shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
     temperatureOverride, reasoningEffortHarness]);
   const requestChoiceRef = useRef(requestChoice);
@@ -4261,9 +4244,7 @@ export function useChatSession(
           // Local builds only, for both bodies. "This machine": run this host's
           // bash on the local computer engine; the consent capability rides the
           // header above, and the server ignores this without it. Absent ⇒ the
-          // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
-          // org-runtime model's turn on this server's runtime resolution, which
-          // local-only MCP servers and an explicit local-harness ask both need.
+          // legacy cloud-family resolution.
           ...(!HOSTED_MODE
             ? {
                 ...(personalBrowserEngine && !hostedScenarioId
@@ -4272,10 +4253,6 @@ export function useChatSession(
                     }
                   : {}),
                 ...(sendLocalEngine ? { computerEngine: "local" } : {}),
-                ...(localMcpRuntimeRequired ||
-                (localHarnessRequested && selectedModelUsesOrgRuntime)
-                  ? { localMcpRuntimeRequired: true }
-                  : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
                   : {}),
@@ -4372,7 +4349,6 @@ export function useChatSession(
     getCustomProviderByName,
     customProviders,
     selectedModelUsesOrgRuntime,
-    localMcpRuntimeRequired,
     localHarnessRequested,
     localHarnessExecution,
     hostedRequiresWebChatApi,

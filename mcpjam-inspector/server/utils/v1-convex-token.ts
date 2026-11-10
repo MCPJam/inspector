@@ -171,6 +171,7 @@ async function mintDelegatedToken(
  */
 const DELEGATED_AUTH_METHODS = new Set([
   "workos_api_key",
+  "workos_agent",
   "slack_service",
   "discord_service",
 ]);
@@ -337,23 +338,29 @@ export async function getBackgroundRunBearerForRequest(
       "Server missing CONVEX_URL configuration",
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(bearer);
+  const authorized = getRequestLocal(c, "authorizedProject");
+  let organizationId =
+    authorized?.projectId === projectId && authorized.bearer === bearer
+      ? authorized.organizationId
+      : undefined;
   // Resolve the organization from the project authorized by the ORIGINAL
   // credential, not from a client header or the browser's active organization.
-  const projects = (await client.query(
-    "projects:getMyProjects" as never,
-    {} as never,
-  )) as Array<{ _id: string; organizationId?: string }>;
-  const project = projects.find((row) => row._id === projectId);
-  if (!project?.organizationId) {
+  if (!organizationId) {
+    const client = new ConvexHttpClient(convexUrl);
+    client.setAuth(bearer);
+    const projects = (await client.query(
+      "projects:getMyProjects" as never,
+      {} as never,
+    )) as Array<{ _id: string; organizationId?: string }>;
+    organizationId = projects.find((row) => row._id === projectId)?.organizationId;
+  }
+  if (!organizationId) {
     throw new WebRouteError(
       403,
       ErrorCode.FORBIDDEN,
       "Cannot authorize background execution for this project",
     );
   }
-  const organizationId = project.organizationId;
   const attribution = stableAgentAttribution(c);
   const path = c.req.path;
   const getBearer = async () => {
