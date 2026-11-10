@@ -17,6 +17,7 @@ import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
+  notApplicableSubtitle,
   OverallScoreCard,
   SUITE_COPY,
   SuiteRow,
@@ -613,9 +614,14 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable && !absentApps
+          : notApplicable
             ? (report.incompleteReason ??
-              "Nothing here applied to this server, so it was not scored.")
+              // A saved OAuth report that ran and scored nothing is the
+              // no-login case; a skipped one never reached the server.
+              notApplicableSubtitle(
+                copy.title,
+                report.suiteKind === "oauth" && report.status !== "skipped",
+              ))
             : copy.description
       }
       badge={badge}

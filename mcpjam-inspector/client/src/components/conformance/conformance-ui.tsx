@@ -32,6 +32,17 @@ export const SUITE_COPY = {
 } as const;
 
 /**
+ * The subtitle of a suite that applied to nothing on this server, the same on
+ * a live run and a saved one. OAuth on a server that answered without a token
+ * says so.
+ */
+export function notApplicableSubtitle(title: string, noLogin = false): string {
+  return noLogin
+    ? `${title} doesn't apply: this server needs no login.`
+    : `${title} doesn't apply to this server.`;
+}
+
+/**
  * Animates open and closed by transitioning the grid row from 0fr to 1fr, so
  * the content slides to its natural height without measuring it. Children
  * stay mounted while closed so the closing slide has something to show;
@@ -287,7 +298,6 @@ export function OverallScoreCard({
   version,
   isRunning = false,
   progress,
-  oauthNotScored = false,
   blockedBySignIn = 0,
   timedOut = 0,
   action,
@@ -301,7 +311,6 @@ export function OverallScoreCard({
   isRunning?: boolean;
   /** How many suites have finished, while the run is going. */
   progress?: { done: number; total: number };
-  oauthNotScored?: boolean;
   /**
    * How many checks were refused for credentials. A run blocked that way says
    * nothing definitive about the server, so the verdict names the sign-in
@@ -427,7 +436,6 @@ export function OverallScoreCard({
           score.notApplicable
             ? `${plural(score.notApplicable, "check")} not applicable`
             : null,
-          oauthNotScored ? "OAuth not scored (no auth)" : null,
         ].filter((part): part is string => part !== null)
       : [];
 
