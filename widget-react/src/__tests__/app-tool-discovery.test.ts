@@ -11,7 +11,7 @@ const move = {
 };
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 afterEach(() => vi.unstubAllGlobals());
-function fixture(legacy = false) {
+function fixture(legacy = false, getModelChatSessionId?: () => string) {
   const bridge = new AppBridge(null, { name: "test", version: "1" }, {});
   vi.spyOn(bridge, "getAppCapabilities").mockReturnValue(
     legacy ? { tools: {} } : {},
@@ -29,12 +29,37 @@ function fixture(legacy = false) {
     onError,
     context: () => ({
       chatSessionId: "chat",
+      getModelChatSessionId,
       parentToolCallId: "render",
       serverId: "server",
     }),
   });
   return { bridge, list, request, registry, onError, refresh };
 }
+
+it("labels a modal from its own iframe rather than the hidden parent", async () => {
+  const f = fixture(true);
+  const frame = document.createElement("iframe");
+  document.body.appendChild(frame);
+  const refresh = createAppToolDiscovery({
+    registry: f.registry,
+    onError: f.onError,
+    context: () => ({
+      chatSessionId: "chat", parentToolCallId: "parent", serverId: "server",
+      presentation: { label: "File viewer: part.stl", visibility: "hidden" },
+    }),
+  });
+  try {
+    await refresh(f.bridge, "modal", { surface: "modal", getIframeElement: () => frame, isLive: () => true });
+    const first = f.registry.getState().snapshotForChatBody("chat")[0];
+    expect(first.description).toContain("File viewer: part.stl; visible");
+    frame.hidden = true;
+    await refresh(f.bridge, "modal", { surface: "modal", force: true, getIframeElement: () => frame, isLive: () => true });
+    const next = f.registry.getState().snapshotForChatBody("chat")[0];
+    expect(next.description).toContain("File viewer: part.stl; hidden");
+    expect(next.alias).toBe(first.alias);
+  } finally { frame.remove(); }
+});
 
 describe.each(["inline", "modal"] as const)("%s discovery", (surface) => {
   it("registers WebMCP tools with source and keeps legacy requests separate", async () => {
@@ -185,4 +210,17 @@ it("keeps identical tool names on separate renders and retires only the closed r
   expect(registry.getState().resolve(old.alias, "chat")).toBeNull();
   expect(registry.getState().snapshotForChatBody("chat")).toHaveLength(1);
   expect(registry.getState().snapshotForChatBody("other-chat")).toHaveLength(0);
+});
+
+it("keeps a discovered retained App bound to the current conversation without rediscovery", async () => {
+  let currentChat = "first";
+  const f = fixture(false, () => currentChat);
+  await f.refresh(f.bridge, "bridge", { isLive: () => true });
+  const first = f.registry.getState().snapshotForChatBody("first");
+  expect(first).toHaveLength(1);
+  currentChat = "second";
+  expect(f.registry.getState().snapshotForChatBody("first")).toEqual([]);
+  expect(f.registry.getState().snapshotForChatBody("second")).toEqual(first);
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.registry.getState().instancesByBridgeId.get("bridge")?.chatSessionId).toBe("chat");
 });

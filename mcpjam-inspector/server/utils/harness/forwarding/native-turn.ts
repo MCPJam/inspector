@@ -23,6 +23,9 @@ import {
 } from "./execution-control.js";
 import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
+import { sessionForwardingHeaders } from "./session-forwarding.js";
+import { createApprovalBindings } from "./approval-bindings.js";
+import type { HarnessSessionTurn } from "../session-mcp-config.js";
 import { nativePolicyDigest, forwardingToolPolicy } from "./native-policy.js";
 import { readNativeToolResult } from "./native-results.js";
 import type { HarnessConnectionProfile } from "../harness-connection-profile.js";
@@ -109,6 +112,14 @@ export async function prepareNativeForwarding(args: {
   profiles?: Record<string, HarnessConnectionProfile>;
   correlationKey?: string;
   tasks?: ToolTaskSeamOptions;
+  /** The lane of a runtime whose MCP config must not change between turns. */
+  session?: HarnessSessionTurn;
+  /** For a runtime that names the server in a call's input, not its name. */
+  attributeToolCall?: (call: {
+    rawToolName: string;
+    input: unknown;
+    keyToServerId: Record<string, string>;
+  }) => { serverId?: string; toolName: string };
 }) {
   if (args.strategy.plane !== "web-authorized" || !args.owners.length)
     throw new Error("Native forwarding route is unavailable.");
@@ -141,7 +152,20 @@ export async function prepareNativeForwarding(args: {
         }
       : undefined,
   );
+  const sessionHeaders = args.session
+    ? await sessionForwardingHeaders({
+        owners: args.owners,
+        session: args.session,
+        grantTurnId: args.turnId,
+        policies: args.policies,
+        bearer: args.authHeader,
+      })
+    : undefined;
   for (const [key, serverId] of Object.entries(keyToServerId)) {
+    if (sessionHeaders) {
+      mcpJson.mcpServers[key].headers = sessionHeaders[serverId];
+      continue;
+    }
     // The native HTTP request includes the human approval wait at the gate.
     mcpJson.mcpServers[key].timeout = Math.max(
       1000,
@@ -189,7 +213,16 @@ export async function prepareNativeForwarding(args: {
     delivery: args.delivery ?? "native",
     policyDigest,
     keyToServerId,
+    approvals: createApprovalBindings({
+      owners: args.owners,
+      keyToServerId,
+      attributeToolCall: args.attributeToolCall,
+      grantTurnId: args.turnId,
+    }),
     readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
+      // A session-stable runtime's requests name no tool call, so no receipt
+      // matches this one: the runtime's own result stands.
+      if (args.session) return undefined;
       const owner = args.owners.find(
         (candidate) => candidate.serverId === serverId,
       );
@@ -260,11 +293,14 @@ export async function prepareNativeForwarding(args: {
     stop: async () => {
       await Promise.all(stop.map((fn) => fn()));
     },
-    isForwardedTool: (name?: string) =>
+    isForwardedTool: (name?: string, input?: unknown) =>
       !!name &&
-      Object.keys(keyToServerId).some((key) =>
-        name.startsWith(`mcp__${key}__`),
-      ),
+      (args.attributeToolCall
+        ? !!args.attributeToolCall({ rawToolName: name, input, keyToServerId })
+            .serverId
+        : Object.keys(keyToServerId).some((key) =>
+            name.startsWith(`mcp__${key}__`),
+          )),
   };
 }
 

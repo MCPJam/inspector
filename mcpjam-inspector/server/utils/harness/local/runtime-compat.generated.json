@@ -4,58 +4,58 @@
   "harnesses": {
     "claude-code": {
       "conformance": {
-        "version": "published-claude-code-1.0.5-2c5f17bc91bf",
-        "evidence": "https://github.com/MCPJam/inspector/actions/runs/40646619108"
+        "version": "published-claude-code-1.0.7-61748456c506",
+        "evidence": "https://github.com/MCPJam/inspector/actions/runs/42574099831"
       },
       "targets": {
         "darwin-arm64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:edf9232d7eed0cf3c1af2bbd814a105ace53322a63b011d2a4960e6e021182f0"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:3a5c06c4427693bea1bbff727ed760f4eef3679ee3b46b186b23e3cbfba27592"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:5611ae8b02e0f325e5a9624bacf36a583172641fd55d6473f1cb30a3956d4a40"
+            "packVersion": "1.0.6",
+            "treeDigest": "sha256:2846a6d20f282f6a6ec575aa6f338d0038655d2d81afaeefaf6572edb2accfb2"
           }
         },
         "darwin-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:28d9771865f95988066a5f05f938a2eeeeca0cb0b3335f1355afe8bab862c40c"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:3dc4433d7fd53dbbae8f9dbcf7ba8d98290ec71c89b4d5b03345cdea6ccb0529"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:e551ee37091ac7edb2d7bf6f40dc3aea15fa5e39a5119e9f8e00dd14b0de7526"
+            "packVersion": "1.0.6",
+            "treeDigest": "sha256:8d50350ab9db9825faf2453dd1dff904e7442445b38acb371d20a15f6f601b25"
           }
         },
         "linux-arm64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:dc38e8a3c978600983359aaebdfc0fc724c6ae3a9e364e28d2bff62c2977e719"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:b6dd62ea7a0faf45c2538fcabd38b5c73722fe24ae892bda517b36a87ef49675"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:6ba6505bb2a053e35dbb50b05cf46b2a61bdee51be02935ded19091bbe220610"
+            "packVersion": "1.0.6",
+            "treeDigest": "sha256:521bd1f3d42895b4926ab00bd5e1935da806a886ef008b5c37148e2351d34267"
           }
         },
         "linux-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:e50c4cbc612f5d32eb31ea85cb7b0e751ee77a9674ee87eb11b5aee34ee725b6"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:5541f952616bfbb61e579c83c7a30e7b2415be99f1f9502ed1fd32c6c4d92ed1"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:34acb460678b6cb366513f1fb539f91ae5113f63058d6c5af65fa2f42a7a8091"
+            "packVersion": "1.0.6",
+            "treeDigest": "sha256:0367e20162bde1f8e970f2befe309b9b557e2701161aabef374c751099577136"
           }
         },
         "win32-x64": {
           "desired": {
-            "packVersion": "1.0.5",
-            "treeDigest": "sha256:49716aab69eabf900d2c2bb9c42c10c4b40609d294ece9b747af01cbcbc15fde"
+            "packVersion": "1.0.7",
+            "treeDigest": "sha256:5517bb7e34e39cff8c9d5a7fdec714a57d4471bdd4b73184aa0f64e69e23ab30"
           },
           "permitted": {
-            "packVersion": "1.0.4",
-            "treeDigest": "sha256:a5cbfeefa8d33dd276d5203863bb2da93bca1c84728ce890861d7c13449ef3a3"
+            "packVersion": "1.0.6",
+            "treeDigest": "sha256:06bd522a993d43fe74485e3849d30cf92f684552919fd58ec03ddfa453dec4ba"
           }
         }
       }
@@ -70,50 +70,30 @@
           "desired": {
             "packVersion": "1.0.3",
             "treeDigest": "sha256:5493e2bdc61a670d295e8342703c1386b5872ca6b865220a1cbcd80e3d26637c"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:656894bb4e3bc0c0d7a2b078f8b38face49ee1bc495404d766d17b6c634d5087"
           }
         },
         "darwin-x64": {
           "desired": {
             "packVersion": "1.0.3",
             "treeDigest": "sha256:20c3a9a65a116143337c4d77e409e435b280792163751334d36e2838889a657d"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:02ece384d2ca957f902676c98226e6410b82ba0944678ef2de7135b8f4d61b92"
           }
         },
         "linux-arm64": {
           "desired": {
             "packVersion": "1.0.3",
             "treeDigest": "sha256:542927c6ce2b4e49a29494a9e08b398ef818fba1979f5eaa1db3055be7b8071f"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:488d021c89ba0228d4a9bf7842953cb0525c0a0891471fcd252a887b7dc97131"
           }
         },
         "linux-x64": {
           "desired": {
             "packVersion": "1.0.3",
             "treeDigest": "sha256:9dcf7926448d9cb034962b1cf92faa1176406dac3be0711cfcb49056b185d19e"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:002899b571a231bcbbe692ed8f24e4e2f7338cc69c5e9c683c580264aeac0ebd"
           }
         },
         "win32-x64": {
           "desired": {
             "packVersion": "1.0.3",
             "treeDigest": "sha256:851f170d891087f84619c054fcbbc6190ed41766b4f374410e158f5aa66e54f7"
-          },
-          "permitted": {
-            "packVersion": "1.0.2",
-            "treeDigest": "sha256:13a0fd3c3b0536c4e27cc35342707b65784d02c32d20aed530fa71af014daedf"
           }
         }
       }

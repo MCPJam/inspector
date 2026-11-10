@@ -21,6 +21,7 @@ import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
 import { retireConsoleOnStreamError } from "./log-console-safety.js";
+import { trustSystemCertificates } from "./system-ca.js";
 import { loadSentryInstallationId } from "./sentry-installation.js";
 import { initializeDesktopSentryIdentity } from "../shared/desktop-sentry-state.js";
 import { installDesktopSentryIdentity } from "./sentry-identity-electron.js";
@@ -107,6 +108,11 @@ retireConsoleOnStreamError(
 // reporting is offline or opted out).
 registerMainProcessCrashHandlers(log);
 
+// Before the embedded server makes any request: on a network that re-signs
+// HTTPS, Node rejects the company root the OS (and so the window) trusts, and a
+// first launch never gets past the loading screen. See the file.
+trustSystemCertificates(log);
+
 // Wire autoUpdater event handlers BEFORE polling starts, otherwise an early
 // `update-available` event could fire before our listener exists.
 setupAutoUpdaterEvents();
@@ -186,6 +192,8 @@ let activating: Promise<void> | null = null;
 let shutdownLocalBrowserFrames: (() => void) | null = null;
 let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
+let shutdownMrtrStreams: (() => void) | null = null;
+let killMrtrStreams: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
@@ -560,6 +568,8 @@ async function startHonoServer(): Promise<number> {
     const {
       app: honoApp,
       injectWebSocket,
+      shutdownLocalMrtrStreams,
+      killLocalMrtrStreams,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
@@ -590,6 +600,8 @@ async function startHonoServer(): Promise<number> {
     // The WebMCP frame sockets are the same story: established WebSockets that
     // `server.close()` leaves attached, with a latching variant for a real quit
     // and a non-latching one for `window-all-closed`.
+    shutdownMrtrStreams = shutdownLocalMrtrStreams;
+    killMrtrStreams = killLocalMrtrStreams;
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
     // The agent's browser is a real Chromium this process started. Quitting the
@@ -1232,6 +1244,7 @@ app.on("window-all-closed", () => {
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
+  killMrtrStreams?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1372,6 +1385,7 @@ app.on("before-quit", (event) => {
   recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownMrtrStreams?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();

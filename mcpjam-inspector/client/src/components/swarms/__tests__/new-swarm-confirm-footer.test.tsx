@@ -2,6 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { NewSwarmConfirmFooter } from "../new-swarm-confirm-footer";
 
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
+
 const base = {
   personaTotal: 1,
   environmentCount: 1,

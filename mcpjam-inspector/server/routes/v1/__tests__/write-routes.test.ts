@@ -85,7 +85,9 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
+import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
+import { convexReadFetch } from "../convex-read-errors.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -364,10 +366,12 @@ describe("v1 write routes", () => {
           "s_beta",
         ]);
         expect(createAuthorizedManagerMock.mock.calls[0][7]).toEqual({
+          pluginComputerRuntime: false,
           serverNames: ["alpha", "beta"],
           // Threaded so per-server XAA servers mint instead of 500ing —
           // the v1 eval API has no host-persona input, so no xaaPolicy.
           xaaIssuer: expect.stringContaining("/xaa"),
+          xaaPolicy: undefined,
         });
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
           serverIds: ["s_alpha", "s_beta"],
@@ -666,22 +670,15 @@ describe("v1 write routes", () => {
         }
       });
 
-      it("DOES execute a replay of a run still in flight", async () => {
-        // Deliberately unchanged: an in-flight run and one abandoned mid-flight
-        // are indistinguishable from here, and refusing to execute would strand
-        // the second. Deciding that needs a liveness signal, not a guess.
-        const { execute } = mockReplay("running");
-
+      it.each(["pending", "running"])("adopts a replay in %s without another executor", async (status) => {
+        const { execute } = mockReplay(status);
         const res = await request(
-          makeApp(),
-          "POST",
-          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
-          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" }
+          makeApp(), "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+          { suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx", idempotencyKey: "same-key" },
         );
-
         expect(res.status).toBe(202);
-        expect((await res.json()).status).toBe("running");
-        expect(execute).toHaveBeenCalledTimes(1);
+        expect((await res.json()).status).toBe(status);
+        expect(execute).not.toHaveBeenCalled();
       });
 
       it("executes normally against a backend with no replay signal", async () => {
@@ -3209,6 +3206,21 @@ describe("v1 write routes", () => {
           },
         },
       });
+    });
+
+    it("reads through convexReadFetch, so an upstream failure keeps its HTTP status", async () => {
+      // Without this fetch the client drops the status of a non-2xx Convex
+      // answer, and Sentry gets an empty `Error` (INSPECTOR-HONO-17).
+      convexQueryMock.mockResolvedValueOnce(RUN_DOC);
+      await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      );
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch }
+      );
     });
 
     it("surfaces a RECORDED execution engine, and only when the run has one", async () => {

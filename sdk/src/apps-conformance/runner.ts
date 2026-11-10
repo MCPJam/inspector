@@ -1,10 +1,18 @@
 import { readUiResources } from "./resource-reads.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   AUTHORIZATION_REQUIRED_MESSAGE,
-  authorizationRequiredDetails,
   isAuthorizationRefusal,
 } from "../conformance-authorization.js";
+import {
+  credentialsFromServerConfig,
+  loginRequiredDetails,
+} from "../conformance-login.js";
+import {
+  blockedByDetails,
+  blockedByMessage,
+} from "../conformance-blocked.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -163,6 +171,36 @@ function skippedResult(
     error: { message },
     ...(details ? { details } : {}),
   };
+}
+
+/** A check that never ran because `blockerId` broke first. */
+function blockedSkip(
+  id: MCPAppsCheckId,
+  blockerId: MCPAppsCheckId,
+): MCPAppsCheckResult {
+  return skippedResult(
+    id,
+    "could-not-run",
+    blockedByMessage(APPS_CHECK_METADATA[blockerId].title),
+    blockedByDetails(blockerId),
+  );
+}
+
+/** A check a 401 stopped: the caller's login to fix, at no cost. */
+function loginSkip(
+  id: MCPAppsCheckId,
+  config: NormalizedMCPAppsConformanceConfig,
+  error: unknown,
+): MCPAppsCheckResult {
+  return skippedResult(
+    id,
+    "could-not-run",
+    AUTHORIZATION_REQUIRED_MESSAGE,
+    loginRequiredDetails(
+      error,
+      credentialsFromServerConfig(config.serverConfig),
+    ),
+  );
 }
 
 function buildCheckSelection(
@@ -375,14 +413,7 @@ function buildConnectionFailureResult(
 
   for (const checkId of selectedCheckIds) {
     if (authorizationRefused) {
-      checks.push(
-        skippedResult(
-          checkId,
-          "could-not-run",
-          AUTHORIZATION_REQUIRED_MESSAGE,
-          authorizationRequiredDetails(error),
-        ),
-      );
+      checks.push(loginSkip(checkId, config, error));
     } else if (checkId === failureCheckId) {
       checks.push(
         failedResult(
@@ -395,11 +426,13 @@ function buildConnectionFailureResult(
       );
     } else {
       checks.push(
-        skippedResult(
-          checkId,
-          "could-not-run",
-          "Skipping check because the MCP server could not be connected",
-        ),
+        failureCheckId
+          ? blockedSkip(checkId, failureCheckId)
+          : skippedResult(
+              checkId,
+              "could-not-run",
+              "Skipping check because the MCP server could not be connected",
+            ),
       );
     }
   }
@@ -433,14 +466,18 @@ function buildConnectionFailureResult(
 
 export class MCPAppsConformanceTest {
   private readonly config: NormalizedMCPAppsConformanceConfig;
+  private readonly suppressTelemetry: boolean;
 
   constructor(config: MCPAppsConformanceConfig) {
     this.config = normalizeMCPAppsConformanceConfig(config);
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<MCPAppsConformanceResult> {
     const signal = this.config.signal;
     signal?.throwIfAborted();
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const serverConfig = this.config.serverConfig;
     const runConfig =
       signal && "url" in serverConfig
@@ -528,13 +565,15 @@ export class MCPAppsConformanceTest {
             const stepStartedAt = Date.now();
             if (toolsError) {
               checks.push(
-                failedResult(
-                  "ui-tools-present",
-                  Date.now() - stepStartedAt,
-                  `tools/list failed: ${errorMessage(toolsError)}`,
-                  undefined,
-                  toolsError,
-                ),
+                isAuthorizationRefusal(toolsError)
+                  ? loginSkip("ui-tools-present", this.config, toolsError)
+                  : failedResult(
+                      "ui-tools-present",
+                      Date.now() - stepStartedAt,
+                      `tools/list failed: ${errorMessage(toolsError)}`,
+                      undefined,
+                      toolsError,
+                    ),
               );
             } else if (
               uiTools.length === 0 &&
@@ -580,11 +619,15 @@ export class MCPAppsConformanceTest {
             const stepStartedAt = Date.now();
             if (toolsError) {
               checks.push(
-                skippedResult(
-                  "ui-tool-metadata-valid",
-                  "could-not-run",
-                  "Skipping check because tools/list did not complete",
-                ),
+                isAuthorizationRefusal(toolsError)
+                  ? loginSkip("ui-tool-metadata-valid", this.config, toolsError)
+                  : selectedCheckIds.has("ui-tools-present")
+                    ? blockedSkip("ui-tool-metadata-valid", "ui-tools-present")
+                    : skippedResult(
+                        "ui-tool-metadata-valid",
+                        "could-not-run",
+                        "Skipping check because tools/list did not complete",
+                      ),
               );
             } else if (uiTools.length === 0) {
               checks.push(
@@ -704,11 +747,15 @@ export class MCPAppsConformanceTest {
             const stepStartedAt = Date.now();
             if (toolsError) {
               checks.push(
-                skippedResult(
-                  "ui-tool-input-schema-valid",
-                  "could-not-run",
-                  "Skipping check because tools/list did not complete",
-                ),
+                isAuthorizationRefusal(toolsError)
+                  ? loginSkip("ui-tool-input-schema-valid", this.config, toolsError)
+                  : selectedCheckIds.has("ui-tools-present")
+                    ? blockedSkip("ui-tool-input-schema-valid", "ui-tools-present")
+                    : skippedResult(
+                        "ui-tool-input-schema-valid",
+                        "could-not-run",
+                        "Skipping check because tools/list did not complete",
+                      ),
               );
             } else if (uiTools.length === 0) {
               checks.push(

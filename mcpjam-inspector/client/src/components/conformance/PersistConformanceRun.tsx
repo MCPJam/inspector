@@ -1,3 +1,4 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 /**
  * Persist a hosted UI conformance execution as a durable Convex run.
  *
@@ -11,6 +12,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useAction } from "convex/react";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { toast } from "@/lib/toast";
 import { makeFunctionReference } from "convex/server";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { useConformanceRun } from "@/hooks/use-conformance-run";
@@ -267,6 +270,7 @@ export function PersistConformanceRun({
       projectId: persist.projectId,
       target,
       source: "ui",
+      runTimeoutSeconds: snapshot.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
       requestedSuites: suites,
       actorLabel: "Inspector UI",
     })
@@ -283,8 +287,19 @@ export function PersistConformanceRun({
         runIdRef.current = startedRunId;
         setRunId(startedRunId);
       })
-      .catch(() => {
-        // Persistence is best-effort for the live panel; the suites still run.
+      .catch((error: unknown) => {
+        // The suites still run and their results stay on screen, but a run
+        // the backend refused (plan limit, budget, access) never reaches
+        // History, so say why instead of losing it in silence.
+        if (disposedRef.current || startedVersionRef.current !== version) {
+          return;
+        }
+        toast.error("This run won't be saved to History", {
+          description: getBillingErrorMessage(
+            error,
+            "Could not save it. Run it again to save the results.",
+          ),
+        });
       });
   }, [
     isExecuting,

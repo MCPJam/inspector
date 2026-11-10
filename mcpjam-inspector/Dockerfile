@@ -67,6 +67,7 @@ COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+COPY mcpjam-inspector/scripts/patch-harness-approvals.mjs ./mcpjam-inspector/scripts/patch-harness-approvals.mjs
 
 COPY soundcheck/package.json ./soundcheck/package.json
 COPY mcp/package.json ./mcp/package.json
@@ -161,6 +162,7 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:copilot-cli-bridge -w @mcpjam/inspector && \
     npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
     npm run bundle:local-harness-layer -w @mcpjam/inspector
 
@@ -263,4 +265,8 @@ COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 
-ENTRYPOINT ["npm", "start"]
+# The launcher is the container's main process rather than `npm start`: npm
+# runs scripts under `sh -c`, and that shell dies on the platform's SIGTERM
+# without passing it on, so npm exits and the server is SIGKILLed with it
+# instead of shutting down gracefully. NODE_ENV is set above.
+ENTRYPOINT ["node", "bin/start.js"]

@@ -42,6 +42,41 @@ export const MCP_TASKS_CHECK_IDS = [
 
 export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
 
+/** Checks whose setup includes a tool call or a task created by one. */
+export const MCP_TASKS_TOOL_CHECK_IDS = [
+  "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
+  "tasks-undeclared-capability-rejected",
+  "tasks-ttl-shape",
+  "tasks-inline-result",
+  "tasks-mcp-name-routing",
+  "tasks-status-payload-shape",
+  "tasks-cancel-ack-shape",
+  "tasks-update-ack-shape",
+  "tasks-ttl-integer-shape",
+  "tasks-undeclared-capability-names-requirements",
+] as const satisfies readonly MCPTasksCheckId[];
+export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
+export function isTasksToolCheck(id: string): id is MCPTasksToolCheckId {
+  return MCP_TASKS_TOOL_CHECK_IDS.some((check) => check === id);
+}
+export interface MCPTasksToolSetup {
+  toolName: string;
+  toolArguments?: Record<string, unknown>;
+}
+export type MCPTasksCheckOverrides = Partial<
+  Record<MCPTasksToolCheckId, MCPTasksToolSetup>
+>;
+export interface MCPTasksRunOptions {
+  protocolVersion?: import("../mcp-client-manager/mcp-protocol-version.js").McpProtocolVersion;
+  checkIds?: MCPTasksCheckId[];
+  readinessIds?: MCPTasksReadinessId[];
+  toolName?: string;
+  toolArguments?: Record<string, unknown>;
+  inputResponses?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
+}
+
 /**
  * Tasks check ids an older SDK accepted under another name, each with its
  * current name. Kept so configs and `--check-id` values written for that SDK
@@ -136,6 +171,14 @@ export interface MCPTasksCheckResult {
 }
 
 export type MCPTasksConformanceConfig = MCPServerConfig & {
+  /** Cancel active requests and polling, then close the owned connection. */
+  signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by `runConformance` for its inner run. See
+   * `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   /**
    * Run only these checks. A renamed id
    * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
@@ -156,6 +199,7 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
    */
   toolName?: string;
   toolArguments?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
   /** Upper bound on polling a created task to a terminal status. */
   pollTimeoutMs?: number;
   /**
@@ -174,6 +218,7 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
 };
 
 export interface NormalizedMCPTasksConformanceConfig {
+  signal?: AbortSignal;
   serverConfig: MCPServerConfig;
   target: string;
   timeout: number;
@@ -183,6 +228,7 @@ export interface NormalizedMCPTasksConformanceConfig {
   readinessIds?: MCPTasksReadinessId[];
   toolName?: string;
   toolArguments?: Record<string, unknown>;
+  checkOverrides?: MCPTasksCheckOverrides;
   /** @see {@link MCPTasksConformanceConfig.inputResponses} */
   inputResponses?: Record<string, unknown>;
 }

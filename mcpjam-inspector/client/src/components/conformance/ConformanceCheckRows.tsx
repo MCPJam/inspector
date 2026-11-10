@@ -15,6 +15,7 @@ import {
   isTimedOutCheck,
   isMissingInputCheck,
   missingInputMessage,
+  noTaskCreatedMessage,
 } from "@mcpjam/sdk/browser";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Button } from "@mcpjam/design-system/button";
@@ -23,6 +24,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
 
@@ -65,27 +71,16 @@ function formatDetailValue(value: unknown) {
 }
 
 /**
- * The shut-row preview gives failures context without opening the row. The
- * full message stays mounted inside Collapse so it slides with the explanation
- * and details; only one message is visible at a time. Red means a failure that
- * counts; skip reasons and unscored findings use the neutral box.
- *
- * A shut row shows the box only when it says something to act on: a failure,
- * or why a check that applies could not run. A not-applicable reason waits
- * for the row to open, or every era-skipped row would carry a box of noise.
+ * What went wrong, under the explanation in an open row. A shut row shows only
+ * its title, whatever the status, so every row opens the same way. Red means
+ * a failure that counts; skip reasons and unscored findings use the neutral box.
  */
-function showsMessageShut(status: string, skipReason?: string): boolean {
-  return status === "failed" || skipReason === "could-not-run";
-}
-
 function ResultMessage({
   message,
   tone,
-  expanded,
 }: {
   message: string;
   tone: "error" | "neutral";
-  expanded: boolean;
 }) {
   return (
     <span
@@ -96,9 +91,7 @@ function ResultMessage({
           : "border-border/60 bg-muted/30 text-muted-foreground",
       )}
     >
-      {/* Clamped inside the padded box: clamped on the box itself, a third
-          line shows through the bottom padding. */}
-      <span className={cn(!expanded && "line-clamp-2")}>{message}</span>
+      {message}
     </span>
   );
 }
@@ -110,6 +103,28 @@ export function pendingIdSet(
 }
 
 /** Says a result row opens: nothing else on it does. */
+/**
+ * The status icon has no text, and a shut row shows no message, so screen
+ * readers get the result from this hidden label on the row button.
+ */
+function RowStatusLabel({
+  status,
+  skipReason,
+}: {
+  status: string;
+  skipReason?: string;
+}) {
+  const label =
+    status === "passed"
+      ? "passed"
+      : status === "failed"
+        ? "failed"
+        : skipReason === "could-not-run"
+          ? "could not run"
+          : "not applicable";
+  return <span className="sr-only">{`, ${label}`}</span>;
+}
+
 function RowChevron({ expanded }: { expanded: boolean }) {
   return (
     <ChevronRight
@@ -190,7 +205,7 @@ export function NeedsInputTag({
 export function NotRunTag() {
   return (
     <span
-      title="This check needs an input before it can run."
+      title="This check needs a setup change before it can run."
       className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
     >
       Not run
@@ -222,7 +237,7 @@ export function CheckRow({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
-    ([key]) => key !== "missingInput",
+    ([key]) => key !== "missingInput" && key !== "missingInputMessage",
   );
   const warnings = check.warnings;
 
@@ -243,28 +258,20 @@ export function CheckRow({
         </span>
         {missingInput ? <NotRunTag /> : pending ? <UnscoredTag /> : null}
         {isTimedOutCheck(check) ? <TimedOutTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span
-            className={cn(
-              "text-sm",
-              check.status === "skipped" &&
-                (missingInput || check.skipReason !== "could-not-run") &&
-                "text-muted-foreground",
-            )}
-          >
-            {check.title}
-          </span>
-          {check.error &&
-          !expanded && showsMessageShut(check.status, check.skipReason) ? (
-            <ResultMessage
-              message={missingInputMessage(check) ?? check.error.message}
-              tone={
-                check.status === "failed" && !pending ? "error" : "neutral"
-              }
-              expanded={false}
-            />
-          ) : null}
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-sm",
+            check.status === "skipped" &&
+              (missingInput || check.skipReason !== "could-not-run") &&
+              "text-muted-foreground",
+          )}
+        >
+          {check.title}
         </span>
+        {/* A missing-input row already says "Not run" in its tag. */}
+        {missingInput ? null : (
+          <RowStatusLabel status={check.status} skipReason={check.skipReason} />
+        )}
         {/* A skipped check never ran: its 0ms says nothing. */}
         {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
@@ -280,11 +287,14 @@ export function CheckRow({
           </div>
           {check.error && (
             <ResultMessage
-              message={missingInputMessage(check) ?? check.error.message}
+              message={
+                missingInputMessage(check) ??
+                noTaskCreatedMessage(check) ??
+                check.error.message
+              }
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
-              expanded
             />
           )}
 
@@ -372,18 +382,8 @@ export function OAuthStepRow({
           />
         </span>
         {pending ? <UnscoredTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm">{step.title}</span>
-          {step.error &&
-          !expanded && showsMessageShut(step.status, step.skipReason) ? (
-            <ResultMessage
-              message={step.error.message}
-              // An unscored failure is reported, not counted: grey, as in CheckRow.
-              tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded={false}
-            />
-          ) : null}
-        </span>
+        <span className="min-w-0 flex-1 text-sm">{step.title}</span>
+        <RowStatusLabel status={step.status} skipReason={step.skipReason} />
         {step.status !== "skipped" && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {step.durationMs}ms
@@ -399,8 +399,8 @@ export function OAuthStepRow({
           {step.error && (
             <ResultMessage
               message={step.error.message}
+              // An unscored failure is reported, not counted: grey, as in CheckRow.
               tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded
             />
           )}
 
@@ -493,10 +493,15 @@ export function CatalogRow({
   onSelectedChange,
   children,
   tag,
+  notApplicable,
 }: {
   entry: CatalogEntry;
-  /** Shown under the row, e.g. the tool a picked check will call. */
-  children?: ReactNode;
+  /**
+   * Shown under the row, e.g. the tool a picked check will call. As a
+   * function it gets whether the row is open, so an off check can show its
+   * field only then.
+   */
+  children?: ReactNode | ((opened: boolean) => ReactNode);
   /** Shown after the title, e.g. that the check needs an input. */
   tag?: ReactNode;
   /**
@@ -506,14 +511,55 @@ export function CatalogRow({
    */
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
+  /**
+   * Why the check has nothing to test on this server. Set, the row is shaded
+   * and the reason shows as a tooltip; the checkbox still works.
+   */
+  notApplicable?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
+  const extra = typeof children === "function" ? children(expanded) : children;
+  const title = (
+    <button
+      type="button"
+      className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
+      onClick={() => setExpanded((value) => !value)}
+      // A shaded row keeps its title focusable, so keyboard and screen reader
+      // users can reach the reason it does not apply.
+      disabled={!expandable && !notApplicable}
+      aria-expanded={expandable ? expanded : undefined}
+    >
+      {selectable ? null : (
+        <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
+      )}
+      <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
+        {entry.title}
+      </span>
+      {tag}
+      {entry.note && (
+        <span className="flex-shrink-0 text-xs text-muted-foreground/70">
+          {entry.note}
+        </span>
+      )}
+      {expandable &&
+        (expanded ? (
+          <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ))}
+    </button>
+  );
 
   return (
     <div className="border-b border-border/30 last:border-0">
-      <div className="flex items-center gap-2 px-1">
+      <div
+        className={cn(
+          "flex items-center gap-2 px-1",
+          notApplicable && "opacity-50",
+        )}
+      >
         {selectable ? (
           // A 24px target around the box: the label passes its clicks on.
           <label className="flex size-6 shrink-0 cursor-pointer items-center justify-center has-[:disabled]:cursor-default">
@@ -525,39 +571,23 @@ export function CatalogRow({
             />
           </label>
         ) : null}
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors enabled:hover:bg-muted/30 enabled:cursor-pointer disabled:cursor-default"
-          onClick={() => setExpanded((value) => !value)}
-          disabled={!expandable}
-          aria-expanded={expandable ? expanded : undefined}
-        >
-          {selectable ? null : (
-            <MinusCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
-          )}
-          <span className="flex-1 min-w-0 truncate text-sm text-muted-foreground">
-            {entry.title}
-          </span>
-          {tag}
-          {entry.note && (
-            <span className="flex-shrink-0 text-xs text-muted-foreground/70">
-              {entry.note}
-            </span>
-          )}
-          {expandable &&
-            (expanded ? (
-              <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-            ))}
-        </button>
+        {notApplicable ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{title}</TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              {notApplicable}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          title
+        )}
       </div>
       <Collapse open={expanded && Boolean(entry.description)}>
         <div className="px-6 pb-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
           {entry.description}
         </div>
       </Collapse>
-      {children ? <div className="pr-1 pb-2 pl-8">{children}</div> : null}
+      {extra ? <div className="pr-1 pb-2 pl-8">{extra}</div> : null}
     </div>
   );
 }
@@ -571,24 +601,30 @@ export function CatalogList({
   note = ".",
   heading,
   isSelected,
+  isLocked,
   onSelectedChange,
   renderExtra,
   renderTag,
+  notApplicableReason,
 }: {
   catalog: CatalogEntry[];
   /** The rest of the line after "N checks in this suite", punctuation included. */
   note?: string;
   /** Replaces that line, for a list that is not the suite's checks. */
   heading?: string;
-  /** What a row shows under it; see `CatalogRow`'s children. */
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  /** What a row shows under it, given whether it is open; see `CatalogRow`'s children. */
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
   renderTag?: (entry: CatalogEntry) => ReactNode;
+  /** Why a row's check does not apply; see `CatalogRow`'s notApplicable. */
+  notApplicableReason?: (entry: CatalogEntry) => string | undefined;
   /**
    * Each row carries a checkbox showing whether it runs; with
    * `onSelectedChange` too, the user picks rows one by one.
    */
   isSelected?: (id: string) => boolean;
+  /** A row whose checkbox the user cannot change, e.g. one missing its input. */
+  isLocked?: (id: string) => boolean;
   onSelectedChange?: (id: string, selected: boolean) => void;
 }) {
   return (
@@ -601,15 +637,18 @@ export function CatalogList({
           key={entry.id}
           entry={entry}
           {...(isSelected ? { selected: isSelected(entry.id) } : {})}
-          {...(isSelected && onSelectedChange
+          {...(isSelected && onSelectedChange && !isLocked?.(entry.id)
             ? {
                 onSelectedChange: (selected: boolean) =>
                   onSelectedChange(entry.id, selected),
               }
             : {})}
           tag={renderTag?.(entry)}
+          notApplicable={notApplicableReason?.(entry)}
         >
-          {renderExtra?.(entry)}
+          {renderExtra
+            ? (opened: boolean) => renderExtra(entry, opened)
+            : undefined}
         </CatalogRow>
       ))}
     </div>

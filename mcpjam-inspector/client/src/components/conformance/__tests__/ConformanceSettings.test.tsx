@@ -16,6 +16,12 @@ import {
 import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
 import { ConformanceSettings } from "../ConformanceSettings";
 import { SavedRunSettings } from "../ConformanceRunActions";
+const toolsMock = vi.hoisted(() => ({ outputSchema: true }));
+// The update check and its answers box are behind a flag; these tests cover it.
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) =>
+    key === "conformance-tasks-update-check",
+}));
 vi.mock("../ConformanceProbeField", async (original) => ({
   ...(await original<typeof import("../ConformanceProbeField")>()),
   useProbeTools: () => ({
@@ -31,7 +37,7 @@ vi.mock("../ConformanceProbeField", async (original) => ({
         name: "output",
         readOnly: true,
         destructive: false,
-        hasOutputSchema: true,
+        hasOutputSchema: toolsMock.outputSchema,
       },
     ],
   }),
@@ -52,11 +58,13 @@ const initial: ConformanceDefaults = {
 function Harness({
   saved,
   onSave,
+  selection = initial.selection,
 }: {
   saved: boolean;
   onSave: ReturnType<typeof vi.fn>;
+  selection?: ConformanceDefaults["selection"];
 }) {
-  const [value, setValue] = useState(initial);
+  const [value, setValue] = useState({ ...initial, selection });
   const save = async (
     selection: ConformanceDefaults["selection"],
     inputs: ConformanceDefaults["inputs"],
@@ -90,7 +98,60 @@ function Harness({
     />
   );
 }
+describe("Settings header", () => {
+  it.each([false, true])(
+    "uses the same Back as a run's page (saved: %s)",
+    (saved) => {
+      render(<Harness saved={saved} onSave={vi.fn(async () => {})} />);
+      // The shared detail header's Back: bordered, with an arrow, not a
+      // bare text link.
+      const back = screen.getByTestId("conformance-settings-back");
+      expect(back).toBe(screen.getByRole("button", { name: "Back" }));
+      expect(back).toHaveClass("border");
+      expect(
+        screen.getByRole("heading", { name: "alpha Conformance Settings" }),
+      ).toBeInTheDocument();
+    },
+  );
+});
+
 describe("Settings inputs", () => {
+  it("keeps a saved output tool visible when no tool declares an output schema", async () => {
+    toolsMock.outputSchema = false;
+    try {
+      const user = userEvent.setup();
+      render(<Harness saved={false} onSave={vi.fn(async () => {})} />);
+      // The saved tool is still called, so the user must see it to clear it.
+      const field = screen.getByRole("combobox", {
+        name: "Tool to check output",
+      });
+      // The server still lists it, so it is not shown as missing.
+      expect(field).toHaveTextContent("output·read-only");
+      expect(
+        screen.getByText(
+          "This tool no longer declares an output schema. It is still called, but its result cannot be checked. Pick another tool or clear it.",
+        ),
+      ).toBeInTheDocument();
+      const box = screen.getByRole("checkbox", {
+        name: "Run Tool Output Schema Honored",
+      });
+      expect(box.closest("label")!.parentElement).not.toHaveClass(
+        "opacity-50",
+      );
+      await user.click(field);
+      await user.click(screen.getByRole("option", { name: "Not set" }));
+      // Cleared, the check has nothing to grade: shaded, no field.
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("combobox", { name: "Tool to check output" }),
+        ).toBeNull(),
+      );
+      expect(box.closest("label")!.parentElement).toHaveClass("opacity-50");
+    } finally {
+      toolsMock.outputSchema = true;
+    }
+  });
+
   it.each([false, true])(
     "shows and saves every input in both Settings views (saved: %s)",
     async (saved) => {
@@ -183,6 +244,108 @@ describe("Settings inputs", () => {
       expect(screen.getByRole("textbox", { name: "Arguments" })).toBe(args);
     },
   );
+  it("shows an off check's tool field while its row is open, without blocking on it", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => {});
+    render(
+      <Harness
+        saved={false}
+        onSave={onSave}
+        selection={{ protocol: [], tasks: [] }}
+      />,
+    );
+    const taskField = () =>
+      screen.queryByRole("combobox", {
+        name: "Tool that creates a task for Result Type Discipline",
+      });
+    const outputField = () =>
+      screen.queryByRole("combobox", { name: "Tool to check output" });
+    expect(taskField()).toBeNull();
+    expect(outputField()).toBeNull();
+    // The suite default and the badge stay with the suite off.
+    expect(
+      screen.getByRole("combobox", { name: "Tool that creates a task" }),
+    ).toHaveTextContent("echo");
+    const taskRow = screen.getByRole("button", {
+      name: /^Result Type Discipline/,
+    });
+    expect(within(taskRow).getByText("Input set")).toBeInTheDocument();
+
+    await user.click(taskRow);
+    expect(taskField()).toHaveTextContent("echo");
+    await user.click(taskRow);
+    expect(taskField()).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: /^Tool Output Schema Honored/ }),
+    );
+    const field = outputField()!.parentElement!.closest("div.space-y-2")!;
+    fireEvent.click(within(field).getByRole("switch"));
+    fireEvent.change(within(field).getByRole("textbox", { name: "Arguments" }), {
+      target: { value: "[1]" },
+    });
+    // The check is off, so its tool is not called yet: Back stays usable and
+    // another change still saves.
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    await user.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith(
+        expect.objectContaining({ protocol: [] }),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Run Tool Output Schema Honored" }),
+    );
+    await act(async () => {});
+    // Picked, its draft holds later saves back.
+    const saves = onSave.mock.calls.length;
+    await user.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    await act(async () => {});
+    expect(onSave).toHaveBeenCalledTimes(saves);
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  });
+
+  it("keeps the picked advice's bad log tool draft blocking after an off logs row closes", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => {});
+    render(
+      <Harness
+        saved={false}
+        onSave={onSave}
+        selection={{
+          protocol: ["modern-tool-output-schema-conformant"],
+          tasks: [],
+        }}
+      />,
+    );
+    const logFields = () =>
+      screen.queryAllByRole("combobox", { name: "Tool that emits logs" });
+    // The advice is picked and the logging check is off, so the advice
+    // holds the log tool field.
+    expect(logFields()).toHaveLength(1);
+    const field = logFields()[0].parentElement!.closest("div.space-y-2")!;
+    fireEvent.click(within(field).getByRole("switch"));
+    fireEvent.change(within(field).getByRole("textbox", { name: "Arguments" }), {
+      target: { value: "[1]" },
+    });
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+
+    const logsRow = screen.getByRole("button", {
+      name: /^Logs Require A Log Level/,
+    });
+    await user.click(logsRow);
+    expect(logFields()).toHaveLength(2);
+    await user.click(logsRow);
+    expect(logFields()).toHaveLength(1);
+    await act(async () => {});
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it("updates untouched inputs from shared defaults", () => {
     const props = {
       serverName: "alpha",
@@ -262,5 +425,96 @@ describe("Settings inputs", () => {
     expect(
       screen.getByRole("heading", { name: "alpha Conformance Settings" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Settings run timeout", () => {
+  it("shows the saved run's timeout and saves a change from its Settings", async () => {
+    const saveTimeout = vi.fn(
+      async (_name: string, _seconds: number | null) => {},
+    );
+    render(
+      <SavedRunSettings
+        serverName="alpha"
+        onBack={vi.fn()}
+        settings={{
+          loaded: true,
+          defaults: { alpha: {} },
+          inputs: { alpha: {} },
+          servers: { alpha: server },
+          save: vi.fn(async () => {}),
+          timeouts: { alpha: 120 },
+          saveTimeout,
+        }}
+      />,
+    );
+    // Run Timeout comes first, above Default Checks.
+    expect(
+      screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+    ).toEqual(["Run Timeout", "Default Checks"]);
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    expect(field).toHaveValue(120);
+    fireEvent.change(field, { target: { value: "60" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 60));
+  });
+
+  it("holds Back while the timeout is invalid", async () => {
+    render(
+      <ConformanceSettings
+        serverName="alpha"
+        server={server}
+        defaults={{}}
+        inputs={{}}
+        onSave={vi.fn(async () => {})}
+        onSaveTimeout={vi.fn(async () => {})}
+        onBack={vi.fn()}
+      />,
+    );
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    fireEvent.change(field, { target: { value: "0" } });
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeDisabled(),
+    );
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.blur(field);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
+  });
+
+  it("leaves on the first Back click straight from an edited timeout", async () => {
+    // Pressing Back blurs the field, which starts the save; Back must not
+    // turn off under the click.
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    let finish: () => void = () => {};
+    const onSaveTimeout = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    render(
+      <ConformanceSettings
+        serverName="alpha"
+        server={server}
+        defaults={{}}
+        inputs={{}}
+        onSave={vi.fn(async () => {})}
+        onSaveTimeout={onSaveTimeout}
+        onBack={onBack}
+      />,
+    );
+    const field = screen.getByLabelText("Total run timeout (seconds)");
+    await user.clear(field);
+    await user.type(field, "90");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(onSaveTimeout).toHaveBeenCalledWith(90);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
+  it("has no timeout section where the timeout cannot be saved", () => {
+    render(<Harness saved={false} onSave={vi.fn(async () => {})} />);
+    expect(screen.queryByRole("heading", { name: "Run Timeout" })).toBeNull();
   });
 });

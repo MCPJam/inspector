@@ -63,7 +63,8 @@ vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
   resolveOrgModelConfig: resolveOrgModelConfigMock,
 }));
 
-import { prepareSuiteReplayFromRun } from "../replay-suite-run.js";
+import { prepareSuiteReplayFromRun, executeSuiteReplayFromRun } from "../replay-suite-run.js";
+import { buildReplayManager, storeReplayConfig } from "../route-helpers.js";
 
 /** A source run that WAS environment-backed, replayed by an ordinary caller. */
 function convexClient() {
@@ -86,6 +87,27 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+it.each(["running", "completed"])("adopts a snapshot replay in %s without setup or execution", async (status) => {
+  const original = startSuiteRunWithRecorderMock.getMockImplementation()!;
+  startSuiteRunWithRecorderMock.mockImplementationOnce(async () => ({ ...await original(), deduped: true, status }));
+  admission.execution.mockClear();admission.failed.mockClear();vi.mocked(storeReplayConfig).mockClear();
+  const prepared = await prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source-run-1" });
+  expect(prepared).toMatchObject({ deduped: true, status, runId: "replay-run-1" });
+  await expect(prepared.execute()).rejects.toThrow(/already has an executor/);
+  await prepared.cleanup();
+  expect(admission.execution).not.toHaveBeenCalled();expect(admission.failed).not.toHaveBeenCalled();
+  expect(storeReplayConfig).not.toHaveBeenCalled();expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+it("the synchronous replay returns an adopted run without executing and closes its manager", async () => {
+  const original = startSuiteRunWithRecorderMock.getMockImplementation()!;
+  startSuiteRunWithRecorderMock.mockImplementationOnce(async () => ({ ...await original(), deduped: true, status: "running" }));
+  await expect(executeSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source-run-1" })).resolves.toMatchObject({ runId: "replay-run-1", message: "An existing replay run was found. Read its status for the result." });
+  expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  const manager = vi.mocked(buildReplayManager).mock.results.at(-1)?.value;
+  expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
+});
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
   it("hands the runner a REASON instead of silence, and never an invented id", async () => {

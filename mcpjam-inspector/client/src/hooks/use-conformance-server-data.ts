@@ -2,80 +2,30 @@
 import { useCallback, useMemo, useState } from "react";
 import { useConvex, useMutation, useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
-import {
-  runnableSelection,
-  type ConformanceSelection,
-} from "@/hooks/use-conformance-run";
-import {
-  PROBE_KEYS,
-  type ConformanceProbe,
-  type ConformanceProbes,
-} from "@/hooks/use-conformance-probes";
+import type { ConformanceSelection } from "@/hooks/use-conformance-run";
+import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { useSoftQuery } from "@/hooks/use-soft-query";
-import { isRecord } from "@/lib/host-capabilities";
+import {
+  decodeStoredProbes,
+  encodeStoredProbes,
+  storedSelection,
+  type StoredConformanceProbes,
+} from "@/shared/conformance-settings";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 
 export type ConformanceDefaults = {
   selection: ConformanceSelection;
   inputs: ConformanceProbes;
 };
-type StoredProbe = Omit<ConformanceProbe, "arguments" | "inputResponses"> & {
-  arguments?: string;
-  inputResponses?: string;
-};
-type StoredProbes = Partial<Record<keyof ConformanceProbes, StoredProbe>>;
-
-// JSON strings preserve tool-defined keys that Convex object fields cannot hold.
-function encodeInputs(inputs: ConformanceProbes): StoredProbes {
-  const stored: StoredProbes = {};
-  for (const key of PROBE_KEYS) {
-    const probe = inputs[key];
-    if (!probe) continue;
-    const { arguments: args, inputResponses, ...fields } = probe;
-    stored[key] = {
-      ...fields,
-      ...(args !== undefined ? { arguments: JSON.stringify(args) } : {}),
-      ...(inputResponses !== undefined
-        ? { inputResponses: JSON.stringify(inputResponses) }
-        : {}),
-    };
-  }
-  return stored;
-}
-function decodeInputs(stored: StoredProbes = {}): ConformanceProbes | Error {
-  const inputs: ConformanceProbes = {};
-  const parseObject = (text: string): Record<string, unknown> => {
-    const value: unknown = JSON.parse(text);
-    if (!isRecord(value)) throw new Error();
-    return value;
-  };
-  try {
-    for (const key of PROBE_KEYS) {
-      const probe = stored[key];
-      if (!probe) continue;
-      const { arguments: args, inputResponses, ...fields } = probe;
-      inputs[key] = {
-        ...fields,
-        ...(args !== undefined ? { arguments: parseObject(args) } : {}),
-        ...(inputResponses !== undefined
-          ? { inputResponses: parseObject(inputResponses) }
-          : {}),
-      };
-    }
-    return inputs;
-  } catch {
-    // Report a failed read without exposing input contents or using partial inputs.
-    return new Error("Could not load your saved inputs. Try again.");
-  }
-}
 type ServerSettingsRow = {
   serverId: string;
   defaultChecks: ConformanceSelection;
+  runTimeoutSeconds?: number;
   defaultAdvice?: Pick<
     ConformanceSelection,
     "protocolAdvice" | "tasksAdvice" | "oauthAdvice"
   >;
-  defaultInputs?: StoredProbes;
+  defaultInputs?: StoredConformanceProbes;
 };
 const settingsQuery = makeFunctionReference<
   "query",
@@ -130,6 +80,7 @@ export function useConformanceServerData({
   );
   const defaults = new Map<string, ConformanceSelection>();
   const inputs = new Map<string, ConformanceProbes>();
+  const timeouts = new Map<string, number>();
   for (const [key, args] of requested) {
     if (args.projectId !== projectId) continue;
     const result = results[key];
@@ -139,22 +90,17 @@ export function useConformanceServerData({
         : result;
     const name = serversById.get(args.serverId);
     if (!name || row === undefined) continue;
-    let decoded = decodeInputs(row?.defaultInputs);
+    let decoded = decodeStoredProbes(row?.defaultInputs);
     if (decoded instanceof Error) {
       // Keep confirmed inputs visible; a new read must succeed before Run.
       row = snapshots.get(key);
       if (row === undefined) continue;
-      decoded = decodeInputs(row?.defaultInputs);
+      decoded = decodeStoredProbes(row?.defaultInputs);
       if (decoded instanceof Error) continue;
     }
-    defaults.set(
-      name,
-      runnableSelection(
-        { ...row?.defaultChecks, ...row?.defaultAdvice },
-        "auto",
-      ) ?? {},
-    );
+    defaults.set(name, storedSelection(row));
     inputs.set(name, decoded);
+    if (row?.runTimeoutSeconds !== undefined) timeouts.set(name, row.runTimeoutSeconds);
   }
   const loadDefaults = useCallback(
     async (serverName: string): Promise<ConformanceDefaults> => {
@@ -166,20 +112,21 @@ export function useConformanceServerData({
       const args = { projectId, serverId };
       setRequested((prev) => new Map(prev).set(key, args));
       const row = await client.query(settingsQuery, args);
-      const inputs = decodeInputs(row?.defaultInputs);
+      const inputs = decodeStoredProbes(row?.defaultInputs);
       if (inputs instanceof Error) throw inputs;
       setSnapshots((prev) => new Map(prev).set(key, row));
       return {
-        selection:
-          runnableSelection(
-            { ...row?.defaultChecks, ...row?.defaultAdvice },
-            "auto",
-          ) ?? {},
+        selection: storedSelection(row),
         inputs,
       };
     },
     [client, projectId, serversByName, serversLoading],
   );
+  const saveTimeout = useCallback(async (serverName: string, seconds: number | null) => {
+    const serverId = serversByName.get(serverName);
+    if (!projectId || !serverId) throw new Error(`No saved server named "${serverName}" exists. Add the server first, then try again.`);
+    await saveSettings({ projectId, serverId, runTimeoutSeconds: seconds });
+  }, [projectId, saveSettings, serversByName]);
   const saveDefaults = useCallback(
     async (
       serverName: string,
@@ -188,14 +135,14 @@ export function useConformanceServerData({
     ) => {
       const serverId = serversByName.get(serverName);
       if (!projectId || !serverId)
-        throw new Error(`No saved server named "${serverName}" to save to.`);
+        throw new Error(`No saved server named "${serverName}" exists. Add the server first, then try again.`);
       await saveSettings({
         projectId,
         serverId,
         defaultChecks: definedOnly(selection, false),
         defaultAdvice: definedOnly(selection, true),
         ...(inputs !== undefined
-          ? { defaultInputs: encodeInputs(inputs) }
+          ? { defaultInputs: encodeStoredProbes(inputs) }
           : {}),
       });
     },
@@ -213,6 +160,8 @@ export function useConformanceServerData({
   );
   return {
     defaultsByServer: Object.fromEntries(defaults),
+    timeoutsByServer: Object.fromEntries(timeouts),
+    saveTimeout: projectId ? saveTimeout : undefined,
     inputsByServer: Object.fromEntries(inputs),
     loadDefaults,
     lastRunByServer,

@@ -243,9 +243,15 @@ export function isHostedDesktopProvisionable(): boolean | null {
  *     up billing desktops at the terminal rate because a fetch timed out —
  *     the failure the gate was added to prevent, arriving through the one path
  *     the gate does not cover.
+ *
+ * `boxBooked` is for a turn whose run already holds its own desktop box. Age
+ * gates new launches only: the box is paid for whether or not the model may
+ * use it, so a verdict that merely went stale must not strip its tools.
  */
-export function isHostedBrowserRefused(): boolean {
-  return refusesOnVerdict(isHostedBrowserExposable());
+export function isHostedBrowserRefused({
+  boxBooked = false,
+}: { boxBooked?: boolean } = {}): boolean {
+  return refusesOnVerdict(isHostedBrowserExposable(), !boxBooked);
 }
 
 /**
@@ -310,14 +316,14 @@ export function isHostedDesktopUnavailable(): boolean {
 }
 
 /**
- * What a three-state verdict means to a caller, per the rule above. A verdict
- * past its maximum age refuses too: readiness changes without a redeploy, so a
- * replica that has lost touch with its backend must not keep launching on an
- * answer that may have been withdrawn.
+ * What a three-state verdict means to a caller, per the rule above. Before a
+ * launch, a verdict past its maximum age refuses too: readiness changes without
+ * a redeploy, so a replica that has lost touch with its backend must not keep
+ * launching on an answer that may have been withdrawn.
  */
-function refusesOnVerdict(verdict: boolean | null): boolean {
+function refusesOnVerdict(verdict: boolean | null, checkAge = true): boolean {
   if (verdict === false) return true;
-  if (isHostedBrowserVerdictStale()) return true;
+  if (checkAge && isHostedBrowserVerdictStale()) return true;
   return verdict === null && HOSTED_MODE;
 }
 
@@ -464,6 +470,9 @@ export type HostedBrowserVerdictRefresh =
  */
 export async function refreshHostedBrowserVerdict(): Promise<HostedBrowserVerdictRefresh> {
   if (verdictRouteMissing) return "route-missing";
+  // A backend restarting with this replica may outlast the boot retries.
+  // Reuse the bootstrap's failure cooldown so credentials recover too.
+  await initComputersRuntimeConfigBootstrap();
   const token = getInspectorServiceToken();
   const base = getConvexHttpUrl();
   if (!token || !base) return "skipped";

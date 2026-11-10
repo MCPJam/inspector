@@ -59,6 +59,9 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { resolveScopeStepUpServer } from "@/lib/scope-step-up";
+import { presentWidgetAuthChallenge } from "@/lib/auth-challenge-lifecycle";
+import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
 import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
@@ -663,6 +666,7 @@ function LivePartSwitch({
             uiType={uiType}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
           />
@@ -725,6 +729,7 @@ function LivePartSwitch({
             editVersion={editVersion}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
             recordedWidgetDiagnostics={
@@ -854,7 +859,41 @@ function LivePartSwitch({
                   ? (toolName, params) => {
                       const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
                       const bound = widgetContext ?? proof;
-                      return bound ? forwardedWidgetCalls.call(bound, toolName, params) : callTool(serverId ?? "offline-view", toolName, params);
+                      if (bound)
+                        return forwardedWidgetCalls.call(
+                          bound,
+                          toolName,
+                          params,
+                        );
+                      // A sign-in challenge on the widget's own call shows a
+                      // Connect card in host chrome under this tool call; the
+                      // iframe still gets its result or error unchanged.
+                      const widgetServer = serverId
+                        ? resolveScopeStepUpServer(appState, { serverId })
+                        : undefined;
+                      return callTool(
+                        serverId ?? "offline-view",
+                        toolName,
+                        params,
+                        {
+                          onResultAuthChallenge: (challenge, schemes) =>
+                            presentWidgetAuthChallenge({
+                              server: widgetServer,
+                              signal: challenge,
+                              toolName,
+                              toolCallId: toolInfo.toolCallId,
+                              schemes,
+                            }),
+                        },
+                      ).catch((error: unknown) => {
+                        presentWidgetAuthChallenge({
+                          server: widgetServer,
+                          signal: authChallengeFromError(error),
+                          toolName,
+                          toolCallId: toolInfo.toolCallId,
+                        });
+                        throw error;
+                      });
                     }
                   : undefined
               }
@@ -895,6 +934,7 @@ function LivePartSwitch({
         uiType={uiType}
         minimalMode={minimalMode}
         serverId={serverId}
+        resourceServerId={toolServerId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
         rawOutput={rawToolOutput}
         {...approvalProps}

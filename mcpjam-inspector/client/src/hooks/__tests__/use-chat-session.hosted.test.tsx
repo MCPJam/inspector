@@ -201,6 +201,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
+  renewSessionBearer: vi.fn(async () => {}),
   buildServerRequest: mockState.buildServerRequest,
   buildResolvedServerBatchRequest: vi.fn(
     ({
@@ -412,6 +413,25 @@ describe("useChatSession hosted mode", () => {
     await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
     expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
     unmount();
+  });
+
+  it("shows the environment's exact connection without sending a pick, then edits that same choice", () => {
+    const base = selectionOptions();
+    const { result, rerender } = renderHook(({ environmentId }) => useChatSession({
+      ...base, pickedModelSelection: undefined, executionConfig: undefined,
+      selectionIntent: "inherit", inheritedEnvironmentModel: {
+        modelId: savedOrgChoice.modelId, modelSelection: savedOrgChoice,
+      },
+      hostedContext: { ...base.hostedContext, executionTarget: { kind: "environment", environmentId } },
+    }), { initialProps: { environmentId: "env-a" } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body().modelSelection).toMatchObject({
+      source: "org", connectionRef: savedOrgChoice.connectionRef, settings: { temperature: 0.9 },
+    });
+    rerender({ environmentId: "env-b" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
   });
 
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
@@ -929,9 +949,17 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.availableModels.length).toBeGreaterThan(0);
     });
-    const offered = result.current.availableModels.map((model) => String(model.id));
+    const offered = result.current.availableModels
+      .filter((model) => !model.disabled)
+      .map((model) => String(model.id));
     expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
     expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    // Listed, but not pickable, with the reason Codex refuses it.
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({ disabled: true, disabledReason: expect.stringMatching(/Codex/) });
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);
@@ -2383,6 +2411,44 @@ describe("useChatSession — environment execution target", () => {
       unmount();
     });
 
+    it.each([false, true])(
+      "keeps an OAuth challenge out of study-access recovery (after recovery: %s)",
+      async (afterRecovery) => {
+        const refreshAccessSession = vi
+          .fn()
+          .mockResolvedValue({ ok: true, accessVersion: 2 });
+        const onAccessRevoked = vi.fn();
+        const { unmount } = renderScenario({
+          refreshAccessSession,
+          onAccessRevoked,
+        });
+        const challenge = {
+          code: "UNAUTHORIZED",
+          message: 'Server "Asana" requires authorization.',
+          details: { oauthRequired: true, serverId: "server-id-1" },
+        };
+        const response = new Response(JSON.stringify(challenge), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+        if (afterRecovery) {
+          mockState.authFetch.mockResolvedValueOnce(
+            accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+          );
+        }
+        mockState.authFetch.mockResolvedValue(response);
+
+        const result = await chatFetch()(TURN_URL, turnInit(1));
+
+        expect(result).toBe(response);
+        await expect(result.json()).resolves.toEqual(challenge);
+        expect(refreshAccessSession).toHaveBeenCalledTimes(afterRecovery ? 1 : 0);
+        expect(mockState.authFetch).toHaveBeenCalledTimes(afterRecovery ? 2 : 1);
+        expect(onAccessRevoked).not.toHaveBeenCalled();
+        unmount();
+      },
+    );
+
     it("never recovers twice — a replay that also fails is final", async () => {
       const refreshAccessSession = vi
         .fn()
@@ -2851,6 +2917,7 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
         selectedServerIds: ["server-id-1"],
         executionTarget: { kind: "environment", environmentId: "env_new" },
         environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        autoContributedPluginServerIds: ["srv_new"],
         includeProjectSkills: true,
         messages: [{ role: "user", content: "hi" }],
       });

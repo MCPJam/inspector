@@ -88,13 +88,16 @@ export function reportAdviceGroups(
   }));
 }
 
-/** The spec's requirement words are defined by BCP 14 (RFC 2119 + RFC 8174). */
-const BCP_14_URL = "https://datatracker.ietf.org/doc/html/bcp14";
+/** RFC 2119 defines each requirement word in its own section. */
+const RFC_2119_URLS = {
+  SHOULD: "https://www.rfc-editor.org/info/rfc2119/#section-3",
+  MAY: "https://www.rfc-editor.org/info/rfc2119/#section-5",
+};
 
-function SpecWord({ word }: { word: string }) {
+function SpecWord({ word }: { word: keyof typeof RFC_2119_URLS }) {
   return (
     <a
-      href={BCP_14_URL}
+      href={RFC_2119_URLS[word]}
       target="_blank"
       rel="noreferrer"
       className="text-primary underline underline-offset-2 hover:text-primary/80"
@@ -155,7 +158,9 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
           {items.map((item) => (
             <li
               key={`${item.suite}-${item.id}`}
-              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 last:border-0"
+              // Indented like a suite's check rows (`pl-7`), so the icon sits
+              // under the header's text rather than its chevron.
+              className="flex items-start gap-2.5 border-b border-border/60 py-2.5 pl-7 last:border-0"
             >
               <Info
                 aria-hidden="true"
@@ -164,8 +169,10 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               <span className="flex min-w-0 flex-col gap-0.5 text-sm">
                 <span>
                   <span className="font-medium text-info">
+                    {/* A deprecation asks for a change, like SHOULD, but the
+                        spec states no SHOULD for it, so no strength is shown. */}
                     {isDeprecation(item)
-                      ? "Deprecation notice"
+                      ? "Suggested"
                       : `${isOptional(item) ? "Optional" : "Suggested"} (${item.specStrength})`}
                   </span>{" "}
                   <span className="text-muted-foreground">{item.suite}</span>{" "}

@@ -33,6 +33,17 @@ async function register() {
     );
 }
 describe("App tools section", () => {
+  it("names file and library instances separately and follows visibility changes", async () => {
+    const registry = useAppToolsRegistry.getState();
+    const file = makeAppInstance({ bridgeId: "file", parentToolCallId: "file-call", presentation: { label: "File viewer: keycap.stl", visibility: "visible" } });
+    await registry.registerInstance(file);
+    await registry.registerInstance(makeAppInstance({ bridgeId: "library", parentToolCallId: "library-call", presentation: { label: "Global App: cad.library", visibility: "hidden" } }));
+    render(<AppToolsSection searchQuery="" onSelect={vi.fn()} />);
+    expect(screen.getByText("File viewer: keycap.stl")).toBeInTheDocument();
+    expect(screen.getByText("Global App: cad.library")).toBeInTheDocument();
+    expect(screen.getByText("Visible")).toBeInTheDocument();
+    expect(screen.getByText("Hidden")).toBeInTheDocument();
+  });
   it("shows grouped tools, warning copy, read-only claim and selection", async () => {
     await register();
     const onSelect = vi.fn();
@@ -75,10 +86,10 @@ describe("App tools section", () => {
       );
       expect(
         screen.getByText(
-          `${name} can't call app tools. Run still calls them in the app.`,
+          id === "codex" ? "Available to the model on its next request. They go away when the app closes." : `${name} can't call app tools. Run still calls them in the app.`,
         ),
       ).toBeInTheDocument();
-      expect(
+      if (id !== "codex") expect(
         screen.queryByText(/The model can't see this tool/),
       ).not.toBeInTheDocument();
     },

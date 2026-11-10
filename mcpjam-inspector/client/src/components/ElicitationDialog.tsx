@@ -1,3 +1,4 @@
+import { useFormDialogFocus } from "./elicitation/use-form-dialog-focus";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   PluginFormFields,
@@ -41,6 +42,8 @@ interface ElicitationDialogProps {
     parameters?: Record<string, any>,
   ) => Promise<void>;
   loading?: boolean;
+  focusWorkspaceId?: string;
+  canRestoreFocus?: () => boolean;
   /** Explicit trusted extension composition. Ordinary MCP forms retain their controller. */
   pluginForm?: {
     profile: PluginFormProfile;
@@ -69,6 +72,8 @@ export function ElicitationDialog({
   elicitationRequest,
   onResponse,
   loading = false,
+  focusWorkspaceId,
+  canRestoreFocus,
   pluginForm,
 }: ElicitationDialogProps) {
   const requestId = elicitationRequest?.requestId;
@@ -104,6 +109,12 @@ export function ElicitationDialog({
     // same schema.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [requestId],
+  );
+  const returnFocus = useFormDialogFocus(
+    focusWorkspaceId ?? (requestId ? `request:${requestId}` : undefined),
+    focusWorkspaceId,
+    !!elicitationRequest,
+    canRestoreFocus,
   );
   const [values, setValues] = useState<Record<string, unknown>>(emptyFieldMap);
   const [errors, setErrors] = useState<Record<string, string>>(emptyFieldMap);
@@ -207,6 +218,7 @@ export function ElicitationDialog({
   return (
     <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
       <DialogContent
+        onCloseAutoFocus={returnFocus}
         data-plugin-form-request-id={requestId}
         className="flex max-h-[80dvh] flex-col overflow-hidden sm:max-w-2xl"
       >

@@ -1,10 +1,12 @@
 import { pluginFormFileGrants } from "./form-file-grants.js";
 import { pluginFormSources } from "./form-sources.js";
+import { pluginContextMemory } from "./context-memory.js";
 import {
   PluginContextWorkspace,
   type PluginContextUpdate,
   type PluginContextRemoveAll,
 } from "./context.js";
+import type { PluginContextLimits } from "../../../shared/plugin-model-context.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { pluginBindingDigest, pluginServerIdentitySchema } from "./bindings.js";
@@ -236,7 +238,7 @@ export class PluginInstanceRegistry {
     { instance: PluginFormOwner; expiresAt: number; signal: AbortSignal }
   >();
 
-  /** The normal gated model executor owns this lifetime; no UI entrypoint is invented. */
+  /** A gated model call or retained model App owns this lifetime. */
   retainModelOwner(instance: PluginFormOwner, signal: AbortSignal) {
     signal.throwIfAborted();
     this.sweep();
@@ -259,16 +261,26 @@ export class PluginInstanceRegistry {
       pluginFormSources.closeOwner(instance.owner);
       pluginFormFileGrants.closeOwner(instance.owner);
     };
-    const expiry = setTimeout(release, this.ttlMs);
+    let expiry = setTimeout(release, this.ttlMs);
     expiry.unref();
     signal.addEventListener("abort", release, { once: true });
-    return release;
+    const renew = () => {
+      signal.throwIfAborted();
+      if (this.modelOwners.get(key) !== record)
+        throw new PluginInvocationError("FORM_SOURCE_UNAVAILABLE");
+      clearTimeout(expiry);
+      record.expiresAt = this.now() + this.ttlMs;
+      expiry = setTimeout(release, this.ttlMs);
+      expiry.unref();
+    };
+    return Object.assign(release, { renew });
   }
   private readonly closed = new Map<string, number>();
   constructor(
     private readonly now = Date.now,
     private readonly ttlMs = 30 * 60_000,
     private readonly capacity = 512,
+    private readonly memory = pluginContextMemory,
   ) {}
 
   async openActivationPersistent(
@@ -350,7 +362,9 @@ export class PluginInstanceRegistry {
     const control = this.parseControl(saved.control);
     if (activationBindingHash(bindingFromControl(control)) !== bindingHash)
       throw new PluginInvocationError("ACTIVATION_BINDING_CHANGED");
-    const instance = this.restore(saved.token, identity, saved.control);
+    const instance = await this.restoreRead(
+      saved.token, identity, saved.control, undefined, port, signal,
+    );
     return {
       token: saved.token,
       instance,
@@ -371,9 +385,45 @@ export class PluginInstanceRegistry {
     if (this.closed.has(token))
       throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
     if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
-    const saved = await port.read(token, signal);
+    // An expired copy can't stand in for the context a reply leaves out.
+    this.sweep();
+    const known = this.records.get(token)?.contextVersion;
+    const saved = await port.read(token, signal, known);
     signal.throwIfAborted();
-    return this.restore(token, identity, saved);
+    return this.restoreRead(token, identity, saved, known, port, signal);
+  }
+
+  /** `restore` a reply that left out the context at `known`. If this
+   * process released its copy while the reply was in flight, the context is
+   * read once more, in full. */
+  private async restoreRead(
+    token: string,
+    identity: PluginInstanceIdentity,
+    saved: DurablePluginInstanceControl | null,
+    known: number | undefined,
+    port: PluginInstanceControlPort,
+    signal: AbortSignal,
+  ) {
+    try {
+      return this.restore(token, identity, saved);
+    } catch (error) {
+      const current = this.records.get(token);
+      const overtakenLease =
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTROL_CHANGED" &&
+        saved && current && saved.expiresAt < current.expiresAt &&
+        current.snapshotHash === pluginBindingDigest(saved.snapshotJson);
+      const missingContext = known !== undefined &&
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE";
+      if (!overtakenLease && !missingContext) throw error;
+      // A concurrent renewal may overtake this read. Only an identical
+      // immutable control may be read again; the fresh reply still passes
+      // every owner, expiry and context fence in restore.
+      const full = await port.read(token, signal);
+      signal.throwIfAborted();
+      return this.restore(token, identity, full);
+    }
   }
 
   /** The immutable snapshot carries the original expiry; the durable row's
@@ -493,15 +543,17 @@ export class PluginInstanceRegistry {
       throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
     if (
       !Number.isSafeInteger(saved.contextVersion) ||
-      saved.contextVersion! < 0 ||
-      (saved.contextVersion! > 0 && !saved.contextJson)
+      saved.contextVersion! < 0
     )
       throw new PluginInvocationError("INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE");
+    // A reply leaves out context this process already holds.
     if (
       record.contextVersion !== undefined &&
       saved.contextVersion! <= record.contextVersion
     )
       return;
+    if (saved.contextVersion! > 0 && !saved.contextJson)
+      throw new PluginInvocationError("INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE");
     if (!record.context) {
       record.context = new PluginContextWorkspace(instance.owner.workspaceId);
       record.context.attach(
@@ -537,6 +589,7 @@ export class PluginInstanceRegistry {
       saved.contextVersion,
     );
     record.contextVersion = saved.contextVersion;
+    this.memory.hold(instance, Buffer.byteLength(saved.contextJson ?? ""));
   }
   prepareMessage(
     token: string,
@@ -574,7 +627,12 @@ export class PluginInstanceRegistry {
     token: string,
     identity: PluginInstanceIdentity,
     command:
-      | { kind: "update"; request: PluginContextUpdate }
+      | {
+          kind: "update";
+          request: PluginContextUpdate;
+          /** The client's policy, resolved for this request. */
+          limits?: PluginContextLimits;
+        }
       | { kind: "remove-all"; request: PluginContextRemoveAll },
     signal: AbortSignal,
     authorize: () => Promise<void>,
@@ -601,6 +659,7 @@ export class PluginInstanceRegistry {
               instance.owner.instanceId,
               instance.owner.generation,
               command.request,
+              command.limits,
             )
           : candidate.removeAll(
               instance.owner.instanceId,
@@ -616,6 +675,9 @@ export class PluginInstanceRegistry {
       this.get(token, identity);
       signal.throwIfAborted();
       if (contextJson !== before) {
+        // The person's removal is never refused: it adds only removal state.
+        if (command.kind === "update")
+          this.memory.check(instance, Buffer.byteLength(contextJson));
         try {
           const saved = await port.writeContext(
             token,
@@ -623,7 +685,13 @@ export class PluginInstanceRegistry {
             AbortSignal.any([signal, record.abort.signal]),
           );
           signal.throwIfAborted();
-          this.restoreContext(record, saved);
+          // The reply leaves out the envelope this write stored.
+          this.restoreContext(
+            record,
+            saved.contextVersion === expectedVersion + 1
+              ? { ...saved, contextJson }
+              : saved,
+          );
         } catch (error) {
           if (
             error instanceof PluginInvocationError &&
@@ -667,11 +735,12 @@ export class PluginInstanceRegistry {
     const expiresAt = this.now() + this.ttlMs;
     if (!record || expiresAt <= record.expiresAt)
       return { expiresAt: record?.expiresAt ?? expiresAt, renewed: false };
+    const known = record.contextVersion;
     let saved: DurablePluginInstanceControl;
     try {
       saved = await port.renew(
         token,
-        { expiresAt },
+        { expiresAt, knownContextVersion: known },
         AbortSignal.any([signal, record.abort.signal]),
       );
     } catch (error) {
@@ -690,7 +759,7 @@ export class PluginInstanceRegistry {
     }
     signal.throwIfAborted();
     // Re-validate the returned control against the same retained snapshot.
-    this.restore(token, identity, saved);
+    await this.restoreRead(token, identity, saved, known, port, signal);
     return { expiresAt: this.records.get(token)!.expiresAt, renewed: true };
   }
 
@@ -940,6 +1009,7 @@ export class PluginInstanceRegistry {
   private release(token: string, record: InstanceRecord) {
     this.records.delete(token);
     record.context?.close(record.instance.owner.instanceId);
+    this.memory.release(record.instance.owner.instanceId);
     record.abort.abort();
     pluginFormSources.closeOwner(record.instance.owner);
     pluginFormFileGrants.closeOwner(record.instance.owner);

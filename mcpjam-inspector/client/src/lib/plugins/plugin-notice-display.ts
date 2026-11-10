@@ -1,3 +1,4 @@
+import { reviewStdioCommandApproval } from "@/lib/stdio-command-approval";
 import { HOSTED_MODE } from "@/lib/config";
 import { toast } from "@/lib/toast";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -27,6 +28,7 @@ export interface PluginNoticePlugin {
   partial?: boolean;
   /** The server to sign in to, when signing in is the fix. */
   signIn?: PluginServerSignInRequest;
+  reviewCommand?: { projectId: string; serverId: string; serverName: string };
 }
 
 export type PluginNoticeData =
@@ -68,6 +70,7 @@ function placementCopy(plugin: PluginNoticePlugin): string {
 
 const PARTIAL_COPY: Record<string, string> = {
   needs_auth: "sign in to that server to use it",
+  needs_approval: "review its command before allowing it on this device",
   needs_setup: "finish that server's setup to use it",
   unreachable: "that server isn't available right now. Try again later",
 };
@@ -174,6 +177,18 @@ export function showPluginNotice(
   data: PluginNoticeData,
 ): boolean {
   if (data.kind === "skipped" && data.plugins.length === 0) return false;
+  if (data.kind === "skipped" && data.plugins.length > 1) {
+    const reviews = data.plugins.filter((plugin) => plugin.reviewCommand);
+    if (reviews.length) {
+      let shown = false;
+      for (const plugin of reviews)
+        shown = showPluginNotice(chatSessionId, { kind: "skipped", plugins: [plugin] }) || shown;
+      const remaining = data.plugins.filter((plugin) => !plugin.reviewCommand);
+      if (remaining.length)
+        shown = showPluginNotice(chatSessionId, { kind: "skipped", plugins: remaining }) || shown;
+      return shown;
+    }
+  }
   const key = pluginNoticeKey(chatSessionId, data);
   if (shownNotices.has(key)) return false;
   if (shownNotices.size >= MAX_SHOWN) {
@@ -183,7 +198,23 @@ export function showPluginNotice(
   shownNotices.add(key);
 
   const message = describePluginNotice(data);
-  const withSignIn = signInAction(data);
+  const reviews = data.kind === "skipped"
+    ? data.plugins.filter((plugin) => plugin.reviewCommand) : [];
+  const review = reviews.length === 1 && data.kind === "skipped" &&
+    namedPlugins(data.plugins).includes(reviews[0])
+    ? reviews[0].reviewCommand : undefined;
+  const withSignIn = review
+    ? {
+        action: {
+          label: "Review command",
+          onClick: () => {
+            void reviewStdioCommandApproval(
+              review.projectId, review.serverId, review.serverName,
+            );
+          },
+        },
+      }
+    : signInAction(data);
   if (withSignIn) toast.info(message, withSignIn);
   else toast.info(message);
   try {

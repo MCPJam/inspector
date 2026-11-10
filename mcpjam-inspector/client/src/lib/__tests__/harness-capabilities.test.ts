@@ -72,11 +72,14 @@ describe("harnessControlState — loop-owned controls", () => {
     }
   });
 
-  it("enforces requireToolApproval on Claude Code and Codex", () => {
+  it("enforces requireToolApproval on Claude Code, Codex and OpenCode", () => {
     expect(harnessControlState("claude-code", "requireToolApproval")).toEqual({
       enforced: true,
     });
     expect(harnessControlState("codex", "requireToolApproval")).toEqual({
+      enforced: true,
+    });
+    expect(harnessControlState("opencode", "requireToolApproval")).toEqual({
       enforced: true,
     });
   });
@@ -87,7 +90,7 @@ describe("harnessControlState — reasoning effort", () => {
     expect(harnessControlState("codex", "reasoningEffort")).toEqual({
       enforced: true,
     });
-    for (const harness of ["claude-code", "cursor"] as const) {
+    for (const harness of ["claude-code", "cursor", "opencode"] as const) {
       const state = harnessControlState(harness, "reasoningEffort");
       expect(state.enforced, harness).toBe(false);
       expect(state.enforced === false && state.note).toMatch(
@@ -136,19 +139,16 @@ describe("harnessControlState — who chooses the MODEL", () => {
    * account picks the model, so a selection persists onto the host, shows in
    * the editor, and reaches nothing — a saved setting that lies about what ran.
    */
-  it("is enforced exactly for the harnesses whose models MCPJam brokers", () => {
+  it("is enforced for brokered and Cursor account model choices", () => {
     expect(harnessControlState("claude-code", "modelId")).toEqual({
       enforced: true,
     });
     expect(harnessControlState("codex", "modelId")).toEqual({ enforced: true });
+    expect(harnessControlState("opencode", "modelId")).toEqual({
+      enforced: true,
+    });
 
-    const cursor = harnessControlState("cursor", "modelId");
-    expect(cursor.enforced).toBe(false);
-    // The note is what a user reads beside the disabled selector, so it has to
-    // name the account that actually decides — not read as an MCPJam limit.
-    expect(cursor.enforced === false && cursor.note).toMatch(
-      /Cursor account.*chooses the model/i,
-    );
+    expect(harnessControlState("cursor", "modelId")).toEqual({ enforced: true });
   });
 
   it("leaves the emulated host's selector alone", () => {
@@ -185,6 +185,7 @@ describe("HARNESS_DISPLAY_NAME", () => {
     // different thing a user can also attach. A label that did not distinguish
     // them would make the two indistinguishable in every picker.
     expect(HARNESS_DISPLAY_NAME.cursor).toBe("Cursor CLI");
+    expect(HARNESS_DISPLAY_NAME.opencode).toBe("OpenCode");
   });
 
   it("names every harness that has a delivery declaration", () => {

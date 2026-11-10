@@ -3,7 +3,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
-import type { ThemeMode } from "@/types/preferences/theme";
 import type {
   HostAttentionIssue,
   HostFocusTabId,
@@ -49,9 +48,7 @@ interface HostFocusPanelProps {
    */
   focusSubKey?: SandboxConfigSubKey;
   hostDisplayName: string;
-  savedHostDisplayName?: string;
   onHostDisplayNameChange: (value: string) => void;
-  themeMode?: ThemeMode;
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   onDraftChange: (
@@ -76,9 +73,7 @@ export function HostFocusPanel({
   onTabChange,
   focusSubKey,
   hostDisplayName,
-  savedHostDisplayName,
   onHostDisplayNameChange,
-  themeMode = "light",
   draft,
   savedDraft,
   onDraftChange,
@@ -122,9 +117,6 @@ export function HostFocusPanel({
                 draft={draft}
                 savedDraft={savedDraft}
                 hostDisplayName={hostDisplayName}
-                savedHostDisplayName={savedHostDisplayName}
-                onHostDisplayNameChange={onHostDisplayNameChange}
-                themeMode={themeMode}
                 onDraftChange={onDraftChange}
                 onSaveLatest={onSaveLatest}
                 hostLoaded={hostLoaded}

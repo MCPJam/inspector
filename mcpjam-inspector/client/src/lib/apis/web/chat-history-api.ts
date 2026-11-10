@@ -1,4 +1,5 @@
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import { registerArtifactUrls } from "@/lib/artifact-urls";
@@ -48,6 +49,10 @@ export interface ChatHistorySession {
   manualUnread: boolean;
   isUnread: boolean;
 }
+
+export type ChatHistoryStateSession = Pick<
+  ChatHistorySession, "_id" | "chatSessionId" | "userId" | "directVisibility" | "version"
+>;
 
 export interface ChatHistoryListResponse {
   ok: boolean;
@@ -132,6 +137,8 @@ export interface ChatHistoryTurnTrace {
    * browser — see `resolvePageToolAttribution`'s header for why that matters.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /** Harness turns only: the MCP route the turn ran on, and why. */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
 export interface ChatHistoryDetailResponse {
@@ -277,6 +284,26 @@ export async function listChatHistory(
   );
 }
 
+function chatHistoryDetailUrl(params: {
+  sessionId?: string; chatSessionId: string; projectId?: string;
+}, view?: "state"): string {
+  const searchParams = new URLSearchParams();
+  if (params.sessionId) searchParams.set("sessionId", params.sessionId);
+  searchParams.set("chatSessionId", params.chatSessionId);
+  if (params.projectId) searchParams.set("projectId", params.projectId);
+
+  if (view) searchParams.set("view", view);
+  return `/api/web/chat-history/detail?${searchParams.toString()}`;
+}
+
+/** Fresh access and version check without hydrating the saved transcript. */
+export async function getChatHistoryState(
+  params: { sessionId?: string; chatSessionId: string; projectId?: string },
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean; session: ChatHistoryStateSession }> {
+  return webGet(chatHistoryDetailUrl(params, "state"), requestOptions);
+}
+
 export async function getChatHistoryDetail(
   params: {
     sessionId?: string;
@@ -285,13 +312,8 @@ export async function getChatHistoryDetail(
   },
   requestOptions?: ChatHistoryRequestOptions
 ): Promise<ChatHistoryDetailResponse> {
-  const searchParams = new URLSearchParams();
-  if (params.sessionId) searchParams.set("sessionId", params.sessionId);
-  searchParams.set("chatSessionId", params.chatSessionId);
-  if (params.projectId) searchParams.set("projectId", params.projectId);
-
   const detail = await webGet<ChatHistoryDetailResponse>(
-    `/api/web/chat-history/detail?${searchParams.toString()}`,
+    chatHistoryDetailUrl(params),
     requestOptions
   );
   // Freshly minted artifact links: record them so anything still holding an

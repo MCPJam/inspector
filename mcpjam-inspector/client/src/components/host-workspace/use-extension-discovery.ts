@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
-import type { ThreadAppApi, ThreadAppDeclaration } from "./thread-app-api";
+import {
+  ThreadAppError,
+  type ThreadAppApi,
+  type ThreadAppDeclaration,
+} from "./thread-app-api";
+import { PLUGIN_ERROR_DESCRIPTIONS } from "../../../../shared/plugin-diagnostics";
 import { logExtensionEvent } from "./extension-log";
 
 export interface DiscoveryServer {
@@ -101,7 +106,7 @@ export function useExtensionDiscovery(
                   : old.revisions,
               },
         );
-      } catch {
+      } catch (error) {
         if (signal.aborted || owner.current !== discovery) return;
         setState((old) =>
           old.api !== current
@@ -111,6 +116,13 @@ export function useExtensionDiscovery(
         const server = serversRef.current.find(
           (item) => item.serverId === serverId,
         );
+        const refusalCode =
+          error instanceof ThreadAppError &&
+          typeof error.code === "string" &&
+          error.code.length <= 96 &&
+          Object.hasOwn(PLUGIN_ERROR_DESCRIPTIONS, error.code)
+            ? error.code
+            : undefined;
         logExtensionEvent({
           serverId,
           serverName: server?.name,
@@ -118,6 +130,14 @@ export function useExtensionDiscovery(
           level: "error",
           message:
             "Couldn't read this server's App entrypoints. Its Apps are hidden until discovery succeeds.",
+          ...(refusalCode
+            ? {
+                detail: {
+                  refusalCode,
+                  refusalDescription: PLUGIN_ERROR_DESCRIPTIONS[refusalCode],
+                },
+              }
+            : {}),
         });
       } finally {
         if (perServer.current.get(serverId) === request)

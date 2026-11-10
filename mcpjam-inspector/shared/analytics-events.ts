@@ -47,6 +47,12 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Conformance runs (one name everywhere; no server twin) ---
+  // The CLI and the SDK send this same name from their own clients, with
+  // `run_source` saying where the run came from. Hosted server runs go
+  // through the SDK, so the app has no `_server` twin.
+  conformance_run_triggered: { source: "client" },
+
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**
@@ -291,6 +297,7 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
@@ -507,6 +514,7 @@ export const ANALYTICS_EVENTS = {
   trace_raw_copied: { source: "client" },
   trace_span_clicked: { source: "client" },
   trace_view_mode_changed: { source: "client" },
+  triggers_tab_viewed: { source: "client" },
   tunnel_closed: { source: "client" },
   tunnel_created: { source: "client" },
   tunnel_rotated: { source: "client" },

@@ -102,8 +102,9 @@ export interface RunAssistantTurnOptions {
    * Source-of-traffic marker forwarded into chat-ingestion. Mirrors
    * the existing `MCPJamHandlerOptions.sourceType` union but kept
    * narrowed to the public values to avoid silent string churn.
+   * `event` is an MCP Events trigger run (unattended, like eval/swarm).
    */
-  sourceType: "direct" | "scenario" | "eval" | "swarm";
+  sourceType: "direct" | "scenario" | "eval" | "swarm" | "event";
   /**
    * Product-surface discriminator forwarded into chat-ingestion. Required
    * so each caller (eval runner, session simulation, MCP route) explicitly
@@ -164,6 +165,7 @@ export interface RunAssistantTurnOptions {
   agentLoop?: Harness;
   harnessTurnContext?: string;
   harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   harnessExecutionTarget?: MCPJamHandlerOptions["harnessExecutionTarget"];
 
   streamSink: RunAssistantTurnStreamSink;
@@ -518,6 +520,7 @@ function buildHandlerOptions(
     ...(opts.agentLoop ? { agentLoop: opts.agentLoop } : {}),
     harnessTurnContext: opts.harnessTurnContext,
     harnessUnavailableAppTools: opts.harnessUnavailableAppTools,
+    harnessAppTools: opts.harnessAppTools,
     ...(opts.harnessExecutionTarget ? { harnessExecutionTarget: opts.harnessExecutionTarget } : {}),
     // Harness MCP-proxy plane + swarm continuity identity: pass-throughs so an
     // eval/synthetic harness turn driven through this facade can (a) reach MCP
@@ -670,7 +673,7 @@ export async function runAssistantTurn(
     },
   );
 
-  // A host with a `harness` selected (claude-code | codex | cursor) runs the
+  // A host with a `harness` selected (claude-code | codex | cursor | opencode) runs the
   // real runtime inside its computer; otherwise the emulated engine. Both
   // satisfy the same ChatEngineLoopResult contract, so everything downstream is
   // identical.

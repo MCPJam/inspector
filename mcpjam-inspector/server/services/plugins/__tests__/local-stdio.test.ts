@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import { appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import { PluginBundleCache } from "../bundle-cache.js";
 import {
   materializePluginStdioForConnect,
@@ -15,6 +16,7 @@ import {
   fixtureBundleSource,
   fixtureBundleZip,
   makeCacheRoot,
+  legacyFixtureBundleFiles,
 } from "./fixture-bundle.js";
 import { WebRouteError } from "../../../routes/web/errors.js";
 
@@ -129,6 +131,24 @@ describe("plugin stdio origin resolution", () => {
       name: "fixture-plugin",
       bundleHash,
     });
+  });
+
+  it("prepares a local server from a verified legacy OpenAI archive and its cache hit", async () => {
+    const source = await fixtureBundleSource(legacyFixtureBundleFiles());
+    const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });
+    for (const offeredSource of [source, undefined]) {
+      const prepared = await preparePluginStdioLaunch({
+        client: stubClient({ bundleHash: parsed.bundleHash }),
+        cache, projectId: PROJECT_ID, serverId: SERVER_ID,
+        spec: PLACEHOLDER_SPEC, leaseId: SERVER_ID,
+        source: offeredSource, dataRoot: join(cacheRoot, "plugin-data"),
+      });
+      expect(prepared.ok).toBe(true);
+      if (prepared.ok) {
+        expect(prepared.launch.args).toEqual([`${prepared.pluginRoot}/server/index.js`]);
+        prepared.release();
+      }
+    }
   });
 
   it.each([

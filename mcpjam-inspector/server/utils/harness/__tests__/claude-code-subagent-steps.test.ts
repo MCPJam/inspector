@@ -206,7 +206,7 @@ describe("forwarding a subagent's steps", () => {
 describe("subagent steps patch", () => {
   it("the installed bridge forwards inside the sub-agent guard, which still returns", () => {
     expect(bridge).toContain(
-      "    if (msg.parent_tool_use_id != null) {\n      mcpjamForwardSubagentStep(state, emit, msg);\n      return;\n    }",
+      "    if (msg.parent_tool_use_id != null) {\n      emit({\n        type: \"raw\",\n        rawValue: msg\n      });\n      mcpjamForwardSubagentStep(state, emit, msg);\n      return;\n    }",
     );
     expect(bridge.match(/function mcpjamForwardSubagentStep\(/g)).toHaveLength(
       1,
@@ -234,11 +234,17 @@ describe("subagent steps patch", () => {
     const vendor = await createClaudeCode({ auth: AUTH }).getBootstrap!();
     const source = vendor!.files.find((file) =>
       file.path.endsWith("/bridge.mjs"),
-    )!.content;
+    )!.content.replaceAll("\t", "  ");
     expect(() =>
       patchClaudeCodeSubagentSteps(
         source.replace(
-          "    if (msg.parent_tool_use_id != null) {\n      return;\n    }",
+          `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
+      return;
+    }`,
           "    if (msg.parent_tool_use_id) {\n      return;\n    }",
         ),
       ),

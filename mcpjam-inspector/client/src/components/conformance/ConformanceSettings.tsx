@@ -1,17 +1,18 @@
 /**
- * A server's Conformance Settings: the checks its runs pick by default. Each
- * change saves right away; Run's setup steps and one-click Run start from it.
+ * A server's Conformance Settings: the checks its runs pick by default, and
+ * how long a run may take. Each change saves right away; Run's setup steps
+ * and one-click Run start from it.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
-import { ChevronLeft } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import type { ConformanceConnectServer } from "./ConformancePanel";
 import { ConformanceChecksEditor } from "./ConformanceChecksEditor";
 import { ConformanceSettingsConnection } from "./ConformanceSettingsConnection";
+import { ConformanceTimeoutSetting } from "./ConformanceTimeout";
 import type { ConformanceSelection } from "@/hooks/use-conformance-run";
 import { toast } from "@/lib/toast";
 import {
@@ -27,8 +28,10 @@ export function ConformanceSettings({
   onEditServer,
   defaults,
   onSave,
+  timeoutSeconds,
+  onSaveTimeout,
   onBack,
-  backDisabled = false,
+  backDisabled: backHeld = false,
 }: {
   serverName: string;
   server?: ServerWithName;
@@ -41,9 +44,17 @@ export function ConformanceSettings({
     selection: ConformanceSelection,
     inputs: ConformanceProbes,
   ) => Promise<void>;
+  /** The saved run timeout override; absent means the default. */
+  timeoutSeconds?: number;
+  /** Saves the run timeout; null goes back to the default. No section without it. */
+  onSaveTimeout?: (seconds: number | null) => Promise<void>;
   onBack: () => void;
   backDisabled?: boolean;
 }) {
+  // A timeout that is not valid holds Back, as an invalid input does. Its
+  // save in flight does not (see `ConformanceTimeoutSetting`).
+  const [timeoutInvalid, setTimeoutInvalid] = useState(false);
+  const backDisabled = backHeld || timeoutInvalid;
   const storedKey = stableStringifyJson({
     selection: defaults ?? {},
     inputs: inputs ?? {},
@@ -95,26 +106,36 @@ export function ConformanceSettings({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
-        <div className="flex min-w-0 items-center gap-3">
-          <Button
-            variant="link"
-            size="sm"
-            onClick={onBack}
-            disabled={backDisabled || pending > 0 || touched || !inputsValid}
-            className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
+      {/* The same header as a run, which Settings opens from: its Back
+          looks and moves like every other Back in Conformance. */}
+      <DetailPageHeader
+        backLabel="Back"
+        onBack={onBack}
+        backTestId="conformance-settings-back"
+        backDisabled={backDisabled || pending > 0 || touched || !inputsValid}
+        title={
+          <h2
+            className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={`${serverName} Conformance Settings`}
           >
-            <ChevronLeft className="size-3.5" />
-            Back
-          </Button>
-          <div className="h-4 w-px shrink-0 bg-border" />
-          <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">
             {serverName} Conformance Settings
           </h2>
-        </div>
-      </div>
+        }
+      />
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
         <div className="mx-auto w-full max-w-240">
+          {onSaveTimeout ? (
+            <section className="mb-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+              <h3 className="mb-4 text-base font-medium tracking-tight">
+                Run Timeout
+              </h3>
+              <ConformanceTimeoutSetting
+                seconds={timeoutSeconds}
+                onSave={onSaveTimeout}
+                onInvalidChange={setTimeoutInvalid}
+              />
+            </section>
+          ) : null}
           <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
             <h3 className="mb-4 text-base font-medium tracking-tight">
               Default Checks

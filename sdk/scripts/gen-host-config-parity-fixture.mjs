@@ -316,6 +316,49 @@ const inputs = [
     },
   },
   {
+    // Plugin App context budgets: keys sorted, values stored as given. An
+    // empty policy collapses to absent (covered by canonicalize tests).
+    label: "apps-model-context-policy-sorted",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          modelContextPolicy: {
+            updateMaxBytes: 2548000,
+            turnMaxBytes: 8388608,
+            maxBlocks: 256,
+          },
+        },
+      },
+    },
+  },
+  {
+    // The budgets beside the `apps` keys they sort between, given out of
+    // order. The backend restores the policy after the pinned SDK runs, so
+    // this pins where it lands.
+    label: "apps-model-context-policy-beside-other-keys",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            permissions: { mode: "custom", allow: { camera: true } },
+          },
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { mentions: false },
+          },
+          modelContextPolicy: { maxBlocks: 64 },
+          mcpAppsOverrides: { logging: true },
+        },
+      },
+    },
+  },
+  {
     label: "host-capabilities-override-explicit-empty",
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },
   },
@@ -361,6 +404,12 @@ const inputs = [
     // and every shim-era row would need a rehash at the next dep bump.
     label: "harness-cursor",
     input: { ...base(), harness: "cursor" },
+  },
+  {
+    // OpenCode is the id a backend pin that predates this SDK release must
+    // mask past its HARNESS_IDS guard (`withSdkSafeHarness`).
+    label: "harness-opencode",
+    input: { ...base(), harness: "opencode" },
   },
   {
     // Empty builtInToolIds collapses to absent → canonical JSON has no key,
@@ -421,7 +470,7 @@ const inputs = [
   },
 ];
 
-for (const agentLoop of ["claude-code", "codex", "cursor"]) {
+for (const agentLoop of ["claude-code", "codex", "cursor", "opencode"]) {
   inputs.push({
     label: `agent-loop-${agentLoop}`,
     input: { ...base(), agentLoop, computer: { kind: "personal" } },

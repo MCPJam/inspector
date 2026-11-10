@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
+  assertPendingPolicy,
   nativePolicyDigest,
   stampNativeForwardingPolicy,
 } from "../native-policy";
@@ -31,4 +32,12 @@ it("pins every tool-policy decision while tolerating harmless key order", () => 
   ).toEqual({
     data: { bridge: "original", mcpjamForwardingPolicy: digest },
   });
+});
+
+it("refuses a missing or changed approval policy before a retained host tool can resume", () => {
+  const state = stampNativeForwardingPolicy({ data: {} }, "account-a");
+  expect(() => assertPendingPolicy(state, "account-a")).not.toThrow();
+  for (const stale of [state, {}, { data: {} }]) {
+    expect(() => assertPendingPolicy(stale, "account-b")).toThrow("policy has changed");
+  }
 });
