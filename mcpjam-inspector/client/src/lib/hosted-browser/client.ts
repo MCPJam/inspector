@@ -72,6 +72,11 @@ export interface HostedBrowserSession {
   yours: boolean;
   /** The desktop's idle window, when the control plane sends it. */
   idleMs?: number;
+  /**
+   * Is the desktop paused? A read without `ensure` says so without waking
+   * it. Absent from a server too old to say.
+   */
+  asleep?: boolean;
 }
 
 /** A refusal that carries enough for a caller to tell one apart from another. */
@@ -209,6 +214,22 @@ export async function fetchHostedBrowserSession(
     `/session${options.ensure ? "?ensure=1" : ""}`,
   );
   return decode<HostedBrowserSession>(res);
+}
+
+/**
+ * Is the desktop running again? A read without `ensure`, so asking never
+ * wakes it. False when the server cannot say: a paused pane then waits for
+ * input, or for the next check.
+ */
+export async function hostedBrowserAwake(
+  tokens: BrowserTokenCache,
+): Promise<boolean> {
+  try {
+    return (await fetchHostedBrowserSession(tokens)).asleep === false;
+  } catch {
+    // Unreachable or refused: still paused as far as the pane can tell.
+    return false;
+  }
 }
 
 /**

@@ -82,6 +82,7 @@ import {
   shouldTouchSessionCommand,
   shouldTouchSessionPanel,
 } from "../../utils/computers/activity-touch.js";
+import { browserBoxAwake } from "../../utils/computers/browser-box-awake.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { registerBrowserInputPing } from "./computer-browser-input-ping.js";
@@ -441,7 +442,11 @@ export function createComputerBrowserPanelRoutes(
       // browser now watches through `/computers/browser/stream`, which
       // authenticates upstream on the server with a password that never
       // leaves it.
-      if ("sandboxRowId" in target) {
+      //
+      // A paused box answers without its daemon, which is not running. A
+      // paused pane reads `asleep` to notice that something else woke it.
+      const asleep = !ensure && !browserBoxAwake(target, auth.status);
+      if (!asleep && "sandboxRowId" in target) {
         const readiness = await createClient(session).status();
         if (readiness.kind !== "ok" || readiness.bootId !== session.bootId) {
           return c.json(
@@ -455,7 +460,9 @@ export function createComputerBrowserPanelRoutes(
           );
         }
       }
-      const lease = await readLease(session);
+      const lease = asleep
+        ? { state: "unknown" as const }
+        : await readLease(session);
       return c.json({
         ok: true,
         ...(auth.claims.computerId
@@ -469,6 +476,7 @@ export function createComputerBrowserPanelRoutes(
         contextMode: session.contextMode,
         lease,
         yours: heldByCaller(lease, userId),
+        asleep,
         ...(session.idleMs !== undefined ? { idleMs: session.idleMs } : {}),
       });
     } catch (error) {

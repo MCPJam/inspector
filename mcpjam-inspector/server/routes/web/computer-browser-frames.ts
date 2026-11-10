@@ -50,6 +50,7 @@ import {
   shouldTouchActivity,
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
+import { browserBoxAwake } from "../../utils/computers/browser-box-awake.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -353,7 +354,7 @@ export function createComputerBrowserFramesWsHandler(
           info.value.projectId !== claims.projectId
         ) {
           refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
-        } else if (info.value.status !== (claims.computerId ? "ready" : "live")) {
+        } else if (!browserBoxAwake(target, info.value.status)) {
           // Free: the status came back in the read we already made for the
           // ownership check. A paused box has no daemon answering, so opening
           // the upstream would fail anyway — this just says WHY, so the pane
