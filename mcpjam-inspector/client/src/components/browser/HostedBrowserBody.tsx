@@ -1348,13 +1348,19 @@ export function HostedBrowserBody({
             setStreamAttempt((n) => n + 1);
           }}
         />
-        <div
+        {/* The frame socket stays open on this tier, so its 4410 pauses the
+            desktop view too. The viewer reconnects once the desktop wakes. */}
+        <PausablePane
           className="min-h-0 flex-1 px-3 pb-3"
-          onPointerDownCapture={noteVncInput}
-          onKeyDownCapture={noteVncInput}
+          state={pausedState}
+          idleMs={idleMs}
+          onResume={resumePane}
+          onInput={noteVncInput}
         >
-          <BrowserPanel projectId={projectId} sessionId={sessionId} />
-        </div>
+          {pausedState === "awake" ? (
+            <BrowserPanel projectId={projectId} sessionId={sessionId} />
+          ) : null}
+        </PausablePane>
       </>
     );
   }

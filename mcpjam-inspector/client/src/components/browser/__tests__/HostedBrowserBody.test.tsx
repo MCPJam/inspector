@@ -39,6 +39,8 @@ const api = vi.hoisted(() => ({
   sessionReadOptions: [] as unknown[],
   /** Holds every `/session` answer until it resolves, when set. */
   sessionGate: null as Promise<void> | null,
+  /** How many VNC input pings went out. */
+  pings: 0,
   /** How many times a paused pane asked whether the desktop woke. */
   awakeChecks: 0,
   streamArgs: [] as unknown[],
@@ -120,6 +122,10 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       }
       return api.session;
     },
+    pingHostedBrowserInput: async () => {
+      api.pings += 1;
+      return true;
+    },
     // A read without `ensure` (see its own tests): what `/session` says now.
     hostedBrowserAwake: async () => {
       api.awakeChecks += 1;
@@ -178,6 +184,7 @@ beforeEach(() => {
   api.sessionReads = 0;
   api.sessionReadOptions = [];
   api.sessionGate = null;
+  api.pings = 0;
   api.awakeChecks = 0;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
@@ -1258,6 +1265,36 @@ describe("the hosted pane — quality tiers", () => {
     fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
     expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("shows the desktop view paused too, and wakes it only on input", async () => {
+    renderBody();
+    await deliverFrame();
+    await openMenu();
+    const before = api.sockets.length;
+    fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
+    const panel = await screen.findByTestId("vnc-panel");
+    // Typing into the desktop view reports input, throttled.
+    fireEvent.keyDown(panel, { key: "a" });
+    expect(api.pings).toBe(1);
+
+    // The pane's frame socket stays open on this tier, and says the desktop
+    // paused.
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
+    act(() => socket().onclose?.({ code: 4410 }));
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(screen.queryByTestId("vnc-panel")).toBeNull();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+
+    // A key press wakes it instead of reaching the desktop, and the desktop
+    // view comes back.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resume" }), {
+      key: "a",
+    });
+    expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    expect(api.pings).toBe(1);
   });
 });
 
