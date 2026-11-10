@@ -107,6 +107,55 @@ describe("broker-prepared connection", () => {
 });
 
 describe("the pnpm guard", () => {
+  it("overlaps resume checks but exposes no session until both finish", async () => {
+    let finishGuard!: () => void;
+    let finishSockets!: () => void;
+    const guard = new Promise<void>((resolve) => { finishGuard = resolve; });
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      await (command.includes("pnpm") ? guard : sockets);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let ready = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).then(() => { ready = true; });
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    finishGuard();
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    finishSockets();
+    await pending;
+    expect(ready).toBe(true);
+    expect(sandboxState.run).toHaveBeenCalledWith(
+      expect.stringContaining("ss -K"),
+      expect.objectContaining({ user: "root" }),
+    );
+  });
+
+  it("still refuses resume when the package guard fails", async () => {
+    let finishSockets!: () => void;
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("pnpm")) throw new FakeCommandExitError(1, "", "offline");
+      await sockets;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let settled = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).finally(() => { settled = true; });
+    const refusal = expect(pending).rejects.toThrow(/pnpm is missing/);
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    finishSockets();
+    await refusal;
+  });
+
   it("explains itself when pnpm is missing and installing it fails", async () => {
     // This is the failure that cost a full debugging session: E2B's raw
     // `CommandExitError` carries only "exit status 1", so a turn that died
@@ -201,6 +250,27 @@ describe("abort plumbing", () => {
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
       expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("trusts the E2B proxy CA while preserving explicit certificate configuration", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    await session.run({ command: "node client.mjs" });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node client.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      }) }),
+    );
+    await session.run({ command: "node custom.mjs", env: {
+      NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+    } });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node custom.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+      }) }),
     );
   });
 

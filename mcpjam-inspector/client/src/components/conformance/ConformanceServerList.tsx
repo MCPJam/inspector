@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { type ConformanceRunListItem } from "./ConformanceHistory";
@@ -93,6 +94,7 @@ function ServerCard({
   onViewRun,
   onRun,
   disabled,
+  starting,
 }: {
   serverName: string;
   run: ConformanceRunListItem;
@@ -100,6 +102,8 @@ function ServerCard({
   onViewRun: (runId: string) => void;
   onRun: (serverName: string) => void;
   disabled: boolean;
+  /** This card's Run was pressed and its run is being set up. */
+  starting: boolean;
 }) {
   const detail = useArtifactQuery<{ reports?: SuiteReport[] } | null>(
     "conformanceRuns:getRun",
@@ -162,11 +166,24 @@ function ServerCard({
           </Button>
           <Button
             size="sm"
-            disabled={disabled}
+            disabled={disabled || starting}
             onClick={() => onRun(serverName)}
-            aria-label={`Run ${serverName}`}
+            aria-label={
+              starting ? `Starting ${serverName}` : `Run ${serverName}`
+            }
+            aria-busy={starting || undefined}
           >
-            Run
+            {starting ? (
+              <>
+                <Loader2
+                  className="mr-1.5 h-3.5 w-3.5 animate-spin"
+                  aria-hidden
+                />
+                Starting...
+              </>
+            ) : (
+              "Run"
+            )}
           </Button>
         </div>
       </div>
@@ -181,6 +198,7 @@ export function ConformanceServerList({
   onRun,
   disabled = false,
   disabledServerName,
+  startingServerName,
 }: {
   /** Each server's latest run, by server name. */
   runs: Array<{ serverName: string; run: ConformanceRunListItem }>;
@@ -192,6 +210,12 @@ export function ConformanceServerList({
   disabled?: boolean;
   /** The server whose saved defaults could not be loaded. */
   disabledServerName?: string;
+  /**
+   * The server whose Run was pressed, while its run is set up. Every Run
+   * stays off meanwhile (a second Run would replace this one), so this card
+   * says which one is starting.
+   */
+  startingServerName?: string;
 }) {
   return (
     <ul
@@ -207,6 +231,7 @@ export function ConformanceServerList({
           onViewRun={onViewRun}
           onRun={onRun}
           disabled={disabled || disabledServerName === serverName}
+          starting={startingServerName === serverName}
         />
       ))}
     </ul>

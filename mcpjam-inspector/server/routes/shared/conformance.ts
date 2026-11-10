@@ -40,6 +40,7 @@ import {
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import type { ConformanceProbes } from "./conformance-probes.js";
+import { protocolSdkFields } from "../../../shared/conformance-settings.js";
 import {
   createSession,
   deleteSession,
@@ -186,18 +187,7 @@ export async function runProtocolConformance(
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
     ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
-    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
-    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
-    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
-    ...(input.logLevelFilteringProbe
-      ? { logLevelFilteringProbe: input.logLevelFilteringProbe }
-      : {}),
-    ...(input.inputRequiredProbe
-      ? { inputRequiredProbe: input.inputRequiredProbe }
-      : {}),
-    ...(input.toolCallProbe
-      ? { fixtures: { toolCalls: [input.toolCallProbe] } }
-      : {}),
+    ...protocolSdkFields(input),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted

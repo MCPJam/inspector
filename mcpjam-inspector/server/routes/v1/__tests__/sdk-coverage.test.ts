@@ -176,6 +176,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
   "get /projects/{projectId}/conformance-runs/{runId}/report":
     "getConformanceReport",
+  "get /projects/{projectId}/conformance-runs/{runId}/checks/{checkId}":
+    "getConformanceCheck",
 
   // Clients
   "get /projects/{projectId}/clients": "listClients",

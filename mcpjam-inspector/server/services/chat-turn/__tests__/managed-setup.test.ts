@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getRequestLocal, type RequestLocalMap } from "../../../middleware/request-local.js";
 import http from "node:http";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -84,6 +85,7 @@ function hostedSetup(
 }
 async function resolveSetup(rawBody: Record<string, unknown>) {
   let setup: Awaited<ReturnType<typeof resolveManagedTurnSetup>> | undefined;
+  let projectAuthorization: RequestLocalMap["authorizedProject"] | undefined;
   const app = new Hono();
   app.post("/", async (c) => {
     setup = await resolveManagedTurnSetup({
@@ -93,10 +95,11 @@ async function resolveSetup(rawBody: Record<string, unknown>) {
       localIngress: true,
       rpcCollector: createHostedRpcLogCollector({}),
     });
+    projectAuthorization = getRequestLocal(c, "authorizedProject");
     return setup.response ?? c.json({});
   });
   const response = await app.request("/", { method: "POST" });
-  return { response, setup: setup! };
+  return { response, setup: setup!, projectAuthorization };
 }
 
 describe("managed setup local runtime policy", () => {
@@ -111,6 +114,57 @@ describe("managed setup local runtime policy", () => {
     m.localSkills.mockResolvedValue([
       { ref: "machine-skill", skillId: "local:machine-skill" },
     ]);
+  });
+
+  it("retains successful project authorization only when the backend proves project access", async () => {
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+    m.authorize.mockResolvedValue({ organizationId: "verified-org", projectAccess: { projectRole: "editor" } });
+    const authorized = await resolveSetup({});
+    expect(authorized.projectAuthorization).toEqual({
+      projectId: "project-1", organizationId: "verified-org", bearer: "bearer",
+    });
+    m.authorize.mockResolvedValue({ organizationId: "legacy-org" });
+    expect((await resolveSetup({})).projectAuthorization).toBeUndefined();
+  });
+
+  it.each([true, false])("refuses read-only conversations with combined policy %s", async (combined) => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://test.convex.site");
+    const policy = { writable: false, requireNativeToolDiscovery: true };
+    const fetchState = vi.fn(async () => Response.json(policy));
+    vi.stubGlobal("fetch", fetchState);
+    try {
+      m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+      m.authorize.mockResolvedValue(combined ? { conversationState: policy } : {});
+      const { response } = await resolveSetup({ chatSessionId: "chat" });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "API_SESSION_READ_ONLY" });
+      expect(fetchState).toHaveBeenCalledTimes(combined ? 0 : 1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("says a conversation is bound only on the backend's own answer for it", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://test.convex.site");
+    // The writability fallback never vouches for a binding, whatever it says.
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ writable: true, executionBound: true })));
+    const bound = async () => {
+      const { setup } = await resolveSetup({ chatSessionId: "chat" });
+      return "value" in setup && setup.value ? setup.value.executionBound : undefined;
+    };
+    try {
+      m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+      m.authorize.mockResolvedValue({ conversationState: { writable: true, executionBound: true } });
+      expect(await bound()).toBe(true);
+      m.authorize.mockResolvedValue({ conversationState: { writable: true } });
+      expect(await bound()).toBe(false);
+      m.authorize.mockResolvedValue({});
+      expect(await bound()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("checks auto-approve consent before a local Claude Code turn starts", async () => {
@@ -153,6 +207,65 @@ describe("managed setup local runtime policy", () => {
   });
 });
 
+describe("a Cursor CLI client", () => {
+  const cursorBody = {
+    model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.authorize.mockResolvedValue({
+      chatEnvironments: false,
+      chatPreparation: false,
+    });
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+  });
+
+  it("is refused in User Testing, before the turn's tools or box", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("recorded", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    let thrown: unknown;
+    const app = new Hono();
+    app.post("/", async (c) => {
+      try {
+        await resolveManagedTurnSetup({
+          c,
+          rawBody: {
+            ...baseBody,
+            ...cursorBody,
+            scenarioId: "scenario-1",
+            accessVersion: 1,
+          },
+          bearerToken: "bearer",
+          localIngress: true,
+          rpcCollector: createHostedRpcLogCollector({}),
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      return c.json({});
+    });
+    await app.request("/", { method: "POST" });
+    expect(thrown).toMatchObject({
+      status: 422,
+      message:
+        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Choose a different client for this study.",
+      details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
+    });
+  });
+
+  it("runs from the Playground", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("interactive", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    const { setup } = await resolveSetup(cursorBody);
+    expect(setup.value?.turnMode).toBe("interactive");
+  });
+});
+
 
 describe("request-scoped project access", () => {
   beforeEach(() => {
@@ -160,6 +273,21 @@ describe("request-scoped project access", () => {
     m.useLocalHarness.mockResolvedValue(false);
     m.localSkills.mockResolvedValue([]);
     m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+  });
+  it("passes the same explicit selection through authorization and uses its prepared result", async () => {
+    const preparedChatTurn = { kind: "resolved", environment: {}, harness: null };
+    m.authorize.mockResolvedValue({ chatPreparation: true, preparedChatTurn });
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+    await resolveSetup({ hostId: "host", selectedServerIds: [] });
+    expect(m.authorize).toHaveBeenCalledWith(expect.anything(), "bearer", "project-1", undefined,
+      expect.objectContaining({ projectId: "project-1", hostId: "host", serverOverrideIds: [] }), expect.any(AbortSignal));
+    expect(m.hostedSetup).toHaveBeenCalledWith(expect.objectContaining({ preparedChatTurn }));
+  });
+  it("does not request combined preparation for an explicit environment", async () => {
+    m.authorize.mockResolvedValue({});
+    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+    await resolveSetup({ executionTarget: { kind: "environment", environmentId: "saved" } });
+    expect(m.authorize.mock.calls[0][4]).toBeUndefined();
   });
   it("passes advertised preparation support and reuses the authorized role", async () => {
     m.authorize.mockResolvedValue({
