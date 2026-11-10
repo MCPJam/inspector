@@ -674,6 +674,10 @@ export function harnessRuntimeFingerprint(parts: {
     // Older Claude sessions have workspace .mcp.json files. Start a new lane
     // when moving to SDK config so stale servers cannot be loaded from disk.
     ...(parts.harnessId === "claude-code" ? ["session-mcp-v1"] : []),
+    // A resumed OpenCode lane reattaches to the bridge that started it, and
+    // no `@ai-sdk/harness-opencode` 1.0.160 adapter has driven a 1.0.119
+    // bridge. Only OpenCode lanes fork; every other harness hashes as before.
+    ...(parts.harnessId === "opencode" ? ["opencode-bridge-1.0.160"] : []),
     (parts.selectedServers ?? []).slice().sort().join(","),
     // Resumed native sessions keep the MCP config they started with.
     ...(unavailable.length ? [`unavailable:${unavailable.join(",")}`] : []),

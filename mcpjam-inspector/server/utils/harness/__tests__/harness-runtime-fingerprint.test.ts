@@ -146,6 +146,22 @@ describe("harnessRuntimeFingerprint", () => {
     );
   });
 
+  it("forks only OpenCode lanes for the harness-opencode 1.0.160 bridge", () => {
+    const lane = (harnessId: string) =>
+      harnessRuntimeFingerprint({
+        harnessId,
+        modelId: "anthropic/claude-haiku-4.5",
+        selectedServers: ["srv-a"],
+        permissionMode: "allow-all",
+      });
+    // The values these lanes had before the bump: they keep resuming.
+    expect(lane("claude-code")).toBe("claude-code|anthropic/claude-haiku-4.5|418da67");
+    expect(lane("codex")).toBe("codex|anthropic/claude-haiku-4.5|a62170c3");
+    expect(lane("cursor")).toBe("cursor|anthropic/claude-haiku-4.5|a62170c3");
+    // An OpenCode lane saved against a 1.0.119 bridge does not.
+    expect(lane("opencode")).not.toBe("opencode|anthropic/claude-haiku-4.5|a62170c3");
+  });
+
   it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {
     // Identical model/servers/permission, different runtime ⇒ different lane.
     expect(harnessRuntimeFingerprint(base)).not.toBe(

@@ -113,7 +113,7 @@ export type HarnessAuth = HarnessV1AuthenticationEnvironment;
 const BROKER_DUMMY_CREDENTIAL = "mcpjam-broker-dummy";
 
 /**
- * OpenCode 1.18.23's Anthropic client appends `/messages` to
+ * OpenCode 1.18.34's Anthropic client appends `/messages` to
  * `ANTHROPIC_BASE_URL`. Claude Code and the official SDK append
  * `/v1/messages` to the lease origin (`…/model-proxy/anthropic`). Give OpenCode
  * the `/v1` suffix so both hit the backend allowlist.

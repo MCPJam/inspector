@@ -193,11 +193,17 @@ export function patchWarmClaudeQuery(source: string): string {
   const end = "abortSignal: abortCtl.signal\n    }\n  });";
   const close = /await q\.return\?\.\(\s*void 0\s*\);/;
   const hostTool = "const [input, extra] = handlerArgs;";
+  // The host tool's result has settled once its `.finally` block closes, just
+  // before the bridge emits it.
+  const settled = "      });";
+  const toolResult =
+    settled + '\n      emit({\n        type: "tool-result",\n        toolCallId,';
   if (
     !source.includes(open) ||
     !source.includes(end) ||
     !close.test(source) ||
     !source.includes(hostTool) ||
+    source.split(toolResult).length !== 2 ||
     !source.includes("mcpjamDrainController.clear()")
   ) {
     throw new Error("The installed Claude bridge cannot retain a live query.");
@@ -212,8 +218,10 @@ export function patchWarmClaudeQuery(source: string): string {
           '\n          if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool request belongs to an ended message.");',
       )
       .replace(
-        "const { output, isError } = await turn.requestToolResult(toolCallId);",
-        'const { output, isError } = await turn.requestToolResult(toolCallId);\n          if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool result belongs to an ended message.");',
+        toolResult,
+        settled +
+          '\n      if (mcpjamWarmClaude?.owner?.turn !== turn || turn.abortSignal.aborted) throw new Error("The tool result belongs to an ended message.");' +
+          toolResult.slice(settled.length),
       )
       .replace(
         close,

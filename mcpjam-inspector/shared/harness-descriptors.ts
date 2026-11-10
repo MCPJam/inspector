@@ -124,7 +124,7 @@ export const HARNESS_DESCRIPTORS = {
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
   opencode: {
-    displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
+    displayName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
     modelAccess: "broker", local: false, guest: false, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
