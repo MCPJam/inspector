@@ -147,6 +147,26 @@ function wsUpstream(session: BrowserSessionRecord): UpstreamSocket {
 }
 
 /**
+ * The desktop's VNC password, from whichever shape the session row has.
+ *
+ * A computer's row carries it as `streamPassword` and a watched conversation
+ * sandbox's as `stream.password`. Reading `streamPassword` off a sandbox row
+ * gave `undefined`, and turning that into the challenge response threw inside
+ * the upstream socket's message event, which took the whole server down.
+ */
+export function vncPasswordOf(
+  session: BrowserSessionRecord,
+): string | undefined {
+  return session.target === "sandbox"
+    ? session.stream?.password
+    : session.streamPassword;
+}
+
+/** What the viewer is told when the desktop wants a password we lack. */
+const NO_PASSWORD_MESSAGE =
+  "The desktop view is not available for this browser. Switch to another view.";
+
+/**
  * Drives the RFB handshake with the upstream server, then reports that the
  * connection is ready to carry messages.
  *
@@ -165,10 +185,12 @@ class UpstreamHandshake {
   private buffer = Buffer.alloc(0);
 
   constructor(
-    private readonly password: string,
+    /** Absent when the session row carries none; see `vncPasswordOf`. */
+    private readonly password: string | undefined,
     private readonly send: (data: Uint8Array) => void,
     private readonly onReady: (leftover: Uint8Array) => void,
-    private readonly onFailed: (reason: string) => void,
+    /** `reason` is for the log; `viewerMessage`, when set, for the viewer. */
+    private readonly onFailed: (reason: string, viewerMessage?: string) => void,
   ) {}
 
   get finished(): boolean {
@@ -215,7 +237,7 @@ class UpstreamHandshake {
           return false;
         }
         this.buffer = this.buffer.subarray(1 + types.length);
-        if (types.includes(RFB_SECURITY.VNC_AUTH)) {
+        if (types.includes(RFB_SECURITY.VNC_AUTH) && this.password) {
           this.send(Buffer.from([RFB_SECURITY.VNC_AUTH]));
           this.stage = "vnc-challenge";
           return true;
@@ -227,6 +249,14 @@ class UpstreamHandshake {
           this.stage = "security-result";
           return true;
         }
+        if (types.includes(RFB_SECURITY.VNC_AUTH)) {
+          this.onFailed(
+            "upstream asked for a VNC password the session row lacks",
+            NO_PASSWORD_MESSAGE,
+          );
+          this.stage = "done";
+          return false;
+        }
         this.onFailed(`no supported security type in [${types.join(",")}]`);
         this.stage = "done";
         return false;
@@ -234,6 +264,15 @@ class UpstreamHandshake {
 
       case "vnc-challenge": {
         if (this.buffer.length < 16) return false;
+        // Only reached with a password; checked again so nothing here throws.
+        if (!this.password) {
+          this.onFailed(
+            "VNC challenge without a password",
+            NO_PASSWORD_MESSAGE,
+          );
+          this.stage = "done";
+          return false;
+        }
         const challenge = this.buffer.subarray(0, 16);
         this.buffer = this.buffer.subarray(16);
         this.send(vncAuthResponse(challenge, this.password));
@@ -326,12 +365,23 @@ export function createComputerBrowserStreamWsHandler(
           rejectCode = CLOSE_UNAUTHORIZED;
           rejectMessage = "Invalid or expired browser token.";
         } else {
-          const lookup = await lookupSession({
-            ...target,
-            ...(claims.sandboxRowId ? { watched: true } : {}),
+          const options = {
             expectedBundleHash: bundleHash(),
-            expectedContextMode: "persistent",
-          });
+            expectedContextMode: "persistent" as const,
+          };
+          // One call per target, so each row keeps its own shape and the
+          // password is read from the field that shape actually has.
+          const lookup =
+            claims.sandboxRowId !== undefined
+              ? await lookupSession({
+                  sandboxRowId: claims.sandboxRowId,
+                  watched: true,
+                  ...options,
+                })
+              : await lookupSession({
+                  computerId: claims.computerId,
+                  ...options,
+                });
           if (!lookup.session) {
             rejectCode = CLOSE_GONE;
             rejectMessage = "No browser is running on this computer.";
@@ -434,9 +484,22 @@ export function createComputerBrowserStreamWsHandler(
           }
         };
 
-        upstream = connectUpstream(live);
+        const browserTarget =
+          live.target === "computer" ? live.computerId : live.sandboxRowId;
+        try {
+          upstream = connectUpstream(live);
+        } catch (error) {
+          // `noVncWebSocketUrl` throws on a host shape it cannot read. This is
+          // a socket event: nothing may escape it.
+          logger.warn("[computers] browser stream could not dial the desktop", {
+            browserTarget,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          shutdown(CLOSE_UNAVAILABLE, "Could not reach the browser stream.");
+          return;
+        }
         const handshake = new UpstreamHandshake(
-          live.streamPassword,
+          vncPasswordOf(live),
           (data) => upstream?.send(data),
           (leftover) => {
             ready = true;
@@ -455,15 +518,15 @@ export function createComputerBrowserStreamWsHandler(
             leaseTimer = setInterval(() => void refreshLease(), LEASE_CACHE_MS);
             leaseTimer.unref?.();
           },
-          (reason) => {
+          (reason, viewerMessage) => {
             logger.warn("[computers] browser stream handshake failed", {
-              browserTarget:
-                live.target === "computer"
-                  ? live.computerId
-                  : live.sandboxRowId,
+              browserTarget,
               reason,
             });
-            shutdown(CLOSE_UNAVAILABLE, "Could not reach the browser stream.");
+            shutdown(
+              CLOSE_UNAVAILABLE,
+              viewerMessage ?? "Could not reach the browser stream.",
+            );
           },
         );
 
@@ -476,15 +539,25 @@ export function createComputerBrowserStreamWsHandler(
 
         upstream.onMessage((data) => {
           if (closed) return;
-          // Server→client needs no filtering: it is pixels, and the panel is
-          // allowed to watch. Only the other direction carries authority.
-          if (handshake.finished) ws.send(bytes(Buffer.from(data)));
-          else handshake.push(data);
+          // NOTHING MAY THROW OUT OF HERE. This runs inside the upstream
+          // socket's own message event, where an exception is uncaught and
+          // ends the whole server, not just this stream.
+          try {
+            // Server→client needs no filtering: it is pixels, and the panel is
+            // allowed to watch. Only the other direction carries authority.
+            if (handshake.finished) ws.send(bytes(Buffer.from(data)));
+            else handshake.push(data);
+          } catch (error) {
+            logger.warn("[computers] browser stream relay failed", {
+              browserTarget,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            shutdown(CLOSE_UNAVAILABLE, "Could not reach the browser stream.");
+          }
         });
         upstream.onError((error) => {
           logger.warn("[computers] browser stream upstream error", {
-            browserTarget:
-              live.target === "computer" ? live.computerId : live.sandboxRowId,
+            browserTarget,
             error: error instanceof Error ? error.message : String(error),
           });
           shutdown(CLOSE_UNAVAILABLE, "The browser stream failed.");
@@ -512,19 +585,27 @@ export function createComputerBrowserStreamWsHandler(
       onMessage: (event, ws) => {
         const state = socketState.get(ws as object);
         if (!state || !state.ready()) return;
-        const incoming = toBytes(event.data);
-        if (!incoming) return;
-        const data = state.consumeHandshake(incoming);
-        if (data.length === 0) return;
-        const result = state.filter.push(data);
-        if (!result.ok) {
-          // A stream we cannot parse is one whose input we cannot reliably
-          // block, so it does not get to continue.
-          state.shutdown(CLOSE_UNAVAILABLE, "Malformed stream.");
-          return;
-        }
-        if (result.forward.length > 0) {
-          state.upstreamRef()?.send(result.forward);
+        // A socket event too: a throw here is uncaught, as upstream.
+        try {
+          const incoming = toBytes(event.data);
+          if (!incoming) return;
+          const data = state.consumeHandshake(incoming);
+          if (data.length === 0) return;
+          const result = state.filter.push(data);
+          if (!result.ok) {
+            // A stream we cannot parse is one whose input we cannot reliably
+            // block, so it does not get to continue.
+            state.shutdown(CLOSE_UNAVAILABLE, "Malformed stream.");
+            return;
+          }
+          if (result.forward.length > 0) {
+            state.upstreamRef()?.send(result.forward);
+          }
+        } catch (error) {
+          logger.warn("[computers] browser stream input relay failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          state.shutdown(CLOSE_UNAVAILABLE, "The browser stream failed.");
         }
       },
 
