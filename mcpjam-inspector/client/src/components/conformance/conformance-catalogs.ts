@@ -16,16 +16,12 @@ import {
   PROTOCOL_VERSION_ERAS,
   READINESS_CATALOG,
   READINESS_ERAS,
-  RENAMED_MCP_TASKS_CHECK_IDS,
   TASKS_CHECK_CATALOG,
   TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import {
-  TASK_ANSWERS_CHECK,
-  type ConformanceSelection,
-} from "@/shared/conformance-settings";
+import { TASK_ANSWERS_CHECK } from "@/shared/conformance-settings";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type { CatalogEntry } from "./ConformanceCheckRows";
 
@@ -104,24 +100,6 @@ export function shownTasksCatalog(updateCheck: boolean): CatalogEntry[] {
   return updateCheck
     ? TASKS_CATALOG
     : TASKS_CATALOG.filter((entry) => entry.id !== TASK_ANSWERS_CHECK);
-}
-
-/**
- * The picks without the hidden check, so a saved pick of it (under this id or
- * its old one) or "the whole suite" does not run it.
- */
-export function withoutHiddenTasksCheck(
-  selection: ConformanceSelection | undefined,
-  updateCheck: boolean,
-): ConformanceSelection | undefined {
-  if (updateCheck) return selection;
-  const renamed: Record<string, string> = RENAMED_MCP_TASKS_CHECK_IDS;
-  return {
-    ...selection,
-    tasks: (selection?.tasks ?? MCP_TASKS_CHECK_IDS).filter(
-      (id) => (renamed[id] ?? id) !== TASK_ANSWERS_CHECK,
-    ),
-  };
 }
 
 // Only the post-flow checks have static identities. The authorization flow

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHECK_ERAS, MCP_CHECK_IDS } from "@mcpjam/sdk/browser";
 import { runnableSelection } from "@/hooks/use-conformance-run";
-import type { ConformanceSelection } from "@/shared/conformance-settings";
 import {
   checkCatalogs,
   withOAuthStep,
@@ -13,7 +12,6 @@ import {
   OAUTH_CATALOG,
   TASKS_ADVICE_CATALOG,
   protocolAdviceCatalog,
-  withoutHiddenTasksCheck,
 } from "../conformance-catalogs";
 
 const modernOnly = MCP_CHECK_IDS.filter(
@@ -219,16 +217,5 @@ describe("OAuth checks that do not count", () => {
     expect(
       withOAuthSuite({ oauth: true, oauthUnscored: [ids[0]!] }, true),
     ).toEqual({ oauth: true });
-  });
-});
-
-describe("withoutHiddenTasksCheck", () => {
-  it("drops a saved pick of the update check under its old id too", () => {
-    const saved = {
-      tasks: ["tasks-input-required-update-completes", "tasks-ttl-shape"],
-    } as ConformanceSelection;
-    const shown = withoutHiddenTasksCheck(saved, false);
-    expect(runnableSelection(shown, "auto")?.tasks).toEqual(["tasks-ttl-shape"]);
-    expect(withoutHiddenTasksCheck(saved, true)).toBe(saved);
   });
 });

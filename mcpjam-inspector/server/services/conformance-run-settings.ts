@@ -4,7 +4,8 @@
  * A start on a saved server runs what the app runs for it: the checks and
  * advice its settings pick, and the tool inputs those checks call, at the
  * protocol version the run resolves to. `settings: "none"` opts out and runs
- * every check with no tool inputs. Tool inputs kept only in a browser (the
+ * every check with no tool inputs. Both leave out the Tasks update check (see
+ * `withoutTaskAnswersCheck`). Tool inputs kept only in a browser (the
  * per-check Tasks tools and the log level advice's own tool) have no hosted
  * equivalent and are not part of a hosted run.
  */
@@ -23,6 +24,7 @@ import {
   type ConformanceSelection,
   type StoredConformanceProbes,
   type StoredConformanceSettings,
+  withoutTaskAnswersCheck,
 } from "../../shared/conformance-settings.js";
 
 /** What the caller asked for: the server's saved settings, or none. */
@@ -91,7 +93,7 @@ export function suitesKeptBySettings<
   protocolVersion: McpProtocolVersion | undefined,
 ): Suite[] {
   const picked = runnableSelection(
-    settings.selection,
+    withoutTaskAnswersCheck(settings.selection),
     protocolVersion ?? "auto",
   );
   return requested.filter((suite) => isSelected(picked?.[suite]));
@@ -111,7 +113,11 @@ export async function suiteConfigsForRun(
   protocolVersion: McpProtocolVersion | undefined,
   signal?: AbortSignal,
 ) {
-  if (settings.source !== "saved") return { protocolVersion };
+  if (settings.source !== "saved")
+    return {
+      protocolVersion,
+      tasks: { checkIds: withoutTaskAnswersCheck(undefined).tasks },
+    };
   const connection = await checkConformanceConnection(
     server,
     protocolVersion ?? "auto",

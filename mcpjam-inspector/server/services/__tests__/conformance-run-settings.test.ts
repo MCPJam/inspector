@@ -9,6 +9,7 @@ vi.mock("../../routes/shared/conformance-connection.js", () => ({
     checkConformanceConnectionMock(...args),
 }));
 
+import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk";
 import {
   readConformanceRunSettings,
   suiteConfigsForRun,
@@ -143,14 +144,21 @@ describe("suiteConfigsForRun", () => {
     checkConformanceConnectionMock.mockReset();
   });
 
-  it("leaves a run without saved settings to the SDK", async () => {
+  it("leaves a run without saved settings to the SDK, but for the update check", async () => {
     const configs = await suiteConfigsForRun(
       { source: "none", probes: {}, runTimeoutSeconds: 300 },
       SERVER,
       "2025-11-25",
       new AbortController().signal,
     );
-    expect(configs).toEqual({ protocolVersion: "2025-11-25" });
+    expect(configs).toEqual({
+      protocolVersion: "2025-11-25",
+      tasks: {
+        checkIds: MCP_TASKS_CHECK_IDS.filter(
+          (id) => id !== "tasks-update-ack-shape",
+        ),
+      },
+    });
     expect(checkConformanceConnectionMock).not.toHaveBeenCalled();
   });
 
