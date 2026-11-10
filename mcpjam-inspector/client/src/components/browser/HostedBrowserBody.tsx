@@ -65,7 +65,8 @@ import {
   type HostedBrowserLease,
   type MintBrowserToken,
 } from "@/lib/hosted-browser/client";
-import { PausedPaneOverlay } from "@/components/browser/PausedPaneOverlay";
+import { PausablePane } from "@/components/browser/PausedPaneOverlay";
+import { usePaneFrame } from "@/components/browser/usePaneFrame";
 import {
   usePausedPane,
   useThrottledInputPing,
@@ -170,7 +171,13 @@ export function HostedBrowserBody({
   const [session, setSession] = useState<Session | null>(null);
   const [lease, setLease] = useState<HostedBrowserLease>({ state: "unknown" });
   const [holding, setHolding] = useState(false);
-  const [frame, setFrame] = useState<PaneFrame | null>(null);
+  const {
+    frame,
+    last: lastFrame,
+    show: showFrame,
+    blank: blankFrame,
+    forget: forgetFrame,
+  } = usePaneFrame();
   const [error, setError] = useState<string | null>(null);
   /**
    * What the SOCKET last said, kept apart from `error`.
@@ -289,7 +296,7 @@ export function HostedBrowserBody({
     setSession(null);
     setLease({ state: "unknown" });
     setHolding(false);
-    setFrame(null);
+    forgetFrame();
     setError(null);
     setNotice(null);
     setUnavailable(null);
@@ -298,7 +305,7 @@ export function HostedBrowserBody({
     return () => {
       generation.current += 1;
     };
-  }, [projectId, sessionId, tokens]);
+  }, [projectId, sessionId, tokens, forgetFrame]);
 
   /**
    * Which read of THIS browser is the latest.
@@ -706,7 +713,7 @@ export function HostedBrowserBody({
     shell.state.connection === "live" ||
     shell.state.connection === "reconnecting";
   useEffect(() => {
-    setFrame(null);
+    blankFrame();
     if (!session || !tokens || !selectionReady) return;
     let closed = false;
     let stream: { close(): void } | null = null;
@@ -721,8 +728,6 @@ export function HostedBrowserBody({
     let openedSocket: WebSocket | null = null;
     /** Decodes the binary pixel path; null until the socket is open. */
     let wire: ReturnType<typeof createFrameWireReader> | null = null;
-    /** The last bitmap this socket produced, so teardown can release it. */
-    let lastBitmap: ImageBitmap | undefined;
     /** Built on the first access unit; null on a stream that stays JPEG. */
     let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
     let videoAgreed = false;
@@ -899,12 +904,8 @@ export function HostedBrowserBody({
                     return;
                   }
                   paintedSeq = at.seq;
-                  // The pane releases each bitmap as the next replaces it; a
-                  // frame that never reached the surface has no successor to
-                  // do it.
-                  lastBitmap?.close();
-                  lastBitmap = bitmap;
-                  setFrame({
+                  // `showFrame` releases the bitmap this one replaces.
+                  showFrame({
                     bitmap,
                     deviceWidth: at.deviceWidth,
                     deviceHeight: at.deviceHeight,
@@ -949,12 +950,7 @@ export function HostedBrowserBody({
               leaseIsStale.current = false;
               void refresh();
             }
-            // React can coalesce two `setFrame` calls into one render, and the
-            // surface only ever releases a frame it PAINTED — so a picture that
-            // was superseded before the commit has nobody to free it.
-            lastBitmap?.close();
-            lastBitmap = decoded.bitmap;
-            setFrame({
+            showFrame({
               bitmap: decoded.bitmap,
               decodeMs: decoded.decodeMs,
               deviceWidth: decoded.deviceWidth,
@@ -1146,7 +1142,7 @@ export function HostedBrowserBody({
           if (parsed.type === "frame" && parsed.frame) {
             paneFrameStats.noteFrameArrived({ bytes: raw.length });
             frameSeqRef.current = parsed.frame.seq;
-            setFrame(parsed.frame);
+            showFrame(parsed.frame);
             // The attempt worked: forgive the refusals that came before it,
             // and clear whatever the last close told the viewer, since the
             // picture is back and the message is no longer true.
@@ -1180,7 +1176,7 @@ export function HostedBrowserBody({
       // attempt worked.
       opened.socket.onclose = (event) => {
         if (closed) return;
-        setFrame(null);
+        blankFrame();
         if (event.code === CLOSE_LEASE_HELD) {
           // Somebody else has the browser, including a handoff that happened
           // while this socket was open — the daemon revokes mid-stream. NOT
@@ -1266,10 +1262,8 @@ export function HostedBrowserBody({
       closed = true;
       wire?.close();
       video?.close();
-      // The pane releases each bitmap as the next one replaces it; the LAST
-      // one has no successor, and this is the thing that knows the stream is
-      // over.
-      lastBitmap?.close();
+      // The last picture outlives its stream, for a desktop that paused:
+      // `usePaneFrame` releases it.
       if (ping) clearInterval(ping);
       if (retry) clearTimeout(retry);
       if (socketRef.current === openedSocket) {
@@ -1284,6 +1278,8 @@ export function HostedBrowserBody({
     refresh,
     pausePane,
     clearPausedPane,
+    showFrame,
+    blankFrame,
     streamAttempt,
     shell.state.activeTabId,
     selectionReady,
@@ -1440,17 +1436,17 @@ export function HostedBrowserBody({
         </>
       }
     >
-      <div
-        className="relative h-full w-full"
-        // Paused or resuming, a key press goes to the wake, not the desktop.
-        onKeyDownCapture={(event) => {
-          if (pausedState === "awake") return;
-          event.stopPropagation();
-          resumePane();
-        }}
+      <PausablePane
+        className="h-full w-full"
+        state={pausedState}
+        idleMs={idleMs}
+        picture={lastFrame}
+        onResume={resumePane}
       >
         <BrowserPaneSurface
           frame={frame}
+          // Paused, the overlay says so: no spinner for a picture not coming.
+          placeholder={pausedState === "awake" ? undefined : <span />}
           authority={{ kind: "lease", holding }}
           control={control}
           // NO take-control button. Using the browser is what takes it now, and
@@ -1473,14 +1469,7 @@ export function HostedBrowserBody({
           active={active}
           engine="hosted"
         />
-        {pausedState !== "awake" ? (
-          <PausedPaneOverlay
-            resuming={pausedState === "resuming"}
-            idleMs={idleMs}
-            onResume={resumePane}
-          />
-        ) : null}
-      </div>
+      </PausablePane>
     </BrowserShell>
   );
 }

@@ -37,6 +37,8 @@ const api = vi.hoisted(() => ({
   sessionReads: 0,
   /** The options each of those reads carried — `{ensure:true}` wakes the box. */
   sessionReadOptions: [] as unknown[],
+  /** Holds every `/session` answer until it resolves, when set. */
+  sessionGate: null as Promise<void> | null,
   streamArgs: [] as unknown[],
   /** What the shell's state poll answers. Null is "cannot say". */
   state: null as unknown,
@@ -110,6 +112,7 @@ vi.mock("@/lib/hosted-browser/client", async () => {
     fetchHostedBrowserSession: async (_tokens: unknown, options?: unknown) => {
       api.sessionReads += 1;
       api.sessionReadOptions.push(options);
+      if (api.sessionGate) await api.sessionGate;
       if (api.sessionError) {
         throw new actual.HostedBrowserError("nope", api.sessionError.status);
       }
@@ -166,6 +169,7 @@ beforeEach(() => {
   api.session = RUNNING;
   api.sessionReads = 0;
   api.sessionReadOptions = [];
+  api.sessionGate = null;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
   api.inputs = [];
@@ -487,6 +491,62 @@ describe("the hosted pane — the socket", () => {
     expect(screen.getByText("Browser paused")).toBeTruthy();
     expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
     expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("keeps the last picture under the paused state, and while it resumes", async () => {
+    // A pause usually shows up as a drop, a reconnect, and then 4410. The
+    // drop blanks the picture, so it has to survive the reconnect.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({
+          type: "frame",
+          frame: {
+            data: "Zm9v",
+            deviceWidth: 1024,
+            deviceHeight: 768,
+            scale: 1,
+            ts: 1,
+            seq: 1,
+          },
+        }),
+      });
+    });
+    act(() => socket().onclose?.({ code: 4503 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(api.sockets.length).toBe(2);
+    act(() => socket().onclose?.({ code: 4410 }));
+
+    const lastPicture = () =>
+      screen
+        .getByTestId("paused-pane-picture")
+        .querySelector("img")
+        ?.getAttribute("src");
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(lastPicture()).toBe("data:image/jpeg;base64,Zm9v");
+    expect(screen.queryByText("Waiting for the first frame…")).toBeNull();
+
+    let release: () => void = () => {};
+    api.sessionGate = new Promise<void>((resolve) => (release = resolve));
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByText("Resuming…")).toBeTruthy();
+    expect(lastPicture()).toBe("data:image/jpeg;base64,Zm9v");
+
+    api.sessionGate = null;
+    release();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.queryByTestId("paused-pane-picture")).toBeNull();
+    expect(api.sockets.length).toBe(3);
     vi.useRealTimers();
   });
 

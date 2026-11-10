@@ -11,6 +11,7 @@ import {
   screen,
 } from "@testing-library/react";
 import {
+  PausablePane,
   PausedPaneOverlay,
   idleWindowText,
 } from "@/components/browser/PausedPaneOverlay";
@@ -22,7 +23,17 @@ import {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
+
+const FRAME = {
+  data: "Zm9v",
+  deviceWidth: 1024,
+  deviceHeight: 768,
+  scale: 1,
+  ts: 1,
+  seq: 1,
+};
 
 describe("usePausedPane", () => {
   it("never wakes the desktop on its own, only when resumed", async () => {
@@ -149,5 +160,50 @@ describe("PausedPaneOverlay", () => {
     expect(screen.getByText("Resuming…")).toBeTruthy();
     fireEvent.pointerDown(screen.getByRole("status").parentElement!);
     expect(onResume).not.toHaveBeenCalled();
+  });
+
+  it("draws the last picture under the paused state", () => {
+    render(
+      <PausedPaneOverlay resuming={false} picture={FRAME} onResume={vi.fn()} />,
+    );
+    expect(
+      screen
+        .getByTestId("paused-pane-picture")
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toBe("data:image/jpeg;base64,Zm9v");
+  });
+});
+
+describe("PausablePane", () => {
+  function renderPane(state: "awake" | "paused" | "resuming") {
+    const onResume = vi.fn();
+    const onInput = vi.fn();
+    const onPaneKey = vi.fn();
+    render(
+      <PausablePane state={state} onResume={onResume} onInput={onInput}>
+        <div data-testid="pane" tabIndex={0} onKeyDown={onPaneKey} />
+      </PausablePane>,
+    );
+    return { onResume, onInput, onPaneKey };
+  }
+
+  it("passes input through while awake, and reports it", () => {
+    const { onResume, onInput, onPaneKey } = renderPane("awake");
+    fireEvent.keyDown(screen.getByTestId("pane"), { key: "a" });
+    fireEvent.pointerDown(screen.getByTestId("pane"));
+    expect(onPaneKey).toHaveBeenCalledOnce();
+    expect(onInput).toHaveBeenCalledTimes(2);
+    expect(onResume).not.toHaveBeenCalled();
+    expect(screen.queryByText("Browser paused")).toBeNull();
+  });
+
+  it("turns a key press into the wake while paused, and keeps it from the pane", () => {
+    const { onResume, onInput, onPaneKey } = renderPane("paused");
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    fireEvent.keyDown(screen.getByTestId("pane"), { key: "a" });
+    expect(onResume).toHaveBeenCalledOnce();
+    expect(onPaneKey).not.toHaveBeenCalled();
+    expect(onInput).not.toHaveBeenCalled();
   });
 });
