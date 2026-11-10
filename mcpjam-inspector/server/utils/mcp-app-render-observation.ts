@@ -11,7 +11,12 @@
  */
 
 import { resolveToolUiResourceUri } from "@mcpjam/sdk/widget-runtime";
-import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
+import {
+  describeError,
+  isMcpAppTool,
+  originOf,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
 import type { WidgetCspMeta } from "./widget-helpers";
 import { HOSTED_MODE } from "../config.js";
@@ -104,13 +109,16 @@ export async function renderMcpAppToolResult(
     }
   } catch (error) {
     const elapsedMs = Date.now() - ts;
+    const origin = originOf(describeError(error, { surface: "mcpServer" }));
     // The row keeps the error class, never its text, which can carry details
-    // from the user's own server. Sentry on our hosted server only: a local
-    // install (npx, desktop) runs its user's own servers.
+    // from the user's own server. Sentry follows `error-origin-capture.ts`:
+    // only an error of ours, and only on our hosted server, since a local
+    // install (npx, desktop) runs its user's own servers. A slow or down user
+    // server reads as `ambiguous` and stays in Axiom.
     renderLog.event(
       "mcp_app.resource_read.failed",
-      { durationMs: elapsedMs },
-      { error, sentry: HOSTED_MODE },
+      { durationMs: elapsedMs, origin },
+      { error, sentry: HOSTED_MODE && origin === "mcpjam" },
     );
     return {
       ...base,
