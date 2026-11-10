@@ -13,6 +13,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "claude-code-host-enabled",
   "client-agent-loop",
   "codex-host-enabled",
+  "conformance-tasks-update-check",
   "credit-estimate-enabled",
   "cursor-host-enabled",
   "description-experiments-enabled",

@@ -29,6 +29,10 @@ import {
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
 import {
+  useTasksUpdateCheckEnabled,
+  withoutHiddenTasksCheck,
+} from "@/components/conformance/conformance-catalogs";
+import {
   protocolRunOptions,
   tasksRunOptions,
   type ConformanceProbes,
@@ -172,6 +176,7 @@ export function useConformanceRun({
   // Read when a run starts; the caller passes it once, before Run.
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const tasksUpdateCheck = useTasksUpdateCheckEnabled();
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;
@@ -608,7 +613,10 @@ export function useConformanceRun({
 
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
-    const selected = runnableSelection(selection, versionPin);
+    const selected = withoutHiddenTasksCheck(
+      runnableSelection(selection, versionPin),
+      tasksUpdateCheck,
+    );
     // Count only a run that starts a suite: protocol and OAuth need HTTP.
     if (
       isSelected(selected?.apps) ||
@@ -658,7 +666,10 @@ export function useConformanceRun({
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
     const pin = resolved ?? versionPin;
-    const picked = runnableSelection(selection, pin);
+    const picked = withoutHiddenTasksCheck(
+      runnableSelection(selection, pin),
+      tasksUpdateCheck,
+    );
     setOAuthUnscored(scorableOAuthIds(picked?.oauthUnscored));
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
@@ -717,6 +728,7 @@ export function useConformanceRun({
     runProtocol,
     runTasks,
     server,
+    tasksUpdateCheck,
     versionPin,
   ]);
 

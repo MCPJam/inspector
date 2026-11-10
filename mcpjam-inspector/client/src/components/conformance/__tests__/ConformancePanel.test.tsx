@@ -93,6 +93,7 @@ import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
+import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
@@ -363,6 +364,8 @@ function createStdioServer(
 beforeEach(() => {
   vi.clearAllMocks();
   enabledFlags.clear();
+  // These tests cover the update check and its answers; one below turns it off.
+  enabledFlags.add("conformance-tasks-update-check");
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
@@ -3730,6 +3733,22 @@ describe("ConformanceTab", () => {
       protocolVersion: "2025-11-25",
     });
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
+  });
+
+  it("leaves the flagged update check out of a whole-suite Tasks run", async () => {
+    enabledFlags.delete("conformance-tasks-update-check");
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(mockRunTasks).toHaveBeenCalledWith(
+      "http-server",
+      expect.objectContaining({
+        checkIds: MCP_TASKS_CHECK_IDS.filter(
+          (id) => id !== "tasks-update-ack-shape",
+        ),
+      }),
+    );
   });
 
   it("marks Protocol and OAuth as not applicable for stdio servers", async () => {

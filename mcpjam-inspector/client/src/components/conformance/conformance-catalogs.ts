@@ -20,6 +20,11 @@ import {
   TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  TASK_ANSWERS_CHECK,
+  type ConformanceSelection,
+} from "@/shared/conformance-settings";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type { CatalogEntry } from "./ConformanceCheckRows";
 
@@ -83,6 +88,40 @@ export const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
   id,
   ...TASKS_CHECK_CATALOG[id],
 }));
+
+/**
+ * The update acknowledgement check stays behind
+ * `conformance-tasks-update-check` until its answers get a real form: today
+ * they are raw JSON keyed by questions the server has not asked yet. `=== true`,
+ * so a missing flag (or one PostHog has not hydrated yet) keeps it hidden.
+ */
+export const useTasksUpdateCheckEnabled = () =>
+  useFeatureFlagEnabled("conformance-tasks-update-check") === true;
+
+/** The Tasks checks a user can see and pick. */
+export function shownTasksCatalog(updateCheck: boolean): CatalogEntry[] {
+  return updateCheck
+    ? TASKS_CATALOG
+    : TASKS_CATALOG.filter((entry) => entry.id !== TASK_ANSWERS_CHECK);
+}
+
+/**
+ * A runnable selection without the hidden check, so a saved pick of it (or
+ * "the whole suite") does not run it. Apply after `runnableSelection`, which
+ * maps the check's old id to this one.
+ */
+export function withoutHiddenTasksCheck(
+  selection: ConformanceSelection | undefined,
+  updateCheck: boolean,
+): ConformanceSelection | undefined {
+  if (updateCheck) return selection;
+  return {
+    ...selection,
+    tasks: (selection?.tasks ?? MCP_TASKS_CHECK_IDS).filter(
+      (id) => id !== TASK_ANSWERS_CHECK,
+    ),
+  };
+}
 
 // Only the post-flow checks have static identities. The authorization flow
 // steps themselves depend on the server's registration strategy and protocol
