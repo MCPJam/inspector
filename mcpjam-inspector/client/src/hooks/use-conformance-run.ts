@@ -1,4 +1,5 @@
 import { runTaskConformanceGroups } from "./run-task-conformance-groups";
+import { useShownSelectionRef } from "./use-shown-selection-ref";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
 import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
 import { useConformanceDeadline } from "./use-conformance-deadline";
@@ -168,8 +169,7 @@ export function useConformanceRun({
   const [resolvedProtocolVersion, setResolvedProtocolVersion] =
     useState<McpProtocolVersion>();
   // Read when a run starts; the caller passes it once, before Run.
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  const selectionRef = useShownSelectionRef(selection);
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;

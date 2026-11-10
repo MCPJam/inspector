@@ -35,8 +35,9 @@ import {
 import {
   APPS_CATALOG,
   OAUTH_CATALOG,
-  TASKS_CATALOG,
   protocolCatalog,
+  shownTasksCatalog,
+  useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import {
   ConformanceConnectError,
@@ -479,6 +480,7 @@ export function ConformanceContent({
   // rather than flashing them for users the flag excludes.
   const directoryReadinessEnabled =
     useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+  const tasksUpdateCheck = useTasksUpdateCheckEnabled();
   const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">
       <DirectoryReadinessSection publisher="claude" server={server} />
@@ -716,7 +718,7 @@ export function ConformanceContent({
                     description={SUITE_COPY.tasks.description}
                     state={tasks}
                     score={tasksScore}
-                    catalog={TASKS_CATALOG}
+                    catalog={shownTasksCatalog(tasksUpdateCheck)}
                     hasResult={Boolean(tasks.result)}
                   >
                     {tasks.result ? (
