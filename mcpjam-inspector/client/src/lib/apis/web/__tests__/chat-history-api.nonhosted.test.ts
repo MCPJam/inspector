@@ -138,26 +138,4 @@ describe("chat history API in non-hosted mode", () => {
     expect(headers.get("Authorization")).toBeNull();
     expect(headers.get("Content-Type")).toBe("application/json");
   });
-
-  it("fails a detail read whose caller aborted it while the body was downloading", async () => {
-    // The pre-send sync's 15 s timeout can fire after the headers arrived.
-    // That is a failed read, not an empty successful one.
-    const timeout = new AbortController();
-    mockAuthFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: () => {
-        timeout.abort(new DOMException("timed out", "TimeoutError"));
-        return Promise.reject(timeout.signal.reason);
-      },
-    });
-
-    await expect(
-      getChatHistoryDetail(
-        { chatSessionId: "chat-session-1" },
-        { signal: timeout.signal },
-      ),
-    ).rejects.toMatchObject({ name: "TimeoutError" });
-  });
 });

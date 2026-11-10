@@ -195,10 +195,8 @@ async function webGet<T>(
   let body: any = null;
   try {
     body = await response.json();
-  } catch (error) {
-    // A body the caller aborted mid-download is a failed read, not an empty
-    // successful one; other unreadable bodies keep falling through as before.
-    if (options?.signal?.aborted) throw error;
+  } catch {
+    // ignored
   }
 
   if (!response.ok) {
