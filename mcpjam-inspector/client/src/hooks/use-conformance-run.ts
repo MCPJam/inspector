@@ -1,4 +1,5 @@
 import { runTaskConformanceGroups } from "./run-task-conformance-groups";
+import { useShownSelectionRef } from "./use-shown-selection-ref";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
 import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
 import { useConformanceDeadline } from "./use-conformance-deadline";
@@ -28,10 +29,6 @@ import {
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
 import { deriveOAuthProfileFromServer } from "@/components/oauth/utils";
-import {
-  useTasksUpdateCheckEnabled,
-  withoutHiddenTasksCheck,
-} from "@/components/conformance/conformance-catalogs";
 import {
   protocolRunOptions,
   tasksRunOptions,
@@ -174,9 +171,7 @@ export function useConformanceRun({
   const [resolvedProtocolVersion, setResolvedProtocolVersion] =
     useState<McpProtocolVersion>();
   // Read when a run starts; the caller passes it once, before Run.
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
-  const tasksUpdateCheck = useTasksUpdateCheckEnabled();
+  const selectionRef = useShownSelectionRef(selection);
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;
@@ -613,10 +608,7 @@ export function useConformanceRun({
 
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
-    const selected = withoutHiddenTasksCheck(
-      runnableSelection(selection, versionPin),
-      tasksUpdateCheck,
-    );
+    const selected = runnableSelection(selection, versionPin);
     // Count only a run that starts a suite: protocol and OAuth need HTTP.
     if (
       isSelected(selected?.apps) ||
@@ -666,10 +658,7 @@ export function useConformanceRun({
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
     const pin = resolved ?? versionPin;
-    const picked = withoutHiddenTasksCheck(
-      runnableSelection(selection, pin),
-      tasksUpdateCheck,
-    );
+    const picked = runnableSelection(selection, pin);
     setOAuthUnscored(scorableOAuthIds(picked?.oauthUnscored));
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
@@ -728,7 +717,6 @@ export function useConformanceRun({
     runProtocol,
     runTasks,
     server,
-    tasksUpdateCheck,
     versionPin,
   ]);
 

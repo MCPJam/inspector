@@ -93,7 +93,7 @@ import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
-import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk/browser";
+import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
@@ -2852,6 +2852,31 @@ describe("ConformanceTab", () => {
           inputResponses: { confirm: { action: "accept" } },
         }),
       );
+    });
+
+    it("hides the flagged update check and its answers box", async () => {
+      enabledFlags.delete("conformance-tasks-update-check");
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
+
+      expect(
+        screen.queryByText(TASKS_CHECK_CATALOG["tasks-update-ack-shape"].title),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
     });
 
     it("lists the tools once for every field, across pages", async () => {

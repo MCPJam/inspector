@@ -16,6 +16,7 @@ import {
   PROTOCOL_VERSION_ERAS,
   READINESS_CATALOG,
   READINESS_ERAS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   TASKS_CHECK_CATALOG,
   TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
@@ -106,19 +107,19 @@ export function shownTasksCatalog(updateCheck: boolean): CatalogEntry[] {
 }
 
 /**
- * A runnable selection without the hidden check, so a saved pick of it (or
- * "the whole suite") does not run it. Apply after `runnableSelection`, which
- * maps the check's old id to this one.
+ * The picks without the hidden check, so a saved pick of it (under this id or
+ * its old one) or "the whole suite" does not run it.
  */
 export function withoutHiddenTasksCheck(
   selection: ConformanceSelection | undefined,
   updateCheck: boolean,
 ): ConformanceSelection | undefined {
   if (updateCheck) return selection;
+  const renamed: Record<string, string> = RENAMED_MCP_TASKS_CHECK_IDS;
   return {
     ...selection,
     tasks: (selection?.tasks ?? MCP_TASKS_CHECK_IDS).filter(
-      (id) => id !== TASK_ANSWERS_CHECK,
+      (id) => (renamed[id] ?? id) !== TASK_ANSWERS_CHECK,
     ),
   };
 }
