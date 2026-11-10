@@ -51,6 +51,8 @@ export function patchAgent(source) {
       '\t\t\tif (hostToolCallIdsAwaitingEcho.size > 0 && input.isTurnSuspending?.() !== true) throw new Error("The runtime ended before approved tool results arrived.");\n\t\t\tif (hostInputPauseRequested && input.isTurnSuspending?.() !== true) {',
     ],
   ];
+  replacements.push(["const settledBuiltinApprovalToolCallIds = /* @__PURE__ */ new Set();", "const settledBuiltinApprovalToolCallIds = /* @__PURE__ */ new Set();\n\t\tconst consumedApprovedHostRelays = new Set();"]);
+  replacements.push(["const settledBuiltinApprovalReplay = (displayValue.type === \"tool-call\" || displayValue.type === \"tool-approval-request\") && settledBuiltinApprovalToolCallIds.has(displayValue.toolCallId);", "const approvedHostRelay = displayValue.type === \"tool-call\" && displayValue.providerExecuted === false && displayValue.providerMetadata?.mcpjam?.approvedHostToolCallId === displayValue.toolCallId && settledBuiltinApprovalToolCallIds.has(displayValue.toolCallId) && !consumedApprovedHostRelays.has(displayValue.toolCallId);\n\t\t\t\tif (approvedHostRelay) consumedApprovedHostRelays.add(displayValue.toolCallId);\n\t\t\t\tconst settledBuiltinApprovalReplay = (displayValue.type === \"tool-call\" || displayValue.type === \"tool-approval-request\") && settledBuiltinApprovalToolCallIds.has(displayValue.toolCallId) && !approvedHostRelay;"]);
   for (const [before, after] of replacements)
     source = replaceOnce(source, before, after);
   return source;
@@ -87,6 +89,8 @@ export function installApprovalPatch() {
     if (next !== original) writeFileSync(path, next);
   }
 }
+
+export default installApprovalPatch;
 
 if (
   process.argv[1] &&

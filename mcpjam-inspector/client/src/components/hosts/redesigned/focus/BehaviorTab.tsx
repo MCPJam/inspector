@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
@@ -44,7 +45,7 @@ import {
   savedModelRow,
 } from "@/components/chat-v2/shared/available-models";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { orgKeysSavableRows } from "@/lib/org-keys-model-target";
 import { FieldRow, FocusBlock } from "./primitives";
@@ -202,6 +203,7 @@ export function BehaviorTab({
   readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
+  const selectedHarness = effectiveHarnessId(draft);
 
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
@@ -212,7 +214,7 @@ export function BehaviorTab({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels();
+  } = useAvailableModels({ harnessTargets: selectedHarness ? [{ harnessId: selectedHarness }] : [] });
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
   // Under the organization's key policy that is only organization models on
@@ -222,13 +224,13 @@ export function BehaviorTab({
       orgKeysSavableRows(
         harnessPickerModels(
           catalogModels,
-          draft.harness ? { harnessId: draft.harness } : null,
+          selectedHarness ? { harnessId: selectedHarness } : null,
           { requireOrgKeys },
         ),
         requireOrgKeys,
         HOST_MODEL_SELECTION_PURPOSE,
       ),
-    [catalogModels, draft.harness, requireOrgKeys],
+    [catalogModels, selectedHarness, requireOrgKeys],
   );
   // Under the policy a pick must save an organization selection, which a
   // deployment without stored selections cannot keep.
@@ -252,7 +254,7 @@ export function BehaviorTab({
     if (
       requireOrgKeys &&
       draft.modelId &&
-      !isRuntimeChosenModelSentinel(draft.modelId)
+      !isRuntimeAccountModel(draft.modelId)
     ) {
       return orgKeysDisallowedRow(savedModelRow(draft.modelId));
     }
@@ -314,9 +316,9 @@ export function BehaviorTab({
   // The MODEL is gated too, for one harness: Cursor authenticates with the
   // customer's own Cursor account and that account picks the model, so a
   // selection would persist onto the host and reach nothing.
-  const modelState = harnessControlState(draft.harness, "modelId");
-  const tempState = harnessControlState(draft.harness, "temperature");
-  const effortState = harnessControlState(draft.harness, "reasoningEffort");
+  const modelState = harnessControlState(draft.agentLoop ?? draft.harness, "modelId");
+  const tempState = harnessControlState(draft.agentLoop ?? draft.harness, "temperature");
+  const effortState = harnessControlState(draft.agentLoop ?? draft.harness, "reasoningEffort");
   // The row shows only when there is something to pick or a saved value to
   // see or clear (a harness that refuses efforts still shows, and lets the
   // user clear, one that was saved before).
@@ -327,7 +329,7 @@ export function BehaviorTab({
       reasoningEffortOptions(
         resolvedModelRow,
         reasoningEffortRouteForRow(resolvedModelRow),
-        draft.harness,
+        draft.agentLoop ?? draft.harness,
       ).length > 0);
   const [effortNotice, setEffortNotice] = useState<string | null>(null);
   /*
@@ -346,10 +348,10 @@ export function BehaviorTab({
    * takes a control away that the static map allowed.
    */
   const { capabilities: harnessCapabilities } = useHarnessCapabilities(
-    draft.harness ?? null,
+    draft.agentLoop ?? draft.harness ?? null,
   );
   const staticApprovalState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "requireToolApproval",
   );
   const approvalState =
@@ -358,11 +360,11 @@ export function BehaviorTab({
       ? ENFORCED_CONTROL
       : staticApprovalState;
   const visibilityState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "respectToolVisibility",
   );
   const progressiveState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "progressiveToolDiscovery",
   );
   const progressiveTriValue = progressiveState.enforced

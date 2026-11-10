@@ -12,5 +12,6 @@ export function startConnectToast(serverName: string) {
     connected: () => toast.success(`${serverName} connected`, { id }),
     failed: (message: string, options?: ExternalToast) =>
       toast.error(message, { ...options, id }),
+    dismiss: () => toast.dismiss(id),
   };
 }

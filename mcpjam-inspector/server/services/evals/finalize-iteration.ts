@@ -72,6 +72,7 @@ import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
 import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
+  type EvalTraceModelSource,
 } from "./persist-eval-trace.js";
 import { isEvalIterationTerminalStatus } from "@mcpjam/sdk/contract";
 import {
@@ -636,6 +637,8 @@ export function buildIterationFinishParams(args: {
   messages: ModelMessage[];
   /** The model selected for this iteration, used for session attribution. */
   modelId?: string;
+  /** Whose spend that model was; absent reads as MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
@@ -965,6 +968,7 @@ export function buildIterationFinishParams(args: {
     usage,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(args.modelSource ? { modelSource: args.modelSource } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(requestPayloads?.length ? { requestPayloads } : {}),
@@ -1051,6 +1055,8 @@ export type FinalizeEvalIterationParams = {
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
+  /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   /**
@@ -1190,6 +1196,7 @@ export async function finalizeEvalIteration(
     usage,
     messages,
     modelId,
+    modelSource,
     spans,
     requestPayloads,
     harnessMcpByPromptIndex,
@@ -1325,6 +1332,7 @@ export async function finalizeEvalIteration(
     iterationStartedAt: startedAt,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(modelSource ? { modelSource } : {}),
     spans,
     requestPayloads,
     harnessMcpByPromptIndex,

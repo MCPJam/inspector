@@ -72,7 +72,12 @@ afterEach(() => {
 });
 
 /** Every method that must take the DELEGATED path. */
-const DELEGATED = ["workos_api_key", "slack_service", "discord_service"] as const;
+const DELEGATED = [
+  "workos_api_key",
+  "workos_agent",
+  "slack_service",
+  "discord_service",
+] as const;
 
 /**
  * Run both entry points against one seeded request and report which bearer

@@ -145,13 +145,11 @@ export function runnablePluginServerIds(
 export function hiddenEnvironmentCompositionKey(input: {
   hostId: string;
   pluginVersionIds: readonly string[];
-  secretIds?: readonly string[];
   venue?: HiddenEnvironmentVenue;
 }): string {
   return JSON.stringify([
     input.hostId,
     input.pluginVersionIds,
-    input.secretIds ?? [],
     ...(input.venue && input.venue !== "hosted" ? [input.venue] : []),
   ]);
 }

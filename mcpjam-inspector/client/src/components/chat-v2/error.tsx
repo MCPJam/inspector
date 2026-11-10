@@ -163,16 +163,26 @@ export function ErrorBox({
     );
   }
 
-  const orgKeysCode = orgKeysRefusalCodeOf(refusalCode);
-  if (orgKeysCode) {
+  // /stream/org uses provider_auth_error when the upstream provider rejects
+  // the organization's key. Other 401s can be session or MCP server errors.
+  const orgKeysCode = refusalCode === "provider_auth_error"
+    ? "provider_auth_failed"
+    : orgKeysRefusalCodeOf(refusalCode);
+  const missingSharedModel = refusalCode === "shared_models_unconfigured";
+  if (orgKeysCode || missingSharedModel) {
     // The organization requires its own provider keys (or its provider
     // refused). Configuration, not credits: never a top-up, and a retry only
     // for the two refusals that lift on their own.
     const canManage = !!onManageOrgProviders;
-    const described = describeOrgKeysRefusal(
-      orgKeysCode,
-      canManage ? "admin" : "member",
-    );
+    const described = missingSharedModel
+      ? {
+          title: "Choose an organization model",
+          body: canManage
+            ? "Choose an organization model or add a provider in AI providers."
+            : "Choose an organization model or ask an organization admin to add a provider.",
+          remediation: "choose_org_model",
+        }
+      : describeOrgKeysRefusal(orgKeysCode, canManage ? "admin" : "member");
     const retryable = isRetryableOrgKeysRefusal(orgKeysCode);
     const memberCanAskAdmin =
       !canManage &&
@@ -187,7 +197,7 @@ export function ErrorBox({
       <div
         role="alert"
         data-testid="chat-error-org-keys"
-        data-refusal-code={orgKeysCode}
+        data-refusal-code={orgKeysCode ?? refusalCode}
         className="flex flex-col gap-3 rounded border border-warning bg-warning/20 p-4 text-warning-foreground"
       >
         {/* The actions wrap under the text once both no longer fit on one

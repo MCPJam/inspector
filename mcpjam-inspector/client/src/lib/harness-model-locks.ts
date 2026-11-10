@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 /**
  * Picker-side reading of the harness × model evidence table
  * (`shared/harness-model-support.ts`) — the SAME table, at the SAME pinned
@@ -8,21 +9,25 @@
  *
  * Whose key pays is decided first, per ROW: a harness with a qualified
  * org-key path (Claude Code, Codex) runs an MCPJam-provided row on MCPJam's
- * key, or a row from an organization connection on its own vendor (Claude
- * Code → Anthropic, Codex → OpenAI) on the organization's key, read on the
- * canonical id that row's saved selection names. OpenCode is platform-funded
- * only. Any other row (a key on this machine, an org connection a harness
- * cannot run on) is refused, exactly as the server refuses it.
+ * key, or a row from an organization connection that serves the API the
+ * harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI Responses)
+ * on the organization's key, read on the canonical id that row's saved
+ * selection names. OpenCode is platform-funded only. Any other row (a key on
+ * this machine, an org connection a harness cannot run on) is refused, exactly
+ * as the server refuses it.
  *
  * While the organization requires its own provider keys (`HarnessKeyPolicy`),
  * MCPJam-provided models are off: a brokered harness runs only on an
- * organization connection to its own vendor, and the copy says so.
+ * organization connection that serves its API, and the copy says so.
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
-  harnessOrgUpstream,
+  harnessRunsOnConnection,
+  harnessTakesOrgKeys,
+} from "@/shared/harness-connection-api";
+import {
   harnessModelSupport,
   harnessModelVerdictAdmits,
   harnessNoRunnableModelReason,
@@ -77,16 +82,11 @@ function harnessModelRefusalReason(
     : verdict.reason;
 }
 
-/** Does this harness run on an organization's own provider key at all? */
-function harnessTakesOrgKeys(harnessId: string): boolean {
-  return harnessOrgUpstream(harnessId) !== null;
-}
-
 /**
  * MCPJam brokers this harness's model credentials. A local key never pays,
  * and an empty picker stays empty rather than restoring refused rows.
  * Cursor (`modelAccess: "external-account"`) is the exception: its account
- * picks the model, so the turn's catalog is not what runs.
+ * uses its own account catalog instead of provider connections.
  */
 function harnessIsBrokered(harnessId: string): boolean {
   return (
@@ -107,8 +107,13 @@ export function harnessRowModelId(
   target: HarnessModelTarget,
   policy: HarnessKeyPolicy = {},
 ):
-  | { modelId: string; rail: "hosted" | "org" | "evidence" }
+  | { modelId: string; rail: "hosted" | "org" | "evidence" | "account" }
   | { refusal: string } {
+  if (target.harnessId === "cursor") {
+    return model.provider === "cursor" && isRuntimeAccountModel(String(model.id))
+      ? { modelId: String(model.id), rail: "account" }
+      : { refusal: "Choose a model from your organization's Cursor account." };
+  }
   if (!harnessTakesOrgKeys(target.harnessId)) {
     if (model.orgProvider) {
       return {
@@ -134,10 +139,9 @@ export function harnessRowModelId(
   }
   if (
     model.orgProvider &&
-    harnessRunsOnOrgProvider(
-      target.harnessId,
-      providerKeyForModelDefinition(model),
-    )
+    harnessRunsOnConnection(target.harnessId, {
+      providerKey: providerKeyForModelDefinition(model),
+    })
   ) {
     // The canonical id its saved selection names — the id the server reads
     // the table on. A row that cannot form one cannot be routed to the org
@@ -159,7 +163,7 @@ export function harnessRowModelId(
 
 /**
  * Why a picker ROW cannot run on `target` for `purpose`, or undefined when it
- * can. `null` / undefined target = an emulated host, which runs any model.
+ * can. An emulated host cannot run a vendor runtime-account model.
  */
 export function harnessRowRefusalReason(
   model: ModelDefinition,
@@ -167,6 +171,8 @@ export function harnessRowRefusalReason(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): string | undefined {
+  if (isRuntimeAccountModel(String(model.id)) && target?.harnessId !== "cursor")
+    return "Choose a Cursor client to use this model.";
   if (!target) return undefined;
   const row = harnessRowModelId(model, target, policy);
   if ("refusal" in row) return row.refusal;
@@ -177,9 +183,9 @@ export function harnessRowRefusalReason(
  * Why a SAVED choice (an id and, when it has one, its selection) cannot run on
  * `target` — for a surface that holds choices rather than picker rows (the
  * composer's resolve, `expandModelChoices`). A local selection never runs on a
- * brokered harness; an org selection runs only on the harness's own vendor,
- * read from its canonical id's prefix (the server, which knows the
- * connection's provider, re-checks at admission).
+ * brokered harness; an org selection runs only where the provider its
+ * canonical id's prefix names serves the harness's API (the server, which
+ * knows the connection's provider, re-checks at admission).
  */
 export function harnessChoiceRefusalReason(
   choice: {
@@ -189,6 +195,8 @@ export function harnessChoiceRefusalReason(
   target: HarnessModelTarget | null | undefined,
   purpose: HarnessModelPurpose,
 ): string | undefined {
+  if (isRuntimeAccountModel(choice.modelId) && target?.harnessId !== "cursor")
+    return "Choose a Cursor client to use this model.";
   if (!target) return undefined;
   const source = choice.selection?.source;
   if (source === "org") {
@@ -218,7 +226,7 @@ export function harnessModelLockReason(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): string | undefined {
-  if (targets.length === 0) return undefined;
+  if (targets.length === 0) return harnessRowRefusalReason(model, null, purpose, policy);
   let firstReason: string | undefined;
   for (const target of targets) {
     const reason = harnessRowRefusalReason(model, target, purpose, policy);
@@ -238,7 +246,7 @@ export function applyHarnessModelLocks(
   purpose: HarnessModelPurpose,
   policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
-  if (!targets.some(Boolean)) return models;
+  if (!targets.some(Boolean) && !models.some((model) => isRuntimeAccountModel(String(model.id)))) return models;
   return models.map((model) => {
     if (model.disabled) return model;
     const reason = harnessModelLockReason(model, targets, purpose, policy);
@@ -294,9 +302,14 @@ export function harnessPickerModels(
   target: HarnessModelTarget | null | undefined,
   policy: HarnessKeyPolicy = {},
 ): ModelDefinition[] {
-  if (!target) return models;
+  if (!target) return models.some((model) => isRuntimeAccountModel(String(model.id)))
+    ? models.filter((model) => !isRuntimeAccountModel(String(model.id)))
+    : models;
+  if (target.harnessId === "cursor")
+    return models.filter((model) => model.provider === "cursor" && isRuntimeAccountModel(String(model.id)));
   const kept: ModelDefinition[] = [];
   for (const model of models) {
+    if (isRuntimeAccountModel(String(model.id))) continue;
     if (
       policy.requireOrgKeys &&
       model.disabled &&
@@ -323,7 +336,7 @@ export function harnessPickerModels(
     );
   }
   if (kept.length > 0 || harnessIsBrokered(target.harnessId)) return kept;
-  return models;
+  return models.filter((model) => !isRuntimeAccountModel(String(model.id)));
 }
 
 const NO_RUNNABLE_HARNESS_MODEL_ID = "mcpjam/no-runnable-harness-model";
@@ -366,11 +379,16 @@ export function harnessDefaultModel(
   target: HarnessModelTarget,
   preferredModelId?: string | null,
 ): ModelDefinition | undefined {
+  if (target.harnessId === "cursor" && preferredModelId) {
+    const saved = models.find((model) => String(model.id) === preferredModelId);
+    if (saved) return saved;
+  }
   const enabled = models.filter((model) => !model.disabled);
   const preferred = preferredModelId
     ? enabled.find((model) => String(model.id) === preferredModelId)
     : undefined;
   if (preferred) return preferred;
+  if (target.harnessId === "cursor") return enabled.find((model) => model.id === "cursor/auto");
   const supported = enabled.find((model) => {
     const row = harnessRowModelId(model, target);
     return (

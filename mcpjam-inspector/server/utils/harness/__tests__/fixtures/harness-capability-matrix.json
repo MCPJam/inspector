@@ -51,6 +51,7 @@
       "local": true,
       "mcpClient": "harness",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "anthropic-native",
         "provider": "anthropic"
@@ -120,6 +121,7 @@
       "local": true,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "openai-native",
         "provider": "openai"
@@ -184,6 +186,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "openai-native",
         "provider": "openai"
@@ -199,15 +202,6 @@
       "approvalPermissionMode": "allow-reads",
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
-      "externalAccountBrokerBinding": {
-        "CURSOR_API_KEY": {
-          "header": "authorization",
-          "hosts": [
-            "api2.cursor.sh"
-          ],
-          "template": "Bearer {}"
-        }
-      },
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
@@ -218,6 +212,7 @@
         "passThroughOnly": true,
         "runtimeVersion": "2026.11.05-86047df"
       },
+      "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
@@ -231,7 +226,7 @@
         "trailingNewline": false
       },
       "supportedReasoningEfforts": [],
-      "supportsHostExecutedToolApproval": false,
+      "supportsHostExecutedToolApproval": true,
       "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
@@ -240,8 +235,7 @@
     "descriptor": {
       "controls": {
         "modelId": {
-          "enforced": false,
-          "note": "The Cursor CLI runs on your Cursor account, which chooses the model itself."
+          "enforced": true
         },
         "progressiveToolDiscovery": {
           "enforced": false,
@@ -271,6 +265,7 @@
       "local": false,
       "mcpClient": "harness",
       "modelAccess": "external-account",
+      "orgKeys": false,
       "orgUpstream": null,
       "protocol": null,
       "reasoningEfforts": [],
@@ -324,6 +319,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": false,
       "orgUpstream": null,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],

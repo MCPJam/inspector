@@ -18,7 +18,10 @@ import {
   ensureComputerReady,
   getComputerSandboxInfo,
 } from "../../utils/computers/control-plane-client.js";
-import { resolveE2BPortEndpoint } from "../../utils/harness/e2b-port-endpoint.js";
+import {
+  hasPrivateAppPorts,
+  resolveE2BPortEndpoint,
+} from "../../utils/harness/e2b-port-endpoint.js";
 import { logger } from "../../utils/logger.js";
 import {
   PREVIEW_TUNNEL_DENIED_PORTS,
@@ -30,6 +33,7 @@ import {
 } from "./tunnel-sidecar.js";
 
 export type WorkspacePreviewErrorCode =
+  | "private_workspace"
   | "https_unsupported"
   | "port_not_allowed"
   | "no_node_runtime"
@@ -39,6 +43,8 @@ export type WorkspacePreviewErrorCode =
 
 /** Model-facing, because the agent is the one that asked for the page. */
 const MESSAGES: Record<WorkspacePreviewErrorCode, string> = {
+  private_workspace:
+    "preview_unavailable: Browser cannot open apps on this private workspace yet. Check the app from the terminal.",
   https_unsupported:
     "preview_unavailable: Browser opens the shell's apps over http only. Use http://localhost:<port>.",
   port_not_allowed:
@@ -92,6 +98,7 @@ export function previewKeyFor(secret: string, port: number): string {
 /** The slice of an attached E2B sandbox the tunnel needs. */
 export interface TunnelSandbox {
   sandboxId: string;
+  privateAppPorts?: boolean;
   trafficAccessToken?: string;
   getHost(port: number): string;
   files: {
@@ -101,7 +108,11 @@ export interface TunnelSandbox {
   commands: {
     run(
       command: string,
-      options?: { timeoutMs?: number; background?: boolean; envs?: Record<string, string> },
+      options?: {
+        timeoutMs?: number;
+        background?: boolean;
+        envs?: Record<string, string>;
+      },
     ): Promise<{ exitCode?: number }>;
   };
 }
@@ -156,8 +167,6 @@ function tunnelFor(sandbox: TunnelSandbox, state: TunnelState): WorkspaceTunnel 
   return {
     secret: state.secret,
     upstreamUrl: endpoint.url,
-    // Carries a private workspace's traffic access token, so the edge lets the
-    // browser box's handshake through; the sidecar's own key still decides.
     upstreamHeaders: endpoint.headers ?? {},
   };
 }
@@ -173,6 +182,8 @@ export function ensureWorkspaceTunnel(
   sandbox: TunnelSandbox,
   options: { pollMs?: number; timeoutMs?: number } = {},
 ): Promise<WorkspaceTunnel> {
+  if (hasPrivateAppPorts(sandbox))
+    return Promise.reject(new WorkspacePreviewError("private_workspace"));
   const running = starting.get(sandbox.sandboxId);
   if (running) return running;
   const attempt = startOrReuseTunnel(sandbox, options).finally(() =>
