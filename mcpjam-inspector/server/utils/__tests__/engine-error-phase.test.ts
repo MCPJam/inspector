@@ -88,6 +88,7 @@ vi.mock("@sentry/node", () => ({
 
 type EngineErrorEvent = {
   phase?: "setup" | "stream";
+  reportedOrigin?: string;
   message?: string;
   httpStatus?: number;
   stepIndex?: number;
@@ -189,4 +190,41 @@ describe("the emulated engine reports which side of the handover it died on", ()
       expect(event.phase).toBeDefined();
     }
   });
+
+  it.each([
+    [
+      "a setup throw",
+      () => ({
+        onStreamWriterReady: () => {
+          throw new Error("preparation blew up before the model was asked");
+        },
+      }),
+    ],
+    [
+      "a transport failure",
+      () => {
+        global.fetch = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+        return {};
+      },
+    ],
+    [
+      "a non-OK backend response",
+      () => {
+        global.fetch = vi
+          .fn()
+          .mockResolvedValue(new Response("Bad Gateway", { status: 502 }));
+        return {};
+      },
+    ],
+  ])(
+    "leaves no emitter without its reporter's verdict: %s",
+    async (_label, stage) => {
+      // The eval driver re-captures a failure whose event lacks this, so an
+      // omission duplicates a Sentry event rather than losing one — and
+      // re-opens INSPECTOR-HONO-70.
+      const { events } = await runTurn(stage());
+      expect(events).toHaveLength(1);
+      expect(events[0].reportedOrigin).toBeDefined();
+    },
+  );
 });

@@ -1103,11 +1103,22 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures. An empty step was
-    // already reported once by the engine, which decided whether it is ours
-    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines.
-    if (lastEngineError?.code === "provider_empty_response") {
+    // `logger.error` with no error object always captures, untagged. Skip it
+    // only when the engine's reporter already recorded this failure:
+    // - it classified it (`reportedOrigin` set, not `ambiguous`): it paged if
+    //   ours and deliberately declined otherwise (INSPECTOR-HONO-70);
+    // - an empty step: the emitter decided ownership itself
+    //   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+    //   `ambiguous` on purpose.
+    // Anything else — `ambiguous`, no verdict, no engine error — has no other
+    // Sentry record, so it still captures here.
+    const reporterClassified =
+      lastEngineError?.reportedOrigin !== undefined &&
+      lastEngineError.reportedOrigin !== "ambiguous";
+    if (
+      reporterClassified ||
+      lastEngineError?.code === "provider_empty_response"
+    ) {
       logger.warn(logLine);
     } else {
       logger.error(logLine);

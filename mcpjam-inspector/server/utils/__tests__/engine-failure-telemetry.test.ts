@@ -14,7 +14,7 @@
  *   - the wire error chunk shape is unchanged (client contract)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { originOf } from "@mcpjam/sdk";
+import { originOf, type ErrorOrigin } from "@mcpjam/sdk";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
@@ -75,7 +75,7 @@ vi.mock("@sentry/node", () => ({
   captureMessage: vi.fn(),
 }));
 
-function makeReporter(): {
+function makeReporter(origin: ErrorOrigin = "ambiguous"): {
   reporter: StreamFailureReporter;
   calls: StreamFailureEvent[];
 } {
@@ -84,7 +84,7 @@ function makeReporter(): {
     calls.push(e);
     return {
       normalized: e.normalized ?? ({ slug: "internal/unknown" } as any),
-      origin: "ambiguous",
+      origin,
     };
   };
   return { reporter, calls };
@@ -254,9 +254,10 @@ describe("engine failure telemetry", () => {
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    const { reporter, calls } = makeReporter();
+    const { reporter, calls } = makeReporter("user_config");
+    const onEngineError = vi.fn();
 
-    await runTurn({ failureReporter: reporter });
+    await runTurn({ failureReporter: reporter, onEngineError });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
@@ -264,6 +265,11 @@ describe("engine failure telemetry", () => {
       hop: "user_server_hop",
       errorCode: "user_rate_limit",
     });
+    // The reporter's verdict rides on the event, so the eval driver can tell
+    // a declined failure from one nobody recorded (INSPECTOR-HONO-70).
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ reportedOrigin: "user_config" }),
+    );
   });
 
   it("owns a 401 whose body names MCPJam's own managed key", async () => {
@@ -577,12 +583,17 @@ describe("engine failure telemetry", () => {
       .fn()
       .mockRejectedValue(new TypeError("fetch failed: ECONNRESET"));
     const { reporter, calls } = makeReporter();
+    const onEngineError = vi.fn();
 
-    await runTurn({ failureReporter: reporter });
+    await runTurn({ failureReporter: reporter, onEngineError });
 
     expect(calls).toHaveLength(1);
     expect(calls[0].source).toBe("mcp.chat-v2.agentic-loop");
     expect(calls[0].transport).toBe("http_stream");
     expect(errorChunks()).toHaveLength(1);
+    // Unclassified and not paged: the driver must still capture this one.
+    expect(onEngineError).toHaveBeenCalledWith(
+      expect.objectContaining({ reportedOrigin: "ambiguous" }),
+    );
   });
 });

@@ -4829,7 +4829,7 @@ export async function runHarnessTurn(
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
       // on origin=mcpjam, emit route.operation.failed.
-      failureReporter({
+      const report = failureReporter({
         message: "[harness] turn failed",
         error: err,
         source: "chat.harness-turn",
@@ -4884,6 +4884,7 @@ export async function runHarnessTurn(
         // failure then stays unclassified rather than being guessed from the
         // sentence above.
         ...(failureEvidence ? { infra: failureEvidence } : {}),
+        reportedOrigin: report.origin,
       });
     } finally {
       stopScopeStepUpBridge();

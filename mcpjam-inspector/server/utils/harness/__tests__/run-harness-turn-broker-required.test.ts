@@ -166,9 +166,16 @@ describe("runHarnessTurn broker-required (COMP-23)", () => {
     );
 
     expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    const err = onEngineError.mock.calls[0]![0] as {
+      message: string;
+      reportedOrigin?: string;
+    };
     expect(err.message).toMatch(/broker credential delivery/i);
     expect(err.message).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+    // Our setup bug, yet the reporter cannot classify it and does not page.
+    // The verdict rides on the event so the eval driver still captures it
+    // (INSPECTOR-HONO-70).
+    expect(err.reportedOrigin).toBe("ambiguous");
     // Fail-closed means NO credential of any kind was pursued:
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(modelCredentialCalls()).toHaveLength(0);

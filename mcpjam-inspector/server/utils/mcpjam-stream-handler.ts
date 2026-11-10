@@ -55,6 +55,7 @@ import {
   readModelOutputImage,
   renameToolNamePart,
   renameToolNamesInMessages,
+  type ErrorOrigin,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -647,6 +648,14 @@ export interface MCPJamEngineErrorEvent {
    * error and go through the normal describer.
    */
   normalized?: NormalizedError;
+  /**
+   * The turn's failure reporter's verdict on this failure
+   * (`RouteFailureReport.origin`, promotion included). The reporter pages only
+   * on `mcpjam`, so any other set value means it was recorded and deliberately
+   * not paged. Absent ⇒ not reported (an aborted turn, or an emitter that does
+   * not report): a consumer must treat that as unrecorded.
+   */
+  reportedOrigin?: ErrorOrigin;
 }
 
 /**
@@ -4413,6 +4422,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      ...(backendReport ? { reportedOrigin: backendReport.origin } : {}),
       // A response is in hand, so this is unambiguously the model's leg —
       // no flag needed to know it.
       phase: "stream",
@@ -5013,6 +5023,7 @@ async function processOneStep(ctx: StepContext): Promise<{
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        ...(stepReport ? { reportedOrigin: stepReport.origin } : {}),
         // The enclosing `try` opens on tool wrapping and execution, which is
         // reached only after the stream responded. Nothing pre-request can
         // land here.
@@ -5212,6 +5223,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized: emptyStepNormalized,
+      ...(emptyStepReport ? { reportedOrigin: emptyStepReport.origin } : {}),
       // A response was streamed in full; only its content was missing. Never
       // `setup` — the model leg unambiguously ran.
       phase: "stream",
@@ -6100,6 +6112,7 @@ export async function runChatEngineLoop(
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          reportedOrigin: loopReport.origin,
           // The only one of this file's three emitters that can fire on
           // either side of the handover. See `modelInvoked`.
           phase: modelInvoked ? "stream" : "setup",
