@@ -234,7 +234,8 @@ export function holdHarnessBox(
   if (!ownsBox && !provisioned.idleMs) {
     // The backend sends the window with every conversation box; without it
     // the turn still runs, held by its model lease, but nothing heartbeats.
-    logger.error(
+    // A backend older than this release sends none, so this stays a warning.
+    logger.warn(
       "[harness-box] conversation box arrived without its idle window",
       { surface: options.surface, sandboxRowId: provisioned.sandboxRowId },
     );

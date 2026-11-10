@@ -1070,7 +1070,11 @@ export function readIdleMs(value: unknown): number | undefined {
 function keepSaneIdleWindow<T extends { idleMs?: number }>(
   result: ControlPlaneResult<T>,
 ): ControlPlaneResult<T> {
-  if (result.ok && readIdleMs(result.value.idleMs) === undefined) {
+  if (
+    result.ok &&
+    result.value &&
+    readIdleMs(result.value.idleMs) === undefined
+  ) {
     delete result.value.idleMs;
   }
   return result;
@@ -1114,7 +1118,7 @@ export async function touchSandbox(args: {
     { quietNetworkErrors: true },
   );
   if (result.ok) {
-    const idleMs = readIdleMs(result.value.idleMs);
+    const idleMs = readIdleMs(result.value?.idleMs);
     return {
       outcome: "touched",
       ...(idleMs !== undefined ? { idleMs } : {}),
