@@ -665,7 +665,10 @@ matchToolArgumentWith("add", "a", (v) => v > 0, calls); // predicate
 
 ## Telemetry
 
-The SDK collects anonymous usage metrics (e.g., eval test run counts) to help improve the product. No personal data is collected.
+The SDK collects anonymous usage metrics to help improve the product. No personal data is collected. It sends two events, each with no user id:
+
+- `eval_test_run_triggered`, when an eval test runs, with its iteration and concurrency counts.
+- `conformance_run_triggered`, once per conformance run (a test, a suite, or `runConformance`), with `run_source: "sdk"`, also in CI.
 
 To disable telemetry, set either of these environment variables:
 

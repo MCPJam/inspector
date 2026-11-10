@@ -8,6 +8,7 @@ export interface InteractiveAuthorizationSession {
     authorizationUrl: string;
     expectedState?: string;
     timeoutMs: number;
+    signal?: AbortSignal;
     openUrl?: (url: string) => Promise<void>;
   }): Promise<AuthorizationCodeResult>;
   stop(): Promise<void>;
@@ -37,9 +38,11 @@ function getBrowserOpenCommand(url: string): {
         args: [url],
       };
     case "win32":
+      // Not `cmd /c start`: cmd.exe reads `&` as a command separator, and the
+      // server under test chooses the authorization endpoint in this URL.
       return {
-        command: "cmd",
-        args: ["/c", "start", "", url],
+        command: "rundll32",
+        args: ["url.dll,FileProtocolHandler", url],
       };
     default:
       return {
@@ -50,6 +53,12 @@ function getBrowserOpenCommand(url: string): {
 }
 
 export async function openUrlInBrowser(url: string): Promise<void> {
+  // The system opener launches whatever handles the scheme, so only a web
+  // page may reach it.
+  const { protocol } = new URL(url);
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw new Error(`Refusing to open a non-HTTP URL (${protocol})`);
+  }
   const { command, args } = getBrowserOpenCommand(url);
 
   await new Promise<void>((resolve, reject) => {
@@ -303,7 +312,7 @@ export async function createInteractiveAuthorizationSession(options?: {
   let pendingResolve:
     | ((value: { code: string; state?: string }) => void)
     | undefined;
-  let pendingReject: ((error: Error) => void) | undefined;
+  let pendingReject: ((error: unknown) => void) | undefined;
   let timeoutHandle: NodeJS.Timeout | undefined;
   let activeExpectedState: string | undefined;
 
@@ -313,7 +322,7 @@ export async function createInteractiveAuthorizationSession(options?: {
     activeExpectedState = undefined;
   };
 
-  const failPending = (error: Error): void => {
+  const failPending = (error: unknown): void => {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
       timeoutHandle = undefined;
@@ -437,11 +446,13 @@ export async function createInteractiveAuthorizationSession(options?: {
       authorizationUrl,
       expectedState,
       timeoutMs,
+      signal,
       openUrl = openUrlInBrowser,
     }) {
       if (pendingResolve || pendingReject) {
         throw new Error("Interactive authorization is already in progress");
       }
+      signal?.throwIfAborted();
       activeExpectedState = expectedState;
 
       const codePromise = new Promise<AuthorizationCodeResult>(
@@ -465,8 +476,26 @@ export async function createInteractiveAuthorizationSession(options?: {
       // original promise's rejection is still observable to the caller.
       codePromise.catch(() => undefined);
 
+      let rejectAbort: (reason: unknown) => void = () => undefined;
+      const aborted = new Promise<never>((_, reject) => {
+        rejectAbort = reject;
+      });
+      const onAbort = () => {
+        failPending(signal?.reason);
+        rejectAbort(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
       try {
-        await openUrl(authorizationUrl);
+        // A browser opener may hang; cancellation must still release the wait.
+        await Promise.race([
+          aborted,
+          Promise.resolve().then(() => {
+            signal?.throwIfAborted();
+            return openUrl(authorizationUrl);
+          }),
+        ]);
+        return await codePromise;
       } catch (error) {
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
@@ -474,9 +503,9 @@ export async function createInteractiveAuthorizationSession(options?: {
         }
         clearPending();
         throw error;
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
-
-      return codePromise;
     },
     async stop() {
       if (timeoutHandle) {

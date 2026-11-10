@@ -128,7 +128,7 @@ function turn(projectId: string, extra: Record<string, unknown> = {}) {
   return {
     projectId,
     selectedServerIds: [],
-    messages: [{ role: "user", content: "go" }],
+    messages: [{ role: "user", parts: [{ type: "text", text: "go" }] }],
     model: {
       id: "anthropic/claude-haiku-4.5",
       provider: "anthropic",
@@ -374,7 +374,14 @@ describe.each([true])(
         [
           AUTHORIZE_PROJECT_URL,
           expect.objectContaining({
-            body: JSON.stringify({ projectId: "project-1" }),
+            body: JSON.stringify({
+              projectId: "project-1",
+              chatPreparation: {
+                projectId: "project-1",
+                serverOverrideIds: [],
+                runtimeVenue: "local",
+              },
+            }),
           }),
         ],
       ]);
@@ -410,7 +417,14 @@ describe.each([true])(
         [
           AUTHORIZE_PROJECT_URL,
           expect.objectContaining({
-            body: JSON.stringify({ projectId: FOREIGN_PROJECT_ID }),
+            body: JSON.stringify({
+              projectId: FOREIGN_PROJECT_ID,
+              chatPreparation: {
+                projectId: FOREIGN_PROJECT_ID,
+                serverOverrideIds: [],
+                runtimeVenue: "local",
+              },
+            }),
           }),
         ],
       ]);

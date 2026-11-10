@@ -456,13 +456,14 @@ async function protocolVersionHeaderWarning(
  * lower-level logs usually mean the server's filtering is off.
  *
  * A call that does not complete cleanly proves nothing about filtering, so it
- * yields no advice. Modern era only, and only when a `logProbe` is supplied:
- * no metadata says which tool logs, and advice never calls a tool on a guess.
+ * yields no advice. Modern era only, and only when a `logProbe` (or this
+ * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
+ * tool logs, and advice never calls a tool on a guess.
  */
 async function logLevelFilteringWarning(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning | undefined> {
-  const probe = ctx.config.logProbe;
+  const probe = ctx.config.logLevelFilteringProbe ?? ctx.config.logProbe;
   if (ctx.config.era !== "modern" || !probe) {
     return undefined;
   }

@@ -19,6 +19,8 @@ import {
   assertNoConflictingEnvironmentOverrides,
 } from "../../services/evals/quick-run-environment.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
+import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
+import { serverDrain } from "../../services/lifecycle/drain.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import {
   createAuthorizedManager,
@@ -63,6 +65,14 @@ import {
 } from "../shared/evals.js";
 
 const evals = new Hono();
+
+// The routes that start eval work, refused while this process drains.
+evals.on("POST", ["/run", "/replay-run"], refuseWhileDraining("eval_run"));
+evals.on(
+  "POST",
+  ["/run-test-case", "/stream-test-case"],
+  refuseWhileDraining("quick_run"),
+);
 
 const hostedBatchSchema = z.object({
   projectId: z.string().min(1),
@@ -193,6 +203,7 @@ evals.post("/run", async (c) =>
         rawBody,
         hostedRunEvalsSchema,
         {
+          pluginComputerRuntime: false,
           // The host THIS run executes under, so the manager negotiates as that
           // host. An environment pins its own, and the browser's pins come from
           // whichever host it had ACTIVE — without this a run could take its
@@ -377,6 +388,7 @@ evals.post("/run-test-case", async (c) => {
     c,
     hostedRunTestCaseSchema,
     async (manager, body) =>
+      // Drained by its admission until this answers; see refuseWhileDraining.
       runEvalTestCaseWithManager(manager, {
         ...body,
         ...((await anyUnattendedLocalHarness(c.req.header("authorization"), body.projectId)) ? { runtimeVenue: "local" as const } : {}),
@@ -389,6 +401,7 @@ evals.post("/run-test-case", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
       },
@@ -521,6 +534,8 @@ evals.post("/stream-test-case", async (c) => {
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
+      // A host attachment does not authorize durable Computer placement for an eval.
+      pluginComputerRuntime: false,
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
@@ -540,6 +555,14 @@ evals.post("/stream-test-case", async (c) => {
   // manager above authorizes the raw bearer itself.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
+  // A shutdown drains the run until its stream completes.
+  let streamSettled!: () => void;
+  void serverDrain.track(
+    "quick_run",
+    new Promise<void>((resolve) => {
+      streamSettled = resolve;
+    }),
+  );
   try {
     const stream = await streamEvalTestCaseWithManager(
       manager,
@@ -553,7 +576,10 @@ evals.post("/stream-test-case", async (c) => {
           : {}),
       },
       {
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: () => {
+          streamSettled();
+          return manager.disconnectAllServers();
+        },
         // Client disconnect aborts the run (including any awaited task).
         requestSignal: c.req.raw.signal,
       },
@@ -567,6 +593,7 @@ evals.post("/stream-test-case", async (c) => {
       },
     });
   } catch (error) {
+    streamSettled();
     await manager.disconnectAllServers();
     throw error;
   }
@@ -588,6 +615,7 @@ evals.post("/generate-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },
@@ -611,6 +639,7 @@ evals.post("/generate-negative-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },

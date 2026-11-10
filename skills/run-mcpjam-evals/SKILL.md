@@ -32,7 +32,7 @@ list_eval_suites → get_eval_run_disclosure → run_eval_suite → get_eval_run
 
 **3. Launch.** `run_eval_suite` is **asynchronous** — it returns a `runId` immediately and the work continues server-side.
 
-**4. Poll.** `get_eval_run` with `project` and `runId` until `status` is terminal: `completed`, `failed`, or `cancelled`. Anything else means still running; wait and ask again. Do not re-launch because a result is not ready.
+**4. Poll.** `get_eval_run` with `project` and `runId` until `status` is terminal: `completed`, `failed`, `cancelled`, or `timed_out`. Anything else means still running; wait and ask again. Do not re-launch because a result is not ready.
 
 **5. Read the verdict.** On anything other than a pass, **start at `get_eval_run`'s `decisionSummary`** — it carries the verdict and `verdictSource`, which tells you what actually decided the outcome. Do not jump straight to iterations; you will read a lot of rows without knowing what you are looking for. `references/triage.md` is the decision tree from here.
 

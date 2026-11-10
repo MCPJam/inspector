@@ -1,7 +1,18 @@
+import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
+import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
+import { makeFunctionReference } from "convex/server";
+import { isRecord } from "../../utils/byok/list-request.js";
+import {
+  normalizeHostRuntimeConfig,
+  type HostRuntimeConfig,
+} from "../../utils/host-runtime-config.js";
 import type { ConvexHttpClient } from "convex/browser";
 import type { InternalExecutionTarget } from "../../../shared/execution-target.js";
 import {
   resolveEnvironmentForRuntime,
+  assertRuntimeInvariants,
+  resolveRuntimeVenue,
+  translateEnvironmentRuntimeError,
   type ResolvedEnvironmentRuntime,
 } from "../environments/runtime.js";
 import { composeTurnEnvironment } from "./compose-turn-environment.js";
@@ -23,6 +34,25 @@ export type ResolvedChatTurn = {
   selection: TurnServerSelection;
 };
 
+export function chatPreparationRequest(
+  projectId: string,
+  target: Extract<InternalExecutionTarget, { kind: "host" | "adhoc" }>,
+  selection: TurnServerSelection,
+) {
+  const runtimeVenue = resolveRuntimeVenue();
+  return {
+    projectId,
+    ...(target.kind === "host" ? { hostId: target.hostId } : {}),
+    ...(selection.kind === "explicit"
+      ? { serverOverrideIds: selection.serverIds }
+      : {}),
+    ...(selection.kind === "client-default"
+      ? { serverSelectionSource: "client-default" as const }
+      : {}),
+    ...(runtimeVenue ? { runtimeVenue } : {}),
+  };
+}
+
 /** Authenticated adapters supply access intent; the existing resolvers authorize it live. */
 export async function resolveChatTurn(args: {
   target: Exclude<InternalExecutionTarget, { kind: "scenario" }>;
@@ -31,6 +61,8 @@ export async function resolveChatTurn(args: {
   client?: ConvexHttpClient;
   bearer: string;
   signal?: AbortSignal;
+  prepareChatTurn?: boolean;
+  preparedChatTurn?: unknown;
 }): Promise<ResolvedChatTurn> {
   if (
     !args.client ||
@@ -44,6 +76,95 @@ export async function resolveChatTurn(args: {
     );
   }
   const composed = args.target.kind !== "environment";
+  let preparedHost: { hostId: string; config: HostRuntimeConfig } | undefined;
+  if (
+    (args.prepareChatTurn || args.preparedChatTurn !== undefined) &&
+    args.target.kind !== "environment"
+  ) {
+    let raw: unknown;
+    try {
+      raw = args.preparedChatTurn !== undefined
+        ? args.preparedChatTurn
+        : await args.client.action(
+            makeFunctionReference<"action">("chatTurnPreparation:prepareChatTurn"),
+            chatPreparationRequest(args.access.projectId, args.target, args.selection),
+          );
+      if (isRecord(raw) && raw.kind === "failed") {
+        throw { data: raw.errorData };
+      }
+    } catch (error) {
+      if (args.signal?.aborted) throw error;
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new WebRouteError(
+          504,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Chat preparation timed out. Try sending your message again.",
+        );
+      }
+      throw translateEnvironmentRuntimeError(error);
+    }
+    if (isRecord(raw) && raw.kind === "resolved") {
+      const environment = assertRuntimeInvariants(raw.environment);
+      if (
+        args.target.kind === "host" &&
+        environment.host.hostId !== args.target.hostId
+      ) {
+        throw new WebRouteError(
+          502,
+          ErrorCode.INTERNAL_ERROR,
+          "Couldn't prepare this client. Try sending your message again.",
+        );
+      }
+      if (
+        (environment.host.runtimeConfig.agentLoop ??
+          environment.host.runtimeConfig.harness ??
+          null) !== raw.harness
+      ) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.CONFLICT,
+          "The client's runtime changed while preparing this turn. Send again to use its current settings.",
+        );
+      }
+      markOnboardingPhase("admission");
+      return {
+        kind: "project",
+        mode: "interactive",
+        access: args.access,
+        environment,
+        composed,
+        selection: args.selection,
+      };
+    }
+    if (
+      !isRecord(raw) ||
+      raw.kind !== "external-account" ||
+      typeof raw.hostId !== "string" ||
+      !isRecord(raw.runtimeConfig)
+    ) {
+      throw new WebRouteError(
+        502,
+        ErrorCode.INTERNAL_ERROR,
+        "Couldn't prepare this chat. Try sending your message again.",
+      );
+    }
+    const harness = raw.runtimeConfig.agentLoop ?? raw.runtimeConfig.harness;
+    if (
+      typeof harness !== "string" ||
+      !externalAccountCredentialFor(harness) ||
+      (args.target.kind === "host" && raw.hostId !== args.target.hostId)
+    ) {
+      throw new WebRouteError(
+        502,
+        ErrorCode.INTERNAL_ERROR,
+        "Couldn't prepare this client. Try sending your message again.",
+      );
+    }
+    preparedHost = {
+      hostId: raw.hostId,
+      config: normalizeHostRuntimeConfig(raw.runtimeConfig),
+    };
+  }
   const composition =
     args.target.kind === "environment"
       ? null
@@ -53,6 +174,7 @@ export async function resolveChatTurn(args: {
           ...(args.target.kind === "host"
             ? { hostId: args.target.hostId }
             : {}),
+          ...(preparedHost ? { preparedHost } : {}),
           bearer: args.bearer,
           signal: args.signal,
         });

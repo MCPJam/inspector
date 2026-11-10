@@ -301,6 +301,40 @@ describe("streamWebChatTurn model dispatch", () => {
     capture.mockRestore();
   });
 
+  it("asks where a custom connection runs when an MCP server is local-only", async () => {
+    // The cloud route refuses a local-runtime connection with
+    // `local_runtime_required`, so a stdio server must not skip the resolve.
+    const config = await import("../org-model-config.js");
+    vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+      ok: true,
+      key: "custom:gateway",
+    });
+    vi.mocked(config.isLocalRuntimeEligible).mockReturnValueOnce(true);
+    vi.mocked(config.resolveOrgProviderRuntime).mockResolvedValueOnce({
+      runtimeLocation: "local",
+      provider: {
+        providerKey: "custom:gateway",
+        baseUrl: "https://gateway.example.com/v1",
+        modelIds: ["gpt-x"],
+      },
+    } as never);
+    await streamWebChatTurn(
+      args(
+        { id: "custom:gateway:gpt-x", provider: "custom", hosted: false },
+        null,
+      ) as never,
+    );
+    expect(config.resolveOrgProviderRuntime).toHaveBeenLastCalledWith(
+      "p1",
+      "custom:gateway",
+      "custom:gateway:gpt-x",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(handlers.localOrg).toHaveBeenCalledTimes(1);
+    expect(handlers.hostedOrg).not.toHaveBeenCalled();
+  });
+
   it("routes a BARE MCPJam-hosted id + provider to the MCPJam path (harness runs)", async () => {
     await streamWebChatTurn(
       args({ id: "gpt-5-nano", provider: "openai" }) as never,
@@ -622,6 +656,61 @@ describe("streamWebChatTurn model dispatch", () => {
         ),
       ).rejects.toThrow(/reasoning effort "high" is not supported/);
       expect(handlers.localOrg).not.toHaveBeenCalled();
+    });
+
+    it("org cloud: a custom connection runs without the effort, saved one included, and says so", async () => {
+      const config = await import("../org-model-config.js");
+      vi.mocked(config.deriveOrgProviderKey).mockReturnValueOnce({
+        ok: true,
+        key: "custom:gateway",
+      });
+      await streamWebChatTurn(
+        args(
+          { id: "custom:gateway:gpt-x", provider: "custom", hosted: false },
+          null,
+          {
+            reasoningEffort: "low",
+            routingSelection: {
+              modelId: "custom:gateway:gpt-x",
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "conn-custom" },
+              settings: { reasoningEffort: "high" },
+              fallback: { provider: "none", model: "none" },
+            },
+          },
+        ) as never,
+      );
+      const opts = handlers.hostedOrg.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect("reasoningEffort" in opts).toBe(false);
+      expect(opts.modelSelection).toMatchObject({ source: "org" });
+      expect(opts.modelSelection).not.toHaveProperty("settings");
+      const onStreamWriterReady = opts.onStreamWriterReady as (writer: {
+        write: (chunk: unknown) => void;
+      }) => void;
+      const write = vi.fn();
+      onStreamWriterReady({ write });
+      expect(write).toHaveBeenCalledWith({
+        type: "data-reasoning-effort-notice",
+        data: { reason: "custom_provider" },
+        transient: true,
+      });
+    });
+
+    it("org local: a custom connection runs without the effort instead of being refused", async () => {
+      await localOrg(
+        "custom:gateway",
+        { id: "custom:gateway:gpt-x", provider: "custom" },
+        { reasoningEffort: "high" },
+      );
+      const opts = handlers.localOrg.mock.calls[0]?.[0] as Record<
+        string,
+        unknown
+      >;
+      expect(opts.reasoningEffort).toBeUndefined();
+      expect(opts.providerOptions).toBeUndefined();
     });
 
     it("org local: an explicit temperature with an effort stays refused", async () => {

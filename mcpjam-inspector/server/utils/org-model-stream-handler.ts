@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
@@ -37,11 +38,11 @@ import type {
 } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
-  buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   type PersistChatOutcome,
@@ -90,6 +91,7 @@ import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   projectId: string;
   providerKey: string;
   /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
@@ -304,6 +306,7 @@ export function formatLocalStreamError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface OrgLocalModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
@@ -627,7 +630,7 @@ export function handleLocalOrgChatModel(
   try {
     assertOrgModelAllowed(provider, modelId);
     llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(provider, modelId),
+      buildGuardedOrgModel(provider, modelId),
       options.admission,
       modelId,
       attempts,
@@ -667,6 +670,7 @@ export function handleLocalOrgChatModel(
 
   let streamErrored = false;
   return streamDirectChatWithLiveTrace({
+    turnAuthorization: options.turnAuthorization,
     llmModel,
     modelId,
     messageHistory: messages,
@@ -834,6 +838,11 @@ export async function postLocalUsage(params: {
    */
   journeyRunId?: string;
   /**
+   * MCP Events trigger run the turn served. The backend charges the usage
+   * record's cost to that run and its trigger's daily spend cap.
+   */
+  eventRunId?: string;
+  /**
    * The eval iteration (and suite run) a local-runtime eval turn belongs to.
    * With `execution`, the backend merges the record onto that iteration row;
    * a swarm turn is attributed by `journeyRunId` + `chatSessionId` instead.
@@ -889,6 +898,7 @@ export async function postLocalUsage(params: {
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
         ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
+        ...(params.eventRunId ? { eventRunId: params.eventRunId } : {}),
         ...(params.evalIterationId
           ? { evalIterationId: params.evalIterationId }
           : {}),
@@ -926,6 +936,7 @@ export async function handleHostedOrgChatModel(
   }
 
   return handleMCPJamFreeChatModel({
+    turnAuthorization: options.turnAuthorization,
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,

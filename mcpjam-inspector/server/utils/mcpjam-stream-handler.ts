@@ -1,9 +1,11 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
-import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
+import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
@@ -34,7 +36,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -46,10 +48,13 @@ import {
   type BackendStreamFailureContext,
 } from "./org-policy-stream-refusal.js";
 import {
+  createToolNameAliases,
   describeAsSlug,
   describeError,
   isNormalizedError,
   readModelOutputImage,
+  renameToolNamePart,
+  renameToolNamesInMessages,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -411,10 +416,12 @@ async function clientAcceptsBackendChunk(
   chunk: unknown,
   reported: Set<string>,
 ): Promise<boolean> {
-  const result = await safeValidateTypes({
-    value: chunk,
-    schema: uiMessageChunkSchema,
-  });
+  // Call the lazy schema's own validate. `safeValidateTypes` from the
+  // inspector's `@ai-sdk/provider-utils` cannot accept this schema: the
+  // harness pin brings a newer copy whose Schema brand does not overlap.
+  const validate = uiMessageChunkSchema().validate;
+  if (!validate) return true;
+  const result = await validate(chunk);
   if (result.success) return true;
 
   const record =
@@ -928,6 +935,9 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
+  /** The route's stage timing; a harness turn adds its stages and first text. */
+  turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -1171,6 +1181,7 @@ export interface MCPJamHandlerOptions {
   agentLoop?: Harness;
   harnessTurnContext?: string;
   harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -2515,6 +2526,9 @@ async function processStream(
   // Who and where a pill minted here is bound to (MJ-008). Required: an
   // approval id minted without it could not be verified on resume.
   approvalBinding: ToolApprovalBinding,
+  // Undoes the request's provider-safe aliases, so a call to `cart_add` is
+  // handled as the server's `cart.add`.
+  toolNameFromWire: (name: string) => string,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2629,14 +2643,17 @@ async function processStream(
             );
       }
 
-      const chunk = value.value as UIMessageChunk & {
-        totalUsage?: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        };
-        [key: string]: unknown;
-      };
+      const chunk = renameToolNamePart(
+        value.value as UIMessageChunk & {
+          totalUsage?: {
+            inputTokens?: number;
+            outputTokens?: number;
+            totalTokens?: number;
+          };
+          [key: string]: unknown;
+        },
+        toolNameFromWire,
+      );
 
       if (firstChunkAt === undefined) {
         firstChunkAt = Date.now();
@@ -3980,7 +3997,7 @@ async function processOneStep(ctx: StepContext): Promise<{
 
   const beforeStepLength = messageHistory.length;
   const stepStartAbs = Date.now();
-  const llmStartAbs = stepStartAbs;
+  let llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
   // Keep current-turn reasoning while cleaning only the outgoing provider copy.
@@ -4081,41 +4098,74 @@ async function processOneStep(ctx: StepContext): Promise<{
   // paying, so a claim there is incoherent rather than merely misrouted.
   const dispatchPath =
     billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
+  // MCP allows tool names (`cart.add`) that the providers behind the backend
+  // reject, so the backend gets provider-safe aliases and `processStream`
+  // restores the originals.
+  const wireToolNames = createToolNameAliases(
+    activeToolDefs.map((def) => def.name),
+  );
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  res = await withSwarmStepAdmissionRetry(
-    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
-      method: "POST",
-      headers: convexHeaders,
-      body: JSON.stringify({
-        mode: "stream",
-        // Persist only once at the end of the full agentic loop via
-        // onConversationComplete to avoid storing partial per-step traces.
-        skipChatIngestion: true,
-        messages: JSON.stringify(scrubbedMessages),
-        model: modelId,
-        systemPrompt: providerSystemPrompt,
-        ...(temperature !== undefined ? { temperature } : {}),
-        tools: activeToolDefs,
-        ...(scenarioId ? { scenarioId } : {}),
-        ...(scenarioId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        ...(projectId ? { projectId } : {}),
-        ...(chatSessionId ? { chatSessionId } : {}),
-        ...(sourceType ? { sourceType } : {}),
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex,
-        ...(toolChoice ? { toolChoice } : {}),
-        ...(extraBodyFields ?? {}),
-      }),
-      ...(abortSignal ? { signal: abortSignal } : {}),
-    }),
+  let admissionAttempts = 0;
+  res = await withModelStepAdmissionRetry(
+    () => {
+      // A resend after a busy refusal restarts the model's clock, so time
+      // spent waiting for spending admission stays out of its latency.
+      if (admissionAttempts++ > 0) llmStartAbs = Date.now();
+      return fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+        method: "POST",
+        headers: convexHeaders,
+        body: JSON.stringify({
+          mode: "stream",
+          // Persist only once at the end of the full agentic loop via
+          // onConversationComplete to avoid storing partial per-step traces.
+          skipChatIngestion: true,
+          messages: JSON.stringify(
+            renameToolNamesInMessages(scrubbedMessages, wireToolNames.toWire),
+          ),
+          model: modelId,
+          systemPrompt: providerSystemPrompt,
+          ...(temperature !== undefined ? { temperature } : {}),
+          tools: activeToolDefs.map((def) => ({
+            ...def,
+            name: wireToolNames.toWire(def.name),
+          })),
+          ...(scenarioId ? { scenarioId } : {}),
+          ...(scenarioId && Number.isFinite(accessVersion)
+            ? { accessVersion }
+            : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(chatSessionId ? { chatSessionId } : {}),
+          ...(sourceType ? { sourceType } : {}),
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          ...(toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+          ...(extraBodyFields ?? {}),
+          // A hosted eval's own `toolChoice` rides in `extraBodyFields`.
+          ...(extraBodyFields?.toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  extraBodyFields.toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+        }),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+    },
     {
       sourceType,
       stepIndex,
@@ -4388,6 +4438,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     approvalDecisions,
     messageHistory,
     approvalBinding,
+    wireToolNames.fromWire,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
@@ -5567,6 +5618,7 @@ export async function runChatEngineLoop(
     let modelInvoked = false;
 
     try {
+      options.turnAuthorization?.start(traceTurn.turnId, safeWriter);
       onStreamWriterReady?.(safeWriter);
 
       if (aborted) {
@@ -5788,7 +5840,7 @@ export async function runChatEngineLoop(
             tools,
             progressivePlan,
             discoveryState,
-            authHeader,
+            authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
             scenarioId,
             accessVersion,
             projectId,
@@ -6089,10 +6141,11 @@ export async function runChatEngineLoop(
         };
         capturedTurnTrace = trace;
         try {
-          const persistOutcome = await onConversationComplete?.(
+          let persistOutcome = await onConversationComplete?.(
             [...messageHistory],
             trace,
           );
+          if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
           // Costs no latency: `onConversationComplete` already awaited the
           // ingest, which is what gates this stream's close in the first place.
           if (persistOutcome && chatSessionId) {

@@ -28,15 +28,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useClients";
-import {
-  useCreateProjectSecret,
-  useProjectSecrets,
-  useUpdateProjectSecret,
-} from "@/hooks/useProjectSecrets";
-import {
-  externalAccountCredentialFor,
-  externalKeySetupFor,
-} from "@/shared/external-credential-selection";
 import { useProjectServers } from "@/hooks/useViews";
 import {
   PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE,
@@ -44,6 +35,7 @@ import {
 } from "@/hooks/useProjects";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
@@ -59,6 +51,8 @@ import {
   getHostLogoSrc,
 } from "@/lib/host-ui-metadata";
 import { filterHostsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
+import { withModelChoiceNotice } from "@/lib/org-bound-template-seed";
 
 interface CreateHostDialogProps {
   isOpen: boolean;
@@ -118,6 +112,7 @@ export function CreateHostDialog({
   }, [claudeCodeLocalFlag, codexLocalFlag]);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
@@ -125,10 +120,11 @@ export function CreateHostDialog({
         ? filterHostsByFeatureFlags(getCatalogHosts(catalogState.catalog), {
             claudeCode: claudeCodeEnabled,
             codex: codexEnabled,
+            copilotCli: copilotCliEnabled === true,
             cursorCli: cursorCliEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
@@ -165,27 +161,8 @@ export function CreateHostDialog({
     localSetupAvailable[selectedLocalHarnessCandidate]
       ? selectedLocalHarnessCandidate
       : null;
-  // A client whose harness authenticates on the customer's own account (Cursor)
-  // cannot run without its key. When the project has no usable one, the dialog
-  // takes it here, so creating the client is the whole setup.
-  const externalCredential = externalAccountCredentialFor(
-    selectedTemplateInput?.harness,
-  );
-  const projectSecrets = useProjectSecrets(projectId || null);
-  const createProjectSecret = useCreateProjectSecret();
-  const updateProjectSecret = useUpdateProjectSecret();
-  const [externalKey, setExternalKey] = useState("");
-  // Waits for the secrets rather than skipping the key step on a guess, and
-  // updates the creator's own row of that name (mis-bound or materialized)
-  // instead of creating a second one, which the per-owner name rule refuses.
-  const externalKeySetup = useMemo(
-    () =>
-      selectedTemplateInput
-        ? externalKeySetupFor(selectedTemplateInput.harness, projectSecrets)
-        : ({ state: "none" } as const),
-    [projectSecrets, selectedTemplateInput],
-  );
-  const needsExternalKey = externalKeySetup.state === "needed";
+  // A Cursor client asks for no key: it runs on the organization's.
+  const orgSeed = useOrgBoundTemplateSeed(projectId || null);
   const selectedTemplateLabel =
     (catalogState.status === "live"
       ? getCatalogHost(catalogState.catalog, selectedTemplateId)?.label
@@ -210,7 +187,7 @@ export function CreateHostDialog({
     !isSaving &&
     catalogState.status === "live" &&
     Boolean(selectedTemplateInput) &&
-    externalKeySetup.state !== "loading";
+    orgSeed.ready;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -243,6 +220,12 @@ export function CreateHostDialog({
       }
       return;
     }
+    // Resolved before the write: a create refused here writes nothing.
+    const prepared = orgSeed.prepare(
+      cloneHostTemplateInput(selectedTemplateInput, { themeMode }),
+      trimmed,
+    );
+    if (!prepared) return;
     setSetupError(null);
     setIsSaving(true);
     try {
@@ -254,38 +237,7 @@ export function CreateHostDialog({
       // opens the whole project catalog regardless of a host's serverIds
       // (see preferences-store.ts), so the original storm risk is gone,
       // but the deliberate-creation framing stays.
-      const seed = cloneHostTemplateInput(selectedTemplateInput, { themeMode });
-      if (
-        externalKeySetup.state === "needed" &&
-        externalCredential &&
-        externalKey.trim()
-      ) {
-        // Personal and brokered: the value reaches the egress proxy, never a
-        // box. Your own existing row of that name is fixed in place.
-        const binding = {
-          delivery: "brokered" as const,
-          brokerHosts: [...externalCredential.binding.hosts],
-          brokerHeader: externalCredential.binding.header,
-          brokerTemplate: externalCredential.binding.template,
-        };
-        if (externalKeySetup.replaceSecretId) {
-          await updateProjectSecret({
-            projectId,
-            secretId: externalKeySetup.replaceSecretId,
-            value: externalKey.trim(),
-            ...binding,
-          });
-        } else {
-          await createProjectSecret({
-            projectId,
-            name: externalCredential.env,
-            value: externalKey.trim(),
-            ...binding,
-            sharing: "user",
-          });
-        }
-        setExternalKey("");
-      }
+      const seed = prepared.input;
       // Capture available-server count for analytics (we don't attach
       // them — see above — but knowing the count at creation time is
       // useful signal for onboarding funnels).
@@ -307,7 +259,9 @@ export function CreateHostDialog({
           .then(() => toast.success(`${harnessName} is ready`, { id: setupToast }))
           .catch(error => toast.error(`Client created. ${error instanceof Error ? error.message : `${harnessName} setup needs a retry.`}`, { id: setupToast }));
       }
-      toast.success(`Client "${trimmed}" created`);
+      toast.success(
+        withModelChoiceNotice(`Client "${trimmed}" created`, prepared.needsModelChoice),
+      );
       handleClose();
       onCreated(hostId);
       // Telemetry is best-effort: a posthog throw must not bubble into the
@@ -404,32 +358,6 @@ export function CreateHostDialog({
             />
           </div>
         </div>
-        {needsExternalKey && externalCredential && (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="external-credential-key">
-              {externalCredential.label}
-            </Label>
-            <Input
-              id="external-credential-key"
-              type="password"
-              autoComplete="off"
-              placeholder="Paste your key"
-              value={externalKey}
-              onChange={(e) => setExternalKey(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Stored as your personal secret and delivered to your runs by the
-              egress proxy, so it never enters a computer. Keep it personal: a
-              key shared with the project can't be used here, and each
-              teammate who runs this client adds their own.
-            </p>
-          </div>
-        )}
-        {externalCredential && externalKeySetup.state === "loading" && (
-          <p className="text-xs text-muted-foreground">
-            Checking for your {externalCredential.label}…
-          </p>
-        )}
         {!HOSTED_MODE && selectedLocalHarness && (
           <p className="text-sm text-muted-foreground">
             Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer. It runs commands in its project folder with your account’s permissions.{" "}

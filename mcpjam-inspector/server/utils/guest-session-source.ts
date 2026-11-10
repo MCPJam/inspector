@@ -1,4 +1,8 @@
-import type { GuestSessionFailureReason } from "@/shared/guest-session-failure";
+import {
+  GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
+  type GuestSessionFailureReason,
+} from "@/shared/guest-session-failure";
 import { guestIpForwardHeaders } from "./guest-spend-ip.js";
 import { getFetchErrorCause, isFetchTimeout } from "./fetch-error-cause.js";
 import { logger } from "./logger.js";
@@ -72,6 +76,8 @@ export type GuestSessionFetchResult =
       upstreamStatus?: number;
       /** The network error code, e.g. `ENOTFOUND`, when the fetch threw. */
       networkCode?: string;
+      /** The authority's 403 said this deployment issues no guests at all. */
+      guestAccessDisabled?: true;
     };
 
 /** Which kind of authority answered, for log lines. Never a URL or secret. */
@@ -175,6 +181,49 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
   };
 }
 
+// The backend's non-production lockdown answers every mint with this body.
+// A hosted Inspector authority relays the same refusal as its own error code.
+const BACKEND_GUEST_ACCESS_DISABLED_ERROR =
+  "Guest access is disabled in non-production environments";
+
+async function isGuestAccessDisabledResponse(
+  response: Response,
+): Promise<boolean> {
+  if (
+    response.headers.get(GUEST_SESSION_REFUSAL_HEADER) ===
+    GUEST_ACCESS_DISABLED_CODE
+  ) {
+    return true;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // The fetch's own timeout is ten seconds; a stalled 403 body must not
+    // hold every bootstrap attempt that long just to classify it.
+    const raw: unknown = await Promise.race([
+      response.json(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(
+          () => resolve(undefined),
+          REFUSAL_BODY_READ_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (!raw || typeof raw !== "object") return false;
+    const { error, code } = raw as Record<string, unknown>;
+    return (
+      error === BACKEND_GUEST_ACCESS_DISABLED_ERROR ||
+      code === GUEST_ACCESS_DISABLED_CODE
+    );
+  } catch {
+    // An unreadable 403 body is an ordinary 403: the caller still answers it.
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+const REFUSAL_BODY_READ_TIMEOUT_MS = 1000;
+
 function parseRetryAfterSeconds(raw: string | null): number | undefined {
   if (!raw) return undefined;
   const seconds = Number.parseInt(raw, 10);
@@ -237,6 +286,9 @@ export async function fetchGuestSession(
         response.status === 429
           ? parseRetryAfterSeconds(response.headers.get("retry-after"))
           : undefined;
+      const guestAccessDisabled =
+        response.status === 403 &&
+        (await isGuestAccessDisabledResponse(response));
       return {
         kind: "error",
         status: response.status,
@@ -244,6 +296,7 @@ export async function fetchGuestSession(
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
         reason: "upstream_status",
         upstreamStatus: response.status,
+        ...(guestAccessDisabled ? { guestAccessDisabled: true as const } : {}),
       };
     }
 

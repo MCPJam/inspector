@@ -1,10 +1,16 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
+import { HOSTED_MODE } from "../../config.js";
+import {
+  appendBrowserRefusalContext,
+  classifyBrowserRefusal,
+  type BrowserRefusalReason,
+  type BrowserSuppressionCode,
+} from "../../utils/built-in-tools/browser-refusal.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
   resolveChatSessionEnvironment,
   unappliedBuiltInToolIds,
 } from "./chat-session-environment.js";
-import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
@@ -102,6 +108,7 @@ import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
   runtimeChosenModelSentinelName,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -385,11 +392,11 @@ function assertUnambiguousModelId(modelId: string): void {
   // The sentinel is deliberately NOT rewritten into some real model: the whole
   // point of it is that the model is unknown to MCPJam.
   const sentinelName = runtimeChosenModelSentinelName(id);
-  if (sentinelName) {
+  if (isRuntimeAccountModel(id)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `modelId "${modelId}" (${sentinelName}) is a placeholder for a runtime that chooses its own model on your own account, not a model this API can run. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
+      `modelId "${modelId}" (${sentinelName ?? "Cursor account"}) requires the Cursor runtime and cannot run through this API. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
       { reason: "MODEL_NOT_RUNNABLE" },
     );
   }
@@ -980,6 +987,8 @@ async function handleTurn(c: Context): Promise<Response> {
   let wallClock: ReturnType<typeof setTimeout> | undefined;
   let browserOutbox: ReturnType<typeof createBrowserArtifactOutbox> | undefined;
   let browserReason: string | undefined;
+  let browserSuppression: BrowserSuppressionCode | undefined;
+  let browserRefusal: BrowserRefusalReason | undefined;
   const browserEvidence: BrowserScreenshotEvidence[] = [];
   const browserNotices: string[] = [];
   let builtInTools: ToolSet | undefined;
@@ -1343,6 +1352,16 @@ async function handleTurn(c: Context): Promise<Response> {
         chatSessionId: runtimeChatSessionId,
       });
       const context: BuiltInToolContext = {
+        // The harness box is acquired after the browser attaches, so its apps
+        // are resolved when the agent first opens a localhost page.
+        ...(engine.kind === "harness"
+          ? {
+              browserPreviewWorkspace: () =>
+                conversationBox
+                  ? { sandboxId: conversationBox.binding.sandboxId }
+                  : undefined,
+            }
+          : {}),
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,
@@ -1365,6 +1384,7 @@ async function handleTurn(c: Context): Promise<Response> {
         onBrowserNotice: (notice) => browserNotices.push(notice),
         onToolSuppressed: (item) => {
           browserReason = item.reason;
+          browserSuppression ??= item.code;
         },
         browserCorrelation: {
           chatSessionId: runtimeChatSessionId,
@@ -1435,6 +1455,16 @@ async function handleTurn(c: Context): Promise<Response> {
       } else
         browserReason ??=
           "The browser capability is unavailable on this deployment.";
+      // An explicit request that did not attach: tell the model why, so it
+      // explains instead of reaching for a shell browser.
+      browserRefusal = browserAttached
+        ? undefined
+        : classifyBrowserRefusal({
+            configured: true,
+            advertised: false,
+            suppression: browserSuppression,
+            hostedMode: HOSTED_MODE,
+          });
     }
 
     wallClock = setTimeout(
@@ -1729,35 +1759,19 @@ async function handleTurn(c: Context): Promise<Response> {
           reason: "NOT_A_DATA_PLANE",
         });
       }
-      // A credential harness uses its resolved setup grant. Plain host
-      // conversations retain their existing sandbox identity.
-      const boxEnvironment = resolveApiHarnessEnvironment({
-        credential: boxReason === "credential",
-        pinnedEnvironmentId: pins.environmentId,
-        resolvedEnvironmentId:
-          target.resolvedEnvironment?.environmentRef.environmentId,
-      });
-      if (!boxEnvironment.ok) {
-        return v1Error(
-          c,
-          boxEnvironment.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
-          boxEnvironment.message,
-          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-        );
-      }
-      const boxEnvironmentId = boxEnvironment.environmentId;
+      // Only a pinned environment is the box's grant, never the trace
+      // composition; a Cursor key is the organization's, on no environment.
+      const boxEnvironmentId = pins.environmentId;
       if (boxReason === "credential") {
         // The credential check `runHarnessTurn` would fail, run BEFORE the box
         // is booted: a refused turn must not pay for a box, nor fail past
         // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check — this surface hands the harness no
-        // materialized secrets, so only a brokered key can satisfy it.
+        // inputs as the turn's own check.
         const credentialRefusal = await playgroundCredentialRefusal({
           harnessId: engine.harness,
-          secretEnv: undefined,
           bearer: authHeader,
           projectId,
-          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+          signal: abortController.signal,
         });
         if (credentialRefusal) {
           return v1Error(c, "CONFLICT", credentialRefusal, {
@@ -1828,7 +1842,10 @@ async function handleTurn(c: Context): Promise<Response> {
       approvalMode: "auto-deny",
       messages: inputMessages,
       modelDefinition,
-      systemPrompt: prepared.enhancedSystemPrompt,
+      systemPrompt: appendBrowserRefusalContext(
+        prepared.enhancedSystemPrompt,
+        browserRefusal,
+      ),
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
@@ -2194,6 +2211,7 @@ async function handleTurn(c: Context): Promise<Response> {
                     reason:
                       browserReason ??
                       "Browser was not requested for this turn.",
+                    ...(browserRefusal ? { refusal: browserRefusal } : {}),
                   }
                 : {}),
               handoff: { waited: handoffWaited, resumed: handoffResumed },

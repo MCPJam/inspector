@@ -23,6 +23,7 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runTasksConformance: tasks,
   startOAuthConformance: oauth,
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   submitOAuthConformanceCode: vi.fn(),
 }));
 vi.mock("@/components/oauth/utils", () => ({
@@ -140,6 +141,44 @@ describe("conformance run version snapshot", () => {
     });
     expect(result.current.resolvedProtocolVersion).toBeUndefined();
     expect(result.current.isRunning).toBe(false);
+  });
+
+  it("still runs the suites when the server asks for a login", async () => {
+    check.mockResolvedValueOnce({
+      status: "auth-required",
+      message: "The server requires authorization (HTTP 401).",
+    });
+    const { result } = renderHook(() => useConformanceRun({ server }));
+    await act(async () => result.current.runAll());
+    // Each suite reaches the 401 itself and reports its checks as "Not run"
+    // with the sign-in prompt, instead of every suite failing outright.
+    for (const suite of [protocol, apps, tasks])
+      expect(suite).toHaveBeenCalled();
+    expect(oauth).not.toHaveBeenCalled();
+    expect(result.current.oauth).toMatchObject({
+      status: "error",
+      error: "The server requires authorization (HTTP 401).",
+      verdict: "incomplete",
+    });
+    // The login gap keeps the pooled run incomplete, not "nothing applicable".
+    expect(result.current.pooledScore?.outcome).toBe("incomplete");
+    expect(result.current.resolvedProtocolVersion).toBeUndefined();
+  });
+
+  it("keeps a pinned version for Apps and Tasks when the server asks for a login", async () => {
+    check.mockResolvedValueOnce({
+      status: "auth-required",
+      message: "The server requires authorization (HTTP 401).",
+    });
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, initialVersionPin: "2025-06-18" }),
+    );
+    await act(async () => result.current.runAll());
+    for (const suite of [apps, tasks])
+      expect(suite).toHaveBeenLastCalledWith(
+        "target",
+        expect.objectContaining({ protocolVersion: "2025-06-18" }),
+      );
   });
 
   it("ignores an Auto reply after the target changes", async () => {

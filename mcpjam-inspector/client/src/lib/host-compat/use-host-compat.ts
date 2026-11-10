@@ -9,6 +9,7 @@ import { useHostCatalog } from "./use-host-catalog";
 import { useWidgetUsageState } from "./use-widget-usage";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "./feature-visibility";
 
@@ -123,6 +124,7 @@ export function useHostCompatReports(
   const catalogState = useHostCatalog();
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
 
   const protocolVersion = server.initializationInfo?.protocolVersion;
@@ -149,6 +151,7 @@ export function useHostCompatReports(
       reports: filterReportsByFeatureFlags(evaluation.reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        copilotCli: copilotCliEnabled === true,
         cursorCli: cursorCliEnabled,
       }),
     };
@@ -162,5 +165,6 @@ export function useHostCompatReports(
     claudeCodeEnabled,
     codexEnabled,
     cursorCliEnabled,
+    copilotCliEnabled,
   ]);
 }

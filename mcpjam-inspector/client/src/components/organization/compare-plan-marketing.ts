@@ -79,7 +79,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         label: "Role-based access control (RBAC)",
         free: t("Basic"),
         team: t("Basic", true),
-        enterprise: t("Custom", true),
+        enterprise: t("Basic", true),
       },
       {
         label: "SSO / SAML",

@@ -12,6 +12,11 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { isAuthorizationRequiredCheck } from "../src/conformance-authorization.js";
+import { missingInputMessage } from "../src/conformance-input.js";
+import {
+  LOGIN_NEEDED_MESSAGE,
+  LOGIN_REJECTED_MESSAGE,
+} from "../src/conformance-login.js";
 import { MCPConformanceTest } from "../src/mcp-conformance/index.js";
 import { scoreFromProtocolResult } from "../src/conformance-score.js";
 import { MCPAppsConformanceTest } from "../src/apps-conformance/index.js";
@@ -78,6 +83,19 @@ describe("protocol conformance against a server that requires authorization", ()
     expect(result.incompleteReason).toMatch(/requires authorization/);
   }, 60_000);
 
+  it("asks to log in again when the run's token was refused", async () => {
+    const serverUrl = await serveStatus(401);
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      accessToken: "expired",
+      checkIds: ["server-initialize"],
+      checkTimeout: 5_000,
+    }).run();
+
+    expect(result.outcome).toBe("incomplete");
+    expect(missingInputMessage(result.checks[0]!)).toBe(LOGIN_REJECTED_MESSAGE);
+  }, 60_000);
+
   it("treats the era as unknown on an unpinned refused run: every selected check could not run, none is era-skipped", async () => {
     const serverUrl = await serveStatus(401);
     // The default selection mixes client-backed and raw checks of both eras.
@@ -105,7 +123,14 @@ describe("protocol conformance against a server that requires authorization", ()
     expect(score.notApplicable).toBe(0);
     expect(score.passed).toBe(0);
     expect(score.failed).toBe(0);
-    expect(score.couldNotRun).toBe(score.applicable);
+    // A login is the caller's to fix: every check is "Not run" at no cost,
+    // so nothing is applicable and there is no score, only an incomplete run.
+    expect(score.applicable).toBe(0);
+    expect(score.score).toBeNull();
+    expect(score.couldNotRun).toBe(result.checks.length);
+    for (const check of result.checks) {
+      expect(missingInputMessage(check), check.id).toBe(LOGIN_NEEDED_MESSAGE);
+    }
   }, 60_000);
 
   it("does not era-skip a client-only unpinned selection either", async () => {

@@ -236,6 +236,12 @@ export function createStreamTranslator(input: {
           nativeName: CODEX_APPSERVER_NATIVE_TOOL_NAMES.webSearch,
           input: { query: (item as { query?: string }).query },
         };
+      case "imageView":
+        return {
+          toolName: CODEX_APPSERVER_TOOL_NAMES.imageView,
+          nativeName: CODEX_APPSERVER_NATIVE_TOOL_NAMES.imageView,
+          input: { path: (item as { path?: string }).path },
+        };
       case "mcpToolCall": {
         const mcp = item as {
           server: string;
@@ -298,6 +304,13 @@ export function createStreamTranslator(input: {
       case "webSearch": {
         const search = item as { results?: unknown };
         return { result: search.results ?? null, isError: false };
+      }
+      case "imageView": {
+        const view = item as { path?: string; status?: string };
+        return {
+          result: { path: view.path },
+          isError: view.status === "failed" || view.status === "declined",
+        };
       }
       case "mcpToolCall": {
         const mcp = item as {

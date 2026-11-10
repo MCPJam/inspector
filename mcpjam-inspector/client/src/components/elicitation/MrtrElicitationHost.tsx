@@ -1,3 +1,5 @@
+import type { MrtrKeyAnswer } from "@/shared/local-mrtr";
+import { MANUAL_PLUGIN_FORM_PROFILE } from "@/shared/plugin-extensions/manual-form";
 import {
   useCallback,
   useEffect,
@@ -9,7 +11,6 @@ import { ElicitationDialog } from "../ElicitationDialog";
 import { UrlElicitationConsent } from "./UrlElicitationConsent";
 import {
   useMrtrElicitationStore,
-  type MrtrKeyAnswer,
 } from "@/stores/mrtr-elicitation-store";
 
 /* ------------------------------------------------------------------ *
@@ -116,9 +117,7 @@ export function MrtrElicitationHost() {
   const collection = useMrtrElicitationStore((s) => s.collection);
   const setCollection = useMrtrElicitationStore((s) => s.setCollection);
 
-  useEffect(() => {
-    connect();
-  }, [connect]);
+  useEffect(() => connect(), [connect]);
 
   const activeRound = rounds[0] ?? null;
 
@@ -216,6 +215,7 @@ export function MrtrElicitationHost() {
         ...(serverId ? { serverId } : {}),
       }}
       loading={responding}
+      pluginForm={current.pluginForm ? { profile: MANUAL_PLUGIN_FORM_PROFILE } : undefined}
       onResponse={async (action, parameters) =>
         recordAnswer(current.key, {
           action,

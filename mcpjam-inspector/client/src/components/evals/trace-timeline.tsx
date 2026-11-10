@@ -1,3 +1,4 @@
+import { projectChatTraceRanges } from "./projected-trace-ranges";
 import { PluginWorkspaceEvents } from "@/components/plugin-workspace/PluginWorkspaceEvents";
 import {
   useCallback,
@@ -425,6 +426,7 @@ function extractToolData(
   messages: TranscriptMessage[],
   toolCallId?: string,
   toolName?: string,
+  projectedSpan?: EvalTraceSpan,
 ): {
   input?: unknown;
   output?: unknown;
@@ -432,6 +434,11 @@ function extractToolData(
 } {
   if (!toolCallId && !toolName) {
     return {};
+  }
+  if (projectedSpan) {
+    if (!toolCallId || projectedSpan.messageStartIndex === undefined ||
+        projectedSpan.messageEndIndex === undefined) return {};
+    messages = messages.slice(projectedSpan.messageStartIndex, projectedSpan.messageEndIndex + 1);
   }
 
   let input: unknown;
@@ -443,7 +450,7 @@ function extractToolData(
       const matchesToolCallId =
         typeof toolCallId === "string" && part.toolCallId === toolCallId;
       const matchesToolName =
-        !matchesToolCallId &&
+        !toolCallId &&
         typeof toolName === "string" &&
         partToolName(part) === toolName;
 
@@ -475,12 +482,13 @@ function extractToolData(
 function spanIndicatesTranscriptFailure(
   span: EvalTraceSpan,
   messages: TranscriptMessage[],
+  projectedMessages = false,
 ): boolean {
   if (span.category === "error") return true;
   if (span.status === "error") return true;
   if (span.category === "tool") {
     return Boolean(
-      extractToolData(messages, span.toolCallId, span.toolName ?? span.name)
+      extractToolData(messages, span.toolCallId, span.toolName ?? span.name, projectedMessages ? span : undefined)
         .errorText,
     );
   }
@@ -519,7 +527,7 @@ function getSpanRowTranscriptRange(row: SpanRow): TranscriptRange | undefined {
 function getSourceIndicesForRange(
   range: TranscriptRange | undefined,
 ): number[] {
-  if (!range) return [];
+  if (!range || range.startIndex < 0) return [];
   const indices: number[] = [];
   for (let index = range.startIndex; index <= range.endIndex; index += 1) {
     indices.push(index);
@@ -1007,7 +1015,9 @@ function partMatchesToolSpan(
     return true;
   }
   const spanToolName = span.toolName?.trim() || span.name?.trim();
-  return Boolean(spanToolName && partToolName(part) === spanToolName);
+  return Boolean(
+    !span.toolCallId && spanToolName && partToolName(part) === spanToolName,
+  );
 }
 
 function findToolFocusSourceIndex(
@@ -1099,11 +1109,13 @@ function getSpanRevealSelection(
 function toolSubtitleFromTranscript(
   messages: TranscriptMessage[],
   span: EvalTraceSpan,
+  projectedMessages = false,
 ): string | undefined {
   const data = extractToolData(
     messages,
     span.toolCallId,
     span.toolName ?? span.name,
+    projectedMessages ? span : undefined,
   );
   if (data.input == null) return undefined;
   const s = summarizeValue(data.input);
@@ -1253,6 +1265,7 @@ function getTraceStartAnchorMs({
 function deriveSpanLabel(
   row: SpanRow,
   transcriptMessages: TranscriptMessage[],
+  projectedMessages = false,
 ): {
   title: string;
   subtitle?: string;
@@ -1317,7 +1330,7 @@ function deriveSpanLabel(
   if (span.category === "tool") {
     const name = (span.toolName ?? span.name).trim() || "tool";
     const title = `Tool · ${name}`;
-    const toolSub = toolSubtitleFromTranscript(transcriptMessages, span);
+    const toolSub = toolSubtitleFromTranscript(transcriptMessages, span, projectedMessages);
     // Skip trivial subtitles like "{}" for empty tool inputs
     const isTrivialSub = !toolSub || toolSub === "{}" || toolSub === "None";
     if (toolSub && !isTrivialSub) {
@@ -1329,6 +1342,7 @@ function deriveSpanLabel(
         transcriptMessages,
         span.toolCallId,
         span.toolName ?? span.name,
+        projectedMessages ? span : undefined,
       );
       if (data.output != null) {
         const outputPreview = summarizeValue(data.output);
@@ -1497,11 +1511,13 @@ function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
 
 function TimelineDetailPane({
   row,
+  projectedMessages,
   transcriptMessages,
   onRevealInTranscript,
   turnRuntimeByPromptIndex,
 }: {
   row: TimelineRow | undefined;
+  projectedMessages?: boolean;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
@@ -1541,25 +1557,26 @@ function TimelineDetailPane({
           transcriptMessages,
           row.span.toolCallId,
           row.span.toolName ?? row.span.name,
+          projectedMessages ? row.span : undefined,
         )
       : {};
   const { durationMs } = getRowTiming(row);
   const spanLabel =
-    row.kind === "span" ? deriveSpanLabel(row, transcriptMessages) : null;
+    row.kind === "span" ? deriveSpanLabel(row, transcriptMessages, projectedMessages) : null;
   const title = row.kind === "prompt" ? row.label : spanLabel!.title;
   const status =
     row.kind === "prompt"
       ? row.hasAnyFailure
         ? "error"
         : "ok"
-      : spanIndicatesTranscriptFailure(row.span, transcriptMessages)
+      : spanIndicatesTranscriptFailure(row.span, transcriptMessages, projectedMessages)
         ? "error"
         : "ok";
   const detailGlyphCategory: EvalTraceSpanCategory | "prompt" =
     row.kind === "prompt"
       ? "prompt"
       : row.span.category === "tool" &&
-          spanIndicatesTranscriptFailure(row.span, transcriptMessages)
+          spanIndicatesTranscriptFailure(row.span, transcriptMessages, projectedMessages)
         ? "error"
         : row.span.category;
   const turnRuntime = turnRuntimeByPromptIndex?.get(row.promptIndex);
@@ -1798,7 +1815,11 @@ function TimelineDetailPane({
         </div>
       ) : null}
 
-      {row.kind === "span" ? (
+      {projectedMessages && row.kind === "span" && row.span.messageStartIndex === undefined ? (
+        <p className="text-xs text-muted-foreground">
+          Message details are unavailable for this span. Read the conversation in Chat.
+        </p>
+      ) : row.kind === "span" ? (
         <div className="space-y-4">
           <div className="space-y-2">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -1853,6 +1874,7 @@ export interface TraceTimelineProps {
   estimatedDurationMs?: number | null;
   transcriptMessageCount?: number;
   transcriptMessages?: TranscriptMessage[];
+  projectedMessages?: boolean;
   traceStartedAtMs?: number | null;
   traceEndedAtMs?: number | null;
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
@@ -1873,7 +1895,8 @@ export interface TraceTimelineProps {
 }
 
 export function TraceTimeline({
-  recordedSpans,
+  recordedSpans: sourceSpans,
+  projectedMessages = false,
   interactionSteps,
   estimatedDurationMs,
   transcriptMessageCount = 0,
@@ -1892,6 +1915,13 @@ export function TraceTimeline({
   turnRuntimeByPromptIndex,
   fillContent = false,
 }: TraceTimelineProps) {
+  const projected = useMemo(
+    () => projectedMessages
+      ? projectChatTraceRanges(sourceSpans ?? [], transcriptMessages)
+      : undefined,
+    [projectedMessages, sourceSpans, transcriptMessages],
+  );
+  const recordedSpans = projected?.spans ?? sourceSpans;
   const shouldReduceMotion = useReducedMotion();
   const mode =
     recordedSpans && recordedSpans.length > 0
@@ -1900,8 +1930,14 @@ export function TraceTimeline({
         ? "estimated"
         : "none";
   const groups = useMemo(
-    () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
-    [recordedSpans],
+    () => (recordedSpans?.length ? buildPromptGroups(recordedSpans).map(
+      (group) => projected ? {
+        ...group,
+        messageStartIndex: projected.userIndices[group.promptIndex] ?? -1,
+        messageEndIndex: projected.userIndices[group.promptIndex] ?? -1,
+      } : group,
+    ) : []),
+    [recordedSpans, projected],
   );
   // Interaction steps grouped by the tool call whose widget they drove, so the
   // flatten step can nest them under the matching tool span row.
@@ -2046,7 +2082,7 @@ export function TraceTimeline({
     function rowSelfVisible(span: EvalTraceSpan): boolean {
       if (filter === "all") return true;
       if (filter === "error") {
-        return spanIndicatesTranscriptFailure(span, transcriptMessages);
+        return spanIndicatesTranscriptFailure(span, transcriptMessages, projectedMessages);
       }
       return span.category === filter;
     }
@@ -2166,7 +2202,7 @@ export function TraceTimeline({
       }
 
       const hasAnyFailure = group.spans.some((span) =>
-        spanIndicatesTranscriptFailure(span, transcriptMessages),
+        spanIndicatesTranscriptFailure(span, transcriptMessages, projectedMessages),
       );
 
       const userPreview = promptPreviewForRange(
@@ -2209,6 +2245,7 @@ export function TraceTimeline({
     interactionsByToolCallId,
     mode,
     transcriptMessages,
+    projectedMessages,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2284,10 +2321,10 @@ export function TraceTimeline({
     const { startMs, endMs } = getRowTiming(hoveredRow);
     const spanShowsFailure =
       hoveredRow.kind === "span" &&
-      spanIndicatesTranscriptFailure(hoveredRow.span, transcriptMessages);
+      spanIndicatesTranscriptFailure(hoveredRow.span, transcriptMessages, projectedMessages);
     const derivedLabel =
       hoveredRow.kind === "span"
-        ? deriveSpanLabel(hoveredRow, transcriptMessages)
+        ? deriveSpanLabel(hoveredRow, transcriptMessages, projectedMessages)
         : null;
     const label =
       hoveredRow.kind === "prompt"
@@ -2314,7 +2351,7 @@ export function TraceTimeline({
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages]);
+  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2620,6 +2657,7 @@ export function TraceTimeline({
                       spanIndicatesTranscriptFailure(
                         row.span,
                         transcriptMessages,
+                        projectedMessages,
                       );
                     const rowGlyphCategory:
                       EvalTraceSpanCategory | "prompt" | "interaction" =
@@ -2634,7 +2672,7 @@ export function TraceTimeline({
                       row.kind === "interaction" && row.status === "error";
                     const derivedLabel =
                       row.kind === "span"
-                        ? deriveSpanLabel(row, transcriptMessages)
+                        ? deriveSpanLabel(row, transcriptMessages, projectedMessages)
                         : null;
                     const label =
                       row.kind === "prompt"
@@ -2891,6 +2929,7 @@ export function TraceTimeline({
               className="h-full min-h-0 min-w-0 max-h-full overflow-y-auto"
             >
               <TimelineDetailPane
+                projectedMessages={projectedMessages}
                 row={selectedRow}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}

@@ -1,3 +1,12 @@
+import { useCursorModels } from "./use-cursor-models";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
+import { reportCaught } from "@/lib/error-reporting";
+import { useHarnessApprovalStop } from "./use-harness-approval-stop";
+import { isHarness } from "@mcpjam/sdk/host-config/internal";
+import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
+import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
+import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
+import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
 import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
 import { nextResumedVersion } from "./use-resumed-thread-persistence";
 import { isForwardingApprovalId, withoutForwardingGateParts, stripForwardingRequestBody } from "@/shared/forwarding-approval";
@@ -18,6 +27,14 @@ import { buildMentionContextMessages } from "@/shared/user-context-message";
 import type { PluginMentionSelection } from "@/shared/plugin-mentions";
 import { createPrivateFormAnswer } from "@/lib/apis/private-form-answer";
 import { sameChatAuthSession } from "@/lib/chat-auth-session";
+import {
+  claimMissingCallCancellation,
+  CHAT_AUTH_RECOVERY_MESSAGE,
+  clearChatAuthRecoveryFailure,
+  recordChatAuthRecoveryFailure,
+  traceChatAuthRecovery,
+  useChatAuthRecoveryFailures,
+} from "@/lib/chat-auth-recovery";
 import { hydrateTurnRequestPayloads } from "@/components/evals/turn-trace-spans";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { withWebMcpTraffic } from "@/lib/webmcp-traffic";
@@ -152,10 +169,8 @@ import {
   useOutOfCreditsReason,
 } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
-import {
-  providerForModelId,
-  runtimeChosenModelSentinelName,
-} from "@/shared/model-provider";
+import { providerForModelId } from "@/shared/model-provider";
+import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import {
@@ -176,6 +191,7 @@ import {
   patchBodyAccessVersion,
 } from "@/lib/scenario-access-errors";
 import {
+  AUTO_TOPUP_DECLINED_CODE,
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
 } from "@/lib/mcpjam-limit";
@@ -226,11 +242,31 @@ import {
 } from "@/shared/scope-step-up";
 import {
   claimCancelledChatScopeStepUp,
+  claimWaitingChatScopeStepUpForCancel,
   claimPendingChatScopeStepUp,
   clearPendingChatScopeStepUp,
+  isPendingChatAuthRequired,
+  preparePendingChatAuthRequired,
+  listPendingChatScopeStepUps,
+  pendingRecoveryContext,
+  subscribePendingChatScopeStepUps,
+  pendingChatScopeStepUpRevision,
+  type PendingChatScopeStepUp,
+  markPendingChatScopeStepUpCancelled,
   readPendingChatScopeStepUp,
   savePendingChatScopeStepUp,
 } from "@/lib/scope-step-up-pending";
+import {
+  isAuthChallengeNoticeDataPart,
+  isAuthRequiredDataPart,
+  type AuthRequiredEvent,
+} from "@/shared/auth-challenge";
+import {
+  clearChatAuthChallengeCard,
+  presentChatAuthRequired,
+  useAuthChallengeNoticeStore,
+} from "@/lib/auth-challenge-lifecycle";
+import { parseToolResultAuthChallenge } from "@mcpjam/sdk/browser";
 import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
@@ -336,8 +372,7 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 import * as AppStateContext from "@/state/app-state-context";
-import { findProjectByAnyId, type AppState } from "@/state/app-types";
-import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
+import { type AppState } from "@/state/app-types";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import { isEmbeddedPreview } from "@/lib/embedded-preview";
 import {
@@ -475,6 +510,8 @@ export interface UseChatSessionOptions {
   /** A card's saved choice; its connection and settings remain authoritative. */
   pickedModelSelection?: RequestedModelSelection;
   selectionIntent?: "picked" | "inherit";
+  /** Display the named setup's exact choice without turning it into a wire override. */
+  inheritedEnvironmentModel?: { modelId: string | null; modelSelection?: RequestedModelSelection | null };
   pluginContextReferences?: string[] | ((workspaceId: string) => string[]);
   /**
    * The Playground's global extension owner. Its Apps have no chat of their
@@ -492,6 +529,10 @@ export interface UseChatSessionOptions {
     | ((chatSessionId: string) =>
         | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
         | undefined);
+  prepareAuthRecovery?: (
+    continuationId: string,
+  ) => import("@/lib/scope-step-up-pending").PendingWriteResult;
+  authRecoveryPaused?: boolean;
   /** Server names to connect to */
   selectedServers: string[];
   /**
@@ -807,6 +848,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The authorized catalog before this session's harness filter. */
+  catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
   /** Why the MCPJam models are locked ("Out of MCPJam credits · resets in
    * 3h"), or null while the org can spend. */
@@ -994,6 +1037,7 @@ export interface UseChatSessionReturn {
 
   // Computed state for UI
   isStreaming: boolean;
+  canStopApproval: boolean;
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
@@ -1044,17 +1088,8 @@ function createLockedInitialModel(modelId: string): ModelDefinition {
   // the raw id under "Sign in to use MCPJam provided models" gets both halves
   // wrong: the label names a model nothing ran, and the reason names a wall
   // signing in would not lift.
-  const sentinelName = runtimeChosenModelSentinelName(modelId);
-  if (sentinelName) {
-    return {
-      id: modelId,
-      name: sentinelName,
-      provider: inferModelProviderFromId(modelId),
-      disabled: true,
-      disabledReason:
-        "This host's runtime chooses its own model on your own account.",
-    };
-  }
+  const sentinel = runtimeChosenModelRow(modelId);
+  if (sentinel) return sentinel;
   return {
     id: modelId,
     name: modelId,
@@ -1376,6 +1411,23 @@ function hasChatToolCall(
   );
 }
 
+function hasChatToolResult(
+  chatMessages: UIMessage[],
+  toolCallId: string,
+): boolean {
+  return chatMessages.some((message) =>
+    message.parts?.some((part) => {
+      const tool = part as { toolCallId?: string; state?: string };
+      return (
+        tool.toolCallId === toolCallId &&
+        ["output-available", "output-error", "output-denied"].includes(
+          tool.state ?? "",
+        )
+      );
+    }),
+  );
+}
+
 /**
  * AI SDK's generic completed-tool predicate also matches MCP tools that the
  * server already executed inside the same response. Auto-sending those starts
@@ -1414,7 +1466,12 @@ export function shouldAutoSendCompletedClientToolCalls(
 export function isSuccessfulRpcResponse(message: unknown): boolean {
   if (!message || typeof message !== "object") return false;
   const m = message as Record<string, unknown>;
-  return "result" in m && !("error" in m);
+  if (!("result" in m) || "error" in m) return false;
+  // A result carrying a sign-in challenge (`isError` with
+  // `_meta["mcp/www_authenticate"]`) is a refusal, not a success: resetting
+  // the budget on it would let a server that alternates challenge and refusal
+  // loop the user through sign-in.
+  return parseToolResultAuthChallenge(m.result) === undefined;
 }
 
 // SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
@@ -1799,6 +1856,7 @@ function buildLiveTraceEnvelope(
   }
 
   const envelope: LiveChatTraceEnvelope = {
+    projectedMessages: true,
     traceVersion: 1,
     messages: state.messages,
     spans: spans.length > 0 ? spans : undefined,
@@ -2227,6 +2285,12 @@ export function useChatSession(
    * noise.
    */
   const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  const [recoverPersistReceipt] = useState(() => createPersistReceiptRecovery(authFetch));
+  const persistReceiptGenerationRef = useRef(0);
+  useEffect(() => {
+    persistReceiptGenerationRef.current++;
+    return () => { persistReceiptGenerationRef.current++; };
+  }, [chatSessionId]);
   /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
   const receiptTurnIdentityRef = useRef<{
     chatSessionId: string;
@@ -2431,6 +2495,7 @@ export function useChatSession(
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
+  const lastResolvedMemberIdRef = useRef<string | undefined>(undefined);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
     undefined,
   );
@@ -2536,10 +2601,152 @@ export function useChatSession(
   );
 
   const harnessStartupRequestRef = useRef<string | null>(null);
+  const harnessStopBlockedRef = useRef(false);
+  const [turnAuthorizationRenewal] = useState(() => createTurnAuthorizationRenewal(() => ({
+    chatSessionId: chatSessionIdRef.current,
+    requestId: harnessStartupRequestRef.current,
+  })));
+  useEffect(() => () => turnAuthorizationRenewal.stop(), [turnAuthorizationRenewal]);
   const [harnessStartupPhase, setHarnessStartupPhase] = useState<HarnessStartupPhase | null>(null);
+
+  // Mid-session sign-in: show the Connect card for a `data-auth-required`
+  // part, saving a resumable call's marker as `awaiting_click` first.
+  const presentedSignInCardsRef = useRef(new Set<string>());
+  const pendingRecoveryRevision = useSyncExternalStore(
+    subscribePendingChatScopeStepUps,
+    pendingChatScopeStepUpRevision,
+    pendingChatScopeStepUpRevision,
+  );
+  const recoveryFailures = useChatAuthRecoveryFailures();
+  const finishedRecoveryRef = useRef(new Set<string>());
+  const completedRecoveryRef = useRef(
+    new Map<
+      string,
+      { pending: PendingChatScopeStepUp; cancelled: boolean; settled?: false }
+    >(),
+  );
+  const attemptedFailureCancellationRef = useRef(new Set<string>());
+  const presentChatAuthRequiredEvent = useCallback(
+    (event: AuthRequiredEvent) => {
+      traceChatAuthRecovery("card", {
+        continuationId: event.continuationId,
+        toolCallId: event.toolCallId,
+        chatSessionId: chatSessionIdRef.current,
+        projectId: hostedProjectId,
+        serverId: event.serverId,
+        serverName: event.serverName,
+      });
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+        serverName: event.serverName,
+        projectId: hostedProjectId,
+      });
+      // Scenario and share-link turns resolve no server and show no card. A
+      // restored card retries every second until its server loads or the
+      // call expires. Neither is a failure.
+      if (!server) return;
+      presentedSignInCardsRef.current.add(event.toolCallId);
+      const sessionId = chatSessionIdRef.current;
+      const resumable =
+        event.action === "prompt" &&
+        typeof event.continuationId === "string" &&
+        Boolean(sessionId);
+
+      if (
+        resumable &&
+        sessionId &&
+        !readPendingChatScopeStepUp({ continuationId: event.continuationId })
+      ) {
+        savePendingChatScopeStepUp({
+          event: event as AuthRequiredEvent & { continuationId: string },
+          serverName: server.name,
+          chatSessionId: sessionId,
+          projectId: hostedProjectId,
+          phase: "awaiting_click",
+        });
+      }
+      if (event.action === "prompt" && !resumable) {
+        recordChatAuthRecoveryFailure("missing_continuation", {
+          toolCallId: event.toolCallId,
+          chatSessionId: sessionId,
+          projectId: hostedProjectId,
+          serverName: server.name,
+        });
+      }
+      void presentChatAuthRequired({
+        server,
+        projectId: hostedProjectId,
+        chatSessionId: sessionId,
+        event: resumable ? event : { ...event, continuationId: undefined },
+        ...(resumable && event.continuationId
+          ? {
+              continuationId: event.continuationId,
+              onConnect: () => {
+                const comparison = options.prepareAuthRecovery?.(
+                  event.continuationId!,
+                );
+                if (comparison && !comparison.ok) {
+                  if (comparison.reason === "loading") return comparison;
+                  recordChatAuthRecoveryFailure("save_failed", {
+                    continuationId: event.continuationId,
+                    toolCallId: event.toolCallId,
+                    chatSessionId: sessionId,
+                    projectId: hostedProjectId,
+                    storageOutcome: "comparison_save_failed",
+                  });
+                  return comparison;
+                }
+                const prepared = preparePendingChatAuthRequired({
+                  event: event as AuthRequiredEvent & {
+                    continuationId: string;
+                  },
+                  serverName: server.name,
+                  chatSessionId: sessionId,
+                  projectId: hostedProjectId,
+                });
+                return prepared;
+              },
+            }
+          : {}),
+      }).then((presentation) => {
+        if (presentation.kind !== "notice") return;
+        useAuthChallengeNoticeStore.getState().add({
+          version: 1,
+          kind: "auth_challenge_notice",
+          serverId: event.serverId,
+          ...(event.serverName ? { serverName: event.serverName } : {}),
+          toolCallId: event.toolCallId,
+          operation: event.operation,
+          source: event.source,
+          action: event.action,
+          reason:
+            presentation.reason === "permanent"
+              ? "repeat-after-sign-in"
+              : presentation.reason === "blocked"
+                ? "auth-method-blocked"
+                : "honored",
+          effectiveAuth: event.effectiveAuth,
+          explanation: presentation.message,
+        });
+      });
+    },
+    [appState, hostedProjectId, options.prepareAuthRecovery],
+  );
+
   const paidFallbackNotices = useRef(new Set<string>());
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
+      if (turnAuthorizationRenewal.accept(part)) return;
+      const appToolEvent = appToolInvocationEvent(part);
+      if (appToolEvent) {
+        void fulfillHarnessAppTool(appToolEvent, {
+          registry: appToolsRegistryRef.current,
+          chatSessionId: () => chatSessionIdRef.current,
+          claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
+          complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
+        }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
+        return;
+      }
       if (isHarnessStartupPart(part)) {
         if (isCurrentHarnessStartup(part, {
           chatSessionId: chatSessionIdRef.current,
@@ -2548,11 +2755,18 @@ export function useChatSession(
         return;
       }
       if (noteTurnNoticePart(part, chatSessionIdRef.current)) return;
-      if (part && typeof part === "object" && "type" in part && part.type === "data-platform-paid-fallback") {
+      if (
+        part &&
+        typeof part === "object" &&
+        "type" in part &&
+        part.type === "data-platform-paid-fallback"
+      ) {
         const session = chatSessionIdRef.current ?? "new";
         if (!paidFallbackNotices.current.has(session)) {
           paidFallbackNotices.current.add(session);
-          toast.info("MCPJam's shared free allowance is unavailable; this chat is using your credits.");
+          toast.info(
+            "MCPJam's shared free allowance is unavailable; this chat is using your credits.",
+          );
           track("platform_paid_fallback_notice", { chatSessionId: session });
         }
         return;
@@ -2579,10 +2793,12 @@ export function useChatSession(
       if (!isTraceEventDataPart(part)) {
         if (isScopeStepUpFinishedDataPart(part)) {
           const event = part.data;
+          finishedRecoveryRef.current.add(event.continuationId);
           const pending = readPendingChatScopeStepUp({
             continuationId: event.continuationId,
           });
-          if (pending) {
+
+          if (pending?.event.continuationId === event.continuationId) {
             if (
               event.outcome === "completed" ||
               event.outcome === "cancelled"
@@ -2592,10 +2808,30 @@ export function useChatSession(
                 serverName: pending.event.serverName,
                 projectId: hostedProjectId,
               });
-              resetScopeStepUp(server, event.operation);
+              resetScopeStepUp(server, event.operation, {
+                projectId: pending.projectId ?? "local",
+                serverId: pending.serverName,
+                surface: "chat",
+                callId: pending.event.continuationId,
+                chatSessionId: pending.chatSessionId,
+              });
             }
-            clearPendingChatScopeStepUp(event.continuationId);
+            clearChatAuthChallengeCard(pending.event.toolCallId);
+            traceChatAuthRecovery(
+              "server_finished",
+              pendingRecoveryContext(pending),
+            );
           }
+        } else if (isAuthRequiredDataPart(part)) {
+          // A mid-session sign-in. Showing the card has no side effects; the
+          // marker is saved now (`awaiting_click`) so a send without clicking,
+          // or a reload, can still settle the suspended call. Scenario and
+          // share-link turns resolve no server and show no card.
+          presentChatAuthRequiredEvent(part.data);
+        } else if (isAuthChallengeNoticeDataPart(part)) {
+          // Display-only: explains why the emulated host did not prompt.
+          // Nothing starts a sign-in from it.
+          useAuthChallengeNoticeStore.getState().add(part.data);
         } else if (isScopeStepUpDataPart(part)) {
           const event = part.data;
           const server = resolveScopeStepUpServer(appState, {
@@ -2610,11 +2846,16 @@ export function useChatSession(
             );
             return;
           }
-          savePendingChatScopeStepUp({
+          const saved = savePendingChatScopeStepUp({
             event,
             serverName: server.name,
             chatSessionId: sessionId,
+            projectId: hostedProjectId,
           });
+          if (!saved.ok) {
+            toast.error(CHAT_AUTH_RECOVERY_MESSAGE);
+            return;
+          }
           driveChatScopeStepUp(
             server,
             {
@@ -2622,6 +2863,10 @@ export function useChatSession(
               resourceMetadataUrl: event.resourceMetadataUrl,
             },
             event.operation,
+            {
+              continuationId: event.continuationId,
+              connectionId: event.connectionId,
+            },
           );
         } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
@@ -2768,37 +3013,35 @@ export function useChatSession(
           // which point a reset, fork, or thread switch may already have moved
           // this surface somewhere else. Applying a stale receipt would sync a
           // version baseline onto a thread it does not belong to.
-          const receipt = part.data;
-          const expectedTurn = receiptTurnIdentityRef.current;
-          const sameSession =
-            receipt.chatSessionId === chatSessionIdRef.current;
-          // The turn check is against the identity captured at `turn_start`,
-          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
-          // arrives BEFORE the receipt.
-          const sameTurn =
-            !receipt.turnId ||
-            !expectedTurn?.turnId ||
-            receipt.turnId === expectedTurn.turnId;
-          if (sameSession && sameTurn) {
+          const accept = (receipt: PersistReceiptData) => {
+            const expectedTurn = receiptTurnIdentityRef.current;
+            if (receipt.chatSessionId !== chatSessionIdRef.current ||
+                (receipt.turnId && expectedTurn?.turnId && receipt.turnId !== expectedTurn.turnId)) return false;
+            const prior = persistReceiptRef.current;
+            if (receipt.outcome === "failed" && prior?.chatSessionId === receipt.chatSessionId &&
+                prior.turnId === receipt.turnId && (prior.outcome === "saved" || prior.outcome === "duplicate")) return false;
             persistReceiptRef.current = receipt;
-            // The SDK can start a client-tool continuation before React effects.
-            // Preserve unversioned surfaces; only advance an existing cursor.
-            if (
-              (receipt.outcome === "saved" ||
-                receipt.outcome === "duplicate") &&
-              typeof receipt.version === "number" &&
-              resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
-              resumedVersionRef.current.version !== null
-            ) {
-              const next = nextResumedVersion({
-                previous: resumedVersionRef.current,
-                currentSessionId: chatSessionIdRef.current,
-                sessionId: receipt.chatSessionId,
-                version: receipt.version,
-              });
+            if ((receipt.outcome === "saved" || receipt.outcome === "duplicate") &&
+                typeof receipt.version === "number" &&
+                resumedVersionRef.current?.sessionId === receipt.chatSessionId &&
+                resumedVersionRef.current.version !== null) {
+              const next = nextResumedVersion({ previous: resumedVersionRef.current,
+                currentSessionId: chatSessionIdRef.current, sessionId: receipt.chatSessionId,
+                version: receipt.version });
               resumedVersionRef.current = next;
               setResumedVersion(next);
             }
+            return true;
+          };
+          const currentReceipt = accept(part.data);
+          if (currentReceipt && part.data.retryHandle && part.data.chatSessionId === chatSessionIdRef.current &&
+              part.data.retryProjectId === hostedProjectId) {
+            const generation = persistReceiptGenerationRef.current;
+            void recoverPersistReceipt(part.data).then((receipt) => {
+              if (generation === persistReceiptGenerationRef.current) accept(receipt);
+            }).catch((error: unknown) => {
+              reportCaught(error, { source: "chat_persistence_recovery" });
+            });
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -2866,6 +3109,7 @@ export function useChatSession(
           turnId: part.data.turnId,
         };
         persistReceiptRef.current = null;
+        persistReceiptGenerationRef.current++;
         // Same lifetime as the receipt: a new turn invalidates the previous
         // turn's abort just as it invalidates the previous turn's receipt.
         // `onFinish` already clears it at every turn end, so this only matters
@@ -2881,6 +3125,8 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
+      presentChatAuthRequiredEvent,
+      convexClient,
     ],
   );
 
@@ -2901,11 +3147,14 @@ export function useChatSession(
   const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
     const receipt = persistReceiptRef.current;
     persistReceiptRef.current = null;
+    persistReceiptGenerationRef.current++;
     // Re-checked at CONSUME time, not just on arrival: the session can change
     // in the window between the receipt landing and a post-stream effect
     // reading it, and handing a receipt for the old thread to the new one would
     // sync its version baseline — or detach it — on the wrong conversation.
-    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+    if (receipt && (receipt.chatSessionId !== chatSessionIdRef.current ||
+        (receipt.turnId && receiptTurnIdentityRef.current?.turnId &&
+         receipt.turnId !== receiptTurnIdentityRef.current.turnId))) {
       return null;
     }
     return receipt;
@@ -2992,7 +3241,8 @@ export function useChatSession(
   const outOfCredits = outOfCreditsReason !== null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
-  const composedModels = useMemo(
+  const cursorCatalog = useCursorModels(hostedProjectId, !isHostedGuest, [...savedModelIds, initialModelId ?? "", preferredModelId ?? ""]);
+  const baseModels = useMemo(
     () =>
       composeAvailableModels({
         orgConfig: hostedOrgModelConfig,
@@ -3023,24 +3273,25 @@ export function useChatSession(
       savedModelIds,
     ],
   );
+  const composedModels = useMemo(() => [...baseModels, ...cursorCatalog.models], [baseModels, cursorCatalog.models]);
   // A harness client offers only what its runtime can run; see
   // `harnessPickerModels`. Everything below (selection, fallback, the picker
   // and every caller that mirrors the selection back) reads this list. Under
-  // the organization's key policy that is only organization models on the
-  // harness's own vendor (Claude Code: Anthropic, Codex: OpenAI).
+  // the organization's key policy that is only organization models on
+  // connections that serve the harness's API.
   const harnessId = harnessModelTarget?.harnessId ?? null;
   const harnessRuntimeVersion = harnessModelTarget?.runtimeVersion ?? null;
   const requireOrgKeys = orgRequiresOwnKeys(hostedOrgModelConfig);
   const availableModels = useMemo(
     () =>
       harnessPickerModels(
-        composedModels,
+        harnessId ? composedModels : baseModels,
         harnessId
           ? { harnessId, runtimeVersion: harnessRuntimeVersion }
           : null,
         { requireOrgKeys },
       ),
-    [composedModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+    [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -3062,9 +3313,10 @@ export function useChatSession(
     () => availableModels.filter((model) => !model.disabled),
     [availableModels],
   );
+  const environmentModel = hostedEnvironmentId ? options.inheritedEnvironmentModel : undefined;
   const savedSelection = (restoredChoice?.target === hostedTargetKeyValue
-    ? restoredChoice.selection : undefined) ?? pickedModelSelection ??
-    (!initialModelId ? savedLeadSelection : undefined);
+    ? restoredChoice.selection : undefined) ?? pickedModelSelection ?? environmentModel?.modelSelection ??
+    (!initialModelId && !environmentModel ? savedLeadSelection : undefined);
   const selectedModel = useMemo<ModelDefinition>(() => {
     if (savedSelection) {
       const candidates = initialModelId
@@ -3074,6 +3326,10 @@ export function useChatSession(
       return resolveCompareSelectionRow(savedSelection, candidates, hostedOrgModelConfig) ??
         { ...createLockedInitialModel(savedSelection.modelId), disabledReason: "The saved model or connection is unavailable. Choose a model again." };
     }
+    if (environmentModel?.modelId) {
+      return resolveModelSelection(availableModels, environmentModel.modelId, null) ??
+        createLockedInitialModel(environmentModel.modelId);
+    }
     const fallback =
       (harnessId
         ? harnessDefaultModel(
@@ -3082,8 +3338,12 @@ export function useChatSession(
             preferredModelId,
           )
         : undefined) ??
+      // A harness host lists the rows it can't run, disabled; none is a
+      // default.
       getDefaultModel(
-        selectableModels.length > 0 ? selectableModels : availableModels,
+        selectableModels.length > 0 || harnessId
+          ? selectableModels
+          : availableModels,
       ) ??
       // Nothing to offer at all: a disabled stand-in, never `undefined`
       // (INSPECTOR-CLIENT-222), which every reader below dereferences. The
@@ -3118,6 +3378,7 @@ export function useChatSession(
           // a saved choice either. Other locks (guest, ollama-no-tools)
           // stay unselectable.
           !model.disabled ||
+          isRuntimeAccountModel(String(model.id)) ||
           model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
           isOrgPolicyLockReason(model.disabledReason),
       );
@@ -3128,7 +3389,7 @@ export function useChatSession(
         createLockedInitialModel(initialModelId)
       );
     }
-    if (!selectedModelId) return fallback;
+    if (environmentModel || !selectedModelId) return fallback;
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [
     availableModels,
@@ -3142,6 +3403,7 @@ export function useChatSession(
     selectableModels,
     selectedModelId,
     savedSelection,
+    environmentModel,
     hostedOrgModelConfig,
   ]);
   const temperature = temperatureOverride ??
@@ -3323,7 +3585,10 @@ export function useChatSession(
         setPickedTarget(hostedTargetKeyValue);
         return;
       }
-      setRestoredChoice(null);
+      // An explicit pick on a named setup stays with that target. A setting
+      // change (effort, temperature) alone keeps the displayed inherited row.
+      setRestoredChoice(hostedEnvironmentId && options?.userInitiated && selection
+        ? { target: hostedTargetKeyValue, selection } : null);
       if (selection) saveSelectedModelSelections(replaceLeadCompareSelection(saved, selection));
       if (options?.userInitiated || options?.selection) setPickedTarget(hostedTargetKeyValue);
       const modelId = selection?.modelId ?? String(model.id);
@@ -3332,7 +3597,7 @@ export function useChatSession(
       setLeadProviderHint(hint);
       setSelectedModelId(modelId);
     },
-    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue],
+    [initialModelId, setSelectedModelId, hostedOrgModelConfig, hostedTargetKeyValue, hostedEnvironmentId],
   );
 
   const setSelectedModelIds = useCallback(
@@ -3353,24 +3618,6 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel],
   );
-  const hasLocalOnlySelectedServer = useMemo(() => {
-    if (!appState || selectedServers.length === 0) return false;
-    const activeProject = findProjectByAnyId(
-      appState.projects,
-      hostedProjectId ?? appState.activeProjectId,
-    );
-    return selectedServers.some((serverName) => {
-      const server =
-        appState.servers?.[serverName] ?? activeProject?.servers?.[serverName];
-      // Fail CLOSED when a selected server's config can't be resolved (state
-      // not yet loaded, name mismatch): treat it as local-only. The local
-      // engine reaches public servers fine, but routing a stdio server to the
-      // cloud reproduces the exact "STDIO not supported" failure this flag
-      // exists to prevent.
-      if (!server?.config) return true;
-      return isLocalOnlyMcpServerConfig(server.config);
-    });
-  }, [appState, hostedProjectId, selectedServers]);
   // Managed local and service turns share environment composition. The
   // process role, rather than the selected model or transport, owns execution.
   const hiddenEnvironmentActive = !!hostedHiddenEnvironment;
@@ -3391,10 +3638,6 @@ export function useChatSession(
   // servers by Convex id.
   const hostedRequiresWebChatApi =
     explicitRequiresWebChatApi || hiddenEnvironmentActive;
-  const localMcpRuntimeRequired =
-    !HOSTED_MODE &&
-    selectedModelUsesOrgRuntime &&
-    (hasLocalOnlySelectedServer || localBrowserRequested);
   /**
    * Does THIS send explicitly ask to run Claude Code on this machine?
    *
@@ -3424,12 +3667,13 @@ export function useChatSession(
     model: selectedModel,
     orgConfig: hostedOrgModelConfig,
     allowLocal: !HOSTED_MODE,
+    harnessId,
     temperature: temperatureOverride,
     effortLevels: reasoningEffortOptions(selectedModel,
       reasoningEffortRouteForRow(selectedModel, hostedOrgModelConfig), reasoningEffortHarness),
     effort: fixedReasoningEffort !== undefined ? fixedReasoningEffort :
       effortKey in effortByModel ? effortByModel[effortKey] ?? null : undefined,
-  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig,
+  }), [effectiveSelectionIntent, savedSelection, selectedModel, hostedOrgModelConfig, harnessId,
     shouldUseOrgAwareChatApi, fixedReasoningEffort, effortKey, effortByModel,
     temperatureOverride, reasoningEffortHarness]);
   const requestChoiceRef = useRef(requestChoice);
@@ -3556,6 +3800,7 @@ export function useChatSession(
         await notifyMCPJamLimitErrorFromResponse(
           response,
           hostedScenarioId ? "scenario" : undefined,
+          { showsDeclinedCard: true },
         );
         if (isHostedTransport) {
           await ingestHostedRpcLogsFromResponse(response);
@@ -3576,6 +3821,7 @@ export function useChatSession(
 
   const handleChatError = useCallback(
     (chatError: Error) => {
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
       setHarnessStartupPhase(null);
       // Every chat failure used to end here and go no further: this handler
@@ -3607,6 +3853,11 @@ export function useChatSession(
         message: chatError.message,
         limitKind,
         ...(hostedScenarioId ? { surface: "scenario" as const } : {}),
+        // Follow the banner's own reading, so an error that only quotes a
+        // decline still opens the dialog the banner won't replace.
+        showsDeclinedCard:
+          formatErrorMessage(chatError.message)?.code ===
+          AUTO_TOPUP_DECLINED_CODE,
       });
       if (hostedProjectId) {
         void askStdioCommandApprovalForChatError(
@@ -3860,6 +4111,9 @@ export function useChatSession(
                 // The project's skills reach this turn as they reach a client
                 // turn, alongside the plugins' own.
                 includeProjectSkills: true,
+                autoContributedPluginServerIds: hiddenPluginServerIds.filter(
+                  (id) => !resolvedServerIds.includes(id),
+                ),
               }
             : // Host-bound direct preview: forward the saved host id so the server
               // re-resolves the host's authoritative runtime config (harness /
@@ -3879,6 +4133,7 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
         savedClientSendGuard.assertCurrent();
         if (requestChoiceRef.current.kind === "blocked") throw new Error(requestChoiceRef.current.reason);
         // Capture the task scope this turn is SUBMITTED under, next to
@@ -3898,6 +4153,7 @@ export function useChatSession(
         // to request approval for, or defers one nothing will ever ask about
         // — and that second one stalls the turn.
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
+        turnAuthorizationRenewal.stop();
         harnessStartupRequestRef.current = crypto.randomUUID();
         setHarnessStartupPhase(null);
         const taskOwnerScope = getOwnedTaskScope();
@@ -3992,9 +4248,7 @@ export function useChatSession(
           // Local builds only, for both bodies. "This machine": run this host's
           // bash on the local computer engine; the consent capability rides the
           // header above, and the server ignores this without it. Absent ⇒ the
-          // legacy cloud-family resolution. `localMcpRuntimeRequired` keeps an
-          // org-runtime model's turn on this server's runtime resolution, which
-          // local-only MCP servers and an explicit local-harness ask both need.
+          // legacy cloud-family resolution.
           ...(!HOSTED_MODE
             ? {
                 ...(personalBrowserEngine && !hostedScenarioId
@@ -4003,10 +4257,6 @@ export function useChatSession(
                     }
                   : {}),
                 ...(sendLocalEngine ? { computerEngine: "local" } : {}),
-                ...(localMcpRuntimeRequired ||
-                (localHarnessRequested && selectedModelUsesOrgRuntime)
-                  ? { localMcpRuntimeRequired: true }
-                  : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
                   : {}),
@@ -4103,7 +4353,6 @@ export function useChatSession(
     getCustomProviderByName,
     customProviders,
     selectedModelUsesOrgRuntime,
-    localMcpRuntimeRequired,
     localHarnessRequested,
     localHarnessExecution,
     hostedRequiresWebChatApi,
@@ -4164,6 +4413,7 @@ export function useChatSession(
   // prevents the generic tool-output rule from recursively submitting the
   // same one-shot continuation descriptor.
   const scopeStepUpResumeInFlightRef = useRef(false);
+  const [signInReplayTick, setSignInReplayTick] = useState(0);
 
   // useChat hook
   const {
@@ -4182,13 +4432,14 @@ export function useChatSession(
     experimental_throttle: 50,
     transport: proxyTransport,
     onData: handleStreamDataPart,
-    onError: handleChatError,
+    onError: (error) => { turnAuthorizationRenewal.stop(); handleChatError(error); },
     // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
     // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
     // React renders that status — so a post-stream effect reading it on the
     // ready transition sees the final request's answer. Client-tool continuations
     // can start before that effect; receipts advance the cursor in onData.
     onFinish: ({ isAbort, message, finishReason }) => {
+      turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
@@ -4450,32 +4701,105 @@ export function useChatSession(
   }, [sdkAddToolApprovalResponse, addToolOutput, reasoningEffortHarness, isHostedTransport, hostedEnsureServerIds]);
 
   useEffect(() => {
+    if (
+      (status !== "ready" && status !== "error") ||
+      scopeStepUpResumeInFlightRef.current
+    )
+      return;
+    for (const [id, result] of completedRecoveryRef.current) {
+      // A cancel sent with a message waits for that request to finish.
+      if (result.settled === false) continue;
+      completedRecoveryRef.current.delete(id);
+      if (result.pending.chatSessionId !== chatSessionIdRef.current) continue;
+      if (
+        finishedRecoveryRef.current.has(id) ||
+        hasChatToolResult(messages, result.pending.event.toolCallId)
+      ) {
+        if (!result.cancelled)
+          clearChatAuthRecoveryFailure(result.pending.event.toolCallId);
+        clearPendingChatScopeStepUp(id);
+      } else {
+        recordChatAuthRecoveryFailure(
+          result.cancelled ? "cancel_failed" : "resume_incomplete",
+          pendingRecoveryContext(result.pending),
+        );
+        if (result.cancelled) clearPendingChatScopeStepUp(id);
+        else
+          markPendingChatScopeStepUpCancelled(
+            result.pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            id,
+          );
+      }
+    }
+  }, [messages, status, signInReplayTick]);
+
+  useEffect(() => {
     const sessionId = chatSessionIdRef.current;
-    if (!sessionId) return;
-    // This chat's own call: another chat's newer entry must not hide it.
-    const pending = readPendingChatScopeStepUp({
+    if (
+      !sessionId ||
+      options.authRecoveryPaused ||
+      scopeStepUpResumeInFlightRef.current
+    )
+      return;
+    const pending = listPendingChatScopeStepUps({
       chatSessionId: sessionId,
+      projectId: hostedProjectId,
       phases: ["ready", "cancelled"],
-    });
+    })[0];
     if (
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
       pending.chatSessionId !== sessionId ||
       !hasChatToolCall(messagesRef.current, pending.event.toolCallId) ||
-      status !== "ready"
+      (status !== "ready" && status !== "error")
     ) {
       return;
     }
     if (pending.phase === "ready") {
+      if (pending.event.expiresAt <= Date.now()) {
+        recordChatAuthRecoveryFailure("expired", {
+          ...pendingRecoveryContext(pending),
+          recoveryResult: "resume_refused",
+        });
+        markPendingChatScopeStepUpCancelled(
+          pending.serverName,
+          CHAT_AUTH_RECOVERY_MESSAGE,
+          pending.event.continuationId,
+        );
+        return;
+      }
       const server = resolveScopeStepUpServer(appState, {
         serverId: pending.event.serverId,
         serverName: pending.event.serverName,
         projectId: hostedProjectId,
       });
       if (!server || server.connectionStatus !== "connected") {
-        return;
+        const timeout = window.setTimeout(() => {
+          recordChatAuthRecoveryFailure("server_missing", {
+            ...pendingRecoveryContext(pending),
+            recoveryResult: "connection_not_ready",
+          });
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        }, 30_000);
+        return () => window.clearTimeout(timeout);
       }
     }
+    // Local connections rebuild after a redirect. Do not consume the one
+    // resume attempt while its original server is still reconnecting.
+    if (
+      pending.phase === "ready" &&
+      !HOSTED_MODE &&
+      appState &&
+      appState.servers[pending.serverName]?.connectionStatus !== "connected"
+    )
+      return;
+    // Set before the storage notification can schedule another render.
+    scopeStepUpResumeInFlightRef.current = true;
     const claimed =
       pending.phase === "ready"
         ? claimPendingChatScopeStepUp(sessionId, pending.event.continuationId)
@@ -4483,10 +4807,16 @@ export function useChatSession(
             sessionId,
             pending.event.continuationId,
           );
-    if (!claimed) return;
+    if (!claimed) {
+      scopeStepUpResumeInFlightRef.current = false;
+      return;
+    }
     const wasCancelled = pending.phase === "cancelled";
+    traceChatAuthRecovery(
+      wasCancelled ? "cancel" : "resume",
+      pendingRecoveryContext(claimed),
+    );
 
-    scopeStepUpResumeInFlightRef.current = true;
     void baseSendMessage(undefined, {
       body: {
         ...(wasCancelled
@@ -4505,10 +4835,24 @@ export function useChatSession(
       },
     })
       .then(() => {
-        clearPendingChatScopeStepUp(claimed.event.continuationId);
+        completedRecoveryRef.current.set(claimed.event.continuationId, {
+          pending: claimed,
+          cancelled: wasCancelled,
+        });
       })
       .catch(() => {
-        clearPendingChatScopeStepUp(claimed.event.continuationId);
+        recordChatAuthRecoveryFailure(
+          wasCancelled ? "cancel_failed" : "resume_failed",
+          pendingRecoveryContext(claimed),
+        );
+        if (wasCancelled)
+          clearPendingChatScopeStepUp(claimed.event.continuationId);
+        else
+          markPendingChatScopeStepUpCancelled(
+            claimed.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            claimed.event.continuationId,
+          );
         toast.error(
           wasCancelled
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
@@ -4517,8 +4861,150 @@ export function useChatSession(
       })
       .finally(() => {
         scopeStepUpResumeInFlightRef.current = false;
+        setSignInReplayTick((tick) => tick + 1);
       });
-  }, [appState, baseSendMessage, hostedProjectId, messages, status]);
+  }, [
+    appState,
+    baseSendMessage,
+    hostedProjectId,
+    messages,
+    status,
+    signInReplayTick,
+    pendingRecoveryRevision,
+    options.authRecoveryPaused,
+  ]);
+
+  // Back/reload must restore waiting cards, and expiry must not depend on a callback.
+  useEffect(() => {
+    const check = () => {
+      const sessionId = chatSessionIdRef.current;
+      for (const pending of listPendingChatScopeStepUps({
+        chatSessionId: sessionId,
+        projectId: hostedProjectId,
+        phases: ["awaiting_click", "awaiting_oauth", "ready"],
+      })) {
+        if (!hasChatToolCall(messagesRef.current, pending.event.toolCallId))
+          continue;
+        if (pending.event.expiresAt <= Date.now()) {
+          clearChatAuthChallengeCard(pending.event.toolCallId);
+          recordChatAuthRecoveryFailure(
+            "expired",
+            {
+              ...pendingRecoveryContext(pending),
+              recoveryResult: "waiting_expired",
+            },
+            { report: false },
+          );
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        } else if (
+          pending.phase !== "ready" &&
+          isPendingChatAuthRequired(pending) &&
+          !presentedSignInCardsRef.current.has(pending.event.toolCallId)
+        ) {
+          presentChatAuthRequiredEvent(pending.event);
+        }
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 1000);
+    window.addEventListener("pageshow", check);
+    window.addEventListener("focus", check);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("pageshow", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [presentChatAuthRequiredEvent, pendingRecoveryRevision, hostedProjectId]);
+
+  // A redirect/reload interrupted a claimed request: never replay it a second time.
+  useEffect(() => {
+    if (status !== "ready" || scopeStepUpResumeInFlightRef.current) return;
+    for (const pending of listPendingChatScopeStepUps({
+      chatSessionId: chatSessionIdRef.current,
+      projectId: hostedProjectId,
+      phases: ["resuming", "cancelling"],
+    })) {
+      if (completedRecoveryRef.current.has(pending.event.continuationId))
+        continue;
+      if (
+        finishedRecoveryRef.current.has(pending.event.continuationId) ||
+        hasChatToolResult(messages, pending.event.toolCallId)
+      )
+        clearPendingChatScopeStepUp(pending.event.continuationId);
+      else if (hasChatToolCall(messages, pending.event.toolCallId)) {
+        if (
+          pending.phase === "resuming" &&
+          pending.resumeAttempted === undefined
+        ) {
+          // Older builds used resuming for both retry and cancellation. It is
+          // unsafe to guess which request already ran before the reload.
+          recordChatAuthRecoveryFailure("resume_interrupted", {
+            ...pendingRecoveryContext(pending),
+            recoveryResult: "ambiguous_legacy_attempt",
+          });
+          clearPendingChatScopeStepUp(pending.event.continuationId);
+        } else if (pending.phase === "cancelling" || pending.cancelAttempted) {
+          recordChatAuthRecoveryFailure(
+            "cancel_failed",
+            pendingRecoveryContext(pending),
+          );
+          clearPendingChatScopeStepUp(pending.event.continuationId);
+        } else {
+          recordChatAuthRecoveryFailure(
+            "resume_interrupted",
+            pendingRecoveryContext(pending),
+          );
+          markPendingChatScopeStepUpCancelled(
+            pending.serverName,
+            CHAT_AUTH_RECOVERY_MESSAGE,
+            pending.event.continuationId,
+          );
+        }
+      }
+    }
+  }, [messages, status, pendingRecoveryRevision, hostedProjectId]);
+
+  // The separate click record can identify a lost entry. Cancel only that call;
+  // a local error remains visible even if the server cannot settle it.
+  useEffect(() => {
+    if (status !== "ready" || scopeStepUpResumeInFlightRef.current) return;
+    const failure = recoveryFailures.find(
+      (item) =>
+        item.chatSessionId === chatSessionIdRef.current &&
+        item.continuationId &&
+        item.toolCallId &&
+        item.reason === "missing_pending" &&
+        item.recoveryResult !== "rebuilding_from_card" &&
+        !attemptedFailureCancellationRef.current.has(item.continuationId) &&
+        hasChatToolCall(messages, item.toolCallId) &&
+        !hasChatToolResult(messages, item.toolCallId) &&
+        !readPendingChatScopeStepUp({ continuationId: item.continuationId }),
+    );
+    if (!failure?.continuationId || !failure.toolCallId) return;
+    attemptedFailureCancellationRef.current.add(failure.continuationId);
+    if (!claimMissingCallCancellation(failure.continuationId)) return;
+    scopeStepUpResumeInFlightRef.current = true;
+    void baseSendMessage(undefined, {
+      body: {
+        scopeStepUpCancel: {
+          continuationId: failure.continuationId,
+          toolCallId: failure.toolCallId,
+        },
+      },
+    })
+      .catch(() => {
+        recordChatAuthRecoveryFailure("cancel_failed", failure);
+      })
+      .finally(() => {
+        clearPendingChatScopeStepUp(failure.continuationId!);
+        scopeStepUpResumeInFlightRef.current = false;
+        setSignInReplayTick((tick) => tick + 1);
+      });
+  }, [recoveryFailures, messages, status, baseSendMessage, signInReplayTick]);
 
   /**
    * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
@@ -5002,6 +5488,7 @@ export function useChatSession(
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
+      if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
         text,
         files,
@@ -5172,29 +5659,87 @@ export function useChatSession(
           const extra = {
             metadata: timestampedMetadata,
           } as { metadata: unknown };
+          // A message sent while a sign-in card is unanswered (or its
+          // redirect never came back) cancels that suspended call in the same
+          // request, so the model sees it was not run instead of the turn
+          // failing on an unresolved tool call.
+          const pendingSignIn = listPendingChatScopeStepUps({
+            chatSessionId: sessionAtSend,
+            projectId: hostedProjectId,
+            phases: ["awaiting_click", "awaiting_oauth"],
+          })[0];
+          const cancelSignIn =
+            pendingSignIn &&
+            isPendingChatAuthRequired(pendingSignIn) &&
+            pendingSignIn.chatSessionId === sessionAtSend &&
+            (pendingSignIn.phase === "awaiting_click" ||
+              pendingSignIn.phase === "awaiting_oauth")
+              ? {
+                  continuationId: pendingSignIn.event.continuationId,
+                  toolCallId: pendingSignIn.event.toolCallId,
+                }
+              : undefined;
+          const cancelClaim =
+            cancelSignIn &&
+            claimWaitingChatScopeStepUpForCancel(
+              sessionAtSend,
+              cancelSignIn.continuationId,
+            );
+          if (cancelSignIn) {
+            // An unclaimed marker is dropped so nothing sends this cancel twice.
+            if (!cancelClaim)
+              clearPendingChatScopeStepUp(cancelSignIn.continuationId);
+            else
+              completedRecoveryRef.current.set(cancelSignIn.continuationId, {
+                pending: cancelClaim,
+                cancelled: true,
+                settled: false,
+              });
+            clearChatAuthChallengeCard(cancelSignIn.toolCallId);
+          }
+          const requestOptions = cancelSignIn
+            ? { body: { scopeStepUpCancel: cancelSignIn } }
+            : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          let sent: Promise<void>;
           if (pluginMessage) {
-            baseSendMessage(
+            sent = baseSendMessage(
               { parts: pluginMessageParts(pluginMessage.params), ...extra },
-              { body: { pluginMessage } },
+              { body: { ...requestOptions?.body, pluginMessage } },
             );
           } else if (pluginMentions?.length || extraParts?.length) {
-            baseSendMessage({
-              parts: [
-                ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
-                  (message) => message.parts,
-                ),
-                ...(extraParts ?? []),
-                { type: "text", text },
-                ...(files ?? []),
-              ],
-              ...extra,
-            });
+            sent = baseSendMessage(
+              {
+                parts: [
+                  ...buildMentionContextMessages(pluginMentions ?? []).flatMap(
+                    (message) => message.parts,
+                  ),
+                  ...(extraParts ?? []),
+                  { type: "text", text },
+                  ...(files ?? []),
+                ],
+                ...extra,
+              },
+              requestOptions,
+            );
           } else if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
-            baseSendMessage({ text, files, ...extra });
+            sent = baseSendMessage({ text, files, ...extra }, requestOptions);
           } else {
-            baseSendMessage({ text, ...extra });
+            sent = baseSendMessage({ text, ...extra }, requestOptions);
+          }
+          if (cancelClaim) {
+            // The settle effect then clears the marker once the server's
+            // finished part or the call's result arrived, and otherwise
+            // reports the cancel as failed.
+            const settle = () => {
+              completedRecoveryRef.current.set(
+                cancelClaim.event.continuationId,
+                { pending: cancelClaim, cancelled: true },
+              );
+              setSignInReplayTick((tick) => tick + 1);
+            };
+            void Promise.resolve(sent).then(settle, settle);
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
@@ -5914,9 +6459,16 @@ export function useChatSession(
           targetKey: hostedTargetKeyValue,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
+        const resolvedMemberId =
+          resolvedAuthHeaders && authIsMemberRef.current
+            ? workOsUser?.id
+            : undefined;
+        // Token rotation updates transport headers, but must not discard the
+        // same member's transcript or detach its pending authorization call.
         const authHeadersChanged =
           hasResolvedBefore &&
-          !sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders);
+          (!sameChatAuthSession(previousAuthHeaders, resolvedAuthHeaders) ||
+            lastResolvedMemberIdRef.current !== resolvedMemberId);
         const hostedScopeChanged =
           hasResolvedBefore &&
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
@@ -5949,6 +6501,7 @@ export function useChatSession(
         }
 
         hasResolvedAuthHeadersRef.current = true;
+        lastResolvedMemberIdRef.current = resolvedMemberId;
         lastResolvedAuthHeadersRef.current = resolvedAuthHeaders;
         lastResolvedHostedScopeRef.current = currentHostedScope;
         setIsSessionBootstrapComplete(true);
@@ -6078,7 +6631,7 @@ export function useChatSession(
     fetchToolsMetadata();
   }, [
     selectedServersSignature,
-    selectedModel,
+    // The selection key tracks identity; rebuilt catalog rows must not refetch.
     tokenCountSelectionKey,
     hostedScenarioId,
     apiContextRevision,
@@ -6273,17 +6826,35 @@ export function useChatSession(
    * the rail is withdrawn with it. (Stream END is deliberately NOT a trigger —
    * a suspended operation's stream always ends while its round is pending.)
    */
+  const { canStopApproval, stopApproval, stopActiveTurn, stopping: stoppingHarness, stopFailed } = useHarnessApprovalStop({
+    owner: isHostedTransport && isAuthenticated && hostedProjectId && isHarness(harnessId) && !hostedScenarioId
+      ? { projectId: hostedProjectId, harnessId, chatSessionId }
+      : null,
+    dispatchBlocked: harnessStopBlockedRef,
+    messages,
+    setMessages,
+  });
   const stopChat = useCallback(() => {
-    harnessStartupRequestRef.current = null;
+    if (status === "ready" && canStopApproval) {
+      void stopApproval();
+      return;
+    }
+    const requestId = harnessStartupRequestRef.current;
+    if (requestId && (status === "submitted" || status === "streaming")) {
+      void stopActiveTurn(requestId);
+    }
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
     setHarnessStartupPhase(null);
     savedClientSendGuard.cancel();
     sendPreparationGuard.cancel();
     const store = useHostedMrtrStore.getState();
     for (const round of store.rounds) void store.cancel(round.key);
     stop();
-  }, [stop, savedClientSendGuard, sendPreparationGuard]);
+  }, [stop, savedClientSendGuard, sendPreparationGuard, status, canStopApproval, stopApproval, stopActiveTurn]);
 
   const submitBlocked =
+    stoppingHarness || stopFailed ||
     disableForAuthentication ||
     isAuthLoading ||
     authHeadersNotReady ||
@@ -6305,12 +6876,14 @@ export function useChatSession(
   useEffect(() => {
     if (status !== "submitted" && status !== "streaming") {
       setHarnessStartupPhase(null);
+      turnAuthorizationRenewal.stop();
       harnessStartupRequestRef.current = null;
     }
   }, [status]);
   useEffect(() => {
     setHarnessStartupPhase(null);
-    harnessStartupRequestRef.current = null;
+    turnAuthorizationRenewal.stop();
+      harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
   return {
@@ -6321,6 +6894,7 @@ export function useChatSession(
     rewindToMessage,
     sendMessage,
     stop: stopChat,
+    canStopApproval,
     status,
     error,
     autoResumeNotice,
@@ -6335,6 +6909,9 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    // The authorized catalog before this session's harness filter, so another
+    // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
+    catalogModels: composedModels,
     isMcpJamModel,
     outOfCreditsReason,
 

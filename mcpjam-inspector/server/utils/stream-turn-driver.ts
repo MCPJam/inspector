@@ -30,6 +30,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { FinishReason, UIMessageChunk } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PersistedTurnTrace } from "./chat-ingestion.js";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import {
   getPromptMessageStartIndex,
   writeTraceEvent,
@@ -78,6 +79,8 @@ export interface StreamTurnDriverOptions {
    *  + persists it. */
   spans: EvalTraceSpan[];
   onStepFinish?: (event: StreamTurnStepFinish) => void;
+  /** Harness turns only: the MCP route the turn ran on. */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
 /**
@@ -94,6 +97,7 @@ export class StreamTurnDriver {
   readonly harness?: string;
   readonly traceBaseMs: number;
   readonly spans: EvalTraceSpan[];
+  readonly harnessMcpAtTurn?: HarnessMcpAtTurn;
 
   /** Cumulative per-turn usage (NOT per-step delta); set by the engine as the
    *  stream's `finish`/step usage settles. */
@@ -117,6 +121,7 @@ export class StreamTurnDriver {
     this.traceBaseMs = opts.traceBaseMs;
     this.spans = opts.spans;
     this.onStepFinishCb = opts.onStepFinish;
+    this.harnessMcpAtTurn = opts.harnessMcpAtTurn;
   }
 
   get traceStarted(): boolean {
@@ -232,6 +237,9 @@ export class StreamTurnDriver {
       ...(this.usage ? { usage: this.usage } : {}),
       finishReason: this.finishReason,
       modelId: this.modelId,
+      ...(this.harnessMcpAtTurn
+        ? { harnessMcpAtTurn: this.harnessMcpAtTurn }
+        : {}),
     };
   }
 }

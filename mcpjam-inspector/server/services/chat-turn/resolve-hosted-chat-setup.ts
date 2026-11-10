@@ -40,6 +40,8 @@ export async function resolveHostedChatSetup(args: {
   bearer: string;
   signal?: AbortSignal;
   getClient: () => Promise<ConvexHttpClient>;
+  prepareChatTurn?: boolean;
+  preparedChatTurn?: unknown;
 }) {
   const { target, access } = args;
   if (
@@ -150,6 +152,8 @@ export async function resolveHostedChatSetup(args: {
       );
     const client = await args.getClient();
     const turn = await resolveChatTurn({
+      prepareChatTurn: args.prepareChatTurn,
+      preparedChatTurn: args.preparedChatTurn,
       target,
       access: { kind: "project", projectId: access.projectId },
       client,

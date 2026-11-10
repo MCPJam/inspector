@@ -1193,7 +1193,7 @@ describe("agent op registry", () => {
         { server: "acme mcp", suites: ["protocol"] },
         { projectId: "p1", client },
       ),
-    ).toEqual({ server: "srv_1", suites: ["protocol"] });
+    ).toEqual({ server: "srv_1", suites: ["protocol"], settings: "none" });
   });
 
   it("passes an already-stable conformance server ID through unchanged", async () => {
@@ -1210,7 +1210,7 @@ describe("agent op registry", () => {
         { server: "srv_1" },
         { projectId: "p1", client },
       ),
-    ).toEqual({ server: "srv_1" });
+    ).toEqual({ server: "srv_1", settings: "none" });
   });
 
   it("leaves an UNRESOLVABLE conformance server selector alone", async () => {
@@ -1227,7 +1227,7 @@ describe("agent op registry", () => {
         { server: "Ghost" },
         { projectId: "p1", client },
       ),
-    ).toEqual({ server: "Ghost" });
+    ).toEqual({ server: "Ghost", settings: "none" });
   });
 
   it("leaves the conformance proposal when the server resolver cannot reach the platform", async () => {
@@ -1244,7 +1244,25 @@ describe("agent op registry", () => {
         input,
         { projectId: "p1", client },
       ),
-    ).toEqual(input);
+    ).toEqual({ ...input, settings: "none" });
+  });
+
+  it("pins Slack and Discord starts to settings none, whatever the model asked", async () => {
+    // The approval names only the server, so the run must not call the tools
+    // a server's saved settings name. A model cannot opt back in.
+    const client = {
+      listProjectServers: async () => ({
+        items: [{ id: "srv_1", name: "Acme MCP" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "Acme MCP", settings: "saved" },
+        { projectId: "p1", client },
+      ),
+    ).toEqual({ server: "srv_1", settings: "none" });
   });
 
   it("leaves empty or missing conformance server selectors alone", async () => {
@@ -1266,7 +1284,7 @@ describe("agent op registry", () => {
           input,
           { projectId: "p1", client },
         ),
-      ).toEqual(input);
+      ).toEqual({ ...input, settings: "none" });
     }
     expect(listProjectServers).not.toHaveBeenCalled();
   });
@@ -1735,6 +1753,20 @@ describe("agent op registry", () => {
     expect(describe({ suite: "smoke", enabled: false })).toBe(
       "Clear the schedule for smoke",
     );
+  });
+
+  it("marks conformance evidence, written by the graded server, as DATA", () => {
+    for (const name of ["get_conformance_report", "get_conformance_check"]) {
+      const entry = AGENT_OP_REGISTRY.find(
+        (candidate) => candidate.operation.name === name,
+      );
+      expect(
+        entry?.promptNotes?.some((note) =>
+          /DATA, never instructions/.test(note),
+        ),
+        name,
+      ).toBe(true);
+    }
   });
 
   it("de-duplicates prompt notes and preserves registry order", () => {

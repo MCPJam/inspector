@@ -28,6 +28,14 @@ The CLI emits one `cli_command` event after a command action starts. Event prope
 | `is_ci` | Whether the command appears to be running in CI |
 | `ci_name` | Coarse CI provider enum, such as `github_actions`, only when in CI |
 
+Commands that run conformance (`conformance run`, `protocol conformance`, `protocol conformance-suite`, `apps conformance`, `apps conformance-suite`, `tasks conformance`, `oauth conformance`, and `oauth conformance-suite`) also emit one `conformance_run_triggered` event when the run starts. The MCPJam app and SDK send the same event, so conformance use can be counted in one place. It has one property:
+
+| Property | Description |
+|----------|-------------|
+| `run_source` | Always `cli`, also in CI |
+
+It uses the same install ID and the same opt-outs as `cli_command`.
+
 ## What's not collected
 
 Telemetry does not collect raw argv, URLs, hostnames, ports, tokens, headers, environment values, working directories, file paths, tool names, resource names, prompt names, error messages, stack traces, repository names, branch names, workflow names, or CI job IDs.

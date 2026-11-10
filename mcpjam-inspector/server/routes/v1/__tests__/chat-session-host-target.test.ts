@@ -46,7 +46,6 @@ const {
   getToolsMock,
   acquirePlaygroundHarnessBoxMock,
   releaseBoxMock,
-  resolvePlaygroundCredentialEnvironmentMock,
   playgroundCredentialRefusalMock,
   backend,
 } = vi.hoisted(() => ({
@@ -63,22 +62,19 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
-  resolvePlaygroundCredentialEnvironmentMock: vi.fn(),
   playgroundCredentialRefusalMock: vi.fn(),
   backend: { chatEnvironments: true },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
 // it and never resolves a persistent computer. Only the acquisition, and the
-// two credential reads a Cursor turn makes before it, are faked.
+// org key check a Cursor turn makes before it, are faked.
 vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   acquirePlaygroundHarnessBox: (...args: unknown[]) =>
     acquirePlaygroundHarnessBoxMock(...args),
-  resolvePlaygroundCredentialEnvironment: (...args: unknown[]) =>
-    resolvePlaygroundCredentialEnvironmentMock(...args),
   playgroundCredentialRefusal: (...args: unknown[]) =>
     playgroundCredentialRefusalMock(...args),
 }));
@@ -320,10 +316,6 @@ beforeEach(() => {
       binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
       release: releaseBoxMock,
     },
-  });
-  resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
-    ok: true,
-    environmentId: "env_hidden",
   });
   playgroundCredentialRefusalMock.mockResolvedValue(null);
 });
@@ -635,10 +627,12 @@ describe("a refused box provision", () => {
   });
 });
 
-describe("a harness that signs in with the member's own account", () => {
+describe("a harness on the organization's vendor key", () => {
   // Cursor's key reaches only a box the project provisioned, so the turn's own
-  // credential check runs BEFORE one is booted: a refused turn pays for no box
+  // org key check runs BEFORE one is booted: a refused turn pays for no box
   // and never reaches the model call that would hold the lease to its TTL.
+  // `resolveTurnRuntime` (faked here) refuses Cursor on this API for now; this
+  // branch is what admits it once the API may run it.
   // Cursor picks its own model on the customer's account, so the engine gate
   // holds the turn's model to the runtime's sentinel. No request body can send
   // it (the route refuses `cursor/auto` before the lease), so the resolver
@@ -654,7 +648,7 @@ describe("a harness that signs in with the member's own account", () => {
     },
   };
   const NO_KEY =
-    "No usable CURSOR_API_KEY. Add or fix it under Project Settings → Secrets, then send again.";
+    "Ask an org admin to add a Cursor key in Organization → AI providers.";
 
   beforeEach(() => {
     resolveHostModelDefinitionMock.mockResolvedValue({
@@ -663,13 +657,9 @@ describe("a harness that signs in with the member's own account", () => {
     });
   });
 
-  it("refuses a host-only turn with no key, before any box", async () => {
+  it("refuses a host-only turn when the org has no key, before any box", async () => {
     fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
-    resolvePlaygroundCredentialEnvironmentMock.mockResolvedValue({
-      ok: false,
-      status: 409,
-      message: NO_KEY,
-    });
+    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
 
     const response = await turn(firstTurn({ hostId: HOST }));
     const body = await response.json();
@@ -689,13 +679,11 @@ describe("a harness that signs in with the member's own account", () => {
     );
   });
 
-  it("refuses a turn whose environment grants no key, before any box", async () => {
+  it("refuses a turn on a pinned environment the same way", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue(
       environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
     );
-    playgroundCredentialRefusalMock.mockResolvedValue(
-      "The Cursor harness found a brokered CURSOR_API_KEY project secret, but the environment this run uses does not select it.",
-    );
+    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
 
     const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
     const body = await response.json();
@@ -703,42 +691,29 @@ describe("a harness that signs in with the member's own account", () => {
     expect(response.status).toBe(409);
     expect(body.code).toBe("CONFLICT");
     expect(body.details.reason).toBe("EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE");
-    // The session's own environment is the grant: nothing hidden is minted.
-    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
     expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        harnessId: "cursor",
-        projectId: PROJECT,
-        environmentId: ENVIRONMENT,
-      }),
+      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
     );
     expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
     expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 
-  it.each([true])("boots a host-only credential box with environment runtime %s", async (supported) => {
-    backend.chatEnvironments = supported;
+  it("boots a host-only box that carries no environment for the key", async () => {
     fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
 
     const response = await turn(firstTurn({ hostId: HOST }));
 
     expect(response.status).toBe(200);
-    expect(resolvePlaygroundCredentialEnvironmentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: PROJECT,
-        hostId: HOST,
-        harnessId: "cursor",
-      }),
-    );
     expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ environmentId: "env_hidden" }),
+      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
     );
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        harness: "cursor",
-        projectEnvironmentId: "env_hidden",
-      }),
-    );
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
+    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0]).toMatchObject({
+      harness: "cursor",
+    });
+    expect(
+      acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId,
+    ).toBeUndefined();
   });
 
   it("a harness on MCPJam's own key makes no credential read", async () => {
@@ -752,7 +727,6 @@ describe("a harness that signs in with the member's own account", () => {
 
     await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
-    expect(resolvePlaygroundCredentialEnvironmentMock).not.toHaveBeenCalled();
     expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
     expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
   });
@@ -1752,6 +1726,22 @@ describe("browser turn integration", () => {
     expect(body.browser.policy.mode).toBe("allow_all");
     expect(body.browser.effectivePolicy.tools).toContain("browser_observe");
     expect(body.browser.effectivePolicy.tools).not.toContain("browser_navigate");
+  });
+  it.each([
+    ["hosted_transient", "cloud_browser_unavailable", "Cloud Browser is unavailable for this turn."],
+    ["hosted_not_configured", "cloud_browser_unavailable_installation", "Cloud Browser is unavailable on this installation."],
+  ] as const)("returns a %s refusal to the caller and tells the model", async (code, refusal, modelText) => {
+    const input = browserFixture();
+    vi.mocked(browserRegistry.resolveHostTools).mockImplementation((_config, ctx) => {
+      ctx?.onToolSuppressed?.({ id: "browser", reason: "browser is not available", code });
+      return undefined;
+    });
+    const response = await turn(input);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.browser).toMatchObject({ attached: false, refusal, reason: "browser is not available" });
+    expect(sessionBrowser.openConversationBrowser).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock.mock.calls[0][0].systemPrompt).toContain(`system\n\n## Browser\n\n${modelText}`);
   });
   it("retries failed evidence at terminal cleanup without failing the turn", async () => {
     const input = browserFixture();

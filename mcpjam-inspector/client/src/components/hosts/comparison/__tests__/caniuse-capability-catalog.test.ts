@@ -82,6 +82,34 @@ describe("caniuse capability catalog", () => {
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
   });
 
+  it("publishes Event delivery, unknown until a client's modes are saved", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toContain("eventsDeliveryModes");
+
+    const field = hostConfigField("eventsDeliveryModes");
+    const withEvents = (events: unknown) =>
+      ({
+        ...emptyHostConfigInputV2(),
+        hostStyle: "chatgpt",
+        mcpProfile: {
+          profileVersion: 1,
+          extensions: { "com.mcpjam/events": events },
+        },
+      }) as never;
+
+    expect(getCaniuseSupportLevel(field, withEvents({ webhook: true }))).toBe(
+      "partial",
+    );
+    expect(getCaniuseSupportLevel(field, withEvents({}))).toBe("neutral");
+    // ChatGPT's style default is webhook, but nothing saved is no reading.
+    expect(
+      getCaniuseSupportLevel(field, {
+        ...emptyHostConfigInputV2(),
+        hostStyle: "chatgpt",
+      } as never),
+    ).toBe("unknown");
+  });
+
   it("publishes pagination as a yes/no row, unknown until probed", () => {
     const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
     expect(ids).toContain("paginationTraversal");
@@ -143,6 +171,7 @@ describe("caniuse capability catalog", () => {
     expect(ids).not.toContain("modelId");
     expect(ids).not.toContain("temperature");
     expect(ids).not.toContain("systemPrompt");
+    expect(ids).not.toContain("requireToolApproval");
     expect(ids).not.toContain("clientInfo.name");
     expect(ids).not.toContain("connectionDefaults.headers");
     expect(ids).not.toContain("connectionDefaults.requestTimeout");

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
@@ -21,6 +21,7 @@ import {
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
   protocolVersionLabel,
+  readEventsHostSetting,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
@@ -51,6 +52,7 @@ import {
   ProtocolAuthChallengeSection,
   type AuthChallengeKnob,
 } from "./ProtocolAuthChallengeSection";
+import { EventsHostSupportSection } from "./EventsHostSupportSection";
 
 /**
  * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
@@ -289,6 +291,13 @@ type ProtocolDoc = {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function profileExtensionsError(parsed: unknown): string | null {
+  return isPlainObject(parsed) && parsed.extensions !== undefined &&
+    !isPlainObject(parsed.extensions)
+    ? "MCP profile extensions must be a JSON object. Replace this value with { } or remove the extensions field."
+    : null;
 }
 
 function findAuthorizationKey(
@@ -549,7 +558,7 @@ export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2,
 ): HostConfigInputV2 | null {
-  if (!isPlainObject(parsed)) return null;
+  if (!isPlainObject(parsed) || profileExtensionsError(parsed)) return null;
 
   // clientInfo — require both name and version, like the form did. A bare
   // `{}` or partial object collapses to "not set", matching the persisted
@@ -766,6 +775,14 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const extensionsError = useMemo(() => {
+    try {
+      return profileExtensionsError(JSON.parse(content));
+    } catch {
+      // The JSON editor already reports syntax errors in its status bar.
+      return null;
+    }
+  }, [content]);
   // Every known version has its own entry, so a stored pin shows itself
   // rather than collapsing onto a neighbour. Only genuinely unknown values
   // (hand-edited junk, a version retired from the SDK) fall back to
@@ -1020,6 +1037,11 @@ export function ProtocolTab({
   // is stranded with tasks disabled and no UI left to re-enable them.
   const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
   const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
+  // Shown with Events, and always once a setting is saved, so a client is
+  // never left with a delivery setting nobody can see or change.
+  const eventsFlagEnabled = useFeatureFlagEnabled("mcp-events-enabled");
+  const showEventsDelivery =
+    eventsFlagEnabled === true || readEventsHostSetting(draft).kind !== "unset";
   const fTasksPolicy = hostConfigField("tasksPolicy");
   const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
     onDraftChange((prev) =>
@@ -1409,6 +1431,13 @@ export function ProtocolTab({
             </Select>
           </div>
         )}
+        {showEventsDelivery && (
+          <EventsHostSupportSection
+            draft={draft}
+            onDraftChange={onDraftChange}
+            readOnly={readOnly}
+          />
+        )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -1450,6 +1479,7 @@ export function ProtocolTab({
       <div className="flex min-h-0 flex-1 flex-col">
         <JsonEditor
           rawContent={content}
+          error={extensionsError}
           onRawChange={onRawChange}
           mode={effectiveJsonMode}
           onModeChange={readOnly ? undefined : setJsonMode}

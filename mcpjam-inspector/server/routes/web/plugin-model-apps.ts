@@ -1,3 +1,7 @@
+import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
+import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts } from "../../services/plugin-host/operation-authorization.js";
+import { assertPluginInstanceBindingCurrent } from "../../services/plugin-host/request-runtime.js";
 import { Hono, type Context } from "hono";
 import { PLUGIN_APP_UI_MAX_BYTES } from "../../../shared/plugin-app-ui-limits.js";
 import { z } from "zod";
@@ -16,6 +20,7 @@ import {
   findListingMetaForUri,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
+import { openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 const scope = z.strictObject({
   projectId: z.string().min(1).max(256),
   pluginWorkspace: z.unknown(),
@@ -24,6 +29,7 @@ const handle = scope.extend({
   instanceToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 const call = handle.extend({
+  authorization: pluginOperationAuthorization.optional(),
   invocationId: z.string().uuid(),
   params: z.strictObject({
     name: z.string().min(1).max(256),
@@ -32,6 +38,11 @@ const call = handle.extend({
   approval: z
     .strictObject({ id: z.string().max(4096), approved: z.boolean() })
     .optional(),
+  resume: z.strictObject({
+    continuationId: z.string().min(1).max(256),
+    round: z.number().int().positive(),
+    responsesBlobId: z.string().min(1).max(512),
+  }).optional(),
 });
 const denied = () => new PluginInvocationError("MODEL_APP_UNAVAILABLE");
 export function pluginModelAppRoutes(ports: {
@@ -107,6 +118,8 @@ export function pluginModelAppRoutes(ports: {
           toolMetadata: source.tool._meta,
           appToolsEnabled: fresh.appToolsEnabled,
           resourcesEnabled: fresh.resourcesEnabled,
+          localFilesAvailable: !!fresh.localFileTargetContract &&
+            fresh.extensions?.capabilities.localFiles !== false && fresh.extensions?.capabilities.fileViewers !== false,
           contextEnabled: fresh.contextEnabled,
           messageEnabled: fresh.messageEnabled,
           contextSnapshot: record.context.snapshot(
@@ -115,6 +128,17 @@ export function pluginModelAppRoutes(ports: {
           ),
           widgetContent: {
             ...widgetContent,
+            sourceReceipt: await sandboxSourceReceipt(
+              c,
+              {
+                serverId: record.owner.owner.serverId,
+                resourceUri: record.resourceUri,
+                toolCallId: record.owner.owner.instanceId,
+              },
+              widgetContent.html,
+              widgetContent.csp,
+              body.projectId,
+            ),
             permissive: false,
             injectedOpenAiCompat: false,
             viewOriginLabel: viewOriginLabelForConfig(
@@ -183,17 +207,22 @@ export function pluginModelAppRoutes(ports: {
             return c.json(record.context.snapshot(id, generation));
           if (action === "remove-all")
             return c.json(
-              record.context.removeAll(id, generation, {
+              modelApps.removeContext(body.instanceToken, actor, {
                 operationId: raw.operationId,
                 basis: raw.basis,
               }),
             );
-          const result = record.context.update(id, generation, {
-            operationId: raw.operationId,
-            sequence: raw.sequence,
-            params: raw.params,
-            ...(raw.attach === "user" ? { attach: "user" as const } : {}),
-          });
+          const result = modelApps.updateContext(
+            body.instanceToken,
+            actor,
+            {
+              operationId: raw.operationId,
+              sequence: raw.sequence,
+              params: raw.params,
+              ...(raw.attach === "user" ? { attach: "user" as const } : {}),
+            },
+            fresh.modelContextPolicy,
+          );
           return c.json({
             ...result,
             snapshot: record.context.snapshot(id, generation),
@@ -241,20 +270,51 @@ export function pluginModelAppRoutes(ports: {
       }
     }),
   );
+  router.post("/files/open", (c) =>
+    ports.route(c, async () => {
+      const body = handle.extend({ path: z.string().min(1).max(4096) }).parse(await c.req.json());
+      const { actor, bearer, admission } = await ports.admitted(c, body);
+      const record = modelApps.get(body.instanceToken, actor);
+      const runtime = createPluginRequestRuntime(c, admission, bearer,
+        { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
+        record.owner, { ownedForms: false });
+      const signal = AbortSignal.any([c.req.raw.signal, record.abort.signal]);
+      const verify = async () => {
+        const source = await runtime.resolve(record.toolName, signal);
+        await admission.revalidate({ signal });
+        if (source.revision !== record.revision || pluginResourceUri(source.tool._meta) !== record.resourceUri)
+          throw denied();
+        modelApps.get(body.instanceToken, actor);
+        signal.throwIfAborted();
+      };
+      try {
+        await verify();
+        return c.json(await openOwnedLocalFile({
+          current: await runtime.catalog(signal), actorId: actor.actorId,
+          projectId: actor.projectId, serverId: record.owner.owner.serverId,
+          bearer, path: body.path, signal, verify,
+        }));
+      } finally { await runtime.release(); }
+    }),
+  );
   router.post("/call", (c) =>
     ports.route(c, async () => {
       const body = call.parse(await c.req.json());
       const { actor, bearer, admission } = await ports.admitted(c, body);
       const record = modelApps.get(body.instanceToken, actor);
+      const authorization = await bindPluginOperation(c, record.owner,
+        { invocationId: body.invocationId, params: body.params, origin: "app" }, body.authorization,
+        AbortSignal.any([c.req.raw.signal, record.abort.signal]));
+      try {
       const runtime = createPluginRequestRuntime(
         c,
         admission,
         bearer,
         { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
         record.owner,
-        { ownedForms: false },
       );
       return await invokePluginRequest(c, {
+    receiptOnly: authorization.receiptOnly,
         actor,
         owner: record.owner.owner,
         admission,
@@ -263,6 +323,7 @@ export function pluginModelAppRoutes(ports: {
         invocationId: body.invocationId,
         params: body.params,
         approval: body.approval,
+        resume: body.resume,
         assertLive: () => {
           modelApps.get(body.instanceToken, actor);
         },
@@ -291,23 +352,34 @@ export function pluginModelAppRoutes(ports: {
         },
         invoke: (invocationPorts, params) =>
           record.invoker.invoke(
-            invocationPorts,
+            receiptOnlyPorts(invocationPorts, authorization.receiptOnly),
             "app",
             body.invocationId,
             params,
             AbortSignal.any([c.req.raw.signal, record.abort.signal]),
           ),
       });
+      } finally { authorization.dispose(); }
     }),
   );
   router.post("/renew", (c) =>
     ports.route(c, async () => {
-      const body = handle.parse(await c.req.json());
-      const { actor } = await ports.admitted(c, body);
-      return c.json({
-        status: "renewed",
-        expiresAt: modelApps.renew(body.instanceToken, actor),
-      });
+      const body = handle.extend({ operation: pluginOperationRequest.optional(), cancelAuthorization: pluginOperationAuthorization.optional() }).parse(await c.req.json());
+      const { actor, admission, bearer } = await ports.admitted(c, body);
+      const record = modelApps.get(body.instanceToken, actor);
+      let operationAuthorization;
+      if (body.operation || body.cancelAuthorization) {
+        await assertPluginInstanceBindingCurrent({ admission, bearer, instance: record.owner, signal: c.req.raw.signal });
+        if (body.cancelAuthorization) await cancelPluginOperation(c, body.cancelAuthorization, record.owner);
+        if (body.operation) {
+          if (body.operation.kind !== "call" || !body.operation.params) throw denied();
+          operationAuthorization = await preparePluginOperation(c, record.owner,
+            { invocationId: body.operation.invocationId, params: body.operation.params, origin: "app" },
+            body.operation.requestId, record.abort.signal);
+        }
+      }
+      return c.json({ status: "renewed", expiresAt: modelApps.renew(body.instanceToken, actor),
+        ...(operationAuthorization ? { operationAuthorization } : {}) });
     }),
   );
   router.post("/close", (c) =>

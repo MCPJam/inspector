@@ -112,11 +112,8 @@ import { capForModel, toToolError } from "../../utils/built-in-tools/mcpjam.js";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import {
   AGENT_MAX_STEPS,
-  MCPJAM_AGENT_BILLING_FEATURE,
-  MCPJAM_AGENT_MODEL_DEFINITION,
-  MCPJAM_AGENT_MODEL_SELECTION,
 } from "../../../shared/mcpjam-agent-model.js";
-import type { ModelDefinition } from "@/shared/types";
+import { resolveAgentModel } from "../../utils/agent-model.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { logger } from "../../utils/logger.js";
@@ -915,22 +912,8 @@ export function buildAgentApiToolSet(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Model + prompt (both static per build, on purpose)
+// Prompt and authored-suite defaults
 // ---------------------------------------------------------------------------
-
-/**
- * Pinned hosted model, shared with the in-app agent panel.
- *
- * It used to be Sonnet 5, chosen here alone. It is now the ONE model the
- * backend will accept a platform-billing claim for
- * (`shared/mcpjam-agent-model.ts`), so this surface and the web panel cannot
- * diverge without one of them losing its billing — which is the point: Slack,
- * Discord and the panel are the same agent, and MCPJam pays for all three.
- *
- * Still validated against the live catalog per request, so a catalog outage or
- * a self-hosted install fails loudly instead of mis-billing.
- */
-const AGENT_API_MODEL: ModelDefinition = MCPJAM_AGENT_MODEL_DEFINITION;
 
 /**
  * Default model for AUTHORED SUITES. The same id as the agent's own model
@@ -1228,13 +1211,6 @@ agent.post("/projects/:projectId/agent", async (c) => {
     throw hostedOnlyRouteError("The agent endpoint");
   }
 
-  if (!isHostedCatalogModel(String(AGENT_API_MODEL.id), "anthropic")) {
-    return v1Error(
-      c,
-      "FEATURE_NOT_SUPPORTED",
-      "The agent endpoint's hosted model is unavailable on this deployment.",
-    );
-  }
 
   const body = parseWithSchema(
     agentTurnSchema,
@@ -1368,6 +1344,21 @@ agent.post("/projects/:projectId/agent", async (c) => {
     // self-dispatched platform-op calls (see module docblock).
     const convexJwt = await getConvexBearerForRequest(c);
     const authHeader = `Bearer ${convexJwt}`;
+    const agentModel = await resolveAgentModel({
+      projectId,
+      authHeader,
+      isGuest: false,
+    });
+    if (
+      agentModel.billingFeature &&
+      !isHostedCatalogModel(String(agentModel.modelDefinition.id), "anthropic")
+    ) {
+      return v1Error(
+        c,
+        "FEATURE_NOT_SUPPORTED",
+        "The agent endpoint's hosted model is unavailable on this deployment.",
+      );
+    }
 
     const selfFetch = getSelfFetch();
     if (!selfFetch) {
@@ -1505,7 +1496,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
       selectedServers,
-      modelDefinition: AGENT_API_MODEL,
+      modelDefinition: agentModel.modelDefinition,
       systemPrompt: AGENT_API_SYSTEM_PROMPT,
       builtInTools,
       skillsSource: { kind: "none" },
@@ -1516,8 +1507,8 @@ agent.post("/projects/:projectId/agent", async (c) => {
 
     const chatSessionId = randomUUID();
     const rt = await resolveTurnRuntime({
-      modelSelection: MCPJAM_AGENT_MODEL_SELECTION,
-      modelDefinition: AGENT_API_MODEL,
+      modelSelection: agentModel.routingSelection,
+      modelDefinition: agentModel.modelDefinition,
       projectId,
       authHeader,
       sourceType: "direct",
@@ -1525,8 +1516,8 @@ agent.post("/projects/:projectId/agent", async (c) => {
       tools: prepared.allTools,
     });
     if (rt.runtime.kind !== "hosted") {
-      // Unreachable for a pinned hosted-catalog model; guard so a resolver
-      // change can't silently route this endpoint onto a BYOK rail.
+      // This API runs in the hosted service. A local-runtime connection
+      // must be run from an Inspector that can reach the provider.
       return v1Error(
         c,
         "INTERNAL_ERROR",
@@ -1602,15 +1593,13 @@ agent.post("/projects/:projectId/agent", async (c) => {
     const result = await runUnifiedAssistantTurn({
       runtime: {
         ...rt.runtime,
-        // MCPJam pays for agent turns on every surface, not just the in-app
-        // panel. The backend honours the claim on the caller's own sign-in,
-        // and only for the credentials it accepts for this — the org-scoped
-        // delegated token this route mints for `sk_` keys, Slack and Discord,
-        // or a first-party session — so a bearer minted for another audience
-        // is refused rather than billed.
+        // Only the fixed platform model carries a platform-paid claim.
+        // Organization models remain on their own credential and billing path.
         extraBodyFields: {
           ...(rt.runtime.extraBodyFields ?? {}),
-          billingFeature: MCPJAM_AGENT_BILLING_FEATURE,
+          ...(agentModel.billingFeature
+            ? { billingFeature: agentModel.billingFeature }
+            : {}),
         },
       },
       streamSink: "none",
@@ -1621,7 +1610,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
       // the engine answers rather than runs (MJ-008).
       ...(durable ? {} : { clientSuppliedHistory: true }),
       messages: turnMessages,
-      modelDefinition: AGENT_API_MODEL,
+      modelDefinition: agentModel.modelDefinition,
       systemPrompt: prepared.enhancedSystemPrompt,
       tools: prepared.allTools,
       mcpClientManager: manager,

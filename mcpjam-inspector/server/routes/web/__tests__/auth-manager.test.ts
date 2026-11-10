@@ -1,3 +1,5 @@
+import { admitWarmChatManager, isWarmChatManager, warmApprovalBindings } from "../../../utils/harness/warm-approval-binding";
+import { assertPendingPolicy, nativePolicyDigest, stampNativeForwardingPolicy } from "../../../utils/harness/forwarding/native-policy";
 import { getManagerResourceSnapshot, setManagerResourceHostConfig } from "../../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../../shared/task-owner.js";
 import { taskConnectionKey } from "../../../utils/task-connection-key.js";
@@ -57,6 +59,7 @@ import {
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
+import { buildHostConnectionPins } from "../../../services/host-connection-pins.js";
 
 // This device has approved every stdio command: the per-device approval gate
 // has its own suite, local-server-resolver.stdio-approval.test.ts.
@@ -96,6 +99,49 @@ describe("web auth manager batching", () => {
     expect(getManagerResourceSnapshot(result.manager, "server-1")?.headersReconstructible).toBe(stored);
   });
 
+  it("binds a paused approval to its actual authorized account even when the server name stays the same", async () => {
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
+    const digest = async (credentialId: string | undefined, token: string, authorizedAt = 7) => {
+      global.fetch = vi.fn(async () => Response.json({organizationId: "pilot-org", results: {"same-server": {
+        ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
+        ...(credentialId ? {oauthCredentialId: credentialId, oauthAccessToken: token, oauthCredentialAuthorizedAt: authorizedAt} : {}),
+        serverConfig: {updatedAt: 100, name: "Same label", transportType: "http", useOAuth: true, url: "https://fixture.example/mcp"},
+      }}}));
+      const {manager} = await createAuthorizedManager({}, "bearer", "project", ["same-server"], 1000,
+        {"same-server": token}, undefined, {lazyConnect: true});
+      const bindings = warmApprovalBindings(manager);
+      expect(bindings).toHaveLength(1);
+      expect(JSON.stringify(bindings)).not.toContain(token);
+      return nativePolicyDigest({}, bindings);
+    };
+    try {
+      const original = stampNativeForwardingPolicy({data: {}}, await digest("account-a", "first-access-token"));
+      expect(() => assertPendingPolicy(original, "different-policy")).toThrow();
+      const refreshed = await digest("account-a", "rotated-access-token");
+      expect(() => assertPendingPolicy(original, refreshed)).not.toThrow();
+      for (const next of [await digest("account-b", "other-account-token"), await digest("account-a", "new-auth-token", 8)])
+        expect(() => assertPendingPolicy(original, next)).toThrow("policy has changed");
+      expect(await digest(undefined, "caller-token-a")).not.toBe(await digest(undefined, "caller-token-b"));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("admits text-only Playground chats from the signed project and refuses missing or mismatched organizations", async () => {
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
+    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
+    try {
+      const {manager} = await createAuthorizedManager({}, "bearer", "project", [], 1000);
+      for (const projectOrg of [undefined, "unrelated"]) {
+        admitWarmChatManager(manager, projectOrg, false);
+        expect(isWarmChatManager(manager)).toBe(false);
+      }
+      admitWarmChatManager(manager, "pilot-org", true);
+      expect(isWarmChatManager(manager)).toBe(false);
+      admitWarmChatManager(manager, "pilot-org", false);
+      expect(isWarmChatManager(manager)).toBe(true);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 
@@ -112,6 +158,120 @@ describe("web auth manager batching", () => {
     } else {
       process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
+  });
+
+  it.each([true, false])(
+    "keeps a persisted modern OAuth server on its wire era with a saved client (browser map=%s)",
+    async (browserMap) => {
+      global.fetch = vi.fn(async () =>
+        Response.json({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthAccessToken: "stored-test-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://fixture.example/mcp",
+                useOAuth: true,
+                oauthProtocolMode: "2026-07-28",
+                oauthProtocolVersion: "2026-07-28",
+                oauthRegistrationStrategy: "dcr",
+              },
+            },
+          },
+        }),
+      );
+      const hostPins = buildHostConnectionPins(
+        {
+          mcpProfile: {
+            mcpProtocolVersion: "auto",
+            initialize: {
+              clientInfo: { name: "saved-client", version: "1.0" },
+              supportedProtocolVersions: ["2025-11-25"],
+            },
+          },
+        },
+        10_000,
+      );
+      const result = await createAuthorizedManager(
+        {},
+        "bearer",
+        "project",
+        ["server-1"],
+        hostPins.timeoutMs,
+        undefined,
+        undefined,
+        {
+          lazyConnect: true,
+          initializePins: hostPins.initializePins,
+          ...(browserMap
+            ? {
+                mcpProtocolVersionsByServerId: {
+                  "server-1": "2026-07-28" as const,
+                },
+              }
+            : {}),
+        },
+      );
+      expect(result.authorizedServerConfigs?.["server-1"]).toMatchObject({
+        mcpProtocolVersion: "2026-07-28",
+      });
+    },
+  );
+
+  it.each([
+    { label: "Auto does not reuse its last OAuth profile", mode: "auto", useOAuth: true, override: undefined, expected: "2025-11-25" },
+    { label: "legacy rows retain their concrete OAuth profile", mode: undefined, useOAuth: true, override: undefined, expected: "2026-07-28" },
+    { label: "an explicit legacy mode does not reuse a modern profile", mode: "2025-11-25", useOAuth: true, override: undefined, expected: "2025-11-25" },
+    { label: "non-OAuth servers do not reuse OAuth metadata", mode: "2026-07-28", useOAuth: false, override: undefined, expected: "2025-11-25" },
+    { label: "the saved per-server override wins over OAuth and host defaults", mode: "2026-07-28", useOAuth: true, override: "2025-06-18", expected: "2025-06-18" },
+  ] as const)("$label", async ({ mode, useOAuth, override, expected }) => {
+    global.fetch = vi.fn(async () => Response.json({
+      results: {
+        "server-1": {
+          ok: true,
+          role: "member",
+          accessLevel: "project_member",
+          permissions: { chatOnly: false },
+          ...(useOAuth ? { oauthAccessToken: "stored-test-token" } : {}),
+          serverConfig: {
+            transportType: "http",
+            url: "https://fixture.example/mcp",
+            useOAuth,
+            ...(mode !== undefined ? { oauthProtocolMode: mode } : {}),
+            oauthProtocolVersion: "2026-07-28",
+          },
+        },
+      },
+    }));
+    const pins = buildHostConnectionPins({
+      mcpProfile: {
+        mcpProtocolVersion: "2025-11-25",
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        },
+      },
+      ...(override ? {
+        serverConnectionOverrides: {
+          "server-1": { mcpProtocolVersionOverride: override },
+        },
+      } : {}),
+    }, 10_000);
+    const result = await createAuthorizedManager(
+      {}, "bearer", "project", ["server-1"], pins.timeoutMs,
+      undefined, undefined,
+      {
+        lazyConnect: true,
+        initializePins: pins.initializePins,
+        mcpProtocolVersionsByServerId: pins.mcpProtocolVersionsByServerId,
+      },
+    );
+    expect(result.authorizedServerConfigs?.["server-1"]).toMatchObject({
+      mcpProtocolVersion: expected,
+    });
   });
 
   it.each(["saved-account", "other-account", undefined])("accepts a single selected credential only when its returned identity matches (%s)", async returnedId => {
@@ -1020,6 +1180,108 @@ describe("web auth manager batching", () => {
     expect(
       result.connectionsByServerId?.["server-1"].map((c) => c.connectionId),
     ).toEqual([a, b]);
+  });
+
+  describe("a member's only login", () => {
+    const credential = "c".repeat(32);
+    const single = (overrides: Record<string, unknown> = {}) => ({
+      ok: true,
+      role: "member",
+      accessLevel: "project_member",
+      permissions: { chatOnly: false },
+      serverConfig: {
+        updatedAt: 123,
+        name: "Lazy bench",
+        transportType: "http",
+        url: "https://example.com/mcp",
+        headers: {},
+        authMethod: "auto",
+      },
+      oauthAccessToken: "token-only",
+      oauthCredentialId: credential,
+      oauthCredentialAuthorizedAt: 11,
+      ...overrides,
+    });
+    const run = async (
+      result: Record<string, unknown>,
+      options: Record<string, unknown> = { multiConnection: true },
+    ) => {
+      const requests: Array<{ url: string; body: any }> = [];
+      global.fetch = vi.fn(async (input, init) => {
+        const url = fetchUrl(input);
+        requests.push({ url, body: JSON.parse(String(init?.body)) });
+        if (url.endsWith("/force-refresh"))
+          return Response.json({ success: true, accessToken: "fresh" });
+        return Response.json({ results: { "server-1": result } });
+      }) as typeof fetch;
+      const created = await createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-1"],
+        10_000,
+        undefined,
+        undefined,
+        options,
+      );
+      return { created, requests };
+    };
+
+    it("is grouped as the implicit default under the bare server key", async () => {
+      const { created, requests } = await run(single());
+      expect(created.connectionsByServerId?.["server-1"]).toEqual([
+        {
+          serverId: "server-1",
+          connectionId: credential,
+          key: "server-1",
+          label: "Lazy bench",
+          profile: undefined,
+          isDefault: true,
+          implicit: true,
+        },
+      ]);
+      const configs = mcpClientManagerMock.mock.calls[0][0];
+      expect(Object.keys(configs)).toEqual(["server-1"]);
+      expect(
+        new Headers(configs["server-1"].requestInit.headers).get(
+          "authorization",
+        ),
+      ).toBe("Bearer token-only");
+      setManagerResourceHostConfig(created.manager, "host-config", "host");
+      expect(
+        getManagerResourceSnapshot(created.manager, "server-1")
+          ?.credentialAuthorizedAt,
+      ).toBe(11);
+      // A 401 refreshes the same credential the call was attributed to.
+      await configs["server-1"].onUnauthorized({});
+      expect(
+        requests.find((r) => r.url.endsWith("/force-refresh"))?.body
+          .connectionId,
+      ).toBe(credential);
+    });
+
+    it.each([
+      ["no account list was requested", single(), {}],
+      ["the caller is a shared-chat visitor", single({ accessLevel: "shared_chat" }), undefined],
+      ["the backend sent no credential id", single({ oauthCredentialId: undefined }), undefined],
+      ["there is no live token", single({ oauthAccessToken: null }), undefined],
+      [
+        "the server authenticates with a bearer header",
+        single({
+          serverConfig: {
+            name: "Lazy bench",
+            transportType: "http",
+            url: "https://example.com/mcp",
+            headers: {},
+            authMethod: "bearer",
+          },
+        }),
+        undefined,
+      ],
+    ])("is not grouped when %s", async (_case, result, options) => {
+      const { created } = await run(result, options);
+      expect(created.connectionsByServerId).toBeUndefined();
+    });
   });
 
   it("uses the request oauth token when the batch response does not include one", async () => {
