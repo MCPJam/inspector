@@ -59,6 +59,7 @@ import {
   fetchHostedBrowserSession,
   fetchHostedBrowserProfileArchive,
   HostedBrowserError,
+  hostedBrowserAwake,
   openHostedBrowserFrameStream,
   pingHostedBrowserInput,
   sendHostedBrowserInput,
@@ -407,6 +408,10 @@ export function HostedBrowserBody({
       return woke;
     },
     onAwake: () => setStreamAttempt((n) => n + 1),
+    // Notices a desktop the agent woke; never wakes one itself.
+    isServing: () =>
+      tokens ? hostedBrowserAwake(tokens) : Promise.resolve(false),
+    visible: active,
   });
   // Another browser, or a fresh session, starts without the last one's pause.
   useEffect(

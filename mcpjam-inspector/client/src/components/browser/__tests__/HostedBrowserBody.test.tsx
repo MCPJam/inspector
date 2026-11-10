@@ -39,6 +39,8 @@ const api = vi.hoisted(() => ({
   sessionReadOptions: [] as unknown[],
   /** Holds every `/session` answer until it resolves, when set. */
   sessionGate: null as Promise<void> | null,
+  /** How many times a paused pane asked whether the desktop woke. */
+  awakeChecks: 0,
   streamArgs: [] as unknown[],
   /** What the shell's state poll answers. Null is "cannot say". */
   state: null as unknown,
@@ -118,6 +120,11 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       }
       return api.session;
     },
+    // A read without `ensure` (see its own tests): what `/session` says now.
+    hostedBrowserAwake: async () => {
+      api.awakeChecks += 1;
+      return (api.session as { asleep?: boolean } | null)?.asleep === false;
+    },
     actOnHostedBrowserLease: async (
       _tokens: unknown,
       { action }: { action: string },
@@ -152,6 +159,7 @@ vi.mock("@/components/computer/BrowserPanel", () => ({
 }));
 
 import { HostedBrowserBody } from "../HostedBrowserBody";
+import { PAUSED_CHECK_MS } from "../usePausedPane";
 import {
   encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
@@ -170,6 +178,7 @@ beforeEach(() => {
   api.sessionReads = 0;
   api.sessionReadOptions = [];
   api.sessionGate = null;
+  api.awakeChecks = 0;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
   api.inputs = [];
@@ -547,6 +556,66 @@ describe("the hosted pane — the socket", () => {
     });
     expect(screen.queryByTestId("paused-pane-picture")).toBeNull();
     expect(api.sockets.length).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it("reopens the picture once something else wakes the desktop, without waking it", async () => {
+    // The agent's next browser command wakes a paused desktop. The pane's
+    // socket closed at the pause, so it reads the session (never `ensure`)
+    // while paused and on screen, and reopens once the desktop serves.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+
+    api.session = { ...RUNNING, asleep: true };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(api.awakeChecks).toBe(1);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(api.sockets.length).toBe(1);
+
+    api.session = { ...RUNNING, asleep: false };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    expect(api.sockets.length).toBe(2);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    vi.useRealTimers();
+  });
+
+  it("asks nothing while the paused pane is hidden", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    api.session = { ...RUNNING, asleep: false };
+
+    // Behind another rail tab.
+    view.rerender(
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={false}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 6);
+    });
+    expect(api.awakeChecks).toBe(0);
+
+    // On screen in the rail, but in a background browser tab.
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    view.rerender(
+      <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 6);
+    });
+    expect(api.awakeChecks).toBe(0);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
     vi.useRealTimers();
   });
 

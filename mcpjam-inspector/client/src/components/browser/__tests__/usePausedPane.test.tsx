@@ -1,6 +1,7 @@
 /**
- * The paused pane: only a person wakes the desktop, and VNC input is reported
- * at most once a minute.
+ * The paused pane: only a person wakes the desktop, a paused pane on screen
+ * notices when something else woke it, and VNC input is reported at most once
+ * a minute.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -16,6 +17,7 @@ import {
   idleWindowText,
 } from "@/components/browser/PausedPaneOverlay";
 import {
+  PAUSED_CHECK_MS,
   VNC_INPUT_PING_MS,
   usePausedPane,
   useThrottledInputPing,
@@ -90,6 +92,70 @@ describe("usePausedPane", () => {
     await act(async () => finish(false));
     expect(result.current.state).toBe("awake");
     expect(onAwake).not.toHaveBeenCalled();
+  });
+
+  it("asks whether something else woke the desktop, and reopens without waking it", async () => {
+    vi.useFakeTimers();
+    let serving = false;
+    const isServing = vi.fn(async () => serving);
+    const wake = vi.fn(async () => true);
+    const onAwake = vi.fn();
+    const { result } = renderHook(() =>
+      usePausedPane({ wake, onAwake, isServing, visible: true }),
+    );
+
+    // Awake, nothing to ask.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 3);
+    });
+    expect(isServing).not.toHaveBeenCalled();
+
+    act(() => result.current.pause());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(isServing).toHaveBeenCalledOnce();
+    expect(result.current.state).toBe("paused");
+
+    serving = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(result.current.state).toBe("awake");
+    expect(onAwake).toHaveBeenCalledOnce();
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing while hidden, or while a person's wake is in flight", async () => {
+    vi.useFakeTimers();
+    const isServing = vi.fn(async () => false);
+    const wake = vi.fn(() => new Promise<boolean>(() => {}));
+    const { result, rerender } = renderHook(
+      ({ visible }) =>
+        usePausedPane({ wake, onAwake: () => {}, isServing, visible }),
+      { initialProps: { visible: false } },
+    );
+    act(() => result.current.pause());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 3);
+    });
+    expect(isServing).not.toHaveBeenCalled();
+
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    rerender({ visible: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 3);
+    });
+    expect(isServing).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+
+    act(() => result.current.resume());
+    expect(result.current.state).toBe("resuming");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 3);
+    });
+    expect(isServing).not.toHaveBeenCalled();
+    expect(wake).toHaveBeenCalledOnce();
   });
 
   it("ignores input while the desktop is awake", () => {

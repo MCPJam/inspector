@@ -1,7 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Where a hosted pane stands with its desktop's pause. */
 export type PausedPaneState = "awake" | "paused" | "resuming";
+
+/** How often a paused pane on screen asks whether something else woke it. */
+export const PAUSED_CHECK_MS = 10_000;
 
 /**
  * A hosted pane whose desktop paused for lack of use.
@@ -10,12 +13,21 @@ export type PausedPaneState = "awake" | "paused" | "resuming";
  * the desktop: a click or key in the pane, or Resume. Never a timer, and never
  * a pane that is merely shown again, because watching is not use and every
  * open tab would otherwise wake it at once.
+ *
+ * Something else can wake it, though: the agent's next browser command does.
+ * The socket closed at the pause, so nothing would tell the pane. While it is
+ * paused AND on screen it asks `isServing`, a read that never wakes anything,
+ * and reopens the picture once the desktop serves again.
  */
 export function usePausedPane(args: {
   /** Ask the control plane to wake the desktop; true once it is awake. */
   wake: () => Promise<boolean>;
   /** The desktop is awake again: reopen the picture. */
   onAwake: () => void;
+  /** Is the desktop serving again? A read only: it must never wake it. */
+  isServing?: () => Promise<boolean>;
+  /** Is the pane on screen? A hidden pane asks nothing. */
+  visible?: boolean;
 }): {
   state: PausedPaneState;
   pause: () => void;
@@ -50,6 +62,33 @@ export function usePausedPane(args: {
     // A wake that failed leaves the box asleep; the next input asks again.
     argsRef.current.wake().then(settle, () => settle(false));
   }, [go]);
+
+  // Only while paused: a person's wake in flight already owns the outcome.
+  const watching =
+    state === "paused" && (args.visible ?? true) && !!args.isServing;
+  useEffect(() => {
+    if (!watching) return;
+    let stopped = false;
+    let asking = false;
+    const timer = setInterval(() => {
+      const isServing = argsRef.current.isServing;
+      if (asking || !isServing || document.visibilityState !== "visible")
+        return;
+      asking = true;
+      const settle = (serving: boolean) => {
+        asking = false;
+        if (stopped || !serving || stateRef.current !== "paused") return;
+        go("awake");
+        argsRef.current.onAwake();
+      };
+      isServing().then(settle, () => settle(false));
+    }, PAUSED_CHECK_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [watching, go]);
+
   return { state, pause, resume, clear };
 }
 
