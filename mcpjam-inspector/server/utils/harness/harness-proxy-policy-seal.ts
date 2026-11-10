@@ -67,6 +67,10 @@ interface SealedPolicyEnvelope {
   v: 1 | 2 | 3 | 4;
   turn?: HarnessProxyTurn;
   profile?: HarnessConnectionProfile;
+  /** `profile.versionNegotiation`, kept out of `profile`: an instance that
+   *  predates it validates `profile` strictly and ignores keys here, so a
+   *  mixed fleet keeps opening envelopes. */
+  vn?: "legacy-first";
   /** The Convex-minted proxy token, verbatim. */
   t: string;
   /** The serverId this envelope was sealed for. */
@@ -166,15 +170,22 @@ export function sealHarnessProxyToken(args: {
   const envelope: SealedPolicyEnvelope = {
     v: args.turn ? 3 : args.profile ? 2 : 1,
     ...(args.turn ? { turn: args.turn } : {}),
-    ...(args.profile
-      ? { profile: harnessConnectionProfileSchema.parse(args.profile) }
-      : {}),
+    ...sealedProfile(args.profile),
     t: args.token,
     s: args.serverId,
     exp: Math.floor(args.expiresAtMs / 1000),
     p: args.policy,
   };
   return encryptEnvelope(secret, envelope, randomBytes(IV_LENGTH));
+}
+
+function sealedProfile(
+  input: HarnessConnectionProfile | undefined,
+): Pick<SealedPolicyEnvelope, "profile" | "vn"> {
+  if (!input) return {};
+  const { versionNegotiation, ...profile } =
+    harnessConnectionProfileSchema.parse(input);
+  return { profile, ...(versionNegotiation ? { vn: versionNegotiation } : {}) };
 }
 
 function encryptEnvelope(
@@ -224,9 +235,7 @@ export function sealHarnessSessionEnvelope(args: {
   }
   const envelope: SealedPolicyEnvelope = {
     v: 4,
-    ...(args.profile
-      ? { profile: harnessConnectionProfileSchema.parse(args.profile) }
-      : {}),
+    ...sealedProfile(args.profile),
     t: args.handle,
     s: args.serverId,
     p: args.policy,
@@ -337,6 +346,13 @@ export function unsealHarnessProxyToken(
     ...(envelope.v === 4 ? { session: true as const } : {}),
     serverId: envelope.s,
     policy,
-    ...(profile?.success ? { profile: profile.data } : {}),
+    ...(profile?.success
+      ? {
+          profile:
+            envelope.vn === "legacy-first"
+              ? { ...profile.data, versionNegotiation: envelope.vn }
+              : profile.data,
+        }
+      : {}),
   };
 }

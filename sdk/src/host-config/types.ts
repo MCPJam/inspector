@@ -31,6 +31,7 @@ import type {
   ToolResultAuthChallengeTrigger,
   UnauthorizedChallengeTrigger,
 } from "../mcp-client-manager/auth-challenge.js";
+import type { VersionNegotiationPreference } from "../mcp-client-manager/version-negotiation.js";
 
 import type { ModelSelection } from "./model-selection.js";
 
@@ -328,6 +329,7 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "unauthorizedChallengeTrigger",
   "toolResultAuthChallenge",
   "toolResultAuthChallengeTrigger",
+  "versionNegotiation",
 ] as const;
 
 /**
@@ -398,6 +400,11 @@ export type HostConfigMcpProfileV1 = {
   // concrete revisions pin that exact wire era. Per-server pins live on
   // serverConnectionOverrides and win over this default.
   mcpProtocolVersion?: McpProtocolVersion | "auto";
+  // How the client negotiates while `mcpProtocolVersion` is absent, in place
+  // of Auto: `"legacy-first"` is Cursor CLI's measured handshake (see
+  // `version-negotiation.ts`). Inert beside any `mcpProtocolVersion`, an
+  // explicit `"auto"` included. Absent = Auto, omitted from canonical output.
+  versionNegotiation?: VersionNegotiationPreference;
   // Whether the simulated client mirrors `x-mcp-header` tool arguments into
   // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
   // spec-conforming default; `"omit"` simulates a non-conforming client so a

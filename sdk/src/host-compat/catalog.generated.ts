@@ -2781,7 +2781,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Cursor CLI",
       provenance: "probe",
       rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
       verifiedAt: 1794096000000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -2836,6 +2836,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostContext: {},
       mcpProfile: {
         profileVersion: 1,
+        versionNegotiation: "legacy-first",
         apps: {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],

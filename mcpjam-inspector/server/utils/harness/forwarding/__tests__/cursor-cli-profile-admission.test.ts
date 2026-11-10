@@ -19,6 +19,8 @@ import { WEB_STREAM_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import { toHttpConfig } from "../../../../routes/web/auth.js";
 import { buildHostConnectionPins } from "../../../../services/host-connection-pins.js";
 import { nativeForwardingGaps } from "../native-admission.js";
+import { qualifiedForwardingRuntime } from "../runtime-contract.js";
+import { getHarnessAdapter } from "../../registry.js";
 
 type Profile = ReturnType<typeof seedHostTemplate>;
 
@@ -118,6 +120,9 @@ async function gapsFor(profile: Profile) {
     serverIds: ["server"],
     respectToolVisibility: profile.respectToolVisibility,
     modelVisibleMcpToolResults: profile.modelVisibleMcpToolResults,
+    nativeVersionNegotiation: qualifiedForwardingRuntime(
+      getHarnessAdapter("cursor"),
+    )?.nativeVersionNegotiation,
   });
 }
 

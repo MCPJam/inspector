@@ -15,6 +15,9 @@ export type ForwardingRuntimeContract = {
   /** The user approves at the runtime's own prompt, and that answer is bound
    *  to one forwarded request; MCPJam never answers the prompt for it. */
   boundApprovals?: true;
+  /** How the runtime's own MCP client negotiates the protocol, as measured. A
+   *  client profile set to it adds no protocol pin to native admission. */
+  nativeVersionNegotiation?: "legacy-first";
   refresh<T extends HarnessV1>(
     runtime: T,
     servers: HarnessMcpJson["mcpServers"],

@@ -17,6 +17,9 @@ export interface HostConnectionProfile {
   clientCapabilities?: Record<string, unknown>;
   supportedProtocolVersions?: string[];
   mcpProtocolVersion?: string;
+  /** `mcpProfile.versionNegotiation`, read only while the profile sets no
+   * `mcpProtocolVersion`. Maps onto `MCPServerConfig.versionNegotiation`. */
+  versionNegotiation?: "legacy-first";
   /**
    * SEP-2243 `Mcp-Param-*` mirroring, already reduced to the wire-layer
    * boolean `MCPServerConfig.mirrorToolParamHeaders` takes: `undefined` =
@@ -112,6 +115,11 @@ export function hostConnectionProfile(
     mcpProfile.mcpProtocolVersion !== "auto"
       ? mcpProfile.mcpProtocolVersion
       : undefined;
+  const versionNegotiation =
+    mcpProfile?.mcpProtocolVersion === undefined &&
+    mcpProfile?.versionNegotiation === "legacy-first"
+      ? ("legacy-first" as const)
+      : undefined;
 
   // Only `"omit"` says anything at the wire layer. An explicit `"mirror"`
   // and an absent field are the same instruction (mirror), so both leave
@@ -167,6 +175,7 @@ export function hostConnectionProfile(
       ? { supportedProtocolVersions }
       : {}),
     ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
+    ...(versionNegotiation ? { versionNegotiation } : {}),
     ...(mirrorToolParamHeaders === false
       ? { mirrorToolParamHeaders: false }
       : {}),
@@ -213,6 +222,9 @@ export function applyHostConnectionProfile<T extends object>(
       ? {
           ...(host.mcpProtocolVersion
             ? { mcpProtocolVersion: host.mcpProtocolVersion }
+            : {}),
+          ...(host.versionNegotiation
+            ? { versionNegotiation: host.versionNegotiation }
             : {}),
           ...(host.mirrorToolParamHeaders === false
             ? { mirrorToolParamHeaders: false }
