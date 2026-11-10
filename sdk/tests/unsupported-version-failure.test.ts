@@ -108,6 +108,28 @@ describe("readUnsupportedVersionFailure", () => {
     expect(verdict).toEqual({ supported: ["2025-06-18"] });
   });
 
+  // A 2026-07-28-only server refusing a legacy `initialize`: HTTP 400 with
+  // JSON-RPC -32022. The transport keeps only the body text in its message.
+  it("reads the server's -32022 refusal from the transport's body text", () => {
+    const verdict = readUnsupportedVersionFailure(
+      new Error(
+        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Unsupported protocol version: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}',
+      ),
+    );
+
+    expect(verdict).toEqual({ supported: ["2026-07-28"] });
+  });
+
+  it("ignores a JSON-RPC error body with another code", () => {
+    expect(
+      readUnsupportedVersionFailure(
+        new Error(
+          'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":0}',
+        ),
+      ),
+    ).toBeUndefined();
+  });
+
   it("ignores a refusal that names no version", () => {
     expect(
       readUnsupportedVersionFailure(
