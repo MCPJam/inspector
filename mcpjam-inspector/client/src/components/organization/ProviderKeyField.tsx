@@ -10,7 +10,11 @@ export function ProviderKeyField({
   onChange,
   placeholder = "sk-...",
   optional = false,
+  error,
+  disabled,
 }: {
+  error?: string;
+  disabled?: boolean;
   id: string;
   configured: boolean;
   value: string;
@@ -30,6 +34,7 @@ export function ProviderKeyField({
           type="button"
           variant="outline"
           size="sm"
+          disabled={disabled}
           onClick={() => setReplacing(true)}
         >
           Replace key
@@ -44,6 +49,9 @@ export function ProviderKeyField({
         {optional && !configured ? " (optional)" : ""}
       </label>
       <Input
+        disabled={disabled}
+        aria-invalid={!!error}
+        aria-describedby={error ? `${id}-error` : undefined}
         id={id}
         type="password"
         autoComplete="new-password"
@@ -51,11 +59,17 @@ export function ProviderKeyField({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
       />
+      {error && (
+        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
       {configured && (
         <Button
           type="button"
           variant="ghost"
           size="sm"
+          disabled={disabled}
           onClick={() => {
             onChange("");
             setReplacing(false);
