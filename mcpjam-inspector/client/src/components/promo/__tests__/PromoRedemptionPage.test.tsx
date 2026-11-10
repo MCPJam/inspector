@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromoRedemptionPage } from "../PromoRedemptionPage";
 import { savePromoIntent, clearPromoIntent } from "@/lib/promo-intent";
+import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
 
 const mocks = vi.hoisted(() => ({
   user: { id: "account-1" } as { id: string } | null,
@@ -29,6 +30,7 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  useWorkosAuthUnavailableStore.getState().dismiss();
   mocks.user = { id: "account-1" };
   mocks.context.organizations = [
     { organizationId: "org-1", name: "My organization" },
@@ -36,6 +38,7 @@ beforeEach(() => {
   mocks.context.accountExternalId = "account-1";
   savePromoIntent("SYNTH-ETIC1");
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("redemption confirmation", () => {
   it("requires an explicit named submit and shows authenticated email as context", async () => {
@@ -76,6 +79,17 @@ describe("redemption confirmation", () => {
     expect(
       sessionStorage.getItem("mcpjam_app_signin_return_path_v1"),
     ).toContain('"path":"/redeem"');
+  });
+  it("explains where to sign in at an HTTP address instead of calling WorkOS", async () => {
+    mocks.user = null;
+    vi.stubGlobal("location", new URL("http://192.168.1.50:6274/redeem"));
+    render(<PromoRedemptionPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to claim" }));
+    await waitFor(() =>
+      expect(useWorkosAuthUnavailableStore.getState().open).toBe(true),
+    );
+    expect(mocks.signIn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
   it("resets form data when the signed-in account changes", () => {
     const { rerender } = render(<PromoRedemptionPage />);
