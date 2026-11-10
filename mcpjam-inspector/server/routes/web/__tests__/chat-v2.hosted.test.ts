@@ -207,12 +207,6 @@ vi.mock("../../../utils/harness/playground-box.js", async () => {
     playgroundCredentialRefusal: vi.fn(
       async (): Promise<string | null> => null,
     ),
-    resolvePlaygroundCredentialEnvironment: vi.fn(
-      async (): Promise<
-        | { ok: true; environmentId: string }
-        | { ok: false; status: 409 | 502; message: string }
-      > => ({ ok: true, environmentId: "env_hidden" }),
-    ),
     acquirePlaygroundHarnessBox: vi.fn(async () => ({
       ok: true as const,
       box: {
@@ -259,7 +253,6 @@ import {
   acquirePlaygroundHarnessBox,
   playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  resolvePlaygroundCredentialEnvironment,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 
@@ -1725,7 +1718,7 @@ describe("web routes — chat-v2 hosted mode", () => {
    * to correct it — leaving the session row naming a model the turn never
    * touched, or nothing at all.
    */
-  describe("an external-account harness host records ITS OWN model", () => {
+  describe("an external-account harness preserves a selected account model", () => {
     const cursorHost = {
       ok: true,
       config: {
@@ -1735,7 +1728,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       },
     };
 
-    it("persists the host's cursor/auto sentinel, not the browser's leftover pick", async () => {
+    it("persists the explicit Cursor account model instead of replacing it with Auto", async () => {
       fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
       const { app, token } = createWebTestApp();
 
@@ -1751,9 +1744,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           // What the picker actually holds on a Cursor host: an unrelated
           // model, because the sentinel is not a selectable entry.
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1763,10 +1756,10 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
       const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
       // The sentinel — never blank, and never the Haiku id that nothing ran.
-      expect(persisted.modelId).toBe("cursor/auto");
+      expect(persisted.modelId).toBe("cursor/mini");
       // And not billed to MCPJam: the turn ran on the customer's Cursor account.
       expect(persisted.modelSource).toBe("external-account");
-      expect(persisted.hostConfig?.modelId).toBe("cursor/auto");
+      expect(persisted.hostConfig?.modelId).toBe("cursor/mini");
     });
 
     it("routes the turn to the harness instead of demanding an org `cursor` provider key", async () => {
@@ -1783,9 +1776,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           chatSessionId: "chat-cursor-2",
           messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1799,7 +1792,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
       const engineArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(engineArgs.harness).toBe("cursor");
-      expect(engineArgs.modelId).toBe("cursor/auto");
+      expect(engineArgs.modelId).toBe("cursor/mini");
     });
 
     it("leaves a NON-harness host's model to the body, as before", async () => {
@@ -1915,9 +1908,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           chatSessionId: "chat-cursor-4",
           messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1930,7 +1923,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       };
       expect(JSON.stringify(body)).toContain("FEATURE_NOT_SUPPORTED");
       expect(JSON.stringify(body)).toContain('"reason":"HARNESS_UNAVAILABLE"');
-      expect(JSON.stringify(body)).toContain("chooses its own model");
+      expect(JSON.stringify(body)).toContain("Cursor account");
       // The id its owner has to fix, named in the refusal.
       expect(JSON.stringify(body)).toContain("anthropic/claude-sonnet-4.5");
       // EARLY: the pre-flight sits after the model resolution, so reaching it
@@ -1987,9 +1980,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           chatSessionId: "chat-cursor-6",
           messages: [{ role: "user", parts: [{ type: "text", text: "preview request" }] }],
           model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
+            id: "cursor/mini",
+            provider: "cursor",
+            name: "Cursor Mini",
           },
         },
         token
@@ -1999,7 +1992,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(checkHarnessRuntimeAvailableMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
           // Promoted: the host's model, not the body's.
-          model: expect.objectContaining({ id: "cursor/auto" }),
+          model: expect.objectContaining({ id: "cursor/mini" }),
           hostModelId: "cursor/auto",
         })
       );
@@ -2031,11 +2024,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           hostId: "host-1",
           chatSessionId: "chat-pg-1",
           messages: [{ role: "user", parts: [{ type: "text", text: "go" }] }],
-          model: {
-            id: "anthropic/claude-haiku-4.5",
-            provider: "anthropic",
-            name: "Haiku",
-          },
+          model: host.harness === "cursor"
+            ? { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" }
+            : { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
           ...body,
         },
         token
@@ -2046,6 +2037,13 @@ describe("web routes — chat-v2 hosted mode", () => {
       modelId: "anthropic/claude-haiku-4.5",
       harness: "claude-code",
     };
+
+    it("refuses an ordinary provider model on the Cursor account path", async () => {
+      const response = await post({ model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" } }, cursor);
+      expect(response.status).toBe(422);
+      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    });
 
     it("a Cursor turn runs on the conversation's box, and the engine gets the binding", async () => {
       const response = await post({}, cursor);
@@ -2156,11 +2154,11 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     it("a Cursor turn whose key is refused provisions NOTHING: the check runs before the box", async () => {
       vi.mocked(playgroundCredentialRefusal).mockResolvedValueOnce(
-        "The Cursor harness requires a CURSOR_API_KEY project secret."
+        "Ask an org admin to add a Cursor key in Organization → AI providers."
       );
       const response = await post({}, cursor);
       expect(response.status).toBe(409);
-      expect(await response.text()).toMatch(/CURSOR_API_KEY/);
+      expect(await response.text()).toMatch(/Organization → AI providers/);
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
         expect.objectContaining({
           harnessId: "cursor",
@@ -2174,41 +2172,17 @@ describe("web routes — chat-v2 hosted mode", () => {
     it("a compare column on Claude Code needs no credential check", async () => {
       await post({ comparePane: true }, claudeCode);
       expect(playgroundCredentialRefusal).not.toHaveBeenCalled();
-      expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
     });
 
-    it("a Cursor turn on a client (no environment chosen) runs under a hidden environment carrying the member's key", async () => {
+    it("a Cursor turn on a client (no environment chosen) needs no key of the member's: the org key's readiness decides", async () => {
       const response = await post({}, cursor);
       expect(response.status).toBe(200);
-      expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          projectId: "project-1",
-          hostId: "host-1",
-          harnessId: "cursor",
-        })
-      );
       expect(playgroundCredentialRefusal).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentId: "env_hidden" })
+        expect.objectContaining({ harnessId: "cursor", projectId: "project-1" })
       );
       expect(acquirePlaygroundHarnessBox).toHaveBeenCalledWith(
-        expect.objectContaining({ projectEnvironmentId: "env_hidden" })
+        expect.objectContaining({ harness: "cursor" })
       );
-    });
-
-    it("no usable key: refused with where to add it, before any box", async () => {
-      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        message:
-          "Add your Cursor API key (CURSOR_API_KEY) before using Cursor. Add or fix it under Project Settings → Secrets, then send again.",
-      });
-      const response = await post({}, cursor);
-      expect(response.status).toBe(409);
-      const text = await response.text();
-      expect(text).toMatch(/Project Settings → Secrets/);
-      expect(text).not.toMatch(/environment/i);
-      expect(acquirePlaygroundHarnessBox).not.toHaveBeenCalled();
-      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
     });
   });
 });

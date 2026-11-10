@@ -173,4 +173,19 @@ describe("takeConformanceStartSlot", () => {
       expect(takeConformanceStartSlot("user:a")).toBeNull();
     }
   });
+
+  it("takes back a start that dialled nothing", async () => {
+    const { takeConformanceStartSlot, releaseConformanceStartSlot } =
+      await load(true);
+    const now = 1_000_000;
+    for (let i = 0; i < 30; i++) {
+      expect(takeConformanceStartSlot("user:a", now)).toBeNull();
+    }
+    releaseConformanceStartSlot("user:a");
+    expect(takeConformanceStartSlot("user:a", now)).toBeNull();
+    expect(takeConformanceStartSlot("user:a", now)).not.toBeNull();
+    // A user with no starts has nothing to give back.
+    releaseConformanceStartSlot("user:b");
+    expect(takeConformanceStartSlot("user:b", now)).toBeNull();
+  });
 });

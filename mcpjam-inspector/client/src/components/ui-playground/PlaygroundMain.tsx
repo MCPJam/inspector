@@ -1,3 +1,4 @@
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
   markComparisonColumnSettled,
@@ -6,6 +7,7 @@ import {
   clearComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
 import { ResourceChatHandoff } from "@/components/host-workspace/resource-chat-handoff";
 import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
@@ -363,12 +365,16 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
 import {
   chatHistoryAction,
-  getChatHistoryDetail,
+  getChatHistoryState,
   type ChatHistorySession,
   type ChatHistoryDetailSession,
   type ChatHistoryWidgetSnapshot,
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
 import {
   getCachedChatHistoryDetail,
@@ -3701,29 +3707,21 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  const currentHistoryTargetRef = useRef({
-    chatSessionId,
-    projectId: convexProjectId,
-  });
-  currentHistoryTargetRef.current = {
-    chatSessionId,
-    projectId: convexProjectId,
-  };
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             chatSessionId,
             projectId: convexProjectId ?? undefined,
           });
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
-            currentHistoryTargetRef.current.chatSessionId !== chatSessionId ||
-            currentHistoryTargetRef.current.projectId !== convexProjectId ||
+            !isCurrentHistoryTarget({ chatSessionId, projectId: convexProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           )
             return null;
@@ -3770,6 +3768,7 @@ export function PlaygroundMain({
       activeHistorySessionId,
       chatSessionId,
       convexProjectId,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       syncResumedVersion,
     ],
@@ -3788,10 +3787,22 @@ export function PlaygroundMain({
    */
   const ensureThreadReadyForSend = useCallback(async () => {
     if (!activeHistorySessionId) return true;
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+        visibility: pendingDirectVisibility,
+      })
+    ) {
+      return true;
+    }
 
+    const target = { chatSessionId, projectId: convexProjectId };
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
@@ -3801,6 +3812,9 @@ export function PlaygroundMain({
       return false;
     }
     if (detail) return true;
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) return false;
 
     detachHistorySession(
       "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
@@ -3808,8 +3822,14 @@ export function PlaygroundMain({
     return false;
   }, [
     activeHistorySessionId,
+    chatSessionId,
+    convexProjectId,
     detachHistorySession,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(
@@ -4152,8 +4172,11 @@ export function PlaygroundMain({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: convexProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
@@ -4168,7 +4191,10 @@ export function PlaygroundMain({
     },
     [
       activeHistorySessionId,
+      chatSessionId,
+      convexProjectId,
       detachHistorySession,
+      isCurrentHistoryTarget,
       refreshCurrentHistorySession,
       releaseExtensionChat,
       extensionIdentity,
@@ -6742,7 +6768,7 @@ export function PlaygroundMain({
           once — each owning its own would race one approval. */}
       <LocalHarnessAutoApproveDialog
         open={localAutoApprove.open}
-        name={(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness) === "codex" ? "Codex" : "Claude Code"}
+        name={HARNESS_DESCRIPTORS[previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness ?? "claude-code"].displayName}
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />

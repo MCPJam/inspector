@@ -11,11 +11,10 @@
  */
 
 import {
-  isHttpServerConfig,
-  isKnownProtocolVersion,
   redactConformanceReportForSharing,
   runConformance,
   type ConformanceReport,
+  type ConformanceRunProgress,
   type ConformanceSuiteKind,
   type MCPServerConfig,
   type OAuthConformanceConfig,
@@ -36,14 +35,16 @@ import {
   runWithConformanceSignal,
 } from "../routes/shared/conformance-deadline.js";
 import { convexErrorData } from "../routes/v1/convex-errors.js";
-import { isSelected } from "../../shared/conformance-settings.js";
 import { startConformanceRunLifecycle } from "./conformance-run-lifecycle.js";
 import {
-  suiteConfigsForRun,
   type ConformanceRunSettings,
+  type ConformanceSuiteConfigs,
 } from "./conformance-run-settings.js";
 import { isAnalyticsDisabled } from "../utils/analytics.js";
 import { resolveEnvironment } from "../utils/log-events.js";
+
+/** How long a stopped run waits for report writes already in flight. */
+const PROGRESS_WRITE_GRACE_MS = 10_000;
 
 export type ConformanceRunSource =
   | "ui"
@@ -125,8 +126,15 @@ export type ExecutePersistedConformanceArgs = {
    * check with no tool inputs, the way the GitHub and benchmark workers run.
    */
   settings?: ConformanceRunSettings;
+  /**
+   * Each suite's config for those settings, at the protocol version the start
+   * resolved before the run existed. Absent: every suite's SDK defaults.
+   */
+  suiteConfigs?: ConformanceSuiteConfigs;
   /** The run's time budget. Absent: no deadline beyond the backend's sweep. */
   runTimeoutSeconds?: number;
+  /** What the launching client declared it was, stored on the run as is. */
+  launcher?: { kind: string; client?: string; version?: string };
   /**
    * Route-level idempotency. Mapped by the caller onto a namespaced
    * `externalRunId` (`api:<projectId>:<serverId>:<key>`). Absent ⇒ every start inserts.
@@ -482,6 +490,8 @@ export async function executePersistedConformanceRun(
       engineVersion: args.engineVersion,
       actorLabel: args.actorLabel,
       runTimeoutSeconds: args.runTimeoutSeconds,
+      ...(args.launcher ? { launcher: args.launcher } : {}),
+      ...(args.settings ? { settingsSource: args.settings.source } : {}),
       githubCheckTriggerId: args.githubCheckTriggerId,
       ...(args.externalRunId ? { externalRunId: args.externalRunId } : {}),
     } as never
@@ -555,6 +565,61 @@ export async function executePersistedConformanceRun(
     );
     return upsertReport(suiteKind, body, "failed", body.durationMs);
   };
+  const persistProgress = async (
+    event: ConformanceRunProgress
+  ): Promise<void> => {
+    const body = prepareReportForPersistence(
+      event.suiteKind,
+      event.report ??
+        syntheticIncompleteReport(
+          event.suiteKind,
+          event.error ?? "suite did not produce a report"
+        ),
+      args.oauthHeadlessCheckIds
+    );
+    const status = event.status === "completed" ? "completed" : "failed";
+    try {
+      await upsertReport(
+        event.suiteKind,
+        jsonSafeReport(body),
+        status,
+        body.durationMs
+      );
+    } catch (persistError) {
+      // A persistence failure must not rewrite a FINISHED suite as
+      // could-not-run: throwing here would bubble into the SDK's suite catch,
+      // which reports the suite failed with the serialization complaint as
+      // its error. Keep the verdict and degrade only the detail.
+      if (event.status !== "completed" || !event.report) {
+        throw persistError;
+      }
+      const message =
+        persistError instanceof Error
+          ? persistError.message
+          : String(persistError);
+      logger.warn(
+        "[conformance-run] report body could not be persisted; keeping suite summary",
+        {
+          runId: started.runId,
+          suiteKind: event.suiteKind,
+          error: message,
+        }
+      );
+      // Degraded from the PREPARED body, never the raw report: the fallback
+      // carries the verdict and the score forward, and the raw ones describe
+      // a scope this exam does not grade.
+      const fallback = summaryFallbackReport(body, event.suiteKind, message);
+      await upsertReport(
+        event.suiteKind,
+        jsonSafeReport(fallback),
+        status,
+        fallback.durationMs
+      );
+    }
+  };
+  // Writes the suites began before the run stopped, awaited before the run
+  // records what they left unfinished.
+  const progressWrites: Promise<void>[] = [];
 
   try {
     const refusal = await persistedConformanceTargetRefusal(args.server);
@@ -562,33 +627,13 @@ export async function executePersistedConformanceRun(
       server: args.server,
       oauth: args.oauth,
     });
-    const requestedVersion =
-      args.protocolVersion && isKnownProtocolVersion(args.protocolVersion)
-        ? args.protocolVersion
-        : undefined;
-    const configs =
-      args.settings && refusal === null && isHttpServerConfig(guarded.server)
-        ? await suiteConfigsForRun(
-            args.settings,
-            guarded.server,
-            requestedVersion,
-            lifecycle.signal
-          )
-        : undefined;
-    // A suite whose saved checks all fall outside the version the run
-    // resolved to has nothing to run; the app leaves it out the same way.
-    const runSuites = configs?.selection
-      ? executionSuites.filter(
-          (kind) =>
-            kind === "oauth" || isSelected(configs.selection?.[kind])
-        )
-      : executionSuites;
+    const configs = args.suiteConfigs;
     const report =
-      runSuites.length > 0 && refusal === null
+      executionSuites.length > 0 && refusal === null
         ? await runWithConformanceSignal(lifecycle.signal, () =>
             runConformance({
               server: stopWithRun(guarded.server, lifecycle.signal),
-              suites: runSuites,
+              suites: executionSuites,
               protocolVersion: (configs?.protocolVersion ??
                 args.protocolVersion) as never,
               engineVersion: args.engineVersion,
@@ -598,62 +643,15 @@ export async function executePersistedConformanceRun(
               ...(configs?.tasks ? { tasks: configs.tasks } : {}),
               ...(guarded.oauth ? { oauth: guarded.oauth } : {}),
               ...conformanceRunTelemetry(args.source),
-              onProgress: async (event) => {
+              onProgress: (event) => {
                 if (event.status === "running") return;
-                const body = prepareReportForPersistence(
-                  event.suiteKind,
-                  event.report ??
-                    syntheticIncompleteReport(
-                      event.suiteKind,
-                      event.error ?? "suite did not produce a report"
-                    ),
-                  args.oauthHeadlessCheckIds
-                );
-                const status =
-                  event.status === "completed" ? "completed" : "failed";
-                try {
-                  await upsertReport(
-                    event.suiteKind,
-                    jsonSafeReport(body),
-                    status,
-                    body.durationMs
-                  );
-                } catch (persistError) {
-                  // A persistence failure must not rewrite a FINISHED suite as
-                  // could-not-run: throwing here would bubble into the SDK's
-                  // suite catch, which reports the suite failed with the
-                  // serialization complaint as its error. Keep the verdict and
-                  // degrade only the detail.
-                  if (event.status !== "completed" || !event.report) {
-                    throw persistError;
-                  }
-                  const message =
-                    persistError instanceof Error
-                      ? persistError.message
-                      : String(persistError);
-                  logger.warn(
-                    "[conformance-run] report body could not be persisted; keeping suite summary",
-                    {
-                      runId: started.runId,
-                      suiteKind: event.suiteKind,
-                      error: message,
-                    }
-                  );
-                  // Degraded from the PREPARED body, never the raw report: the
-                  // fallback carries the verdict and the score forward, and the
-                  // raw ones describe a scope this exam does not grade.
-                  const fallback = summaryFallbackReport(
-                    body,
-                    event.suiteKind,
-                    message
-                  );
-                  await upsertReport(
-                    event.suiteKind,
-                    jsonSafeReport(fallback),
-                    status,
-                    fallback.durationMs
-                  );
-                }
+                // Past the deadline or a cancel, a suite still unwinding
+                // reports the requests the run cut off, not the server. The
+                // run records it as timed out instead.
+                if (lifecycle.signal.aborted) return;
+                const write = persistProgress(event);
+                progressWrites.push(write);
+                return write;
               },
             })
           ).catch((error: unknown) => {
@@ -663,6 +661,16 @@ export async function executePersistedConformanceRun(
             throw error;
           })
         : null;
+    // Bounded, so a write that never settles cannot hold the run open: past
+    // the grace period its suite is recorded below like one that saved nothing.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled(progressWrites),
+      new Promise<void>((resolve) => {
+        grace = setTimeout(resolve, PROGRESS_WRITE_GRACE_MS);
+      }),
+    ]);
+    clearTimeout(grace);
 
     if (refusal !== null) {
       // Nothing was dialled, so every suite that would have run records the
@@ -672,16 +680,9 @@ export async function executePersistedConformanceRun(
         await recordIncomplete(suiteKind, refusal);
       }
     }
-    for (const suiteKind of executionSuites) {
-      if (runSuites.includes(suiteKind)) continue;
-      await recordIncomplete(
-        suiteKind,
-        `None of this suite's saved checks apply to MCP protocol version ${configs?.protocolVersion ?? "auto"}, so it did not run.`
-      );
-    }
     if (lifecycle.signal.aborted && !lifecycle.cancelled()) {
       const reason = lifecycle.signal.reason;
-      for (const suiteKind of runSuites) {
+      for (const suiteKind of executionSuites) {
         if (persisted.has(suiteKind)) continue;
         await recordIncomplete(
           suiteKind,

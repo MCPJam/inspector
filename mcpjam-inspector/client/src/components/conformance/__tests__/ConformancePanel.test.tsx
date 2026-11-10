@@ -612,8 +612,11 @@ describe("ConformanceTab", () => {
     // On History only the header offers Run.
     await clickRun();
 
-    // The run's own header, which leads back to History.
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    // The run's own header, whose Back leads to History.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance History",
+    );
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.queryByText("History table")).toBeNull();
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -633,11 +636,11 @@ describe("ConformanceTab", () => {
       "true",
     );
 
-    await clickRun();
+    await runToCompletion();
     expect(window.location.search).toBe("");
 
-    // The run header's History tab goes back to History.
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    // The run started from History, so Back goes there.
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
     expect(window.location.search).toBe("?view=history");
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",
@@ -649,7 +652,10 @@ describe("ConformanceTab", () => {
       window.history.pushState({}, "", "/conformance");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("stays on History when Run has no server to run", async () => {
@@ -1341,9 +1347,8 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance", exact: true }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(save).not.toHaveBeenCalled();
     expect(mockRunProtocol).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
@@ -1458,7 +1463,9 @@ describe("ConformanceTab", () => {
     expect(load).toHaveBeenLastCalledWith("beta");
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Run beta" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Starting beta" }),
+    ).toBeDisabled();
     await act(async () =>
       betaDefaults.resolve({
         selection: { protocol: ["ping"], apps: [], tasks: [], oauth: false },
@@ -1663,6 +1670,49 @@ describe("ConformanceTab", () => {
     expect(betaCard).toHaveTextContent("Be");
   });
 
+  it("says which card is starting while every Run waits on its defaults", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const defaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={vi.fn(() => defaults.promise)}
+        serverDefaults={{ alpha: {}, beta: {} }}
+      />,
+    );
+
+    const list = screen.getByRole("list", { name: "Servers" });
+    fireEvent.click(within(list).getByRole("button", { name: "Run alpha" }));
+
+    const starting = within(list).getByRole("button", {
+      name: "Starting alpha",
+    });
+    expect(starting).toBeDisabled();
+    expect(starting).toHaveAttribute("aria-busy", "true");
+    expect(starting).toHaveTextContent("Starting...");
+    // The other card stays off, since a second Run would replace this one,
+    // but it does not claim to be starting.
+    const other = within(list).getByRole("button", { name: "Run beta" });
+    expect(other).toBeDisabled();
+    expect(other).not.toHaveAttribute("aria-busy");
+    expect(other).toHaveTextContent(/^Run$/);
+
+    await act(async () => defaults.resolve({ selection: {}, inputs: {} }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
   it("shows progress, not a score, until the run finishes", async () => {
     setupSuccessfulRunMocks();
     // Protocol never answers: the run stays going.
@@ -1712,7 +1762,7 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back to the server list from History's Overview after a run", async () => {
+  it("goes back to the server list from the run's Back", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
     const lastRun = {
@@ -1760,8 +1810,7 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
 
     // The page's home, not the run it just left.
     expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
@@ -2015,7 +2064,8 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("History table")).toBeInTheDocument();
@@ -3048,7 +3098,8 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
 
@@ -3127,17 +3178,14 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    // Swarm's header: back, the server's name and the page's tabs, then
-    // Run again and when it ran; no pickers in the run's header.
+    // Back and the server's name, then Run again and when it ran; no
+    // Overview/History tabs and no pickers in the run's header.
     expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
       "Conformance",
     );
     expect(screen.getByRole("heading", { name: "alpha" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Overview" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     expect(screen.getByText(/ · UI$/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -3198,7 +3246,7 @@ describe("ConformanceTab", () => {
     const error = vi.spyOn(toast, "error");
     const loading = vi.spyOn(toast, "loading");
     const success = vi.spyOn(toast, "success");
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
@@ -3216,6 +3264,17 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
     // One toast says it is connecting, then settles into the result.
     expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    // Not while beta is still loading into the session.
+    expect(success).not.toHaveBeenCalled();
+    const connectedBeta = createHttpServer({ name: "beta" });
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, connectedBeta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
     await waitFor(() =>
       expect(success).toHaveBeenCalledWith("beta connected", {
         id: loading.mock.results[0]!.value,
@@ -3297,8 +3356,9 @@ describe("ConformanceTab", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-    expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
+    expect(
+      screen.getByRole("heading", { name: "Set what you'd like to test" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {
@@ -4997,102 +5057,146 @@ it("does not dispatch later suites when the deadline expires after preflight", a
 });
 
 
-it("keeps an unsaved project server's timeout for the session without saving a missing server", async () => {
-  const connection = createDeferred<Awaited<ReturnType<typeof checkConformanceConnection>>>();
-  vi.mocked(checkConformanceConnection).mockReturnValueOnce(connection.promise);
-  const server = createHttpServer({ name: "unsaved-server" });
-  const saveTimeout = vi.fn(async () => { throw new Error("No saved server exists"); });
+it("sets a saved server's run timeout in Settings and runs with it", async () => {
+  setupSuccessfulRunMocks();
+  const alpha = createHttpServer({ name: "alpha" });
+  const saveTimeout = vi.fn(async (_name: string, _seconds: number | null) => {});
   render(<ConformanceTab
-    server={server}
-    servers={[server]}
+    server={alpha}
+    servers={[alpha]}
     persist={{ projectId: "project-1" }}
-    isSavedServer={() => false}
+    isSavedServer={() => true}
     onSelectServer={vi.fn()}
+    onSaveServerDefaults={vi.fn(async () => {})}
+    serverDefaults={{ alpha: {} }}
+    serverTimeouts={{}}
     onSaveServerTimeout={saveTimeout}
   />);
-  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  const next = await screen.findByRole("button", { name: "Continue" });
-  expect(next).toBeDisabled();
-  fireEvent.click(next);
-  expect(screen.queryByRole("button", { name: "Run timeout" })).not.toBeInTheDocument();
-  await act(async () => {
-    connection.resolve({ status: "ready", protocolVersion: "2025-11-25" });
-  });
-  await continueSetup();
-  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
-  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
-  expect(saveTimeout).not.toHaveBeenCalled();
-  expect(screen.getByText("90s")).toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole("button", { name: "Choose server and protocol" }));
-  await continueSetup();
-  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
+  await runToCompletion();
+  expect(mockRunProtocol).toHaveBeenLastCalledWith(
+    "alpha",
+    expect.objectContaining({ runTimeoutSeconds: 300 }),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  const field = screen.getByLabelText("Total run timeout (seconds)");
+  expect(field).toHaveValue(300);
+  fireEvent.change(field, { target: { value: "90" } });
+  fireEvent.blur(field);
+  await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 90));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  await runToCompletion();
+  expect(mockRunProtocol).toHaveBeenLastCalledWith(
+    "alpha",
+    expect.objectContaining({ runTimeoutSeconds: 90 }),
+  );
 });
 
 
-it("restores unsaved timeouts after remount, isolates projects, and keeps a cleared value cleared", async () => {
-  const server = createHttpServer({ name: "unsaved-remount" });
-  const saveTimeout = vi.fn(async () => {});
-  const open = async (projectId: string, saved = false, loading = false) => {
+it.each(["lands", "fails"])(
+  "runs with a timeout whose save is still in flight, and drops it if the save %s badly",
+  async (outcome) => {
+    // Back works while the timeout saves, so Run again can start before the
+    // save lands: the run must already use the new value.
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const save = createDeferred<void>();
+    const saveTimeout = vi.fn(
+      (_name: string, _seconds: number | null) => save.promise,
+    );
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "");
+    try {
+      render(<ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        persist={{ projectId: "project-1" }}
+        isSavedServer={() => true}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: {} }}
+        serverTimeouts={{}}
+        onSaveServerTimeout={saveTimeout}
+      />);
+      await runToCompletion();
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      const field = screen.getByLabelText("Total run timeout (seconds)");
+      fireEvent.change(field, { target: { value: "90" } });
+      fireEvent.blur(field);
+      await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 90));
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+      // The save has not landed yet.
+      await runToCompletion();
+      expect(mockRunProtocol).toHaveBeenLastCalledWith(
+        "alpha",
+        expect.objectContaining({ runTimeoutSeconds: 90 }),
+      );
+
+      if (outcome === "fails") {
+        await act(async () => save.reject(new Error("offline")));
+        expect(error).toHaveBeenCalledWith(
+          "Could not save the run timeout. Try again.",
+        );
+        // Not saved, so the next run is back on the default.
+        await runToCompletion();
+        expect(mockRunProtocol).toHaveBeenLastCalledWith(
+          "alpha",
+          expect.objectContaining({ runTimeoutSeconds: 300 }),
+        );
+      } else {
+        await act(async () => save.resolve());
+        await runToCompletion();
+        expect(mockRunProtocol).toHaveBeenLastCalledWith(
+          "alpha",
+          expect.objectContaining({ runTimeoutSeconds: 90 }),
+        );
+      }
+    } finally {
+      error.mockRestore();
+    }
+  },
+);
+
+
+it("runs an unsaved project server, or one with no project, on the default timeout", async () => {
+  setupSuccessfulRunMocks();
+  // A value the old setup clock left behind is no longer read.
+  window.localStorage.setItem("mcpjam:conformance:timeout:local", "90");
+  try {
+    const unsaved = createHttpServer({ name: "unsaved" });
     const view = render(<ConformanceTab
-      server={server} servers={[server]} persist={{ projectId }}
-      isSavedServer={() => saved} projectServersLoading={loading}
-      serverTimeouts={{ [server.name]: 300 }}
-      onSelectServer={vi.fn()} onSaveServerTimeout={saveTimeout}
+      server={unsaved}
+      servers={[unsaved]}
+      persist={{ projectId: "project-1" }}
+      isSavedServer={() => false}
+      onSelectServer={vi.fn()}
     />);
-    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    await continueSetup();
-    fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
-    return view;
-  };
-  const first = await open("project-a");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
-  first.unmount();
-  const otherProject = await open("project-b");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  otherProject.unmount();
-  const returned = await open("project-a");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
-  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
-  returned.unmount();
-  const cleared = await open("project-a");
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  cleared.unmount();
-  const savedServer = await open("project-a", true);
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  savedServer.unmount();
-  const loadingServer = await open("project-a", false, true);
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  loadingServer.unmount();
-  expect(saveTimeout).not.toHaveBeenCalled();
-});
+    await runToCompletion();
+    expect(mockRunProtocol).toHaveBeenLastCalledWith(
+      "unsaved",
+      expect.objectContaining({ runTimeoutSeconds: 300 }),
+    );
+    view.unmount();
 
-
-it("does not carry an unsaved timeout into another project without unmounting", async () => {
-  const server = createHttpServer({ name: "same-server" });
-  const props = { server, servers: [server], isSavedServer: () => false, onSelectServer: vi.fn() };
-  const view = render(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
-  fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-  await continueSetup();
-  fireEvent.click(await screen.findByRole("button", { name: "Run timeout" }));
-  fireEvent.change(screen.getByLabelText("Total run timeout (seconds)"), { target: { value: "90" } });
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
-  view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-b" }} />);
-  fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(300);
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(screen.queryByLabelText("Total run timeout (seconds)")).not.toBeInTheDocument());
-  view.rerender(<ConformanceTab {...props} persist={{ projectId: "project-a" }} />);
-  fireEvent.click(screen.getByRole("button", { name: "Run timeout" }));
-  expect(screen.getByLabelText("Total run timeout (seconds)")).toHaveValue(90);
+    const local = createHttpServer({ name: "local" });
+    render(<ConformanceTab
+      server={local}
+      servers={[local]}
+      onSelectServer={vi.fn()}
+    />);
+    await runToCompletion();
+    expect(mockRunProtocol).toHaveBeenLastCalledWith(
+      "local",
+      expect.objectContaining({ runTimeoutSeconds: 300 }),
+    );
+  } finally {
+    window.localStorage.removeItem("mcpjam:conformance:timeout:local");
+  }
 });
 
 

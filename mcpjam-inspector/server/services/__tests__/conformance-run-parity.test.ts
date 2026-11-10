@@ -38,6 +38,7 @@ import {
 import { executePersistedConformanceRun } from "../conformance-run-executor.js";
 import {
   readConformanceRunSettings,
+  suiteConfigsForRun,
   suitesKeptBySettings,
 } from "../conformance-run-settings.js";
 
@@ -168,10 +169,16 @@ async function runAsAHostedStartDoes() {
     serverId: "s1",
     mode: "saved",
   });
+  // As a start does: the version first, then the suites it keeps.
+  const suiteConfigs = await suiteConfigsForRun(
+    settings,
+    { url } as never,
+    PIN,
+  );
   const suites = suitesKeptBySettings(
     ["protocol", "apps", "tasks"],
     settings,
-    PIN,
+    suiteConfigs.protocolVersion,
   );
   await executePersistedConformanceRun({
     convexToken: "tok",
@@ -182,6 +189,7 @@ async function runAsAHostedStartDoes() {
     target: { kind: "server", serverId: "s1" },
     protocolVersion: PIN,
     settings,
+    suiteConfigs,
     runTimeoutSeconds: settings.runTimeoutSeconds,
   });
   return { suites, report: reports.get("protocol") };

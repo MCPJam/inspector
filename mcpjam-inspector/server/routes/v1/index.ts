@@ -17,8 +17,6 @@ import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rat
 import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 import { mcpOperationRateLimit } from "../../middleware/mcp-operation-rate-limit.js";
 import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
-import { takeConformanceStartSlot } from "../../middleware/conformance-run-rate-limit.js";
-import { principalKey } from "../../utils/request-principal.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -157,9 +155,9 @@ export const V1_EVAL_LAUNCH_ROUTES = [
 v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
 /**
- * The conformance start route. Refused while draining, like eval launches,
- * and limited to 30 starts per user per 10 minutes: every start dials a
- * third-party server, and an agent in a loop would otherwise keep dialling.
+ * The conformance start route, refused while draining like eval launches. Its
+ * per-user limit is spent inside the start (`startHostedConformanceRun`), so a
+ * refused request or a retry of an existing run costs nothing.
  */
 export const V1_CONFORMANCE_START_ROUTE =
   "/projects/:projectId/servers/:serverId/conformance-runs";
@@ -167,20 +165,6 @@ v1.on(
   "POST",
   V1_CONFORMANCE_START_ROUTE,
   refuseWhileDraining("conformance_run"),
-  async (c, next) => {
-    const userId = c.get("workosUserId");
-    const refusal = takeConformanceStartSlot(
-      userId ? `user:${userId}` : principalKey(c),
-    );
-    if (!refusal) return next();
-    return v1Error(
-      c,
-      "RATE_LIMITED",
-      `You started 30 conformance runs in the last 10 minutes. Try again in ${refusal.retryAfterSeconds} seconds.`,
-      undefined,
-      { "Retry-After": String(refusal.retryAfterSeconds) },
-    );
-  },
 );
 
 // Each sub-router declares full resource paths; mount them all at the root.

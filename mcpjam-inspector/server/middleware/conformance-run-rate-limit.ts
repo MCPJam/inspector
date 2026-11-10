@@ -119,6 +119,13 @@ export function takeConformanceStartSlot(
     : { retryAfterSeconds: Math.max(1, Math.ceil(slot.waitMs / 1000)) };
 }
 
+/** Give back a slot whose start dialled nothing: refused, or a replay. */
+export function releaseConformanceStartSlot(userKey: string): void {
+  if (!HOSTED_MODE) return;
+  const entry = userWindows.get(userKey);
+  if (entry && entry.count > 0) entry.count--;
+}
+
 /** Test-only: the bound is only meaningful if a test can actually observe it. */
 export function conformanceRunRateLimitWindowCountForTests(): number {
   return ipWindows.size;

@@ -1137,9 +1137,6 @@ describe("useChatSession minimal mode parity", () => {
       selectedServerIds: ["server-id-1"],
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    // A remote server needs no local runtime: the route resolves the org
-    // connection as usual (the key stays in Convex).
-    expect(transport.requests[0]).not.toHaveProperty("localMcpRuntimeRequired");
     expect(transport.requests[0]).toHaveProperty("accessScope", "chat_v2");
     expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
@@ -1231,7 +1228,6 @@ describe("useChatSession minimal mode parity", () => {
       projectId: "project-1",
       selectedServerNames: ["server-1"],
       selectedServerIds: ["hosted-server-id"],
-      localMcpRuntimeRequired: true,
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(transport.requests[0].selectedServerIds).toEqual(["hosted-server-id"]);

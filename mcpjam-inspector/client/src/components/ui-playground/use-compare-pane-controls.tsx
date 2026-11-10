@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   useCallback,
   useEffect,
@@ -8,7 +9,6 @@ import {
 import { ChevronDown } from "lucide-react";
 import type {
   ModelReasoningEffort,
-  ModelSelection,
   RequestedModelSelection,
 } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
@@ -36,11 +36,8 @@ import {
   reasoningEffortOptions,
   reasoningEffortRouteForRow,
 } from "@/lib/reasoning-effort-options";
-import { RUNTIME_CHOSEN_MODEL_REASON } from "@/lib/runtime-chosen-model";
 import {
   effectiveHarnessId,
-  harnessAccountChoosesModel,
-  HARNESS_DESCRIPTORS,
 } from "@/shared/harness-descriptors";
 import type { ModelDefinition } from "@/shared/types";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
@@ -108,7 +105,7 @@ export function useComparePaneControls({
   orgConfig: OrgVisibleConfig | undefined;
   restorePanes: (panes: readonly RecoveryPane[]) => void;
   setPaneOverrides: (paneId: string, overrides: PaneOverrides) => void;
-  setPanePick: (paneId: string, pick: ModelSelection | undefined) => void;
+  setPanePick: (paneId: string, pick: RequestedModelSelection | undefined) => void;
   /** Runs a pane on another target; it starts a new conversation. */
   setPaneTarget: (paneId: string, target: ComparePaneTarget) => void;
   /** What a pane may run: clients, and environments when they are visible. */
@@ -177,7 +174,9 @@ export function useComparePaneControls({
 
   const pick = useCallback(
     (paneId: string, row: ModelDefinition, effort?: ModelReasoningEffort) => {
-      const selection = compareEffortSelection(row, orgConfig, effort);
+      const selection = isRuntimeAccountModel(String(row.id))
+        ? { source: "legacy" as const, modelId: String(row.id) }
+        : compareEffortSelection(row, orgConfig, effort);
       if (selection) setPanePick(paneId, selection);
     },
     [orgConfig, setPanePick],
@@ -356,11 +355,6 @@ export function useComparePaneControls({
       const model = column?.model ?? blocked?.model;
       const rows = column?.modelRows ?? blocked?.modelRows ?? [];
       const harnessId = hostConfig ? effectiveHarnessId(hostConfig) : null;
-      const accountPicks = harnessAccountChoosesModel(harnessId);
-      const harnessName =
-        harnessId && harnessId in HARNESS_DESCRIPTORS
-          ? HARNESS_DESCRIPTORS[harnessId as Harness].displayName
-          : null;
       const effort = selectionEffort(column?.selection);
       const levels = model
         ? reasoningEffortOptions(
@@ -407,14 +401,7 @@ export function useComparePaneControls({
           onChange={(next) => setPaneTarget(pane.paneId, next)}
         />
       );
-      const modelControl = !hostConfig ? undefined : accountPicks ? (
-        <div className="space-y-0.5">
-          <p className="text-sm">{model?.name}</p>
-          <p className="text-xs text-muted-foreground">
-            {RUNTIME_CHOSEN_MODEL_REASON}
-          </p>
-        </div>
-      ) : (
+      const modelControl = !hostConfig ? undefined : (
         <ModelSelector
           currentModel={
             model ?? {
@@ -472,7 +459,7 @@ export function useComparePaneControls({
             }}
             model={modelControl}
             effort={
-              model && levels.length > 0 && !accountPicks ? (
+              model && levels.length > 0 ? (
                 <CompareCardEffort
                   model={model}
                   levels={levels}
@@ -503,9 +490,6 @@ export function useComparePaneControls({
             details={[
               ...(environment?.preview?.host.hostName
                 ? [environment.preview.host.hostName]
-                : []),
-              ...(accountPicks && harnessName
-                ? [`Chosen by ${harnessName}`]
                 : []),
               ...(effort ? [`${reasoningEffortLabel(effort)} effort`] : []),
               serverCount(enabledServers),
