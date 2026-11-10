@@ -13,6 +13,7 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
 } from "./forwarding/native-turn.js";
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
 import { startHarnessForwardingGrant } from "./forwarding/forwarding-grant.js";
+import { APPROVAL_UNAVAILABLE, answerOnlyDecidedCalls, decidedCalls, pausedCallsForDecisions, type DecidedCall } from "./forwarding/approval-bindings.js";
 import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
 import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
@@ -2171,6 +2172,7 @@ export async function runHarnessTurn(
             runtimeChanged: boolean;
           }
         | undefined;
+      let decided: DecidedCall[] | undefined;
       if (
         chatSessionId &&
         projectId &&
@@ -2201,10 +2203,13 @@ export async function runHarnessTurn(
           ...(executionScope ? { executionScope } : {}),
         };
         const leaseId = crypto.randomUUID();
+        // A runtime that binds approvals renumbers them per process: a decision names its call too.
+        decided = isApprovalResume && forwardingRuntime?.boundApprovals ? decidedCalls(messages, approvalContinuations) : undefined;
         const claim = await claimHarnessSessionState({
           owner,
           requestId: options.harnessStartupRequestId,
           ...(warmAgentPilot || isApprovalResume ? { approvalIds: approvalContinuations.map(({ approvalId }) => approvalId) } : {}),
+          ...(decided ? { approvalCalls: decided } : {}),
           runtimeFingerprint,
           ...(skillsHash !== undefined ? { skillsHash } : {}),
           leaseId,
@@ -2219,7 +2224,8 @@ export async function runHarnessTurn(
           // non-persisted harness session when continuity can't be guaranteed —
           // that would mislead the user into thinking they're in a continuous
           // conversation.
-          if (claim.status === 409) throw new Error(sessionClaimConflictMessage(claim.error));
+          // The lane fence refuses a decision that names no paused call: a late decision.
+          if (claim.status === 409) throw new Error(decided && claim.error === "harness_approval_pending" ? APPROVAL_UNAVAILABLE : sessionClaimConflictMessage(claim.error));
           logger.warn("[harness] session-state claim failed; failing closed", {
             status: claim.status,
             error: claim.error,
@@ -2264,6 +2270,8 @@ export async function runHarnessTurn(
           }
         }
       }
+      // Bound from the server's saved continuation, and only for the paused calls the decisions name.
+      const pausedCalls = decided && pausedCallsForDecisions(continuity?.state?.resumeState, decided, approvalContinuations);
       if (warmAgentPilot && nativeMcpDelivery && !useNativeForwarding) {
         if (!continuity?.laneId) throw new Error("The chat session is unavailable. Send your message again.");
         ({ mcpJson, keyToServerId } = await buildNativeProxyConfig({
@@ -2870,8 +2878,12 @@ export async function runHarnessTurn(
       }
       if (nativeForwarding) {
         if (!forwardingRuntime) throw new Error("The runtime forwarding contract is not qualified.");
-        harnessRuntime = withAutoApprovedNativeRequests(forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp ?? nativeForwarding.policyDigest), undefined, new Set(), nativeForwarding.isForwardedTool);
+        const refreshed = forwardingRuntime.refresh(harnessRuntime, mcpJson.mcpServers, approvalPolicyStamp ?? nativeForwarding.policyDigest);
+        // A runtime that binds approvals asks the user itself; the others leave asking to the forwarder.
+        harnessRuntime = forwardingRuntime.boundApprovals ? nativeForwarding.approvals.voidOnCallEnd(refreshed)
+          : withAutoApprovedNativeRequests(refreshed, undefined, new Set(), nativeForwarding.isForwardedTool);
       }
+      if (decided) harnessRuntime = answerOnlyDecidedCalls(harnessRuntime, decided);
       if (nativeForwarding) onHarnessMcpReady?.(nativeForwarding.logScopeIds);
       if (localPrepared) {
         harnessRuntime = await withLocalRuntimeBootstrap(harnessRuntime, localPrepared.plan.runtime);
@@ -3538,6 +3550,7 @@ export async function runHarnessTurn(
         // `messages` to the last user message, so stream() would re-prompt).
         // Everything above this line is ours; everything at or below it is the
         // model's turn. See `modelInvoked`.
+        if (resumeFromApproval && pausedCalls) await nativeForwarding?.approvals.record(pausedCalls);
         tDispatch = Date.now();
         logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;

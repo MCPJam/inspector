@@ -1300,11 +1300,8 @@ describe("cursor adapter (Cursor CLI / ACP)", () => {
     // built-ins under "allow-reads".
     expect(cursor.supportsNativeToolApproval).toBe(true);
     expect(cursor.approvalPermissionMode).toBe("allow-reads");
-    // NOT claimed, pending a live MCP-approval measurement. False means an
-    // approval host with servers attached is REFUSED at preflight rather than
-    // run with some MCP calls unapproved — the conservative direction, and the
-    // one this flag exists to protect.
-    expect(cursor.supportsMcpToolApproval).toBe(false);
+    expect(cursor.supportsMcpToolApproval).toBe(true);
+    expect(cursor.forwardingRuntime?.boundApprovals).toBe(true);
     expect(cursor.supportsHostExecutedToolApproval).toBe(true);
     expect(cursor.hostToolApprovalAtRuntime).toBe(true);
   });

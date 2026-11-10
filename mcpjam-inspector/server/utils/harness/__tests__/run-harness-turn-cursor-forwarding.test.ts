@@ -168,7 +168,7 @@ function turn(overrides: Record<string, unknown> = {}) {
     projectId: "p1",
     harnessSandboxBinding: { sandboxRowId: "sandbox-row-1", sandboxId: "sandbox-1" },
     environmentId: "env-1",
-    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "key_live_abc", updatedAt: 1 }],
+    runtimeSecrets: [{ name: "CURSOR_API_KEY", value: "fixture-key", updatedAt: 1 }],
     mcpClientManager: manager(GAP_FREE),
     selectedServers: ["srv-a"],
     harnessMcpProxy: {

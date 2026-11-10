@@ -1,0 +1,119 @@
+{
+  "$comment": "Shared ground truth for the approval-binding argument digest. The Inspector digests Cursor's ACP rawInput.args when it records an approval; the backend digests the forwarded tools/call arguments when it consumes one. Each vector is JSON text as it arrives on the wire (text, so a __proto__ key survives loading), the canonical JSON both sides must write for it (absent arguments count as {}), and its lowercase hex SHA-256. Mirrored byte for byte in mcpjam-backend tests/convex/fixtures/ and mcpjam-inspector server/utils/harness/__tests__/fixtures/.",
+  "vectors": [
+    {
+      "name": "key order",
+      "json": "{\"b\":\"x\",\"a\":1,\"c\":{\"z\":1,\"y\":2}}",
+      "canonical": "{\"a\":1,\"b\":\"x\",\"c\":{\"y\":2,\"z\":1}}",
+      "digest": "e61a1ddde640e65818216dccadfabec3e7b89d50e76b5038df8eed2c75957924"
+    },
+    {
+      "name": "key order, spelled differently",
+      "json": "{\"c\":{\"y\":2,\"z\":1},\"a\":1,\"b\":\"x\"}",
+      "canonical": "{\"a\":1,\"b\":\"x\",\"c\":{\"y\":2,\"z\":1}}",
+      "digest": "e61a1ddde640e65818216dccadfabec3e7b89d50e76b5038df8eed2c75957924"
+    },
+    {
+      "name": "number spelling",
+      "json": "{\"n\":10,\"f\":2.5,\"z\":0,\"e\":1e21,\"s\":1e-7,\"i\":-1}",
+      "canonical": "{\"e\":1e+21,\"f\":2.5,\"i\":-1,\"n\":10,\"s\":1e-7,\"z\":0}",
+      "digest": "10244563d015b0c419e6025e7793431706e2bf40c83211a4ff037ad8f0010a73"
+    },
+    {
+      "name": "number spelling, spelled differently",
+      "json": "{\"i\":-1.0,\"s\":0.0000001,\"e\":1000000000000000000000,\"z\":-0,\"f\":2.50,\"n\":1e1}",
+      "canonical": "{\"e\":1e+21,\"f\":2.5,\"i\":-1,\"n\":10,\"s\":1e-7,\"z\":0}",
+      "digest": "10244563d015b0c419e6025e7793431706e2bf40c83211a4ff037ad8f0010a73"
+    },
+    {
+      "name": "nesting",
+      "json": "{\"z\":[1,{\"b\":true,\"a\":null},[]],\"a\":{\"y\":[{\"d\":1,\"c\":2}],\"x\":{}}}",
+      "canonical": "{\"a\":{\"x\":{},\"y\":[{\"c\":2,\"d\":1}]},\"z\":[1,{\"a\":null,\"b\":true},[]]}",
+      "digest": "f45e0dc4b9855b64ec69a89ff8b4d90b1c78ee3856dd3528d6d388784d2addd6"
+    },
+    {
+      "name": "nesting, spelled differently",
+      "json": "{\"a\":{\"x\":{},\"y\":[{\"c\":2,\"d\":1}]},\"z\":[1.0,{\"a\":null,\"b\":true},[]]}",
+      "canonical": "{\"a\":{\"x\":{},\"y\":[{\"c\":2,\"d\":1}]},\"z\":[1,{\"a\":null,\"b\":true},[]]}",
+      "digest": "f45e0dc4b9855b64ec69a89ff8b4d90b1c78ee3856dd3528d6d388784d2addd6"
+    },
+    {
+      "name": "unicode and escapes",
+      "json": "{\"t\":\"\\u00e9\\u200b\",\"q\":\"\\\"\\\\\\/\\n\\t\\u0001\",\"emoji\":\"\\ud83d\\ude00\",\"lone\":\"\\ud800\",\"raw\":\"é\"}",
+      "canonical": "{\"emoji\":\"😀\",\"lone\":\"\\ud800\",\"q\":\"\\\"\\\\/\\n\\t\\u0001\",\"raw\":\"é\",\"t\":\"é​\"}",
+      "digest": "cd325519df3e23e26f8b96d835b7ebe90024f024b8db9e5fc3faa01f3718f74a"
+    },
+    {
+      "name": "unicode and escapes, spelled differently",
+      "json": "{\"raw\":\"\\u00e9\",\"lone\":\"\\uD800\",\"emoji\":\"😀\",\"q\":\"\\u0022\\\\/\\u000a\\u0009\\u0001\",\"t\":\"é​\"}",
+      "canonical": "{\"emoji\":\"😀\",\"lone\":\"\\ud800\",\"q\":\"\\\"\\\\/\\n\\t\\u0001\",\"raw\":\"é\",\"t\":\"é​\"}",
+      "digest": "cd325519df3e23e26f8b96d835b7ebe90024f024b8db9e5fc3faa01f3718f74a"
+    },
+    {
+      "name": "keys sort by UTF-16 code unit",
+      "json": "{\"\\ud83d\\ude00\":1,\"\\uffff\":2,\"a\":3,\"Z\":4,\"10\":5,\"9\":6}",
+      "canonical": "{\"10\":5,\"9\":6,\"Z\":4,\"a\":3,\"😀\":1,\"￿\":2}",
+      "digest": "d5332c72d0b8270bd804c111d63fa0c79dece0310ea02eb3072ba476fc169da8"
+    },
+    {
+      "name": "__proto__ is an ordinary key",
+      "json": "{\"__proto__\":{\"isAdmin\":true},\"a\":1}",
+      "canonical": "{\"__proto__\":{\"isAdmin\":true},\"a\":1}",
+      "digest": "dcfaf67d9456464b3047568a0b9509e8312e061e8887b728a18b17a2baabef27"
+    },
+    {
+      "name": "__proto__ is an ordinary key, spelled differently",
+      "json": "{\"a\":1,\"__proto__\":{\"isAdmin\":true}}",
+      "canonical": "{\"__proto__\":{\"isAdmin\":true},\"a\":1}",
+      "digest": "dcfaf67d9456464b3047568a0b9509e8312e061e8887b728a18b17a2baabef27"
+    },
+    {
+      "name": "without the __proto__ key",
+      "json": "{\"a\":1}",
+      "canonical": "{\"a\":1}",
+      "digest": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+    },
+    {
+      "name": "__proto__ nested",
+      "json": "{\"a\":{\"b\":1,\"__proto__\":\"x\"}}",
+      "canonical": "{\"a\":{\"__proto__\":\"x\",\"b\":1}}",
+      "digest": "ec579fcb48e7eba5f9fadeb31f6dfe77f79709368fc481d1ff54eb86718d7077"
+    },
+    {
+      "name": "__proto__ nested, removed",
+      "json": "{\"a\":{\"b\":1}}",
+      "canonical": "{\"a\":{\"b\":1}}",
+      "digest": "815ce69073bf37a71afee34156192e1d9921dfc365dc653a02516902c3a5e2e7"
+    },
+    {
+      "name": "constructor and prototype keys",
+      "json": "{\"constructor\":{\"prototype\":{\"polluted\":true}},\"toString\":\"x\",\"hasOwnProperty\":1}",
+      "canonical": "{\"constructor\":{\"prototype\":{\"polluted\":true}},\"hasOwnProperty\":1,\"toString\":\"x\"}",
+      "digest": "d75a13e3f8ab424f6927005a40d12a2667901ed28f581dff029a4b93c8745da4"
+    },
+    {
+      "name": "duplicate keys, the last wins",
+      "json": "{\"a\":1,\"a\":2}",
+      "canonical": "{\"a\":2}",
+      "digest": "7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c"
+    },
+    {
+      "name": "booleans, null and the empty string",
+      "json": "{\"t\":true,\"f\":false,\"n\":null,\"s\":\"\"}",
+      "canonical": "{\"f\":false,\"n\":null,\"s\":\"\",\"t\":true}",
+      "digest": "851b96a7921de284f436406aea46bbfcafc50d0a28cd7338cc9b5eb37fe23fef"
+    },
+    {
+      "name": "absent arguments",
+      "json": "null",
+      "canonical": "{}",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "empty arguments",
+      "json": "{}",
+      "canonical": "{}",
+      "digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ]
+}

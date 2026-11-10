@@ -226,6 +226,8 @@ export function sessionClaimConflictMessage(reason: string | undefined): string 
 export async function claimHarnessSessionState(args: {
   approvalIds?: string[];
   requestId?: string;
+  /** The call each decision names, so a renumbered approval id cannot take the lease. */
+  approvalCalls?: Array<{ approvalId: string; toolCallId: string }>;
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -243,6 +245,7 @@ export async function claimHarnessSessionState(args: {
     {
       ...args.owner,
       ...(args.approvalIds !== undefined ? { approvalIds: args.approvalIds } : {}),
+      ...(args.approvalCalls !== undefined ? { approvalCalls: args.approvalCalls } : {}),
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,
@@ -434,23 +437,24 @@ export async function commitHarnessSessionState(args: {
   /** Deadline — same terminal-path reasoning as `releaseHarnessSessionState`. */
   signal?: AbortSignal;
 }): Promise<boolean> {
-  const res = await postSessionState(
-    "commit",
-    args.bearer,
-    {
-      ...args.owner,
-      leaseId: args.leaseId,
-      expectedStateVersion: args.expectedStateVersion,
-      harnessSessionId: args.harnessSessionId,
-      resumeState: args.resumeState,
-      computerId: args.computerId,
-      runtimeFingerprint: args.runtimeFingerprint,
-      ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
-      ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
-      ...(args.guardedApprovalIds ? { guardedApprovalIds: args.guardedApprovalIds } : {}),
-    },
-    args.signal
-  );
+  const body = {
+    ...args.owner,
+    leaseId: args.leaseId,
+    expectedStateVersion: args.expectedStateVersion,
+    harnessSessionId: args.harnessSessionId,
+    resumeState: args.resumeState,
+    computerId: args.computerId,
+    runtimeFingerprint: args.runtimeFingerprint,
+    ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
+    ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+    ...(args.guardedApprovalIds ? { guardedApprovalIds: args.guardedApprovalIds } : {}),
+  };
+  // Match the backend's full commit-request limit, including the ownership envelope.
+  if (Buffer.byteLength(JSON.stringify(body)) > 768 * 1024)
+    throw new Error(
+      "The agent could not save this approval because its conversation state is too large. Start a new chat.",
+    );
+  const res = await postSessionState("commit", args.bearer, body, args.signal);
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });
     return false;
