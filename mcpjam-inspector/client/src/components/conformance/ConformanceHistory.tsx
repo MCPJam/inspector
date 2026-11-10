@@ -18,6 +18,7 @@ import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
+  savedNotApplicableSubtitle,
   SUITE_COPY,
   SuiteRow,
   VerdictBadge,
@@ -614,9 +615,8 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable && !absentApps
-            ? (report.incompleteReason ??
-              "Nothing here applied to this server, so it was not scored.")
+          : notApplicable
+            ? savedNotApplicableSubtitle(report, copy.title)
             : copy.description
       }
       badge={badge}

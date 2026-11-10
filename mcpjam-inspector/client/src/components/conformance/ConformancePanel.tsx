@@ -19,6 +19,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
+  notApplicableSubtitle,
   OverallScoreCard,
   SUITE_COPY,
   SuiteRow,
@@ -130,6 +131,17 @@ function SuiteSection({
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
   const skipped = Boolean((state as { skipped?: boolean }).skipped);
+  // OAuth on a server that answered without a token.
+  const noLogin =
+    unavailable &&
+    (state as { result?: { outcome?: string } }).result?.outcome ===
+      "not-applicable";
+  // Ran, but none of its checks applied to this server.
+  const appliedToNothing =
+    state.status === "done" &&
+    state.verdict === "passed" &&
+    score?.applicable === 0 &&
+    score.notApplicable > 0;
   const autoOpen =
     waitingForAuth ||
     state.status === "error" ||
@@ -140,21 +152,13 @@ function SuiteSection({
     <SuiteRow
       title={title}
       subtitle={
-        unavailable && state.unavailableReason
-          ? state.unavailableReason
-          : description
+        noLogin || appliedToNothing
+          ? notApplicableSubtitle(title, noLogin)
+          : unavailable && state.unavailableReason
+            ? state.unavailableReason
+            : description
       }
-      badge={
-        <SuiteBadge
-          state={state}
-          notApplicable={
-            state.status === "done" &&
-            state.verdict === "passed" &&
-            score?.applicable === 0 &&
-            score.notApplicable > 0
-          }
-        />
-      }
+      badge={<SuiteBadge state={state} notApplicable={appliedToNothing} />}
       score={
         score && score.score !== null
           ? {
@@ -298,7 +302,6 @@ export function ConformanceContent({
     tasksScore,
     oauthScore,
     pooledScore,
-    oauthNotScored,
     oauthUnscored,
     isRunning,
     openAuthorizationWindow,
@@ -631,7 +634,6 @@ export function ConformanceContent({
                   isRunning={isRunning}
                   progress={runProgress}
                   serverIconUrl={serverIconUrl}
-                  oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
                   timedOut={timedOut}
                 />

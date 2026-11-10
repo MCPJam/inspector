@@ -48,7 +48,6 @@ function snapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
     runVersion: 0,
     runAll: vi.fn(),
     authorizeOAuth: vi.fn(),
-    oauthNotScored: false,
     isRunning: false,
     ...overrides,
   };

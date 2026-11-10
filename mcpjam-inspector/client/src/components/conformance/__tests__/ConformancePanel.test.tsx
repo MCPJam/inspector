@@ -100,7 +100,7 @@ import {
   ProtocolVersionSelect,
   RUN_LABEL,
 } from "../ConformancePageChrome";
-import { SUITE_COPY } from "../conformance-ui";
+import { notApplicableSubtitle, SUITE_COPY } from "../conformance-ui";
 
 /** A tool option: its name, then its safety badge. */
 const toolOption = (name: string, tag: string) =>
@@ -275,9 +275,11 @@ function inputBadge(text: string) {
 
 /** A suite's header row, found by its description (unique, unlike titles). */
 function suiteHeader(suite: keyof typeof SUITE_COPY) {
-  const button = screen
-    .getByText(SUITE_COPY[suite].description)
-    .closest("button");
+  // A suite that applied to nothing says so in place of its description.
+  const button = (
+    screen.queryByText(SUITE_COPY[suite].description) ??
+    screen.getByText(notApplicableSubtitle(SUITE_COPY[suite].title))
+  ).closest("button");
   expect(button).not.toBeNull();
   return button!;
 }
@@ -528,7 +530,9 @@ describe("ConformanceTab", () => {
     expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
     const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
     expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
-    expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
+    expect(
+      within(appsHeader).getByText("Apps doesn't apply to this server."),
+    ).toBeInTheDocument();
     expect(appsHeader).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(appsHeader);
     expect(appsHeader).toHaveAttribute("aria-expanded", "true");
@@ -4575,8 +4579,10 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     // The reason replaces the suite's description, under a neutral chip
-    // rather than a red failure.
-    const header = screen.getByText(/No login required/).closest("button")!;
+    // rather than a red failure, in the words a saved run uses too.
+    const header = screen
+      .getByText("OAuth doesn't apply: this server needs no login.")
+      .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
 
