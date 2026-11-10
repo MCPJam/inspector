@@ -184,6 +184,19 @@ export function readUnsupportedVersionFailure(
     ) {
       return { supported: [] };
     }
+    // The server's own refusal of a legacy `initialize`: a 2026-07-28-only
+    // server answers it with HTTP 400 and JSON-RPC `-32022`, naming what it
+    // does support. The transport carries only the body text ("Error POSTing
+    // to endpoint: {…}"), so the code is read from the parsed body, never from
+    // loose prose a server could echo. Read before the prose match below: the
+    // body's own message may say "protocol version is not supported: <the
+    // requested version>", which that match would report as the offer.
+    if (typeof named.message === "string") {
+      const refusal = readJsonRpcVersionRefusal(named.message);
+      if (refusal) {
+        return refusal;
+      }
+    }
     // The LEGACY-pin refusal, thrown by the upstream `Client` when the
     // server's `initialize` reply names a version outside the accept-list a
     // stateful pin narrowed to. It is a plain `Error` — no `supported` array,
@@ -208,15 +221,6 @@ export function readUnsupportedVersionFailure(
       );
       if (offered) {
         return { supported: [offered[1]] };
-      }
-      // The server's own refusal of a legacy `initialize`: a 2026-07-28-only
-      // server answers it with HTTP 400 and JSON-RPC `-32022`, naming what it
-      // does support. The transport carries only the body text ("Error
-      // POSTing to endpoint: {…}"), so the code is read from the parsed body,
-      // never from loose prose a server could echo.
-      const refusal = readJsonRpcVersionRefusal(named.message);
-      if (refusal) {
-        return refusal;
       }
     }
   }

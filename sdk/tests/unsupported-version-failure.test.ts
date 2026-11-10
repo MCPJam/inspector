@@ -120,6 +120,16 @@ describe("readUnsupportedVersionFailure", () => {
     expect(verdict).toEqual({ supported: ["2026-07-28"] });
   });
 
+  it("takes the -32022 body's offer over the prose inside it", () => {
+    const verdict = readUnsupportedVersionFailure(
+      new Error(
+        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Server\'s protocol version is not supported: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}',
+      ),
+    );
+
+    expect(verdict).toEqual({ supported: ["2026-07-28"] });
+  });
+
   it("ignores a JSON-RPC error body with another code", () => {
     expect(
       readUnsupportedVersionFailure(
