@@ -15,7 +15,6 @@ import { isMcpAppTool, type MCPClientManager } from "@mcpjam/sdk";
 import { injectOpenAICompat, normalizeWidgetCspMeta } from "./widget-helpers";
 import type { WidgetCspMeta } from "./widget-helpers";
 import { HOSTED_MODE } from "../config.js";
-import { logger } from "./logger";
 import { getSystemLogger } from "./request-logger.js";
 import {
   extractHtmlFromResourceContent,
@@ -105,13 +104,9 @@ export async function renderMcpAppToolResult(
     }
   } catch (error) {
     const elapsedMs = Date.now() - ts;
-    // The logger keeps only the error class from `error`, never its text,
-    // which can carry details from the user's own server.
-    logger.warn(
-      `[mcp-app-render] widget resource read failed after ${elapsedMs}ms`,
-    );
-    // Sentry on our hosted server only. A local install (npx, desktop) runs
-    // its user's own servers, and the alert would send their details to us.
+    // The row keeps the error class, never its text, which can carry details
+    // from the user's own server. Sentry on our hosted server only: a local
+    // install (npx, desktop) runs its user's own servers.
     renderLog.event(
       "mcp_app.resource_read.failed",
       { durationMs: elapsedMs },
