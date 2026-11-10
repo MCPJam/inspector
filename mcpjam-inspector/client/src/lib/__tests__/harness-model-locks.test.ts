@@ -255,21 +255,23 @@ describe("organization-key rows on a harness", () => {
     ]);
   });
 
-  it("OpenCode offers hosted Anthropic rows and refuses organization keys", () => {
+  it("OpenCode offers hosted Anthropic rows plus the org's Anthropic rows", () => {
     expect(
       offered(harnessPickerModels(WITH_ORG, { harnessId: "opencode" })).map(modelRowKey),
     ).toEqual([
       "hosted:anthropic:anthropic/claude-haiku-4.5",
       "hosted:anthropic:anthropic/claude-fable-5",
+      "org:orgprov_anthropic:claude-sonnet-4-5",
+      "org:orgprov_anthropic:claude-experimental-x",
     ]);
     expect(
       harnessRowRefusalReason(
-        ORG_ANTHROPIC,
+        ORG_OPENAI,
         { harnessId: "opencode" },
         "chat",
       ),
     ).toBe(
-      "The OpenCode client does not support organization provider keys. Choose another client.",
+      "The OpenCode client needs an MCPJam model or your organization's Anthropic key. Choose a supported model.",
     );
   });
 
@@ -310,13 +312,13 @@ describe("organization-key rows on a harness", () => {
 
   it("an org-only catalog leaves OpenCode empty rather than restoring refused rows", () => {
     expect(
-      harnessPickerModels([ORG_ANTHROPIC], { harnessId: "opencode" }),
+      harnessPickerModels([ORG_OPENAI], { harnessId: "opencode" }),
     ).toEqual([
       {
-        ...ORG_ANTHROPIC,
+        ...ORG_OPENAI,
         disabled: true,
         disabledReason:
-          "The OpenCode client does not support organization provider keys. Choose another client.",
+          "The OpenCode client needs an MCPJam model or your organization's Anthropic key. Choose a supported model.",
       },
     ]);
   });
@@ -492,7 +494,7 @@ describe("a harness under the organization's key policy", () => {
     const standIn = noRunnableHarnessModel("claude-code", POLICY);
     expect(isNoRunnableHarnessModel(standIn)).toBe(true);
     expect(standIn.disabledReason).toBe(
-      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     );
   });
 });
@@ -524,6 +526,13 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         { harnessId: "opencode" },
         "eval",
       ),
+    ).toBeUndefined();
+    expect(
+      harnessChoiceRefusalReason(
+        org("anthropic/claude-haiku-4.5"),
+        { harnessId: "cursor" },
+        "eval",
+      ),
     ).toMatch(/does not support organization provider keys/);
   });
 
@@ -548,7 +557,7 @@ describe("harnessChoiceRefusalReason (a saved choice, no row)", () => {
         "chat",
       ),
     ).toBe(
-      "The OpenCode client does not support organization provider keys. Choose another client.",
+      "The OpenCode client needs an MCPJam model or your organization's Anthropic key. Choose a supported model.",
     );
   });
 

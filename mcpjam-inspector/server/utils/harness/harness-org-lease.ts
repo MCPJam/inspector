@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 import { logger } from "../logger.js";
-import type { HarnessOrgUpstream } from "@/shared/harness-model-support";
+import type { HarnessOrgUpstreamProfile } from "@/shared/harness-model-support";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import {
   HARNESS_PROXY_REFUSAL_REASONS,
@@ -28,8 +28,11 @@ import { bearerHeader, getConvexHttpUrl } from "./harness-broker-http.js";
  */
 export type HarnessOrgLeaseUpstream = {
   credentialSource: "org";
-  profile: HarnessOrgUpstream["profile"];
-  /** The exact native model id the lease admits (`claude-sonnet-4-5`). */
+  profile: HarnessOrgUpstreamProfile;
+  /**
+   * The exact model id the lease admits: the vendor's native id
+   * (`claude-sonnet-4-5`), or on `org-gateway` the gateway's own model name.
+   */
   nativeModelId: string;
   credentialRevision: string;
 };
@@ -45,17 +48,23 @@ export function leaseSelectionField(
   return selection && (selection.source === "org" || selection.source === "hosted") ? { modelSelection: selection } : {};
 }
 
-/** What a start response echoes for an org lease, checked at the boundary. */
-const orgLeaseEchoSchema = z.object({
-  credentialSource: z.literal("org"),
-  upstreamProfile: z.enum(["anthropic-native", "openai-native"]),
-  credentialRevision: z.string().min(1),
-  // A native id never carries the canonical `creator/` prefix.
-  upstreamModelId: z
-    .string()
-    .min(1)
-    .refine((id) => !id.includes("/")),
-});
+/**
+ * What a start response echoes for an org lease, checked at the boundary. A
+ * vendor's native id never carries the canonical `creator/` prefix; a
+ * gateway's own model name may contain `/` (`anthropic/claude-haiku-4-5`).
+ */
+const orgLeaseEchoSchema = z
+  .object({
+    credentialSource: z.literal("org"),
+    upstreamProfile: z.enum(["anthropic-native", "openai-native", "org-gateway"]),
+    credentialRevision: z.string().min(1),
+    upstreamModelId: z.string().min(1),
+  })
+  .refine(
+    (echo) =>
+      echo.upstreamProfile === "org-gateway" ||
+      !echo.upstreamModelId.includes("/"),
+  );
 
 /** The org facts of a start response, or null when absent or incomplete. */
 export function orgLeaseUpstreamFrom(

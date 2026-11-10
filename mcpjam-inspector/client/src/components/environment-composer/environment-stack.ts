@@ -260,7 +260,8 @@ export function expandModelChoices(
   for (const target of dedupeModelTargets(resolved.explicitTargets)) {
     const { modelId } = target;
     // The saved selection says whose key the choice runs on: a local key never
-    // runs on a brokered harness, an org connection only on its own vendor.
+    // runs on a brokered harness, an org connection only where it serves the
+    // harness's API (a gateway's is judged at lease start).
     const reason = harnessChoiceRefusalReason(
       { modelId, selection: target.selection },
       options?.harness,
