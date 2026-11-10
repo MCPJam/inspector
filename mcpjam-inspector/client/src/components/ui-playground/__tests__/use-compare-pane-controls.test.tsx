@@ -253,7 +253,7 @@ describe("Compare pane settings", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers only the rows the pane's harness runs, and picks one for that pane", async () => {
+  it("offers only the rows the pane's harness runs, listing the rest disabled, and picks one for that pane", async () => {
     const user = userEvent.setup();
     const calls = spies();
     render(<Harness paneId="codex" spies={calls} />);
@@ -261,7 +261,9 @@ describe("Compare pane settings", () => {
       screen.getByRole("button", { name: "Pane settings for codex" }),
     );
     await user.click(screen.getByRole("button", { name: "Model for codex" }));
-    expect(screen.queryByText("anthropic/claude-haiku-4.5")).toBeNull();
+    expect(
+      screen.getByText("anthropic/claude-haiku-4.5").closest("[cmdk-item]"),
+    ).toHaveAttribute("aria-disabled", "true");
     await user.click(await screen.findByText("openai/gpt-5-mini"));
     expect(calls.setPanePick).toHaveBeenCalledWith(
       "codex",

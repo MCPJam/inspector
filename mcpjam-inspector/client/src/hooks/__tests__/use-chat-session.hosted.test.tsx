@@ -949,9 +949,17 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.availableModels.length).toBeGreaterThan(0);
     });
-    const offered = result.current.availableModels.map((model) => String(model.id));
+    const offered = result.current.availableModels
+      .filter((model) => !model.disabled)
+      .map((model) => String(model.id));
     expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
     expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    // Listed, but not pickable, with the reason Codex refuses it.
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({ disabled: true, disabledReason: expect.stringMatching(/Codex/) });
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);

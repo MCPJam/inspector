@@ -34,10 +34,9 @@
  *     own defenses); treating those as egress would break the suite it is
  *     meant to protect.
  *   - It does not close the check-vs-connect (TOCTOU) rebinding window: the
- *     DNS answer is validated, then the HTTP client resolves again. Narrowing
- *     that requires pinning the connection to the vetted IP, which belongs to
- *     infra-level egress policy — the same punt documented on the harness
- *     guard.
+ *     DNS answer is validated, then the HTTP client resolves again. A caller
+ *     that must close it dials only the addresses
+ *     `assertAllowedHostedTargetUrl` returns (`createCheckedAddressFetch`).
  */
 
 import { promises as dns } from "node:dns";
@@ -392,14 +391,18 @@ export function setEgressHostResolverForTests(
  * No-op outside hosted mode. `label` names the field in the error so a user
  * who pasted a bad URL learns WHICH url was refused — a run failure that says
  * only "blocked" is indistinguishable from a bug in our runner.
+ *
+ * Returns the addresses it checked, so a caller can dial only those: none
+ * outside hosted mode, the literal for an IP host, otherwise every address
+ * the name resolved to.
  */
 export async function assertAllowedHostedTargetUrl(
   rawUrl: string,
   label: string,
   options: { resolver?: EgressHostResolver; hosted?: boolean } = {}
-): Promise<void> {
+): Promise<string[]> {
   const hosted = options.hosted ?? HOSTED_MODE;
-  if (!hosted) return;
+  if (!hosted) return [];
 
   let parsed: URL;
   try {
@@ -421,7 +424,7 @@ export async function assertAllowedHostedTargetUrl(
   }
   // An IP literal has already been judged on its own terms; resolving it would
   // only ask DNS to repeat the number back.
-  if (isIpLiteral(host)) return;
+  if (isIpLiteral(host)) return [host];
 
   const resolver = options.resolver ?? activeResolver;
   let resolvedIps: string[];
@@ -458,6 +461,7 @@ export async function assertAllowedHostedTargetUrl(
       );
     }
   }
+  return resolvedIps;
 }
 
 /**

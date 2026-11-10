@@ -3338,8 +3338,12 @@ export function useChatSession(
             preferredModelId,
           )
         : undefined) ??
+      // A harness host lists the rows it can't run, disabled; none is a
+      // default.
       getDefaultModel(
-        selectableModels.length > 0 ? selectableModels : availableModels,
+        selectableModels.length > 0 || harnessId
+          ? selectableModels
+          : availableModels,
       ) ??
       // Nothing to offer at all: a disabled stand-in, never `undefined`
       // (INSPECTOR-CLIENT-222), which every reader below dereferences. The
