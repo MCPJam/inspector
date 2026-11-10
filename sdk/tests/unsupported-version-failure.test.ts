@@ -113,8 +113,8 @@ describe("readUnsupportedVersionFailure", () => {
   it("reads the server's -32022 refusal from the transport's body text", () => {
     const verdict = readUnsupportedVersionFailure(
       new Error(
-        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Unsupported protocol version: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}',
-      ),
+        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Unsupported protocol version: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}'
+      )
     );
 
     expect(verdict).toEqual({ supported: ["2026-07-28"] });
@@ -123,8 +123,8 @@ describe("readUnsupportedVersionFailure", () => {
   it("takes the -32022 body's offer over the prose inside it", () => {
     const verdict = readUnsupportedVersionFailure(
       new Error(
-        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Server\'s protocol version is not supported: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}',
-      ),
+        'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32022,"message":"Server\'s protocol version is not supported: 2025-06-18","data":{"supported":["2026-07-28"],"requested":"2025-06-18"}},"id":0}'
+      )
     );
 
     expect(verdict).toEqual({ supported: ["2026-07-28"] });
@@ -134,9 +134,9 @@ describe("readUnsupportedVersionFailure", () => {
     expect(
       readUnsupportedVersionFailure(
         new Error(
-          'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":0}',
-        ),
-      ),
+          'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":0}'
+        )
+      )
     ).toBeUndefined();
   });
 
