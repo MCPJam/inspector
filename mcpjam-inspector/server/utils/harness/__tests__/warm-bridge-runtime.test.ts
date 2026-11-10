@@ -230,6 +230,7 @@ describe("warm runtime lifecycle", () => {
     const session = await withWarmBridgeRuntime(
       f.factory,
       "configuration",
+      WINDOW_MS,
     ).doStart(f.options);
     f.run.mockImplementationOnce(() => new Promise(() => undefined));
     const detached = session.doDetach();
