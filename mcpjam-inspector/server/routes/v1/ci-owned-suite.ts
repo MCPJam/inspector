@@ -90,6 +90,23 @@ export function fileSyncArg(declaredSuiteId: string | undefined | null): {
 }
 
 /**
+ * The marker a request carries: the query's `declaredSuiteId`, else the
+ * body's, trimmed, or nothing. A blank query value (`?declaredSuiteId=`) does
+ * not hide a marker in the body. Read it once per route and pass the result to
+ * the guard and to every `fileSyncArg` call, so they cannot disagree.
+ */
+export function declaredSuiteIdOf(
+  c: { req: { query(name: string): string | undefined } },
+  body?: { declaredSuiteId?: string },
+): string | undefined {
+  return (
+    c.req.query("declaredSuiteId")?.trim() ||
+    body?.declaredSuiteId?.trim() ||
+    undefined
+  );
+}
+
+/**
  * Refuse a configuration write to a CI-owned suite BEFORE the mutation.
  *
  * The backend's `assertCiOwnedSuiteWritable` stays the guard and refuses the
@@ -108,6 +125,10 @@ export function fileSyncArg(declaredSuiteId: string | undefined | null): {
  * as CI-owned, this refuses a write the platform would accept until
  * `isCiOwnedSuiteDoc` is updated to match. It cannot err the other way — a
  * suite this copy calls writable still meets the lock in Convex.
+ *
+ * It also refuses a PATCH that would write nothing (say, only
+ * `expectedRevisionNumber`): the one request on a CI-owned suite that the
+ * platform answered 200 before this check and now gets 409.
  */
 export function assertSuiteWritableViaApi(
   suite: SuiteOwnership,

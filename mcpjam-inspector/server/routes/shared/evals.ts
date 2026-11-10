@@ -1852,6 +1852,24 @@ async function composableEnvironmentTargets(args: {
  * partial-failure visibility, and rerun snapshot rules — and `prepareEvalRun`
  * stays the single run engine that calls this then starts the recorder.
  */
+/**
+ * Whether a run launch writes the suite it runs: its cases on any launch that
+ * is not a rerun, its saved server snapshot on `refreshSnapshot` outside an
+ * environment launch. `authorEvalSuite` writes on exactly these launches, and
+ * the v1 CI-owned pre-check (PLB-238) refuses exactly these, so both read it
+ * from here.
+ */
+export function evalLaunchWritesSuite(args: {
+  suiteRerun: boolean | undefined;
+  refreshSnapshot: boolean | undefined;
+  environmentLaunch?: boolean;
+}): boolean {
+  return (
+    !args.suiteRerun ||
+    (args.refreshSnapshot === true && !args.environmentLaunch)
+  );
+}
+
 export async function authorEvalSuite(args: {
   hostAttachments?: Array<{
     namedHostId: string;
@@ -1989,7 +2007,7 @@ export async function authorEvalSuite(args: {
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
     const shouldUpdateSnapshot =
-      !args.environmentLaunch && (!suiteRerun || refreshSnapshot === true);
+      !args.environmentLaunch && evalLaunchWritesSuite(args);
     // …and when there is nothing to update, DON'T CALL AT ALL.
     //
     // A plain rerun carries no snapshot (above) and no name or description of

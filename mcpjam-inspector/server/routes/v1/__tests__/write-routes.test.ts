@@ -1073,6 +1073,75 @@ describe("v1 write routes", () => {
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
+
+      // PLB-238 (D11): a launch that writes the suite is refused up front on a
+      // CI-owned suite, before any connection; a launch that only runs it is not.
+      describe("on a CI-owned suite", () => {
+        const RUNS =
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs";
+        const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+        function mockCiSuite(environmentIds: string[] = []): void {
+          mockConvexQueries({
+            "testSuites:getTestSuite": () => ({
+              ...SUITE_DOC,
+              declaredSuiteId: "s_from_file",
+              environmentIds,
+            }),
+            "testSuites:getSuiteRunServerSelection": () => ({
+              serverIds: ["s_alpha"],
+              serverNames: ["alpha"],
+              source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+            }),
+            "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
+            "projectEnvironments:resolveEnvironmentForLaunch": () =>
+              RESOLVED_ENVIRONMENT,
+            "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+          });
+        }
+
+        it.each([
+          [
+            "inline tests",
+            { suiteId: SUITE_ID, serverIds: ["s_alpha"], tests: [inlineTest] },
+          ],
+          [
+            "refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+          ],
+        ])(
+          "refuses a launch that writes the suite (%s)",
+          async (_label, body) => {
+            mockHappyCreate();
+            mockCiSuite();
+            const res = await request(makeApp(), "POST", RUNS, body);
+            expect(res.status).toBe(409);
+            expect(
+              ((await res.json()) as { details?: { reason?: string } }).details
+                ?.reason,
+            ).toBe("CI_OWNED_SUITE_READ_ONLY");
+            expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+            expect(prepareEvalRunMock).not.toHaveBeenCalled();
+            expect(convexMutationMock).not.toHaveBeenCalled();
+          },
+        );
+
+        it.each([
+          ["a bare rerun", { suiteId: SUITE_ID }, []],
+          ["the CLI's rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
+          [
+            "an environment rerun with refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+        ])("starts %s", async (_label, body, environmentIds) => {
+          mockHappyCreate();
+          mockCiSuite(environmentIds);
+          const res = await request(makeApp(), "POST", RUNS, body);
+          expect(res.status).toBe(202);
+          expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+        });
+      });
     });
 
     describe("inline test model validation", () => {

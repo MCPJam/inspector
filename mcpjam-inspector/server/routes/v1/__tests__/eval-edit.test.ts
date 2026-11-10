@@ -2546,29 +2546,65 @@ describe("v1 eval-edit routes", () => {
     }
   });
 
-  it.each(["failed", "cancelled", "pending", "completed"])("returns %s authoring jobs without missing-collection crashes", async (status) => {
-    convexQueryMock.mockImplementation((name: string) => name === "evalAuthoringState:status"
-      ? Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status, error: "Stopped" }) : defaultQueryImpl(name));
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ status, error: "Stopped" });
-    expect(convexMutationMock).not.toHaveBeenCalled();
-  });
-  it.each(["GET", "POST"])("returns 404 for absent authoring jobs on %s", async (method) => {
-    convexQueryMock.mockResolvedValue(null);
-    const response = await request(method, `/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${method === "POST" ? "/commit" : ""}`, method === "POST" ? {} : undefined);
-    expect(response.status).toBe(404);
-  });
+  it.each(["failed", "cancelled", "pending", "completed"])(
+    "returns %s authoring jobs without missing-collection crashes",
+    async (status) => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "evalAuthoringState:status"
+          ? Promise.resolve({
+              jobId: "job",
+              projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+              source: "generation",
+              status,
+              error: "Stopped",
+            })
+          : defaultQueryImpl(name),
+      );
+      const response = await request(
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+        {},
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ status, error: "Stopped" });
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["GET", "POST"])(
+    "returns 404 for absent authoring jobs on %s",
+    async (method) => {
+      convexQueryMock.mockResolvedValue(null);
+      const response = await request(
+        method,
+        `/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${method === "POST" ? "/commit" : ""}`,
+        method === "POST" ? {} : undefined,
+      );
+      expect(response.status).toBe(404);
+    },
+  );
   it("omits unavailable case reads from receipts and counts", async () => {
     convexQueryMock.mockImplementation((name: string, args: any) => {
-      if (name === "evalAuthoringState:status") return Promise.resolve({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", committedCaseIds: ["valid", "missing", "unreadable"] });
+      if (name === "evalAuthoringState:status")
+        return Promise.resolve({
+          jobId: "job",
+          projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          source: "generation",
+          status: "completed",
+          committedCaseIds: ["valid", "missing", "unreadable"],
+        });
       if (name === "testSuites:getTestCase") {
         if (args.testCaseId === "unreadable") return Promise.reject(new Error("Not accessible"));
         return Promise.resolve(args.testCaseId === "valid" ? CASE_DOC : null);
       }
       return defaultQueryImpl(name);
     });
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    const response = await request(
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.created).toHaveLength(1);
@@ -2576,16 +2612,52 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("keeps review skips and normalizes batch failure messages", async () => {
-    const draft = { version: 1, draftId: "draft", revision: 0, case: { title: "Save failed", steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }], expectedOutput: "Document found" }, issues: [], additions: [], review: "required" };
-    convexQueryMock.mockResolvedValue({ jobId: "job", projectId: "p1", suiteId: "s1", source: "generation", status: "completed", drafts: [
-      { ...draft, draftId: "review", case: { ...draft.case, title: "Needs review" }, issues: [{ code: "unknown_tool", message: "Tool nope is missing or ambiguous.", blocking: false, origin: "validation" }] }, draft,
-    ] });
+    const draft = {
+      version: 1,
+      draftId: "draft",
+      revision: 0,
+      case: {
+        title: "Save failed",
+        steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }],
+        expectedOutput: "Document found",
+      },
+      issues: [],
+      additions: [],
+      review: "required",
+    };
+    convexQueryMock.mockResolvedValue({
+      jobId: "job",
+      projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      source: "generation",
+      status: "completed",
+      drafts: [
+        {
+          ...draft,
+          draftId: "review",
+          case: { ...draft.case, title: "Needs review" },
+          issues: [
+            {
+              code: "unknown_tool",
+              message: "Tool nope is missing or ambiguous.",
+              blocking: false,
+              origin: "validation",
+            },
+          ],
+        },
+        draft,
+      ],
+    });
     convexMutationMock.mockImplementation((name: string) => {
       if (name === "evalAuthoringState:prepareCommit") return Promise.resolve({ title: "Save failed" });
       if (name === "testSuites:createTestCases") return Promise.resolve({ caseUpsert: { committed: [], failed: [{ index: 0, code: "DUPLICATE", message: "Already exists" }] } });
       return Promise.resolve(null);
     });
-    const response = await request("POST", "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {});
+    const response = await request(
+      "POST",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      {},
+    );
     expect(response.status).toBe(200);
     // The skip NAMES the doubt. "Review this draft in the suite" told a CLI
     // caller that something was wrong without saying what.
@@ -2895,8 +2967,8 @@ describe("v1 eval-edit routes", () => {
         name === "evalAuthoringState:status"
           ? Promise.resolve({
               jobId: "job",
-              projectId: "p1",
-              suiteId: "s1",
+              projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
               source,
               status: "completed",
               drafts: [],
@@ -2905,7 +2977,7 @@ describe("v1 eval-edit routes", () => {
       );
       const response = await request(
         "POST",
-        "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
         {},
       );
       expect(response.status).toBe(expected);
@@ -2942,36 +3014,38 @@ describe("v1 eval-edit routes", () => {
     };
     convexQueryMock.mockResolvedValue({
       jobId: "job77",
-      projectId: "p1",
-      suiteId: "s1",
+      projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       source: "import",
       status: "completed",
       drafts: [draft],
     });
     const response = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
       {},
     );
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result.skipped).toHaveLength(1);
-    expect(result.reviewUrl).toContain("/evaluate/suite/s1");
+    expect(result.reviewUrl).toContain(
+      "/evaluate/suite/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+    );
     expect(result.reviewUrl).toContain("importJob=job77");
   });
 
   it("omits the review link when every case landed", async () => {
     convexQueryMock.mockResolvedValue({
       jobId: "job77",
-      projectId: "p1",
-      suiteId: "s1",
+      projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       source: "import",
       status: "completed",
       drafts: [],
     });
     const response = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
       {},
     );
     expect(await response.json()).not.toHaveProperty("reviewUrl");
@@ -2980,8 +3054,8 @@ describe("v1 eval-edit routes", () => {
   it("carries a commit-time duplicate policy into the case writer", async () => {
     convexQueryMock.mockResolvedValue({
       jobId: "job",
-      projectId: "p1",
-      suiteId: "s1",
+      projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
       source: "import",
       status: "completed",
       drafts: [
@@ -3011,7 +3085,7 @@ describe("v1 eval-edit routes", () => {
     });
     const response = await request(
       "POST",
-      "/api/v1/projects/p1/eval-suites/s1/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
       { duplicatePolicy: "warn", overrideReason: "Re-importing a fixed case" },
     );
     expect(response.status).toBe(200);
@@ -5008,6 +5082,223 @@ describe("v1 eval-edit — CI-owned suites", () => {
     expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
     expect(convexMutationMock).not.toHaveBeenCalled();
   });
+
+  // Authoring routes take no marker, so a CI-owned suite is refused before
+  // the servers are connected and before the backend is asked to start a job.
+  it.each([
+    ["cases/generate", { mode: "normal" }],
+    ["cases/import", { content: "# Case 1\nSearch for coffee." }],
+  ] as const)(
+    "refuses %s before connecting to the suite's servers",
+    async (route, body) => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      try {
+        const res = await request(
+          "POST",
+          `/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/${route}`,
+          { ...body },
+        );
+        expect(res.status).toBe(409);
+        const json = (await res.json()) as { details?: { reason?: string } };
+        expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    },
+  );
+
+  // Defense in depth: today the backend refuses CI-owned suites at job start,
+  // so no such job reaches commit. An SDK-ingested suite stands in for one
+  // that a future change lets through (a file-owned job fails the status read).
+  describe("authoring commit", () => {
+    const COMMIT_PATH =
+      "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit";
+    const draft = {
+      version: 1,
+      draftId: "draft",
+      revision: 0,
+      case: {
+        title: "Find a document",
+        steps: [{ id: "p", kind: "prompt", prompt: "Find a document" }],
+        expectedOutput: "Document found",
+      },
+      issues: [],
+      additions: [],
+    };
+    function jobIn(projectId: string) {
+      return {
+        jobId: "job",
+        projectId,
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        source: "generation",
+        status: "completed",
+        drafts: [draft],
+      };
+    }
+    function serveJob(job: Record<string, unknown>) {
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "evalAuthoringState:status") return Promise.resolve(job);
+        if (name === "testSuites:getTestSuite")
+          return Promise.resolve({ ...SUITE_DOC, source: "sdk" });
+        return defaultQueryImpl(name);
+      });
+    }
+
+    it("refuses a CI-owned suite before accepting or saving drafts", async () => {
+      serveJob(jobIn("proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx"));
+      const res = await request("POST", COMMIT_PATH, {});
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as { details?: { reason?: string } };
+      expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("answers 404 for another project's job before reading the suite", async () => {
+      serveJob(jobIn("proj2xxxxxxxxxxxxxxxxxxxxxxxxxxx"));
+      const res = await request("POST", COMMIT_PATH, {});
+      expect(res.status).toBe(404);
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "testSuites:getTestSuite",
+        expect.anything(),
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  const SUITE_PATH =
+    "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+  const CASE_PATH = `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`;
+
+  // A blank query value used to hide the body's marker (`??` keeps "").
+  it.each([
+    ["empty", ""],
+    ["blank", "%20"],
+  ])(
+    "uses the body marker when the query marker is %s",
+    async (_label, query) => {
+      const res = await request(
+        "PATCH",
+        `${CASE_PATH}?declaredSuiteId=${query}`,
+        {
+          title: "renamed",
+          declaredSuiteId: "s_from_file",
+        },
+      );
+      expect(res.status).toBeLessThan(300);
+      const call = convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === "testSuites:updateTestCase",
+      );
+      expect(call?.[1]).toMatchObject({
+        fileSync: { declaredSuiteId: "s_from_file" },
+      });
+    },
+  );
+
+  // D4: refused even though the platform would have written nothing.
+  it("refuses a PATCH that would write nothing", async () => {
+    const res = await request("PATCH", SUITE_PATH, {
+      expectedRevisionNumber: 0,
+    });
+    expect(res.status).toBe(409);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("sends a wrong marker on, and maps the platform's refusal to the 409", async () => {
+    const res = await request("PATCH", `${CASE_PATH}?declaredSuiteId=s_other`, {
+      title: "renamed",
+    });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { details?: { reason?: string } };
+    expect(json.details?.reason).toBe("CI_OWNED_SUITE_READ_ONLY");
+    expect(convexMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses POST environments even with the suite's own marker", async () => {
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/environments?declaredSuiteId=s_from_file`,
+      { environmentId: "js7abc0def1ghj2klm3nop4qrs5tuv6w" },
+    );
+    expect(res.status).toBe(409);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes a case with a marker without reading the suite", async () => {
+    const res = await request(
+      "DELETE",
+      `${CASE_PATH}?declaredSuiteId=s_from_file`,
+    );
+    expect(res.status).toBe(200);
+    expect(convexQueryMock).not.toHaveBeenCalledWith(
+      "testSuites:getTestSuite",
+      expect.anything(),
+    );
+  });
+
+  // Scope before ownership: a suite from another project is "not found", not
+  // "read-only", so the 409 cannot confirm that the id exists.
+  it.each([
+    ["PATCH", "", { name: "renamed" }],
+    ["PATCH", "/schedule", { enabled: true, intervalMinutes: 60 }],
+    [
+      "POST",
+      "/cases",
+      { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+    ],
+    ["PATCH", "/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", { title: "renamed" }],
+    [
+      "POST",
+      "/cases/batch",
+      {
+        cases: [
+          {
+            title: "added",
+            steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+          },
+        ],
+      },
+    ],
+    [
+      "POST",
+      "/environments",
+      { environmentId: "js7abc0def1ghj2klm3nop4qrs5tuv6w" },
+    ],
+    ["DELETE", "/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx", undefined],
+    ["POST", "/cases/generate", { mode: "normal" }],
+    ["POST", "/cases/import", { content: "# Case 1\nSearch for coffee." }],
+    ["POST", "/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit", {}],
+  ] as const)(
+    "answers 404 on %s %s for a CI-owned suite in another project",
+    async (method, route, body) => {
+      const otherProject = "proj2xxxxxxxxxxxxxxxxxxxxxxxxxxx";
+      convexQueryMock.mockImplementation((name: string) => {
+        if (name === "testSuites:getTestSuite")
+          return Promise.resolve({ ...CI_SUITE, projectId: otherProject });
+        if (name === "testSuites:getTestCase")
+          return Promise.resolve({ ...CASE_DOC, projectId: otherProject });
+        if (name === "evalAuthoringState:status")
+          return Promise.resolve({
+            jobId: "job",
+            projectId: otherProject,
+            suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+            source: "generation",
+            status: "completed",
+          });
+        return defaultQueryImpl(name);
+      });
+      const res = await request(
+        method,
+        `${SUITE_PATH}${route}`,
+        body ? { ...body } : undefined,
+      );
+      expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("still maps a refusal that reaches Convex to the same 409", async () => {
     // The route's copy of the predicate said "writable" (a plain UI suite)
