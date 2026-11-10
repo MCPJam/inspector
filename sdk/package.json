@@ -156,7 +156,7 @@
     "predev": "node ../scripts/generate-telemetry-catalogs.mjs",
     "dev": "concurrently -n telemetry,tsup \"node ../scripts/generate-telemetry-catalogs.mjs --watch\" \"tsup --watch\"",
     "sentry:inject": "sentry-cli sourcemaps inject ./dist",
-    "sentry:sourcemaps": "npm run sentry:inject && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
+    "sentry:sourcemaps": "npm run sentry:inject && sentry-cli sourcemaps upload --release=mcpjam-sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

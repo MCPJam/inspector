@@ -700,9 +700,14 @@ jobs:
         run: |
           # npm's SDK prepack injects after its prepublish rebuild. No build or
           # injection may run between packing and uploading these same files.
+          # Sentry maps frames by those debug IDs; --release only files the
+          # bundle under the release the SDK reports (SDK_RELEASE in
+          # sdk/src/sentry.ts). Keep the two identical and free of "/":
+          # sentry-cli refuses such a release before uploading anything, and
+          # continue-on-error keeps that failure out of the release result.
           version=$(node -p "require('./sdk/package.json').version")
           npx @sentry/cli sourcemaps upload \
-            --release="@mcpjam/sdk@${version}" \
+            --release="mcpjam-sdk@${version}" \
             --org=mcpjam-gh \
             --project=mcpjam-sdk \
             ./sdk/dist
