@@ -471,7 +471,15 @@ vi.mock("@/hooks/use-chat-session", () => ({
       },
       detachToLocalFork: async (...args: unknown[]) => {
         const result = await mockUseChatSession.detachToLocalFork(...args);
-        chatSessionOnResetRef.current?.("fork");
+        const options = args[1];
+        chatSessionOnResetRef.current?.(
+          options &&
+            typeof options === "object" &&
+            "preserveAppSession" in options &&
+            options.preserveAppSession
+            ? "conflict-fork"
+            : "fork"
+        );
         // The real fork's hydration is what drops the optimistic-concurrency
         // guard, so a confirmed fork — and only a confirmed fork — clears it.
         if (result) {
@@ -945,6 +953,65 @@ describe("ChatTabV2 history sync", () => {
         "data-active-session-id",
         "none"
       );
+    });
+
+    it("keeps the same thread through a conflict with comparison configured", async () => {
+      const models = [
+        { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+        {
+          id: "anthropic/claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.availableModels = models;
+      mockUseChatSession.selectedModelIds = models.map((model) => model.id);
+      mockUseChatSession.multiModelEnabled = true;
+      mockReadHistory.mockResolvedValue(detailResponse);
+      const props = { ...defaultProps, enableMultiModelChat: true };
+      const view = render(<ChatTabV2 {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+      await flushMicrotasks();
+      const thread = screen.getByTestId("thread");
+
+      const fork = createDeferred<{ chatSessionId: string }>();
+      mockUseChatSession.detachToLocalFork.mockReturnValueOnce(fork.promise);
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "conflict",
+        chatSessionId: "chat-session-1",
+        currentVersion: 5,
+      });
+      mockUseChatSession.status = "submitted";
+      view.rerender(<ChatTabV2 {...props} />);
+      mockUseChatSession.status = "ready";
+      view.rerender(<ChatTabV2 {...props} />);
+      await flushMicrotasks();
+
+      expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledTimes(1);
+      expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ preserveAppSession: true })
+      );
+      expect(screen.getByTestId("thread")).toBe(thread);
+      expect(thread.isConnected).toBe(true);
+      expect(screen.queryAllByTestId("multi-model-card")).toHaveLength(0);
+
+      await act(async () => {
+        fork.resolve({ chatSessionId: "forked-session" });
+      });
+      expect(screen.getByTestId("thread")).toBe(thread);
+      expect(thread.isConnected).toBe(true);
+      expect(screen.queryAllByTestId("multi-model-card")).toHaveLength(0);
+      expect(screen.getByTestId("history-rail")).toHaveAttribute(
+        "data-active-session-id",
+        "none"
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "New personal thread" }));
+      await flushMicrotasks();
+      expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
+      expect(thread.isConnected).toBe(false);
     });
 
     it("reports an unsaved reply honestly and keeps the thread attached", async () => {

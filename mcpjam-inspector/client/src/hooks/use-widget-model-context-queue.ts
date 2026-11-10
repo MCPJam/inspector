@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import type { UIMessage } from "ai";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   upsertWidgetModelContextEntry,
@@ -24,5 +25,22 @@ export function useWidgetModelContextQueue() {
       ),
     [setQueue],
   );
-  return [queue, setQueue, update] as const;
+  const retainForMessages = useCallback(
+    (messages: UIMessage[]) => {
+      const toolCallIds = new Set(
+        messages.flatMap((message) =>
+          message.parts.flatMap((part) =>
+            "toolCallId" in part && typeof part.toolCallId === "string"
+              ? [part.toolCallId]
+              : [],
+          ),
+        ),
+      );
+      setQueue(
+        current.current.filter((entry) => toolCallIds.has(entry.toolCallId)),
+      );
+    },
+    [setQueue],
+  );
+  return [queue, setQueue, update, retainForMessages] as const;
 }

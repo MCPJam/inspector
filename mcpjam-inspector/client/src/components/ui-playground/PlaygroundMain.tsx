@@ -796,8 +796,12 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
-    useWidgetModelContextQueue();
+  const [
+    modelContextQueue,
+    setModelContextQueue,
+    handleModelContextUpdate,
+    retainModelContextForMessages,
+  ] = useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -1504,10 +1508,12 @@ export function PlaygroundMain({
       : null,
     preferredModelId: previewedHost?.config?.modelId ?? null,
     onReset: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => {
-      if (reason !== "conflict-fork" && !(reason === "hydrate" && hydration)) {
+      if (reason === "hydrate" && hydration) {
+        retainModelContextForMessages(hydration.messages);
+      } else if (reason !== "conflict-fork") {
         setModelContextQueue([]);
       }
-      setPreludeTraceExecutions([]);
+      if (reason !== "conflict-fork") setPreludeTraceExecutions([]);
       if (reason === "hydrate" && hydration &&
           injectedAppScopeRef.current === hydration.appSessionScopeId) {
         setInjectedToolRenderOverrides((previous) => retainInjectedAppOverrides(
@@ -3204,18 +3210,21 @@ export function PlaygroundMain({
     appMessageDraft.clear();
   }, [composer, fileAttachments, appMessageDraft.clear]);
 
-  const cancelPendingHistorySelection = useCallback(() => {
-    historySelectionRequestIdRef.current += 1;
-    invalidatePendingReactiveHistoryLoad();
-    setLoadingHistorySessionId(null);
-    setActiveHistorySessionId(null);
-    setLoadedThreadOwnerUserId(null);
-    setViewingHistoryReplay(false);
-    // No persisted conversation is open any more, so there is nothing left to
-    // disclose about one — and leaving the flag set would gate sends on a
-    // fresh chat the user just started.
-    setRestoredConversation(null);
-  }, [invalidatePendingReactiveHistoryLoad]);
+  const cancelPendingHistorySelection = useCallback(
+    (preserveAppSession = false) => {
+      historySelectionRequestIdRef.current += 1;
+      invalidatePendingReactiveHistoryLoad();
+      setLoadingHistorySessionId(null);
+      setActiveHistorySessionId(null);
+      setLoadedThreadOwnerUserId(null);
+      if (!preserveAppSession) setViewingHistoryReplay(false);
+      // No persisted conversation is open any more, so there is nothing left to
+      // disclose about one — and leaving the flag set would gate sends on a
+      // fresh chat the user just started.
+      setRestoredConversation(null);
+    },
+    [invalidatePendingReactiveHistoryLoad],
+  );
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
@@ -3581,7 +3590,7 @@ export function PlaygroundMain({
   const detachHistorySession = useCallback(
     (toastMessage: string, opts?: { silent?: boolean; preserveAppSession?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
+      cancelPendingHistorySelection(opts?.preserveAppSession);
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
 
@@ -4425,7 +4434,7 @@ export function PlaygroundMain({
   useEffect(() => {
     setTraceViewMode("chat");
     setPreludeTraceExecutions([]);
-  }, [chatSessionId]);
+  }, [appSessionScopeId, appReopenKey]);
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {

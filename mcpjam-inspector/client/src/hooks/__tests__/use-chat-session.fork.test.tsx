@@ -756,12 +756,27 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.messages).toEqual([message]);
   });
 
-  it("populates liveTraceEnvelope.messages from the restored transcript so trace timeline can resolve tool input/output", async () => {
+  it.each(["branch", "source"] as const)("retains restored trace tool data across a conflict but clears it on %s", async (nextSession) => {
     // Transcript with one tool call so the trace timeline can resolve its
     // input/output. The same shape we read from a real session blob via
     // transcriptToUIMessages → dynamic-tool part.
     const fetchMock = vi.fn(async (url) =>
-      String(url).includes("requests.json")
+      String(url).includes("spans.json")
+        ? new Response(
+            JSON.stringify([
+              {
+                id: "turn-1-step-0",
+                name: "Step 1",
+                category: "step",
+                startMs: 0,
+                endMs: 1000,
+                promptIndex: 0,
+                stepIndex: 0,
+                status: "ok",
+              },
+            ]),
+          )
+        : String(url).includes("requests.json")
         ? new Response(
             JSON.stringify([
               {
@@ -839,6 +854,7 @@ describe("useChatSession fork preservation", () => {
         version: 1,
         turnTraces: [
           {
+            spansBlobUrl: "https://storage.test/spans.json",
             requestPayloadsBlobUrl: "https://storage.test/requests.json",
             turnId: "turn-1",
             promptIndex: 0,
@@ -884,6 +900,30 @@ describe("useChatSession fork preservation", () => {
         ),
       ).toBe(true);
     });
+
+    const traceSpans = result.current.liveTraceEnvelope?.spans;
+    const requestPayloads = result.current.requestPayloadHistory;
+    expect(traceSpans?.length).toBeGreaterThan(0);
+
+    await result.current.detachToLocalFork(result.current.messages, {
+      preserveAppSession: true,
+    });
+    expect(result.current.chatSessionId).not.toBe("restored-with-tools");
+    expect(result.current.appSessionScopeId).toBe("restored-with-tools");
+    expect(result.current.liveTraceEnvelope?.spans).toEqual(traceSpans);
+    expect(result.current.requestPayloadHistory).toEqual(requestPayloads);
+
+    if (nextSession === "branch") {
+      await result.current.detachToLocalFork(result.current.messages);
+    } else {
+      await result.current.loadChatSession({
+        chatSessionId: "restored-with-tools",
+        messagesBlobUrl: "https://storage.test/restored-with-tools.json",
+        version: 1,
+      });
+    }
+    expect(result.current.appSessionScopeId).toBe(result.current.chatSessionId);
+    expect(result.current.liveTraceEnvelope).toBeNull();
   });
 
   it("restores empty sessions even when the transcript blob URL is missing", async () => {

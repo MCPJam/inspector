@@ -588,10 +588,11 @@ describe("ChatTabV2 trace views", () => {
   it.each([
     ["conflict-fork", false, true],
     ["hydrate", true, true],
+    ["hydrate", true, false],
     ["hydrate", false, false],
   ] as const)(
-    "scopes buffered App context after %s (same-row refresh: %s)",
-    (reason, sameRow, keep) => {
+    "scopes buffered App context after %s (same-row refresh: %s, surviving call: %s)",
+    (reason, sameRow, survives) => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
       ];
@@ -601,12 +602,32 @@ describe("ChatTabV2 trace views", () => {
         mockThread.mock.lastCall![0].onModelContextUpdate("counter", context),
       );
       act(() =>
+        mockThread.mock.lastCall![0].onModelContextUpdate("removed", context),
+      );
+      act(() =>
         onChatReset?.(
           reason,
           sameRow
             ? {
                 appSessionScopeId: "chat-session-1",
-                messages: [],
+                messages: survives
+                  ? [
+                      {
+                        id: "app",
+                        role: "assistant",
+                        parts: [
+                          {
+                            type: "dynamic-tool",
+                            toolName: "counter",
+                            toolCallId: "counter",
+                            state: "output-available",
+                            input: {},
+                            output: {},
+                          },
+                        ],
+                      },
+                    ]
+                  : [],
                 toolRenderOverrides: {},
               }
             : undefined,
@@ -617,7 +638,15 @@ describe("ChatTabV2 trace views", () => {
       );
       expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          widgetModelContext: keep ? [{ toolCallId: "counter", context }] : [],
+          widgetModelContext:
+            reason === "conflict-fork"
+              ? [
+                  { toolCallId: "counter", context },
+                  { toolCallId: "removed", context },
+                ]
+              : sameRow && survives
+                ? [{ toolCallId: "counter", context }]
+                : [],
         }),
       );
     },

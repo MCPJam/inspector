@@ -3,7 +3,10 @@ import { createAppToolsRegistry, type AppInstance } from "@mcpjam/widget-react";
 import { makeAppInstance } from "@/test/factories";
 import { fulfillHarnessAppTool } from "../fulfill-harness-app-tool";
 
-async function setup(overrides: Partial<AppInstance> = {}) {
+async function setup(
+  overrides: Partial<AppInstance> = {},
+  appSessionScopeId = "chat",
+) {
   const registry = createAppToolsRegistry();
   const instance = makeAppInstance({ chatSessionId: "chat", ...overrides });
   const call = vi.spyOn(instance.bridge, "callTool").mockResolvedValue({
@@ -12,7 +15,7 @@ async function setup(overrides: Partial<AppInstance> = {}) {
     _meta: { secret: true },
   });
   await registry.getState().registerInstance(instance);
-  const descriptor = registry.getState().snapshotForChatBody("chat")[0];
+  const descriptor = registry.getState().snapshotForChatBody(appSessionScopeId)[0];
   const event = {
     id: "invocation",
     chatSessionId: "chat",
@@ -45,9 +48,51 @@ async function setup(overrides: Partial<AppInstance> = {}) {
     claim,
     complete,
     chatSessionId: () => "chat",
+    appSessionScopeId: () => appSessionScopeId,
   };
 }
 describe("native app-tool fulfillment", () => {
+  it("resolves a retained App scope while authorizing the new durable conversation", async () => {
+    const s = await setup({ chatSessionId: "source" }, "source");
+    await fulfillHarnessAppTool({ ...s.event, chatSessionId: "source" }, s);
+    expect(s.claim).not.toHaveBeenCalled();
+    await fulfillHarnessAppTool(s.event, s);
+    expect(s.call).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(s.complete.mock.calls[0][0].resultJson).isError,
+    ).toBeUndefined();
+  });
+  it("refuses a retained App when the durable conversation changes during a claim", async () => {
+    const s = await setup({ chatSessionId: "source" }, "source");
+    let currentChat = "chat";
+    const claim = s.claim.mockImplementationOnce(async () => {
+      currentChat = "other";
+      return {
+        projectId: "project",
+        expiresAt: s.event.expiresAt,
+        ...s.registry.getState().snapshotForChatBody("source")[0],
+        bridgeId: s.instance.bridgeId,
+        inputJson: "{}",
+        chatSessionId: "chat",
+      };
+    });
+    await fulfillHarnessAppTool(s.event, {
+      ...s,
+      claim,
+      chatSessionId: () => currentChat,
+    });
+    expect(s.call).not.toHaveBeenCalled();
+    expect(JSON.parse(s.complete.mock.calls[0][0].resultJson).isError).toBe(true);
+  });
+  it("refuses an App when its current scope is unavailable", async () => {
+    const s = await setup();
+    await fulfillHarnessAppTool(s.event, {
+      ...s,
+      appSessionScopeId: () => undefined,
+    });
+    expect(s.call).not.toHaveBeenCalled();
+    expect(JSON.parse(s.complete.mock.calls[0][0].resultJson).isError).toBe(true);
+  });
   it("dispatches a global App in the current chat and refuses its old chat after a switch", async () => {
     let targetChat = "chat";
     const s = await setup({

@@ -2763,6 +2763,7 @@ export function useChatSession(
         void fulfillHarnessAppTool(appToolEvent, {
           registry: appToolsRegistryRef.current,
           chatSessionId: () => chatSessionIdRef.current,
+          appSessionScopeId: () => appSessionScopeIdRef.current,
           claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
           complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
         }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
@@ -5435,15 +5436,21 @@ export function useChatSession(
     options.builtInToolDefinitions,
   ]);
 
-  // useLayoutEffect (not useEffect) so the trace state is swapped out
-  // before the browser paints the new chatSessionId render, preventing a
-  // flash of the previous session's live-trace envelope on session switch
-  // or fork.
+  // Swap traces before paint on history switches and manual branches. A
+  // conflict keeps the App lifetime and its revealed trace; returning to the
+  // source conversation must still restore that source's own trace state.
+  const traceAppSessionScopeRef = useRef(appSessionScopeId);
   useLayoutEffect(() => {
+    const preserveAppTrace =
+      traceAppSessionScopeRef.current === appSessionScopeId &&
+      chatSessionId !== appSessionScopeId;
+    traceAppSessionScopeRef.current = appSessionScopeId;
     const hydratedState = pendingLiveTraceStateRef.current;
     pendingLiveTraceStateRef.current = null;
-    setLiveTraceState(hydratedState ?? createEmptyLiveTraceState());
-  }, [chatSessionId]);
+    setLiveTraceState((previous) =>
+      hydratedState ?? (preserveAppTrace ? previous : createEmptyLiveTraceState()),
+    );
+  }, [chatSessionId, appSessionScopeId]);
 
   useSharedChatWidgetCapture({
     // Scenario runtime sessions persist server-side on every platform, so

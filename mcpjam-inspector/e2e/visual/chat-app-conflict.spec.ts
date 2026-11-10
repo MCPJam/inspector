@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { buildSync } from "esbuild";
-import { PROJECT_ID } from "./app-data";
+import { FIXED_TIME, PROJECT_ID } from "./app-data";
 import { prepareApp } from "./app-network";
 import { chatQueries, chatResponses } from "./chat-data";
 import { memberFixture } from "./product-data";
@@ -28,7 +28,7 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
     format: "iife",
   }).outputFiles[0].text;
   const widgetPath = "/api/web/apps/mcp-apps/widget-content";
-  await prepareApp(
+  const fixtureFailures = await prepareApp(
     context,
     "light",
     {
@@ -45,6 +45,8 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
     },
     baseURL,
   );
+  page.on("pageerror", (error) => fixtureFailures.push(error.message));
+  await page.clock.setFixedTime(FIXED_TIME);
 
   const requests: ChatRequest[] = [];
   let alias: string | undefined;
@@ -113,8 +115,10 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
     .frameLocator("iframe")
     .getByRole("button", { name: /Count/ });
   await expect(counter).toBeEnabled();
-  await counter.press("Enter");
-  await expect(counter).toHaveText("Count 1");
+  for (let count = 1; count <= 3; count += 1) {
+    await counter.press("Enter");
+    await expect(counter).toHaveText(`Count ${count}`);
+  }
   const originalFrame = await frame.evaluateHandle((node) => node);
   const instance = await counter.getAttribute("data-instance");
   expect(instance).toBeTruthy();
@@ -130,7 +134,7 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
   )?.alias;
   expect(alias).toBeTruthy();
   expect(await originalFrame.evaluate((node) => node.isConnected)).toBe(true);
-  await expect(counter).toHaveText("Count 1");
+  await expect(counter).toHaveText("Count 3");
   expect(await counter.getAttribute("data-instance")).toBe(instance);
 
   await composer.fill("Read the counter");
@@ -149,7 +153,7 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
         state: "output-available",
         output: {
           content: [
-            { type: "text", text: JSON.stringify({ instance, count: 1 }) },
+            { type: "text", text: JSON.stringify({ instance, count: 3 }) },
           ],
         },
       }),
@@ -165,4 +169,5 @@ test("product light: a conflict keeps the mounted App and its tool", async ({
   expect(await originalFrame.evaluate((node) => node.isConnected)).toBe(false);
   await expect(counter).toBeEnabled();
   expect(await counter.getAttribute("data-instance")).not.toBe(instance);
+  expect(fixtureFailures).toEqual([]);
 });
