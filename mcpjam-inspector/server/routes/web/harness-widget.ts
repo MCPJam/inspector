@@ -1,3 +1,4 @@
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { retainedResourceProofSchema, readRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedProfileFingerprint, retainedResourceLegGate, readRetainedResourceScope } from "../../utils/harness/forwarding/retained-resources";
 import { historyProvenanceContextFor, verifyToolResult, verifyAppResourceSource } from "../../utils/history-provenance";
@@ -379,6 +380,13 @@ harnessWidgets.post("/widget-resources", async c => {
           : await authorized.manager.listResourceTemplates(serverKey, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" });
     await revalidateScope();
     signal.throwIfAborted();
+    if (operation.method === "widget/content" && "html" in result && typeof result.html === "string") {
+      return c.json({ ...result, sourceReceipt: await sandboxSourceReceipt(c, {
+        serverId: owner.serverId,
+        resourceUri: operation.request.template || operation.request.resourceUri,
+        toolCallId: operation.request.toolId,
+      }, result.html, "csp" in result ? result.csp : undefined, scope.projectId) });
+    }
     return c.json(result);
 
   } catch (error) {

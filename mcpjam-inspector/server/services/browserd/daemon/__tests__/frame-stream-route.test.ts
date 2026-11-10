@@ -820,14 +820,14 @@ describe("GET /v1/frames?codec=h264", () => {
   }
 
   async function listen(
-    over: { video?: boolean; driver?: BrowserDriver } = {},
+    over: { video?: boolean; driver?: BrowserDriver; videoStartupMs?: number } = {},
   ) {
     lease = new HandoffLease();
     ffmpeg = fakeEncoderProcess();
     stack = buildBrowserdStack(over.driver ?? stubDriver(fakeViewport().viewport), {
       token: TOKEN,
       lease,
-      frames: { heartbeatMs: 30 },
+      frames: { heartbeatMs: 30, videoStartupMs: over.videoStartupMs },
       ...(over.video === false
         ? {}
         : {
@@ -983,6 +983,30 @@ describe("GET /v1/frames?codec=h264", () => {
       seen = (record.stats as { webmcp?: { hash?: string } })?.webmcp;
     }
     expect(seen?.hash).toBe("second");
+    await cursor.cancel();
+  });
+
+  it("falls back when an encoder stays alive without producing a first keyframe", async () => {
+    await listen({ videoStartupMs: 80 });
+    const cursor = openCursor(await openVideo(), { video: true });
+    let record = await cursor.next();
+    while (record.kind !== FRAME_STREAM_KIND.end) record = await cursor.next();
+    expect(record.reason).toBe("video_unavailable");
+    expect(ffmpeg.killed()).toBe(true);
+  });
+
+  it("keeps a static video stream after its first keyframe", async () => {
+    await listen({ videoStartupMs: 80 });
+    const cursor = openCursor(await openVideo(), { video: true });
+    await cursor.next();
+    ffmpeg.stdout.emit(
+      "data",
+      Buffer.from(new Uint8Array([...annexB(7, 8, 5), ...annexB(1), ...annexB(1)])),
+    );
+    let record = await cursor.next();
+    while (record.kind !== FRAME_STREAM_KIND.video_key) record = await cursor.next();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(ffmpeg.killed()).toBe(false);
     await cursor.cancel();
   });
 

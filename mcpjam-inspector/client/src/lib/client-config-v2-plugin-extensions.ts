@@ -1,3 +1,4 @@
+import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
 /**
  * Per-client "OpenAI plugin extensions" setting
  * (`mcpProfile.apps.pluginExtensions`): the inspector-side helpers.
@@ -58,7 +59,7 @@ export function pluginExtensionsForHost(
 export function pluginExtensionProfileForHost(
   hostConfig: PluginExtensionsHostConfig | null | undefined,
 ): "codex" | "chatgpt" {
-  return hostConfig?.harness === "codex" ? "codex" : "chatgpt";
+  return pluginRuntimeProfile(hostConfig);
 }
 
 /** Everything off — used while a gate can't be resolved (loading, error). */

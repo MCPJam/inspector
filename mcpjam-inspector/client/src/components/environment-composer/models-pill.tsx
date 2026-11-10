@@ -126,7 +126,7 @@ export function ModelsPill({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId });
+  } = useAvailableModels({ projectId, harnessTargets });
   const availableModels = useMemo(
     () => orgSavableModels(listedModels, requireOrgKeys),
     [listedModels, requireOrgKeys],

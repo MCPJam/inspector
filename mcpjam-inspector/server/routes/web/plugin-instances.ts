@@ -1,10 +1,10 @@
+import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
 import { pluginOperationRequest, pluginOperationAuthorization } from "../../../shared/plugin-operation-authorization.js";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { preparePluginOperation, bindPluginOperation, cancelPluginOperation, receiptOnlyPorts, rootPluginOperation } from "../../services/plugin-host/operation-authorization.js";
 import { discoveryIcons, openOwnedLocalFile } from "../../services/plugin-host/open-local-file.js";
 import { fileReadResponse, readFileWriteBody } from "../../services/plugin-host/file-transfer.js";
 import { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_MEDIA_TYPE } from "../../../shared/plugin-file-transfer.js";
-import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { pluginModelAppRoutes } from "./plugin-model-apps.js";
 import { preparePluginMessageTurn } from "../../services/plugin-host/message.js";
 import {
@@ -1459,7 +1459,7 @@ instances.post("/deep-link/resolve", (c) =>
         })
       : new Map();
     const { link, servers } = resolvePluginDeepLinkTarget(body.url, {
-      runtime: (config.agentLoop && usesMcpjamClient(config) || config.harness === "codex") ? "codex" : "chatgpt",
+      runtime: pluginRuntimeProfile(config),
       candidates: identities.map((candidate) => ({
         ...candidate,
         ...(candidate.serverIdentity.kind === "plugin" &&

@@ -11,6 +11,7 @@ const DESCRIPTOR_KEYS = [
   "local",
   "mcpClient",
   "modelAccess",
+  "orgKeys",
   "orgUpstream",
   "protocol",
   "reasoningEfforts",

@@ -54,7 +54,14 @@ export interface ComputerSandboxInfo {
   sandboxRowId?: string;
   providerComputerId: string | null;
   provider: string;
-  status: ComputerStatus;
+  status:
+    | ComputerStatus
+    | "live"
+    | "sleeping"
+    | "retiring"
+    | "reaping"
+    | "released"
+    | "leaked";
   projectId: string;
   ownerUserId: string;
   /** Hand-mirrored from the backend `ComputerView` (PR e2). */
@@ -695,12 +702,13 @@ export async function getHarnessCredentialReadiness(args: {
   bearer: string;
   projectId: string;
   harnessId: string;
+  modelId?: string;
   signal?: AbortSignal;
-}): Promise<ControlPlaneResult<{ readiness: HarnessCredentialReadiness }>> {
-  const result = await postJson<{ readiness?: unknown }>(
+}): Promise<ControlPlaneResult<{ readiness: HarnessCredentialReadiness; modelAvailable?: boolean }>> {
+  const result = await postJson<{ readiness?: unknown; modelAvailable?: unknown }>(
     "/web/harness/credential-readiness",
     bearerHeader(args.bearer),
-    { projectId: args.projectId, harnessId: args.harnessId },
+    { projectId: args.projectId, harnessId: args.harnessId, ...(args.modelId ? { modelId: args.modelId } : {}) },
     args.signal,
   );
   if (!result.ok) return result;
@@ -709,7 +717,7 @@ export async function getHarnessCredentialReadiness(args: {
   return readiness === "ready" ||
     readiness === "missing" ||
     readiness === "invalid"
-    ? { ok: true, value: { readiness } }
+    ? { ok: true, value: { readiness, ...(typeof result.value.modelAvailable === "boolean" ? { modelAvailable: result.value.modelAvailable } : {}) } }
     : { ok: false, status: 502, error: "unexpected readiness answer" };
 }
 
@@ -1150,26 +1158,6 @@ export async function prepareSandboxConnection(args: {
     };
   return postJson<{ ok: true }>(
     "/computers/prepare-connection",
-    headers,
-    { providerComputerId: args.providerComputerId },
-    args.signal,
-  );
-}
-
-/** The credential a private box's ports require; wakes nothing. */
-export async function getSandboxTrafficToken(args: {
-  providerComputerId: string;
-  signal?: AbortSignal;
-}): Promise<ControlPlaneResult<{ trafficAccessToken?: string }>> {
-  const headers = authHeaders();
-  if (!headers)
-    return {
-      ok: false,
-      status: 0,
-      error: "Computers service authentication is unavailable",
-    };
-  return postJson<{ trafficAccessToken?: string }>(
-    "/computers/traffic-token",
     headers,
     { providerComputerId: args.providerComputerId },
     args.signal,

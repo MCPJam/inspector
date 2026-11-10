@@ -1,3 +1,6 @@
+import { createHostToolCancellation } from "./host-tool-cancellation";
+import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
+import { cursorRuntimeLogin } from "./runtime-login.js";
 import { startLeaseHeartbeat } from "./lease-heartbeat.js";
 import { isCallToolResult } from "@modelcontextprotocol/client";
 import { deferCompletedTurnLeaseRelease, finishPendingPersist } from "../completed-turn-finalization.js";
@@ -218,7 +221,6 @@ import {
   isExternalAccountPlanWallTurn,
 } from "./external-account-plan-wall.js";
 import { resolveOrgKeyCredentialPlan } from "./external-account-credentials.js";
-import { removeRuntimeCredentials } from "./runtime-credential-files.js";
 import {
   orgKeyHarnessSurfaceRefusal,
   orgKeyRefusedSurfaceFor,
@@ -809,6 +811,7 @@ export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  const hostToolCancellation = createHostToolCancellation();
   const {
     messages,
     modelId: rawModelId,
@@ -863,6 +866,7 @@ export async function runHarnessTurn(
     secretsUnavailable,
     onSecretEnvDelivered,
     createHarnessScopeStepUpContinuation,
+    turnTiming,
   } = options;
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
@@ -976,22 +980,13 @@ export async function runHarnessTurn(
         }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
       }
     | undefined;
-  let sandboxSessionWorkDir: string | undefined;
-  // Turn end, whatever the outcome: the vendor tokens the CLI exchanged for its
-  // key leave the box (`removeRuntimeCredentials`). Called before the session
-  // is torn down, and from the engine's outer finally for a turn that never
-  // established one. At most once per turn.
+  // Cleanup uses its own deadline: cancelling the turn must not cancel removal.
   let runtimeCredentialsRemoved = false;
+  let cursorLogin: ReturnType<typeof cursorRuntimeLogin> | undefined;
   const removeTurnRuntimeCredentials = async () => {
-    if (runtimeCredentialsRemoved || !sandboxFileSession) return;
-    if (!sandboxSessionWorkDir) return;
+    if (runtimeCredentialsRemoved) return;
     runtimeCredentialsRemoved = true;
-    await removeRuntimeCredentials({
-      adapter: harnessAdapter,
-      session: sandboxFileSession,
-      sessionWorkDir: sandboxSessionWorkDir,
-      signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
-    });
+    await cursorLogin?.clear();
   };
   // WS3: the turn paused awaiting a tool approval (a third terminal alongside
   // success/abort). Treated like a clean end that happens to await input — the
@@ -1552,17 +1547,7 @@ export async function runHarnessTurn(
       //       own native tools (Codex) is unsound under approval whether or not
       //       any MCP server is attached, and its host-executed built-ins
       //       (web_search) would otherwise run unapproved here.
-      const approvalRefusal = harnessToolApprovalRefusalReason({
-        adapter: harnessAdapter,
-        requireToolApproval,
-        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
-        // Every caller with nobody to answer (evals, swarms, synthetic
-        // sessions, API turns) says so this way.
-        unattended: approvalMode === "auto-deny",
-      });
-      if (approvalRefusal) {
-        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
-      }
+
 
       //   (c) reasoning effort (refuse, never drop). The turn's own effort, else
       //       the one on the selection it was sent with, must be one this
@@ -1706,6 +1691,18 @@ export async function runHarnessTurn(
         }),
       });
       turnMcpPlan = mcpPlan;
+      const approvalRefusal = harnessToolApprovalRefusalReason({
+        adapter: harnessAdapter,
+        mcpClient: mcpPlan.delivery === "host-tools" ? "mcpjam" : "harness",
+        requireToolApproval,
+        hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
+        // Every caller with nobody to answer (evals, swarms, synthetic
+        // sessions, API turns) says so this way.
+        unattended: approvalMode === "auto-deny",
+      });
+      if (approvalRefusal) {
+        throw new Error(`Can't run this turn: ${approvalRefusal}.`);
+      }
       const enhancedApps = mcpPlan.forwardingKind === "profiled";
       const useNativeForwarding = mcpPlan.forwardingKind !== undefined;
       assertHarnessMcpDiscoveryGate({
@@ -1750,7 +1747,11 @@ export async function runHarnessTurn(
       // box is woken, so an unreachable server fails the turn cheaply.
       const retainedExecutor = retainedResourceExecutor({
         manager: mcpClientManager, existing: hostToolExecutor,
-        enabled: mcpPlan.surface,
+        enabled: retainedAppResourcesEligible({
+          plane: harnessMcpProxy?.plane, delivery: mcpPlan.delivery,
+          chatSessionId, hostRendersApps: streamSink === "ui" && options.harnessHostCapabilities !== undefined,
+          scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
+        }),
         laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
       });
       const hostExecutedMcp =
@@ -1956,6 +1957,7 @@ export async function runHarnessTurn(
       const externalAccountAuth = (
         await resolveOrgKeyCredentialPlan({
           harness: harnessAdapter,
+          modelId,
           bearer: await currentAuthorization(),
           projectId,
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -2657,6 +2659,11 @@ export async function runHarnessTurn(
         // could start bootstrapping the same box mid-run. `reservationHeld`
         // stays true and the turn's own teardown releases it.
         auth = externalAccountAuth;
+        if (harnessAdapter.id === "cursor") {
+          if (box?.kind !== "sandbox") throw new Error("Cursor requires an owned hosted sandbox.");
+          cursorLogin = cursorRuntimeLogin({ sandboxRowId: box.sandboxRowId, runId: turnRunId,
+            modelId, authorization: currentAuthorization, signal: effectiveAbortSignal });
+        }
       } else {
         reportStartup("authorization");
         brokerRunId = turnRunId;
@@ -2760,11 +2767,12 @@ export async function runHarnessTurn(
             })
           : [],
       );
-      const buildRuntime = (startupTimeoutMs?: number) =>
+      const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
           ? harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2780,6 +2788,7 @@ export async function runHarnessTurn(
             })
           : harnessAdapter.createHarness({
               startupTimeoutMs,
+              sandboxHomeDir,
               warmAgent: warmAgentPilot,
               modelId,
               auth,
@@ -2795,7 +2804,7 @@ export async function runHarnessTurn(
                 : {}),
             });
       let harnessRuntime = warmAgentPilot
-        ? withWarmBridgeRuntime((ms) => withWarmBridgeBootstrap(buildRuntime(ms)),
+        ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home)),
             JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]))
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
@@ -2870,11 +2879,11 @@ export async function runHarnessTurn(
       const appTools = harness === "codex" && options.harnessAppTools?.length && chatSessionId
         ? harnessAppTools({ entries: options.harnessAppTools, projectId, chatSessionId, turnId, authHeader, getAuthorization: currentAuthorization, getCleanupAuthorization: cleanupAuthorization, signal: effectiveAbortSignal, writer })
         : {};
-      const hostExecutedTools = {
+      const hostExecutedTools = hostToolCancellation.wrap({
         ...appTools,
         ...hostExecutedMcp.tools,
         ...offeredBuiltInTools,
-      } as Record<string, unknown>;
+      });
       // The tools that actually ask, read off the same `needsApproval` the
       // other two engines read.
       //
@@ -2896,7 +2905,7 @@ export async function runHarnessTurn(
       // refuses that combination outright at both gate sites; this is the
       // belt to its braces.
       const gatedHostExecutedToolNames =
-        harnessAdapter.supportsHostExecutedToolApproval
+        harnessAdapter.supportsHostExecutedToolApproval && !harnessAdapter.hostToolApprovalAtRuntime
           ? Object.entries(hostExecutedTools)
               .filter(([, definition]) => {
                 const declared = (
@@ -2959,7 +2968,7 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
-          sandboxSessionWorkDir = sessionWorkDir;
+          await cursorLogin?.install();
           // NATIVE delivery only: write the host's MCP servers into the session
           // before the runtime starts, via the adapter's own strategy (Claude
           // runtimes can require config files). A host-executed adapter has nothing to
@@ -3398,7 +3407,7 @@ export async function runHarnessTurn(
         } catch (resumeErr) {
           // Preparation has already bound the local gateway and state directory
           // to this identity. Never fall back to an unrelated SDK-generated id.
-          if (localPrepared) throw resumeErr;
+          if (localPrepared || externalAccountAuth) throw resumeErr;
           logger.warn("[harness] resume failed; starting fresh", {
             error: resumeErr instanceof Error ? resumeErr.message : resumeErr,
           });
@@ -3549,6 +3558,7 @@ export async function runHarnessTurn(
           const finalTextId = crypto.randomUUID();
           emitTextStart(writer, finalTextId);
           emitTextDelta(writer, finalTextId, text);
+          turnTiming?.markFirstText();
           emitTextEnd(writer, finalTextId);
           emittedAnyText = true;
           // Whitespace-only text renders as a blank message to the user, so it
@@ -3777,6 +3787,7 @@ export async function runHarnessTurn(
             }
             splitNextText = false;
             emitTextDelta(writer, textId, delta);
+            turnTiming?.markFirstText();
             emittedAnyText = true;
             // See the whitespace-only note on projectAssistantText above.
             if (delta.trim().length > 0) {
@@ -3848,6 +3859,14 @@ export async function runHarnessTurn(
                 nativeTools: harnessAdapter.listBuiltinTools?.() ?? [],
               }),
             });
+            // Approval continuation can repeat a call already in saved history.
+            // Keep its original input and card; only the result is new.
+            const savedCall = toolCallLookupFor(() => messageHistory)(toolCallId);
+            if (savedCall) {
+              toolMeta.set(toolCallId, { ...toolMeta.get(toolCallId), ...savedCall });
+              drainOpenToolCalls.add(toolCallId);
+              continue;
+            }
             // Stand-in ToolSet entry so emitTraceSnapshot's collectActualToolCalls
             // can resolve this tool's serverId (the harness has no `ai` ToolSet).
             toolSetForTrace[toolName] = serverId ? { _serverId: serverId } : {};
@@ -4262,6 +4281,7 @@ export async function runHarnessTurn(
             continue;
           } else if (type === "raw") {
             const rawValue = (part as { rawValue?: unknown }).rawValue;
+            if (harnessAdapter.hostToolApprovalAtRuntime && hostToolCancellation.cancel(rawValue)) continue;
             // The Claude Code bridge's background drain: progress becomes a
             // transient chunk; notices are logged too, because the bridge's
             // own warnings only ever reach its stderr.
@@ -4559,10 +4579,15 @@ export async function runHarnessTurn(
             tConnect - tBroker
           }ms dispatchSetup=${tDispatch - tStart}ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
-          }ms resumed=${resumedSession}${bootstrapLog.text}`,
+          }ms resumed=${resumedSession}${turnTiming?.text() ?? ""}${bootstrapLog.text}`,
           // `harnessId` rides both outcome lines so the feature-health monitor
-          // can compare failed against completed turns per harness.
-          { ...bootstrapLog.context, harnessId: harnessAdapter.id },
+          // can compare failed against completed turns per harness. The route's
+          // stages and `firstTextMs` are measured from the start of the request.
+          {
+            ...bootstrapLog.context,
+            ...turnTiming?.fields(),
+            harnessId: harnessAdapter.id,
+          },
         );
         if (localPrepared !== null) {
           // Its own line, with LOCAL-only names.
@@ -4594,7 +4619,14 @@ export async function runHarnessTurn(
       } finally {
         stopHeartbeat?.();
         stopDrainKeepalive();
-        await removeTurnRuntimeCredentials();
+        let credentialCleanupError: unknown;
+        try {
+          await removeTurnRuntimeCredentials();
+        } catch (error) {
+          credentialCleanupError = error;
+          runSucceeded = false;
+          pausedForApproval = false;
+        }
         try {
           // Turn-end adoption: sync filesystem-installed skills up into Convex
           // while the session is still LIVE (before detach/destroy below). Only on
@@ -4762,6 +4794,7 @@ export async function runHarnessTurn(
           capturedHarnessCommit = undefined;
           if (!localPrepared) await releaseHarnessLease?.();
         }
+        if (credentialCleanupError) throw credentialCleanupError;
       }
     } catch (err) {
       const livenessFailed = isLivenessFailure();
@@ -4843,7 +4876,16 @@ export async function runHarnessTurn(
         ...(failureEvidence ? { infra: failureEvidence } : {}),
       });
     } finally {
-      if (!sessionEstablished) await removeTurnRuntimeCredentials();
+      if (!sessionEstablished) {
+        try {
+          await removeTurnRuntimeCredentials();
+        } catch (error) {
+          // Backend quarantine still applies; report failure without skipping teardown.
+          const message = harnessFailureMessageOf(error);
+          emitError(writer, message);
+          onEngineError?.({ message, rawText: message, promptIndex, phase: "setup" });
+        }
+      }
       stopScopeStepUpBridge();
       await nativeForwarding?.stop();
       stopPolicyBlockBridge();

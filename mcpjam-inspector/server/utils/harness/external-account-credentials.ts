@@ -89,6 +89,7 @@ export async function resolveOrgKeyCredentialPlan(args: {
   };
   bearer?: string;
   projectId?: string;
+  modelId?: string;
   signal?: AbortSignal;
 }): Promise<OrgKeyCredentialPlan | undefined> {
   const required =
@@ -103,6 +104,7 @@ export async function resolveOrgKeyCredentialPlan(args: {
           bearer: args.bearer,
           projectId: args.projectId,
           harnessId: args.harness.id,
+          ...(args.modelId ? { modelId: args.modelId } : {}),
           signal: args.signal ? AbortSignal.any([args.signal, timeout]) : timeout,
         })
       : null;
@@ -121,9 +123,11 @@ export async function resolveOrgKeyCredentialPlan(args: {
   if (answer.value.readiness !== "ready") {
     throw new ExternalAccountCredentialRefusal(ORG_KEY_MISSING_MESSAGE);
   }
+  if (args.modelId && args.modelId !== "cursor/auto" && answer.value.modelAvailable !== true)
+    throw new ExternalAccountCredentialRefusal("Cursor no longer offers this model. Choose another model for this client.");
   return {
     auth: Object.fromEntries(
-      required.map((name) => [name, EXTERNAL_ACCOUNT_BROKERED_PLACEHOLDER]),
+      required.map((name) => [name, ""]),
     ),
   };
 }

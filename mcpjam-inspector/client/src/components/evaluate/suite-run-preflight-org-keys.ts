@@ -16,15 +16,15 @@ import { CHOOSE_ORG_JUDGE_MODEL } from "@/components/evals/judge-model-picker";
 import { ORG_KEYS_MODEL_REASON } from "@/lib/org-keys-refusal";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   harnessDisplayName,
   harnessNoRunnableModelReason,
-  harnessOrgUpstream,
   harnessRunsOnOrgProvider,
 } from "@/shared/harness-model-support";
+import { harnessTakesOrgKeys } from "@/shared/harness-connection-api";
 import {
   ORG_KEY_MISSING_MESSAGE,
   orgKeyHarnessName,
@@ -211,7 +211,7 @@ function orgVendorKeyProblem(
  */
 function orgKeyRuntimeProblem(model: PreflightModel): string | null {
   const harnessId = model.harness;
-  if (!harnessId || harnessOrgUpstream(harnessId)) return null;
+  if (!harnessId || harnessTakesOrgKeys(harnessId)) return null;
   return `${harnessDisplayName(harnessId)} can't run on an organization's providers, so it is unavailable while the organization requires its own keys. Choose another client for this run.`;
 }
 
@@ -231,7 +231,7 @@ function orgKeyHarnessProblem(
 ): string | null {
   if (model.selectionKnown === false) return null;
   const harnessId = model.harness;
-  if (!harnessId || !harnessOrgUpstream(harnessId)) return null;
+  if (!harnessId || !harnessTakesOrgKeys(harnessId)) return null;
   if (harnessRunsOnOrgProvider(harnessId, orgModelVendor(orgConfig, model))) {
     return null;
   }
@@ -289,7 +289,7 @@ export function orgKeyProblemsOf(
     if (
       !model.provider ||
       model.provider === "none" ||
-      isRuntimeChosenModelSentinel(model.model)
+      isRuntimeAccountModel(model.model)
     )
       continue;
     const problem =

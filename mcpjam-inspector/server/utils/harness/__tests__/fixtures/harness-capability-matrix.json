@@ -51,6 +51,7 @@
       "local": true,
       "mcpClient": "harness",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "anthropic-native",
         "provider": "anthropic"
@@ -120,6 +121,7 @@
       "local": true,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "openai-native",
         "provider": "openai"
@@ -184,6 +186,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": true,
       "orgUpstream": {
         "profile": "openai-native",
         "provider": "openai"
@@ -202,6 +205,7 @@
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",
       "mcpNativeDelivery": "session-config",
@@ -214,7 +218,7 @@
         "trailingNewline": false
       },
       "supportedReasoningEfforts": [],
-      "supportsHostExecutedToolApproval": false,
+      "supportsHostExecutedToolApproval": true,
       "supportsMcpToolApproval": false,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
@@ -223,8 +227,7 @@
     "descriptor": {
       "controls": {
         "modelId": {
-          "enforced": false,
-          "note": "The Cursor CLI runs on your Cursor account, which chooses the model itself."
+          "enforced": true
         },
         "progressiveToolDiscovery": {
           "enforced": false,
@@ -254,6 +257,7 @@
       "local": false,
       "mcpClient": "harness",
       "modelAccess": "external-account",
+      "orgKeys": false,
       "orgUpstream": null,
       "protocol": null,
       "reasoningEfforts": [],
@@ -307,6 +311,7 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
+      "orgKeys": false,
       "orgUpstream": null,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],

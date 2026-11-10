@@ -1,3 +1,5 @@
+import { withCursorHostToolApproval } from "./cursor-host-tool-approval";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 /**
  * Harness runtime registry — the ONLY place that knows an adapter is "Claude
@@ -20,8 +22,8 @@ import { createHostedClaudeCodeHarness } from "./claude-code-typed-errors.js";
 export { patchClaudeCodeHarnessBootstrap } from "./claude-code-bootstrap.js";
 import { createCursor } from "@ai-sdk/harness-cursor";
 import { pinCursorHarnessBootstrap } from "./cursor-bootstrap.js";
+import { withCursorLoginAuthentication } from "./cursor-login-auth.js";
 import { EXTERNAL_ACCOUNT_CREDENTIALS } from "@/shared/external-credential-selection";
-import { cursorCredentialCleanupCommand } from "./runtime-credential-files.js";
 export {
   CURSOR_CLI_CHECKSUMS,
   CURSOR_CLI_VERSION,
@@ -384,6 +386,7 @@ type HarnessRuntimeAdapterBase = {
   /** Can host-executed AI SDK tools (run on MCPJam's server) be approval-gated?
    *  Modeled separately; false for v1 (not wired/tested in MCPJam yet). */
   supportsHostExecutedToolApproval: boolean;
+  hostToolApprovalAtRuntime?: boolean;
   /** HOW this adapter gets the host's selected MCP servers to the model — see
    *  `HarnessMcpDelivery`. Every adapter delivers them one way or the other, so
    *  there is no "MCP unsupported" arm and no MCP pre-flight refusal. */
@@ -496,12 +499,6 @@ type HarnessRuntimeAdapterBase = {
    * failed run.
    */
   runtimeVersionCommand?(sessionWorkDir: string): string;
-  /**
-   * Shell command that removes the files where the CLI keeps vendor tokens it
-   * exchanged for its key, given the session workdir. Run at every turn end
-   * (`runtime-credential-files.ts`); absent for runtimes that keep none.
-   */
-  runtimeCredentialCleanupCommand?(sessionWorkDir: string): string;
 };
 
 /** Base args every adapter's `createHarness` receives. (The per-adapter
@@ -509,6 +506,8 @@ type HarnessRuntimeAdapterBase = {
  *  are delivered outside the VM, see `buildBrokerDummyAuth`; an
  *  external-account harness gets its customer credential in `auth` instead.) */
 export type HarnessCreateArgs = {
+  /** HOME returned by the current successful warm sandbox probe. */
+  sandboxHomeDir?: string;
   startupTimeoutMs?: number;
   warmAgent?: boolean;
   modelId: string;
@@ -1092,10 +1091,11 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // run match a Codex run tool-for-tool. Codex's own natives arrive as common
   // names (`bash`, `read`, …), which have no prefix and pass through unchanged.
   parseToolName: parseHarnessToolName,
-  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs, warmAgent }) {
+  createHarness({ modelId, auth, sandboxPolicy, reasoningEffort, upstream, forwardingMcpJson, startupTimeoutMs, warmAgent, sandboxHomeDir }) {
     const nativeModel = toCodexNativeModel(modelId, upstream);
     return createCodexAppServer({
       startupTimeoutMs,
+      sandboxHomeDir,
       warmAgent,
       ...(nativeModel ? { model: nativeModel } : {}),
       // Forwarded on the bridge `start` message, which sends it as
@@ -1172,8 +1172,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // `requireToolApproval` and a selected MCP server is observed pausing on the
   // MCP call.
   supportsMcpToolApproval: false,
-  // Not wired or tested for this adapter; same posture as Codex.
-  supportsHostExecutedToolApproval: false,
+  // The ACP permission grant authorizes one host execution before dispatch.
+  supportsHostExecutedToolApproval: true,
+  hostToolApprovalAtRuntime: true,
   // NATIVE: the CLI's own MCP client dials MCPJam's signed per-server proxy, so
   // every `tools/call` crosses the seam where firsthand evidence is captured.
   // Read from the shared declaration, which the client's Behavior tab derives
@@ -1200,17 +1201,12 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // The ACP wrapper carries a static builtin catalog (31 tools), so the generic
   // `/v1/harness/:id/builtin-tools` route works with no per-harness edits.
   listBuiltinTools: memoizedBuiltinTools(() => createCursor()),
-  // AUTO. The adapter passes no model, so Cursor picks — which is the only
-  // honest thing to do while MCPJam has no view of the account's entitlements
-  // (a plan-gated model does not error; it answers "Upgrade your plan to
-  // continue" in a normal end_turn, which the turn runner detects separately).
-  toNativeModel: () => undefined,
-  // Never consulted by the gates: `runHarnessTurn` and the preflight skip every
-  // model gate for an external-account harness, because the model MCPJam knows
-  // about is not the model that runs (the sentinel rule replaces them). Read
-  // from the same table anyway — it says `cursor/auto` only — so a picker that
-  // asks gets the same answer. The CLI build is pinned (see
-  // `cursor-bootstrap.ts`), and every Cursor row is version-independent.
+  // Auto delegates to the account default; explicit catalog IDs stay explicit.
+  toNativeModel: (modelId) => isRuntimeAccountModel(modelId)
+    ? modelId === "cursor/auto" ? "default" : modelId.slice("cursor/".length)
+    : undefined,
+  // Namespace compatibility is checked here; current account membership is
+  // rechecked by the backend before installing the runtime login.
   pinnedRuntimeVersion: harnessPinnedVersion("cursor"),
   modelSupport: modelSupportFor("cursor"),
   supportsModel: supportsModelFor("cursor"),
@@ -1238,26 +1234,22 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     // The path is the framework's, not the session workdir: interpolating a
     // host-configured workdir here used to be an injection surface.
     '"$HOME/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.local/bin/agent" --version',
-  // The CLI writes the access and refresh tokens it exchanges for the org's
-  // key to `auth.json`; they leave the box at every turn end.
-  runtimeCredentialCleanupCommand: cursorCredentialCleanupCommand,
   createHarness({ auth, mcpJson }) {
     // Dual-`ai` boundary cast, same as the other two adapters.
-    return pinCursorHarnessBootstrap(
+    return withCursorHostToolApproval(withCursorLoginAuthentication(pinCursorHarnessBootstrap(
       createCursor({
-        // The customer's own CURSOR_API_KEY, as the environment arm of
-        // HarnessV1Authentication. Passing an explicit env map (rather than
-        // 'auto' / 'ai-gateway' / 'direct') is what stops the adapter reading
-        // the SERVER's process env for a credential — and the routing modes
-        // would only produce a warning here anyway, since Cursor cannot be
-        // re-routed.
+        // An explicit empty key prevents ambient credential lookup. The backend
+        // installs the temporary login before the runtime process starts.
         auth,
+        // The framework replaces even empty keys with placeholders by default.
+        // Keep the CLI on its installed login instead of trying a fake API key.
+        credentialForwarding: () => "",
         // REQUIRED by this arm's signature: `session-config` delivery has no
         // other channel, so a construction that forgot the servers would be a
         // silently tool-less turn. The type makes that unwritable.
         mcpServers: toAcpMcpServers(mcpJson),
       }) as unknown as HarnessAgentAdapter,
-    );
+    )));
   },
 };
 
