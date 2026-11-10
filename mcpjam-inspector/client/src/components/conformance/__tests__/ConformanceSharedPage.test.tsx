@@ -119,15 +119,13 @@ describe("ConformanceSharedPage", () => {
     render(<ConformanceSharedPage token="tok" />);
     expect(screen.getByText("Not run")).toHaveAttribute(
       "title",
-      "This check needs an input before it can run.",
+      "This check needs a setup change before it can run.",
     );
-    expect(
-      within(
-        screen.getByRole("button", { name: /Result Type Discipline/ }),
-      ).getByText(
-        "Select a tool that creates a task in setup, then run again.",
-      ),
-    ).toBeInTheDocument();
+    const row = screen.getByRole("button", { name: /Result Type Discipline/ });
+    const hint = "Select a tool that creates a task in setup, then run again.";
+    expect(within(row).queryByText(hint)).toBeNull();
+    fireEvent.click(row);
+    expect(screen.getByText(hint).closest("[inert]")).toBeNull();
     expect(screen.queryByText(message)).toBeNull();
     expect(screen.getByText("Result Type Discipline")).toBeInTheDocument();
   });
@@ -148,11 +146,15 @@ describe("ConformanceSharedPage", () => {
     expect(screen.getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
     // A failed suite opens to its checks, read from the artifact itself.
     expect(screen.getByText("Widget CSP declared")).toBeInTheDocument();
+    const cspRow = screen.getByRole("button", { name: /Widget CSP declared/ });
     expect(
-      within(screen.getByRole("button", { name: /Widget CSP declared/ }))
-        .getByText("No CSP on the widget resource")
-        .parentElement,
-    ).toHaveClass("border-red-500/20", "bg-red-500/5");
+      within(cspRow).queryByText("No CSP on the widget resource"),
+    ).toBeNull();
+    fireEvent.click(cspRow);
+    expect(screen.getByText("No CSP on the widget resource")).toHaveClass(
+      "border-red-500/20",
+      "bg-red-500/5",
+    );
     expect(screen.queryByText(/"reports"/)).toBeNull();
     // A public page makes no verification claim, either way.
     expect(screen.queryByText("MCPJam-verified")).toBeNull();

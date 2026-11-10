@@ -1,3 +1,5 @@
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -24,8 +26,14 @@ import {
   Cable,
   MessagesSquare,
   Globe,
+  Radio,
+  Zap,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import {
+  EVENTS_FEATURE_FLAG,
+  useEventsEnabledState,
+} from "@/hooks/useEventsEnabled";
 import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -132,6 +140,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "unified-sessions-enabled",
   "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
+  EVENTS_FEATURE_FLAG,
 ] as const;
 
 /**
@@ -242,6 +251,16 @@ export const navigationSections: NavSection[] = [
         title: "Playground",
         url: "/playground",
         icon: MessageCircle,
+      },
+      {
+        // Agent runs fired by MCP Events on MCPJam's hosted runner. Sits next
+        // to Playground because it is the unattended version of the same
+        // thing: a model with the project's servers, reacting to an event
+        // instead of a message.
+        title: "Triggers",
+        url: "/triggers",
+        icon: Zap,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         title: "Environments",
@@ -366,6 +385,12 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+      {
+        title: "Events",
+        url: "/events",
+        icon: Radio,
+        featureFlag: EVENTS_FEATURE_FLAG,
       },
       {
         // Tools a live web PAGE registers, rather than an MCP server — the
@@ -526,15 +551,14 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
-  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
-    "project-environments-enabled",
-  );
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
   const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
+  const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
+  const projectEnvironmentsEnabled = useProjectEnvironmentsVisible(useIsMemberActor());
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
   // (`user` is null and `isAuthenticated` is false even for signed-in users).
@@ -644,8 +668,7 @@ export function MCPSidebar({
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
-      "project-environments-enabled":
-        projectEnvironmentsEnabled === true && isAuthenticated,
+      "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
@@ -656,6 +679,7 @@ export function MCPSidebar({
       // Hosted: the backend's availability answer, flag and readiness both.
       // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
+      [EVENTS_FEATURE_FLAG]: eventsEnabled === true,
     }),
     [
       learningEnabled,
@@ -668,6 +692,7 @@ export function MCPSidebar({
       unifiedSessionsEnabled,
       evaluateEnabled,
       webmcpInspectorEnabled,
+      eventsEnabled,
       isAuthenticated,
     ],
   );

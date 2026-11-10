@@ -1,3 +1,6 @@
+import type { chatPreparationRequest } from "../../services/chat-turn/resolve-chat-turn.js";
+import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
+import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
@@ -25,6 +28,7 @@ import {
   withStampedAuthChallenge,
 } from "../../utils/connection-effective-auth.js";
 import { z } from "zod";
+import type { WebConversationState } from "./web-conversation-state.js";
 import type { Context } from "hono";
 import {
   MCPClientManager,
@@ -80,6 +84,7 @@ import {
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   resolvePluginStdioHttpTarget,
   type PluginStdioHttpTarget,
@@ -129,6 +134,7 @@ import {
 } from "../../services/xaa-connect-error.js";
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
@@ -506,6 +512,7 @@ export type ConvexAuthorizeResponse = {
     // own `serverNames` still win (see `displayNameForServer`).
     name?: string;
     transportType: "stdio" | "http";
+    pluginComponent?: true;
     url?: string;
     // Declared wire transport from a plugin manifest (parser `httpVariant`),
     // once the backend persists + serves it. Absent on every ordinary row
@@ -657,7 +664,8 @@ function stripStdioFieldsFromHostedConfig<
  *
  * - For session/guest JWTs (the default): forward the caller's bearer
  *   verbatim. Convex sees the same identity it always has.
- * - For WorkOS API keys (`authMethod === "workos_api_key"`): exchange
+ * - For org-bound credentials (`isOrgBoundCredential`: WorkOS API keys and
+ *   auth.md agents): exchange
  *   the bearer for `INSPECTOR_SERVICE_TOKEN` and add
  *   `x-mcpjam-acting-as: <workosUserId>` (the user's Convex `externalId`)
  *   plus `x-mcpjam-acting-in-org: <mcpjamOrganizationId>` (the org the key
@@ -684,7 +692,7 @@ function stripStdioFieldsFromHostedConfig<
  * `caller-context.test.ts`).
  */
 export interface ManagerCallerContext {
-  /** "workos_api_key" switches to the service-token + acting-as exchange. */
+  /** An org-bound credential switches to the service-token + acting-as exchange. */
   authMethod?: string;
   /** WorkOS user id (Convex `externalId`) for the delegated exchange. */
   workosUserId?: string;
@@ -714,7 +722,7 @@ export function buildConvexAuthHeaders(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (caller.authMethod === "workos_api_key") {
+  if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
     // `acting-as` is the WorkOS user id (the user's Convex `externalId`),
     // NOT the Convex user `_id`: the backend resolves the delegated user by
@@ -842,6 +850,7 @@ export async function authorizeBatch(
   projectId: string,
   serverIds: string[],
   options?: {
+    pluginComputerRuntime?: boolean;
     connectionId?: string;
     connectionIds?: Record<string, string>;
     includeConnections?: boolean;
@@ -891,6 +900,9 @@ export async function authorizeBatch(
         // the docstring on `normalizeAuthorizeResult` in
         // mcpjam-backend/convex/http.ts for the full rationale.
         ...(!HOSTED_MODE ? { localRuntime: true } : {}),
+        ...(options?.pluginComputerRuntime === true && canColocatePluginStdio()
+          ? { pluginComputerRuntime: true }
+          : {}),
       }),
     });
   } catch (error) {
@@ -976,6 +988,16 @@ export async function authorizeBatch(
   };
 }
 
+const conversationAuthorization = z.object({
+  ok: z.literal(true),
+  conversationState: z.object({
+    conversationId: z.string(),
+    writable: z.boolean(),
+    requireNativeToolDiscovery: z.boolean().optional(),
+    executionBound: z.boolean().optional(),
+  }),
+});
+
 /**
  * Project membership with no servers to authorize: the same backend
  * `resolveProjectAccess` verdict {@link authorizeBatch} applies, for a turn
@@ -987,9 +1009,19 @@ export async function authorizeProject(
   caller: ManagerCallerContext,
   bearerToken: string,
   projectId: string,
+  conversationId?: string,
+  chatPreparation?: ReturnType<typeof chatPreparationRequest>,
+  signal?: AbortSignal,
 ): Promise<{
+  preparedChatTurn?: unknown;
+  /**
+   * Only this combined answer can say the row `bind` would check for this
+   * conversation is already bound.
+   */
+  conversationState?: WebConversationState & { executionBound?: boolean };
   chatEnvironments: boolean;
   chatPreparation: boolean;
+  organizationId?: string;
   projectAccess?: { projectRole: "admin" | "editor" };
 }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -1001,13 +1033,24 @@ export async function authorizeProject(
     );
   }
 
+  const checkConversation =
+    Boolean(conversationId) && convexUrl.startsWith("https://");
+  const prepareChat =
+    Boolean(chatPreparation) && convexUrl.startsWith("https://");
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-project`, {
       method: "POST",
       headers: buildConvexAuthHeaders(caller, bearerToken),
-      body: JSON.stringify({ projectId }),
-      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+      body: JSON.stringify({
+        projectId,
+        ...(checkConversation ? { conversationId } : {}),
+        ...(prepareChat ? { chatPreparation } : {}),
+      }),
+      ...(checkConversation || prepareChat ? { redirect: "error" as const } : {}),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(WEB_CALL_TIMEOUT_MS)])
+        : AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
     });
   } catch (error) {
     throw new WebRouteError(
@@ -1028,7 +1071,18 @@ export async function authorizeProject(
       payload && typeof payload === "object" && "projectRole" in payload
         ? payload.projectRole
         : undefined;
+    const policy = checkConversation
+      ? conversationAuthorization.safeParse(payload)
+      : undefined;
     return {
+      ...(prepareChat && payload && typeof payload === "object" && "preparedChatTurn" in payload
+        ? { preparedChatTurn: payload.preparedChatTurn }
+        : {}),
+      ...(policy?.success && policy.data.conversationState.conversationId === conversationId
+        ? { conversationState: policy.data.conversationState }
+        : {}),
+      ...(payload && typeof payload === "object" && "organizationId" in payload &&
+        typeof payload.organizationId === "string" ? { organizationId: payload.organizationId } : {}),
       chatPreparation:
         !!payload &&
         typeof payload === "object" &&
@@ -1438,6 +1492,8 @@ export async function createAuthorizedManager(
   options?: {
     /** Authorize fully, but let a request owner decide when to connect. */
     lazyConnect?: boolean;
+    /** Set only from the server-resolved host Computer setting. */
+    pluginComputerRuntime?: boolean;
     multiConnection?: boolean;
     /** Build transports only for the explicitly pinned accounts. */
     onlySelectedConnections?: boolean;
@@ -1523,10 +1579,12 @@ export async function createAuthorizedManager(
      */
     requestTimeoutByServerId?: Record<string, number>;
     /**
-     * Pre-resolved MCPJam test-IdP issuer (`resolveXaaIssuer(c, HOSTED_MODE)`)
-     * for Cross-App Access servers. Supplied by callers that have the request
-     * `Context`. Required whenever the batch contains a `useXaa` server — the
-     * builder throws a 500 rather than connecting tokenless if it's missing.
+     * Pre-resolved MCPJam test-IdP issuer for Cross-App Access servers.
+     * Callers holding the request `Context` pass
+     * `resolveXaaIssuer(c, HOSTED_MODE)`; the claim loops, which have none,
+     * pass `resolveConfiguredXaaIssuer()`. Required whenever the batch
+     * contains a `useXaa` server — the builder throws a 500 rather than
+     * connecting tokenless if it's missing.
      */
     xaaIssuer?: string;
     /**
@@ -1592,6 +1650,10 @@ export async function createAuthorizedManager(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    /** Claims and schema selection owned by the collector installed above. */
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /**
      * The turn's execution scope, forwarded to the computer reservation that
      * hosts a plugin's stdio component (`resolvePluginStdioHttpTarget`). Only
@@ -1663,6 +1725,7 @@ export async function createAuthorizedManager(
     projectId,
     uniqueServerIds,
     {
+      pluginComputerRuntime: options?.pluginComputerRuntime,
       includeConnections:
         options?.multiConnection || options?.onlySelectedConnections,
       connectionIds: options?.connectionIds,
@@ -1687,6 +1750,25 @@ export async function createAuthorizedManager(
         // Selected-account authorization returns one credential, not the account list.
         if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
           auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
+        }
+        // A member's only login on a server arrives as the default credential,
+        // not as an account list (the backend lists two or more). Without a
+        // group its calls carry no connection, so a sign-in continuation binds
+        // to nothing and its resume cannot prove the credential it replays on.
+        // Same rails as the stored-token path below: OAuth or discover only,
+        // never XAA or a bearer header, whose tokens the group would override.
+        if (
+          !selectedId &&
+          options.multiConnection &&
+          !auth.oauthConnections &&
+          auth.oauthCredentialId &&
+          auth.oauthAccessToken &&
+          auth.accessLevel === "project_member" &&
+          ["oauth", "discover"].includes(
+            resolveEffectiveAuthMethod(auth.serverConfig, options?.xaaPolicy),
+          )
+        ) {
+          auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
         }
         const live = (auth.oauthConnections ?? []).filter(
           (c) =>
@@ -1717,9 +1799,14 @@ export async function createAuthorizedManager(
           serverId: id,
           connectionId: c.connectionId,
           key: connectionKey(id, c.connectionId, c.isDefault),
-          label: groupLabels[index],
+          // An implicit login is the server itself to the user; its sign-in
+          // errors name the server, exactly as the ungrouped path does.
+          label: c.implicit
+            ? displayNameForServer(id, serverNamesById, auth.serverConfig)
+            : groupLabels[index],
           profile: c.profile,
           isDefault: c.isDefault,
+          ...(c.implicit ? { implicit: true } : {}),
         }));
       }
     }
@@ -1813,10 +1900,11 @@ export async function createAuthorizedManager(
 
       // Backend-resolved identity failure (legacy partial per-server override):
       // a distinct configuration error, surfaced before any mint AND before the
-      // issuer guard — eval routes omit `xaaIssuer`, so checking that first
-      // would mask this actionable 400 behind the caller-contract 500. Gated on
-      // the same XAA selection the mint pass uses. No silent fallback to the
-      // demo identity, no silent XAA→OAuth fallback.
+      // issuer guard, so a surface that has no issuer to pass (a claim loop on
+      // a deployment with no public URL) still gets this actionable 400 rather
+      // than the caller-contract 500. Gated on the same XAA selection the mint
+      // pass uses. No silent fallback to the demo identity, no silent XAA→OAuth
+      // fallback.
       //
       // Framed like every other connect-time XAA failure: the backend's sentence
       // is written for the server's auth form, and on its own ("Complete or
@@ -2186,7 +2274,7 @@ export async function createAuthorizedManager(
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
               workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
+                isOrgBoundCredential(caller.authMethod) &&
                 caller.workosUserId &&
                 caller.mcpjamOrganizationId
                   ? {
@@ -2208,7 +2296,12 @@ export async function createAuthorizedManager(
         // that will not verify, a session record that did not land) and leaves
         // the `toHttpConfig` refusal below exactly as it was.
         let pluginRuntime: PluginStdioHttpTarget | undefined;
-        if (auth.serverConfig.transportType !== "http") {
+        if (
+          options?.pluginComputerRuntime === true &&
+          canColocatePluginStdio() &&
+          auth.serverConfig.transportType !== "http" &&
+          auth.serverConfig.pluginComponent === true
+        ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
               bearerToken,
@@ -2228,15 +2321,6 @@ export async function createAuthorizedManager(
               // wake a second, unrelated machine purely because a plugin was
               // pinned.
               executionScope: options?.executionScope,
-              workosApiKeyActingAs:
-                caller.authMethod === "workos_api_key" &&
-                caller.workosUserId &&
-                caller.mcpjamOrganizationId
-                  ? {
-                      workosUserId: caller.workosUserId,
-                      mcpjamOrganizationId: caller.mcpjamOrganizationId,
-                    }
-                  : undefined,
             })) ?? undefined;
         }
 
@@ -2298,9 +2382,11 @@ export async function createAuthorizedManager(
           // sibling server can mint.)
           if (!options?.xaaIssuer) {
             // Caller-contract violation: a `useXaa` server reached a manager
-            // builder that didn't thread the issuer (only callers holding the
-            // request `Context` can resolve it). Fail loud here rather than
-            // connecting tokenless and surfacing a confusing downstream 401.
+            // builder that didn't thread the issuer. A claim loop lands here
+            // when the deployment configures no public URL
+            // (`MCPJAM_INSPECTOR_PUBLIC_URL`, see `resolveConfiguredXaaIssuer`).
+            // Fail loud here rather than connecting tokenless and surfacing a
+            // confusing downstream 401.
             //
             // Always MCPJam's own bug, so it is declared ours: the origin it
             // carries reaches `http.request.failed`, where the MCPJam-fault
@@ -2469,7 +2555,7 @@ export async function createAuthorizedManager(
                 // as `authorizeBatch` — otherwise Convex would see the
                 // service token without an acting-as user.
                 workosApiKeyActingAs:
-                  caller.authMethod === "workos_api_key" &&
+                  isOrgBoundCredential(caller.authMethod) &&
                   caller.workosUserId &&
                   caller.mcpjamOrganizationId
                     ? {
@@ -2714,7 +2800,11 @@ export async function createAuthorizedManager(
         batch.organizationId,
       );
       if (collector) {
-        manager.setMrtrInputCollector(serverId, collector);
+        manager.setMrtrInputCollector(
+          serverId,
+          collector,
+          options.mrtrInputOptionsForServer?.(baseServerId),
+        );
       }
     }
   }
@@ -2729,14 +2819,21 @@ export async function createAuthorizedManager(
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
-  for (const [key] of connectionEntries) {
+  const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
+  for (const [key, config] of connectionEntries) {
     const connection = connectionsByKey.get(key);
     const serverId = connection?.serverId ?? key;
     const auth = batch.results[serverId];
-    if (!auth?.ok || auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (!auth?.ok) continue;
     const account = connection ? auth.oauthConnections?.find(c => c.connectionId === connection.connectionId) : undefined;
     const credentialAuthorizedAt = account ? account.credentialAuthorizedAt ?? account.authorizedAt : auth.oauthCredentialAuthorizedAt ?? null;
-    if (connection && credentialAuthorizedAt === undefined) continue;
+    if (bindWarmAccounts) bindWarmApprovalConnection(manager, key, {
+      serverId, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined,
+      updatedAt: auth.serverConfig.updatedAt, authorizedAt: credentialAuthorizedAt,
+      defaultAccount: connection?.isDefault, profileId: connection?.profile?.id,
+    }, "url" in config ? config.requestInit?.headers : undefined);
+    if (auth.serverConfig.updatedAt === undefined || auth.serverConfig.httpVariant === "sse") continue;
+    if (connection && !connection.implicit && credentialAuthorizedAt === undefined) continue;
     resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
@@ -2985,6 +3082,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     tolerateServerRefusals?: boolean;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
@@ -3032,6 +3131,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     /** See `createAuthorizedManager`; no MCP initialization before authorization. */
     lazyConnect?: boolean;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
@@ -3233,6 +3334,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
       (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
+      pluginComputerRuntime:
+        options?.pluginComputerRuntime !== false && !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
       ...(typeof raw.connectionId === "string" &&
       typeof raw.serverId === "string"
@@ -3399,6 +3502,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: {
     beforeOperation?: (body: z.infer<S>) => Promise<void>;
     timeoutMs?: number;
+    /** False forbids personal plugin placement even when the host has a Computer. */
+    pluginComputerRuntime?: boolean;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
@@ -3462,6 +3567,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       },
       {
         timeoutMs: options?.timeoutMs,
+        pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
         rpcLogger: rpcCollector?.rpcLogger,

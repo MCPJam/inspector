@@ -30,6 +30,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 }));
 
 import { usePlaygroundEnvironment } from "../use-playground-environment";
+import { useProjectEnvironmentsVisible } from "../useProjectEnvironmentsEnabled";
 
 const PLUGINS = [
   { pluginId: "pl_1", pluginVersionId: "pv_1", name: "docs" },
@@ -99,12 +100,22 @@ beforeEach(() => {
   );
 });
 
-async function renderEnvironment(projectId: string | null = "proj_1") {
-  const rendered = renderHook(() => usePlaygroundEnvironment(projectId));
+async function renderEnvironment(projectId: string | null = "proj_1", signedIn = true) {
+  const rendered = renderHook(() => usePlaygroundEnvironment(projectId, useProjectEnvironmentsVisible(signedIn)));
   return rendered;
 }
 
 describe("usePlaygroundEnvironment — mode", () => {
+  it.each([[true, false], [undefined, true]] as const)(
+    "does not fetch a stored environment with flag %s and signed-in %s",
+    async (flag, signedIn) => {
+      localStorage.setItem("mcp-previewed-environment-id", JSON.stringify({ proj_1: "env_1" }));
+      mockFlagValue.value = flag;
+      const { result } = await renderEnvironment("proj_1", signedIn);
+      expect(result.current.executionTarget).toBeUndefined();
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
   it("is inert until an environment is selected", async () => {
     const { result } = await renderEnvironment();
     expect(result.current.isEnvironmentMode).toBe(false);
@@ -434,7 +445,7 @@ describe("usePlaygroundEnvironment — nothing stale across a transition", () =>
     const seen: Array<string | null> = [];
     const { rerender } = renderHook(
       ({ projectId }: { projectId: string }) => {
-        const state = usePlaygroundEnvironment(projectId);
+        const state = usePlaygroundEnvironment(projectId, mockFlagValue.value === true);
         seen.push(state.environmentId);
         return state;
       },

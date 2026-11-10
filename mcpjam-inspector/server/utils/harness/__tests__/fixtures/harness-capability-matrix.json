@@ -1,0 +1,322 @@
+{
+  "claude-code": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "Claude Code",
+      "forwardingRuntime": {
+        "configurationVersion": "tool-search-auto-v1",
+        "ownedInput": true,
+        "runtimeVersion": "2.1.290"
+      },
+      "id": "claude-code",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "session-config",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "2.1.290",
+      "promptImageInput": true,
+      "requiresComputer": true,
+      "skillsBaseDir": "/home/user/.claude/skills",
+      "skillsWriteOptions": {
+        "trailingNewline": true
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": true
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "Claude Code does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "Claude Code runs its own loop and ignores temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "Claude Code",
+      "guest": true,
+      "local": true,
+      "mcpClient": "harness",
+      "modelAccess": "broker",
+      "orgKeys": true,
+      "orgUpstream": {
+        "profile": "anthropic-native",
+        "provider": "anthropic"
+      },
+      "protocol": "anthropic-messages",
+      "reasoningEfforts": [],
+      "runtimeVersion": "2.1.290"
+    },
+    "qualifiedDiscovery": []
+  },
+  "codex": {
+    "adapter": {
+      "acceptsSandboxPolicy": true,
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "Codex",
+      "forwardingRuntime": {
+        "configurationVersion": "native-mcp-v1",
+        "correlationKey": "callId",
+        "ownedInput": true,
+        "runtimeVersion": "0.163.0"
+      },
+      "id": "codex",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "mcpjam",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "0.163.0",
+      "promptImageInput": true,
+      "requiresComputer": true,
+      "skillsBaseDir": "/home/user/.agents/skills",
+      "skillsWriteOptions": {
+        "trailingNewline": false
+      },
+      "supportedReasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": true,
+      "transport": "app-server"
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "Codex does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "Codex runs its own loop and ignores temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "Codex",
+      "guest": true,
+      "local": true,
+      "mcpClient": "mcpjam",
+      "modelAccess": "broker",
+      "orgKeys": true,
+      "orgUpstream": {
+        "profile": "openai-native",
+        "provider": "openai"
+      },
+      "protocol": "openai-responses",
+      "reasoningEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "runtimeVersion": "0.163.0"
+    },
+    "qualifiedDiscovery": [
+      "forwarded-bridge",
+      "host-tools"
+    ]
+  },
+  "copilot-cli": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "GitHub Copilot CLI",
+      "id": "copilot-cli",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "mcpjam",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "1.0.92",
+      "promptImageInput": false,
+      "requiresComputer": true,
+      "skillsBaseDir": "",
+      "skillsWriteOptions": {
+        "trailingNewline": false
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": false
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "GitHub Copilot CLI receives the selected tools at turn start."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "GitHub Copilot CLI controls temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "GitHub Copilot CLI",
+      "guest": false,
+      "local": false,
+      "mcpClient": "mcpjam",
+      "modelAccess": "broker",
+      "orgKeys": true,
+      "orgUpstream": {
+        "profile": "openai-native",
+        "provider": "openai"
+      },
+      "protocol": "openai-responses",
+      "reasoningEfforts": [],
+      "runtimeVersion": "1.0.92"
+    },
+    "qualifiedDiscovery": []
+  },
+  "cursor": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "Cursor CLI",
+      "externalAccountCredentialEnv": [
+        "CURSOR_API_KEY"
+      ],
+      "hostToolApprovalAtRuntime": true,
+      "id": "cursor",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "session-config",
+      "modelAccess": "external-account",
+      "pinnedRuntimeVersion": "2026.11.05-86047df",
+      "promptImageInput": true,
+      "requiresComputer": true,
+      "skillsBaseDir": "/home/user/.agents/skills",
+      "skillsWriteOptions": {
+        "trailingNewline": false
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": false
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "The Cursor CLI does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "The Cursor CLI runs on your Cursor account and ignores temperature."
+        }
+      },
+      "credential": {
+        "binding": {
+          "header": "authorization",
+          "hosts": [
+            "api2.cursor.sh"
+          ],
+          "template": "Bearer {}"
+        },
+        "env": "CURSOR_API_KEY",
+        "label": "Cursor API key"
+      },
+      "displayName": "Cursor CLI",
+      "guest": false,
+      "local": false,
+      "mcpClient": "harness",
+      "modelAccess": "external-account",
+      "orgKeys": false,
+      "orgUpstream": null,
+      "protocol": null,
+      "reasoningEfforts": [],
+      "runtimeVersion": "2026.11.05-86047df"
+    },
+    "qualifiedDiscovery": []
+  },
+  "opencode": {
+    "adapter": {
+      "approvalPermissionMode": "allow-reads",
+      "defaultPermissionMode": "allow-all",
+      "displayName": "OpenCode",
+      "id": "opencode",
+      "liveApprovalRuntime": true,
+      "mcpDelivery": "mcpjam",
+      "modelAccess": "broker",
+      "pinnedRuntimeVersion": "1.18.23",
+      "promptImageInput": false,
+      "requiresComputer": true,
+      "skillsBaseDir": "/home/user/.agents/skills",
+      "skillsWriteOptions": {
+        "trailingNewline": false
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": true,
+      "supportsMcpToolApproval": false,
+      "supportsNativeToolApproval": true,
+      "supportsPluginBundles": false,
+      "supportsSkills": false
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": true
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "OpenCode does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": true
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "OpenCode runs its own loop and ignores temperature."
+        }
+      },
+      "credential": null,
+      "displayName": "OpenCode",
+      "guest": false,
+      "local": false,
+      "mcpClient": "mcpjam",
+      "modelAccess": "broker",
+      "orgKeys": false,
+      "orgUpstream": null,
+      "protocol": "anthropic-messages",
+      "reasoningEfforts": [],
+      "runtimeVersion": "1.18.23"
+    },
+    "qualifiedDiscovery": []
+  }
+}

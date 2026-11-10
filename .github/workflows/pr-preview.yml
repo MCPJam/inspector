@@ -223,16 +223,10 @@ jobs:
 
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         run: |
-          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-          fi
+          URL=$(node .github/scripts/railway-preview-origin.mjs \
+            -e "${{ steps.meta.outputs.environment }}" -s "$RAILWAY_INSPECTOR_SERVICE")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
@@ -509,16 +503,10 @@ jobs:
 
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         run: |
-          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-          fi
+          URL=$(node .github/scripts/railway-preview-origin.mjs \
+            -e "${{ steps.meta.outputs.environment }}" -s "$RAILWAY_INSPECTOR_SERVICE")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
@@ -793,16 +781,10 @@ jobs:
 
       - name: Read preview public domain
         id: preview_domain
-        continue-on-error: true
         run: |
-          DOMAIN=$(.github/scripts/railway-retry.sh railway run \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ github.event.client_payload.inspector_environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            printenv RAILWAY_PUBLIC_DOMAIN | tail -n 1 | tr -d '\r')
-          if [ -n "$DOMAIN" ]; then
-            echo "url=https://${DOMAIN}" >> "$GITHUB_OUTPUT"
-          fi
+          URL=$(node .github/scripts/railway-preview-origin.mjs \
+            -e "${{ github.event.client_payload.inspector_environment }}" -s "$RAILWAY_INSPECTOR_SERVICE")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''

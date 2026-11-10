@@ -1,3 +1,4 @@
+import { createCopilotCli } from "../copilot-cli/index.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -16,6 +17,7 @@ import { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import {
   HARNESS_BAKED_BOOTSTRAP_DIRS,
+  HARNESS_STATE_DIRECTORY_NAME,
   HARNESS_TEMPLATE_NODE_VERSION,
   HARNESS_TEMPLATE_PNPM_VERSION,
   harnessPnpmGuardCommand,
@@ -23,6 +25,8 @@ import {
   type HarnessBootstrapRecipe,
 } from "../harness-bake.js";
 import { getHarnessAdapter } from "../registry.js";
+import { withWarmBridgeBootstrap } from "../warm-bridge-files.js";
+import type { HarnessV1 } from "@ai-sdk/harness";
 import { HOSTED_APPROVAL_SANDBOX_POLICY } from "../codex-appserver/hosted-sandbox-policy.js";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 
@@ -106,8 +110,16 @@ const CODEX_AUTH = { CODEX_API_KEY: "x", OPENAI_BASE_URL: "http://x" };
 const CURSOR_AUTH = { CURSOR_API_KEY: "x" };
 
 /** The hosted runtimes exactly as `run-harness-turn` builds them. */
-function hostedHarnesses(): Record<
-  "claude-code" | "codex" | "cursor",
+function copilotRecipe(proxyUrl: string) {
+  const runtime = createCopilotCli({
+    model: "openai/gpt-5.5",
+    auth: { COPILOT_MODEL_PROXY_PLACEHOLDER: "fixture", OPENAI_BASE_URL: proxyUrl },
+  });
+  return { ...runtime, getBootstrap: async () => await runtime.getBootstrap!() };
+}
+
+function hostedHarnesses(warmAgent = false): Record<
+  "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode",
   HarnessWithBootstrap
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -116,15 +128,47 @@ function hostedHarnesses(): Record<
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
     .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
+    .createHarness as unknown as CreateHarness;
   return {
     "claude-code": claude({
       modelId: "anthropic/claude-sonnet-4-5",
       auth: CLAUDE_AUTH,
+      warmAgent,
       mcpJson: { mcpServers: {} },
     }),
-    codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH }),
+    codex: codex({ modelId: "openai/gpt-5.5", auth: CODEX_AUTH, warmAgent }),
+    "copilot-cli": copilotRecipe("http://test.invalid"),
     cursor: cursor({ auth: CURSOR_AUTH, mcpJson: { mcpServers: {} } }),
+    opencode: opencode({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: CLAUDE_AUTH,
+    }),
   };
+}
+
+function warmHostedHarness(id: "claude-code" | "codex" | "copilot-cli", native = true): HarnessWithBootstrap {
+  const adapter = getHarnessAdapter(id);
+  let harness = withWarmBridgeBootstrap(hostedHarnesses(true)[id] as HarnessV1);
+  if (native && adapter.mcpDelivery === "harness" && adapter.forwardingRuntime) {
+    harness = adapter.forwardingRuntime.refresh(harness, {}, "bake");
+  }
+  return harness as HarnessWithBootstrap;
+}
+
+/** Both runtime selections must find their exact recipe marker in the image. */
+function allHostedHarnesses(): HarnessWithBootstrap[] {
+  const base = hostedHarnesses();
+  return [
+    base["claude-code"],
+    warmHostedHarness("claude-code"),
+    base.codex,
+    warmHostedHarness("codex"),
+    base["copilot-cli"],
+    warmHostedHarness("copilot-cli"),
+    base.cursor,
+    base.opencode,
+  ];
 }
 
 /**
@@ -133,7 +177,7 @@ function hostedHarnesses(): Record<
  * them may reach the recipe, or one template could not cover every turn.
  */
 function hostedHarnessVariants(): Record<
-  "claude-code" | "codex" | "cursor",
+  "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode",
   HarnessWithBootstrap[]
 > {
   const claude = getHarnessAdapter("claude-code")
@@ -141,6 +185,8 @@ function hostedHarnessVariants(): Record<
   const codex = getHarnessAdapter("codex")
     .createHarness as unknown as CreateHarness;
   const cursor = getHarnessAdapter("cursor")
+    .createHarness as unknown as CreateHarness;
+  const opencode = getHarnessAdapter("opencode")
     .createHarness as unknown as CreateHarness;
   return {
     "claude-code": [
@@ -163,9 +209,21 @@ function hostedHarnessVariants(): Record<
         sandboxPolicy: HOSTED_APPROVAL_SANDBOX_POLICY,
       }),
     ],
+    "copilot-cli": [copilotRecipe("http://other.invalid")],
     cursor: [
       cursor({
         auth: { CURSOR_API_KEY: "a-different-key" },
+        mcpJson: {
+          mcpServers: {
+            probe: { type: "http", url: "https://example.invalid/mcp" },
+          },
+        },
+      }),
+    ],
+    opencode: [
+      opencode({
+        modelId: "anthropic/claude-haiku-4.5",
+        auth: CLAUDE_AUTH,
         mcpJson: {
           mcpServers: {
             probe: { type: "http", url: "https://example.invalid/mcp" },
@@ -187,18 +245,49 @@ type HarnessBakeLock = {
 };
 
 describe("harnessRecipeIdentity", () => {
-  it.each(["claude-code", "codex", "cursor"] as const)(
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "is the identity the real framework checks for (%s)",
     async (id) => {
       const harness = hostedHarnesses()[id];
       const recipe = await harness.getBootstrap();
       const seen = await frameworkMarkerIdentity(harness);
-      expect(seen.bootstrapDir).toBe(recipe.bootstrapDir);
+      expect(seen.bootstrapDir).toBe(
+        `${HARNESS_STATE_DIRECTORY_NAME}/${recipe.bootstrapDir}`,
+      );
       expect(harnessRecipeIdentity(recipe)).toBe(seen.identity);
     },
   );
 
-  it("bakes exactly the hosted Claude Code, Codex app-server and Cursor recipes", async () => {
+  it("uses one exact warm Claude artifact for bridged and native MCP delivery", async () => {
+    const bridged = await warmHostedHarness("claude-code", false).getBootstrap();
+    const native = await warmHostedHarness("claude-code", true).getBootstrap();
+    expect(bridged).toEqual(native);
+    const bridge = bridged.files.find(file => file.path.endsWith("/warm-bridge.mjs"));
+    expect(bridge?.content.match(/var mcpjamRefreshNativeMcp;/g)).toHaveLength(1);
+    expect(harnessRecipeIdentity(bridged)).toBe(harnessRecipeIdentity(native));
+  });
+
+  it.each(["claude-code", "codex", "copilot-cli"] as const)(
+    "bakes the marker the real framework requests with warm reuse (%s)",
+    async (id) => {
+      const harness = warmHostedHarness(id);
+      const recipe = await harness.getBootstrap();
+      const seen = await frameworkMarkerIdentity(harness);
+      const lock = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as HarnessBakeLock;
+      expect(seen.bootstrapDir).toBe(
+        `${HARNESS_STATE_DIRECTORY_NAME}/${recipe.bootstrapDir}`,
+      );
+      expect(seen.identity).toBe(harnessRecipeIdentity(recipe));
+      expect(lock.recipes).toContainEqual({
+        harnessId: id,
+        bootstrapDir: recipe.bootstrapDir,
+        identity: seen.identity,
+        runtimeVersion: HARNESS_PINNED_VERSIONS[id],
+      });
+    },
+  );
+
+  it("bakes every registered hosted recipe", async () => {
     const harnesses = hostedHarnesses();
     const dirs = await Promise.all(
       Object.values(harnesses).map(
@@ -208,7 +297,7 @@ describe("harnessRecipeIdentity", () => {
     expect([...dirs].sort()).toEqual([...HARNESS_BAKED_BOOTSTRAP_DIRS].sort());
   });
 
-  it.each(["claude-code", "codex", "cursor"] as const)(
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "does not depend on the turn's settings (%s)",
     async (id) => {
       const base = harnessRecipeIdentity(
@@ -251,15 +340,15 @@ describe("harness-bake.lock.json", () => {
       },
       recipes: (
         await Promise.all(
-          Object.entries(hostedHarnesses()).map(async ([harnessId, h]) => {
+          allHostedHarnesses().map(async (h) => {
             const recipe = await h.getBootstrap();
             return {
-              harnessId,
+              harnessId: recipe.harnessId,
               bootstrapDir: recipe.bootstrapDir,
               identity: harnessRecipeIdentity(recipe),
               runtimeVersion:
                 HARNESS_PINNED_VERSIONS[
-                  harnessId as keyof typeof HARNESS_PINNED_VERSIONS
+                  recipe.harnessId as keyof typeof HARNESS_PINNED_VERSIONS
                 ],
             };
           }),
@@ -449,12 +538,12 @@ describe("the generated bake context", () => {
   it("records the identities the running inspector resolves", async () => {
     // The manifest is what the template bakes; the right hand side is what a
     // hosted turn on this commit will look for.
-    const harnesses = hostedHarnesses();
-    expect(manifest.recipes).toHaveLength(Object.keys(harnesses).length);
-    const byDir = new Map(manifest.recipes.map((r) => [r.bootstrapDir, r]));
-    for (const harness of Object.values(harnesses)) {
+    const harnesses = allHostedHarnesses();
+    expect(manifest.recipes).toHaveLength(harnesses.length);
+    const byIdentity = new Map(manifest.recipes.map((r) => [r.identity, r]));
+    for (const harness of harnesses) {
       const live = await harness.getBootstrap();
-      const baked = byDir.get(live.bootstrapDir);
+      const baked = byIdentity.get(harnessRecipeIdentity(live));
       expect(baked, live.bootstrapDir).toBeDefined();
       expect(baked!.identity).toBe(harnessRecipeIdentity(live));
       expect(baked!.marker).toBe(`.bootstrap-${baked!.identity}.ok`);
@@ -501,9 +590,13 @@ describe("the generated bake context", () => {
     ).toEqual({
       "claude-code": HARNESS_PINNED_VERSIONS["claude-code"],
       codex: HARNESS_PINNED_VERSIONS.codex,
+      "copilot-cli": HARNESS_PINNED_VERSIONS["copilot-cli"],
       cursor: HARNESS_PINNED_VERSIONS.cursor,
+      opencode: HARNESS_PINNED_VERSIONS.opencode,
     });
-    expect(manifest.bakeRoot).toBe("/home/user/.harness-bootstrap");
+    expect(manifest.bakeRoot).toBe(
+      "/home/user/.ai-sdk-harness/.harness-bootstrap",
+    );
     expect(manifest.runtimeUser).toBe("user");
   });
 
@@ -619,7 +712,7 @@ registerHooks({ resolve(specifier, context, next) {
     );
     expect(misplaced.status).toBe(1);
     expect(misplaced.stderr).toMatch(
-      /markers are only found at \/home\/user\/\.harness-bootstrap/,
+      /markers are only found at \/home\/user\/\.ai-sdk-harness\/\.harness-bootstrap/,
     );
 
     // Real path: `bake.mjs` locates itself through its module URL, which is

@@ -1,54 +1,54 @@
 import { Loader2, Settings, Share2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
-import type { ConformanceView } from "./ConformancePageChrome";
 import { ConformanceRunShareButton } from "./ConformanceRunActions";
 import { detailDateFormat } from "./ConformanceHistory";
 
-const RUN_VIEWS = [
-  { value: "overview", label: "Overview" },
-  { value: "history", label: "History" },
-] as const;
-
 /**
- * A run on screen: the same chrome as a Swarm or User Testing page (back,
- * title, the page's tabs) with the run's own actions on the right.
+ * A run on screen: back and title, with the run's own actions on the right.
+ * No Overview/History tabs: the run is not one of the page's views.
  */
 export function ConformanceRunHeader({
   serverName,
   startedAt,
+  backLabel,
   onBack,
   busy,
   isConnecting,
   showHistory,
-  onShowHistory,
   onOpenSettings,
   settingsLoading,
   showShare,
   savedRunId,
+  shareServerName,
   onRunAgain,
   runDisabled,
 }: {
   serverName: string;
   startedAt: number | null;
-  /** Back to the Conformance page's server list. */
+  /** Where Back goes: the tab the run was started from. */
+  backLabel: string;
   onBack: () => void;
   /** Running or connecting: leaving now would lose the run. */
   busy: boolean;
   isConnecting: boolean;
   showHistory: boolean;
-  onShowHistory: () => void;
   onOpenSettings?: () => void;
   settingsLoading?: boolean;
   /** The run is saved, so it can be shared once it finishes. */
   showShare: boolean;
   savedRunId?: string | null;
+  /**
+   * The name the share card shows: set only when the run is saved against a
+   * saved server, so the card reads the same here and reopened from History.
+   */
+  shareServerName?: string;
   onRunAgain: () => void;
   runDisabled: boolean;
 }) {
   return (
     <DetailPageHeader
-      backLabel="Conformance"
+      backLabel={backLabel}
       onBack={onBack}
       // Going back resets the page. Without History (no project) a finished
       // run could not be found again, so it stays until the next run.
@@ -61,19 +61,6 @@ export function ConformanceRunHeader({
         >
           {serverName}
         </h1>
-      }
-      tabs={
-        showHistory
-          ? {
-              value: "overview" as ConformanceView,
-              options: RUN_VIEWS,
-              onChange: (next) => {
-                if (next === "history") onShowHistory();
-              },
-              ariaLabel: "Conformance view",
-              indicatorId: "conformance-run-view",
-            }
-          : undefined
       }
       actions={
         <>
@@ -89,7 +76,11 @@ export function ConformanceRunHeader({
           ) : null}
           {showShare ? (
             savedRunId ? (
-              <ConformanceRunShareButton runId={savedRunId} finished={!busy} />
+              <ConformanceRunShareButton
+                runId={savedRunId}
+                finished={!busy}
+                serverName={shareServerName}
+              />
             ) : (
               // Not saved yet: Share waits for the run to finish.
               <Button variant="outline" size="sm" disabled>

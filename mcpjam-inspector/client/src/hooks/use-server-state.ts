@@ -37,6 +37,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import type {
+  AgentServerInfo,
   AppAction,
   AppState,
   ServerWithName,
@@ -1420,6 +1421,7 @@ export function useServerState({
         ? resolveEffectiveClientCapabilities({
             host: activeHostConfig,
             serverConfig,
+            localFormSupport: !HOSTED_MODE,
           })
         : resolveEffectiveClientCapabilities({
             host: activeProject?.clientConfig
@@ -1429,6 +1431,7 @@ export function useServerState({
                 } as Pick<HostConfigDtoV2, "clientCapabilities">)
               : null,
             serverConfig,
+            localFormSupport: !HOSTED_MODE,
           });
 
       // Hoisted above the transport split: the per-server override applies to
@@ -3237,18 +3240,74 @@ export function useServerState({
         }
         if (result.success && onlyStoresCredential(hostedCallbackContext)) {
           markOnboardingSignInCompleted(hostedCallbackContext?.pluginSignIn);
-          if (!HOSTED_MODE && result.serverName) {
-            const existing =
-              appStateServersRef.current[result.serverName] ??
-              latestEffectiveServersRef.current[result.serverName];
-            if (existing)
-              await guardedReconnectServer(result.serverName, existing.config);
+          const settledServerName =
+            result.serverName ?? hostedCallbackContext?.serverName;
+          // Reconnect in hosted mode too, and publish the outcome. The callback
+          // marked the server "connecting" before the exchange, and the
+          // redirect left it disconnected: without this, a call waiting on a
+          // per-login sign-in finds no live connection and fails as "could
+          // not retry". A failed reconnect still lets the waiting call settle.
+          const existing = settledServerName
+            ? (appStateServersRef.current[settledServerName] ??
+              latestEffectiveServersRef.current[settledServerName])
+            : undefined;
+          if (settledServerName && existing) {
+            try {
+              const reconnected = await guardedReconnectServer(
+                settledServerName,
+                existing.config,
+              );
+              if (isCancelled()) return;
+              if (reconnected?.success) {
+                dispatch({
+                  type: "CONNECT_SUCCESS",
+                  name: settledServerName,
+                  config: existing.config,
+                  tokens: undefined,
+                  useOAuth: true,
+                });
+                if (reconnected.initInfo)
+                  storeInitInfo(settledServerName, reconnected.initInfo).catch(
+                    (err) =>
+                      logger.warn("Failed to fetch init info", {
+                        serverName: settledServerName,
+                        err,
+                      }),
+                  );
+              } else {
+                const reconnectNormalized = (
+                  reconnected as { normalized?: unknown } | undefined
+                )?.normalized;
+                dispatch({
+                  type: "CONNECT_FAILURE",
+                  name: settledServerName,
+                  error:
+                    (typeof reconnected?.error === "string" &&
+                    reconnected.error.length > 0
+                      ? reconnected.error
+                      : undefined) ??
+                    "The server could not reconnect after sign-in. Reconnect it to try again.",
+                  ...(reconnectNormalized &&
+                  typeof reconnectNormalized === "object"
+                    ? { normalized: reconnectNormalized as NormalizedError }
+                    : {}),
+                });
+              }
+            } catch (error) {
+              if (isCancelled()) return;
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: settledServerName,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "The server could not reconnect after sign-in. Reconnect it to try again.",
+              });
+            }
           }
           // A step-up or sign-in that was waiting on this connection settles
           // here too. This branch used to return first, so a saved call never
           // resumed after a hosted connection-intent callback.
-          const settledServerName =
-            result.serverName ?? hostedCallbackContext?.serverName;
           if (settledServerName) {
             const notRetried = await settleSignInCallback(settledServerName, {
               state,
@@ -6661,7 +6720,22 @@ export function useServerState({
     try {
       const result = await listServers();
       if (result?.success && Array.isArray(result.servers)) {
-        dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
+        const servers: AgentServerInfo[] = result.servers;
+        dispatch({ type: "SYNC_AGENT_STATUS", servers });
+        // The status list carries no handshake details. After a page reload
+        // the browser has none either, so a server that stayed connected
+        // showed no version and an empty Overview. Skip in-flight connects:
+        // their own result stores fresher details than this lookup would.
+        for (const agentServer of servers) {
+          const current = appStateServersRef.current[agentServer.id];
+          if (
+            agentServer.status === "connected" &&
+            current?.connectionStatus !== "connecting" &&
+            !current?.initializationInfo
+          ) {
+            void fetchAndStoreInitInfo(agentServer.id);
+          }
+        }
       }
       return result;
     } catch (error) {
@@ -6670,7 +6744,7 @@ export function useServerState({
       });
       throw error;
     }
-  }, [logger, dispatch]);
+  }, [logger, dispatch, fetchAndStoreInitInfo]);
 
   useEffect(() => {
     if (isLoading) return;

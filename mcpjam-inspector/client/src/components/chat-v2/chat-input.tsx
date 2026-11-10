@@ -13,9 +13,7 @@ import {
 } from "./chat-input/prompts/mentions-popover";
 import { PluginServerIcon } from "./chat-input/plugin-server-icon";
 import {
-  ContextAttachmentChip,
-  ContextGroupChip,
-  groupContextAttachments,
+  ContextAttachmentList,
   type ContextAttachment,
 } from "./chat-input/attachments/context-attachment-chip";
 import {
@@ -324,6 +322,7 @@ interface ChatInputProps {
   isLoading?: boolean;
   /** A send is being prepared: Enter is refused and Send shows a spinner. */
   isSubmitting?: boolean;
+  canStop?: boolean;
   placeholder?: string;
   className?: string;
   currentModel: ModelDefinition;
@@ -507,6 +506,7 @@ export function ChatInput({
   submitDisabledReason,
   isLoading = false,
   isSubmitting = false,
+  canStop = false,
   placeholder = "Type your message...",
   className,
   currentModel,
@@ -1546,6 +1546,7 @@ export function ChatInput({
         submitDisabled ||
         isLoading ||
         isSubmitting ||
+        canStop ||
         // While recording/transcribing the textarea shows a placeholder but
         // `value` still holds the draft — don't let Enter submit it behind the
         // voice UI (and leave the mic open).
@@ -1587,20 +1588,7 @@ export function ChatInput({
               </Button>
             </span>
           )}
-          {groupContextAttachments(contextAttachments).map((entry) =>
-            entry.kind === "group" ? (
-              <ContextGroupChip
-                key={`group:${entry.group.id}`}
-                group={entry.group}
-                items={entry.items}
-              />
-            ) : (
-              <ContextAttachmentChip
-                key={entry.attachment.id}
-                {...entry.attachment}
-              />
-            ),
-          )}
+          <ContextAttachmentList attachments={contextAttachments} />
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
               key={`prompt-${index}`}
@@ -1713,7 +1701,10 @@ export function ChatInput({
         ref={formRef}
         hidden={formCardActive}
         className={cn("w-full", className)}
-        onSubmit={onSubmit}
+        onSubmit={(event) => {
+          if (canStop) { event.preventDefault(); return; }
+          onSubmit(event);
+        }}
       >
         <div
           ref={containerRef}
@@ -2441,7 +2432,7 @@ export function ChatInput({
                 </Tooltip>
               ) : (
                 voiceInputState !== "recording" &&
-                (isLoading ? (
+                (isLoading || canStop ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

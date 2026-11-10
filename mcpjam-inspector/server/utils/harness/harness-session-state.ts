@@ -95,6 +95,7 @@ export type HarnessClaimResult =
       state: HarnessResumePayload | null;
       stateVersion: number;
       fingerprintChanged: boolean;
+      supportsApprovalFence?: true;
       laneId?: string;
     }
   | { ok: false; status: number; error: string };
@@ -209,7 +210,22 @@ async function postSessionState(
   return { ok: true, payload };
 }
 
+export function sessionClaimConflictMessage(reason: string | undefined): string {
+  switch (reason) {
+    case "harness_turn_cancelled":
+      return "This turn was stopped. Send a new message to continue.";
+    case "harness_approval_expired":
+      return "This approval has ended. Send a new message to request the action again.";
+    case "harness_approval_pending":
+      return "Answer the pending tool approval before sending another message, or start a new chat.";
+    default:
+      return "Another turn is already running for this chat — wait for it to finish.";
+  }
+}
+
 export async function claimHarnessSessionState(args: {
+  approvalIds?: string[];
+  requestId?: string;
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -226,11 +242,13 @@ export async function claimHarnessSessionState(args: {
     args.bearer,
     {
       ...args.owner,
+      ...(args.approvalIds !== undefined ? { approvalIds: args.approvalIds } : {}),
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
+      ...(args.requestId ? { requestId: args.requestId } : {}),
     },
     args.signal
   );
@@ -240,6 +258,7 @@ export async function claimHarnessSessionState(args: {
     state: res.payload.state ?? null,
     stateVersion: Number(res.payload.stateVersion ?? 0),
     fingerprintChanged: Boolean(res.payload.fingerprintChanged),
+    ...(res.payload.supportsApprovalFence === true ? { supportsApprovalFence: true } : {}),
     ...(typeof res.payload.laneId === "string" ? { laneId: res.payload.laneId } : {}),
   };
 }
@@ -260,12 +279,13 @@ export async function heartbeatHarnessSessionState(args: {
   leaseId: string;
   leaseTtlMs: number;
   bearer: string;
+  signal?: AbortSignal;
 }): Promise<HarnessHeartbeatResult> {
   const res = await postSessionState("heartbeat", args.bearer, {
     ...args.owner,
     leaseId: args.leaseId,
     leaseTtlMs: args.leaseTtlMs,
-  });
+  }, args.signal);
   if (res.ok) {
     // The request reached the endpoint; `extended` is the definitive answer.
     return res.payload?.extended === true ? "ok" : "lost";
@@ -339,6 +359,7 @@ export async function releaseUncommittedHarnessLane(args: {
 }
 
 export async function commitHarnessSessionState(args: {
+  guardedApprovalIds?: string[];
   owner: HarnessOwnerRef;
   leaseId: string;
   expectedStateVersion: number;
@@ -366,6 +387,7 @@ export async function commitHarnessSessionState(args: {
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+      ...(args.guardedApprovalIds ? { guardedApprovalIds: args.guardedApprovalIds } : {}),
     },
     args.signal
   );

@@ -71,6 +71,19 @@ describe("buildBrokerDummyAuth", () => {
         "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
     });
   });
+
+  it("opencode → dummy auth-token env with /v1 on the Anthropic lease origin", () => {
+    const auth = buildBrokerDummyAuth(
+      "opencode",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+    );
+    expect(auth).toEqual({
+      ANTHROPIC_AUTH_TOKEN: "mcpjam-broker-dummy",
+      ANTHROPIC_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic/v1",
+    });
+    expect("ANTHROPIC_API_KEY" in auth).toBe(false);
+  });
 });
 
 describe("startHarnessModelBroker", () => {

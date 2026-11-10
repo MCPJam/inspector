@@ -1,3 +1,5 @@
+import { managedTurnFailureResponse } from "./managed-turn-error.js";
+import { prepareTurnAuthorization } from "./turn-authorization.js";
 import { TurnResources } from "./resources.js";
 import { stripForwardingRequestBody } from "@/shared/forwarding-approval";
 import { preparePluginMessageTurn } from "../plugin-host/message.js";
@@ -5,7 +7,6 @@ import {
   readOwnedTurnContext,
   pluginContextReferencesSchema,
 } from "../plugin-host/turn-context.js";
-import { pluginChatRefusal } from "../../routes/web/chat-v2-plugin-refusal.js";
 import {
   globalOwnerAdmission,
   withGlobalOwnerFallback,
@@ -15,7 +16,6 @@ import { pluginModelContextMessage } from "../../../shared/plugin-model-context.
 import { toResumeExecutionTarget } from "@/shared/execution-target";
 import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
-import { isMCPAuthError } from "@mcpjam/sdk";
 import { HOSTED_MODE } from "../../config.js";
 import { advertisedPageToolsOnly } from "../../utils/chat-v2-orchestration.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
@@ -24,11 +24,6 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import {
   assertBearerToken,
   readJsonBody,
-  ErrorCode,
-  webError,
-  webErrorFromRoute,
-  mapTargetServerError,
-  projectRouteFailure,
 } from "../../routes/web/auth.js";
 import { createHostedRpcLogCollector } from "../../routes/web/hosted-rpc-logs.js";
 import { getSpendClientIp } from "../../utils/client-ip.js";
@@ -43,6 +38,11 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import { TurnTiming } from "../../utils/turn-timing.js";
+import {
+  conversationExecutionArgs,
+  startBoundConversationExecutionCheck,
+} from "../../utils/harness/conversation-execution.js";
 
 export async function handleManagedChatTurn(
   c: Context,
@@ -50,6 +50,7 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
+  const timing = new TurnTiming();
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -67,6 +68,7 @@ export async function handleManagedChatTurn(
   let streamOwnsResources = false;
   try {
     const bearerToken = assertBearerToken(c);
+    const retrySubject = c.get("workosUserId");
     const rawBody = JSON.parse(
       stripForwardingRequestBody(
         JSON.stringify(
@@ -98,6 +100,7 @@ export async function handleManagedChatTurn(
       rpcCollector,
     });
     if (!setup.value) return setup.response;
+    timing.mark("setup");
     let {
       hostedBody,
       initializePins,
@@ -145,8 +148,15 @@ export async function handleManagedChatTurn(
       includeProjectSkills,
       liveProjectCapabilities,
       projectSkillReadFailed,
+      executionBound,
     } = setup.value;
 
+    const turnAuthorization = await prepareTurnAuthorization(c, {
+      projectId: hostedBody.projectId, chatSessionId: body.chatSessionId, executionTarget,
+      requestId: hostedBody.harnessStartupRequestId,
+      harness: resolvedExecution.harness,
+    }, resources);
+    timing.mark("turnAuthorization");
     const connections = await prepareManagedConnections({
       c,
       rawBody,
@@ -183,6 +193,30 @@ export async function handleManagedChatTurn(
       validatedPageTools,
       validatedWidgetModelContext,
     } = connections;
+    timing.mark("connections");
+    // What the turn persists under, and so what its binding check validates.
+    // One object feeds both the check below and `persist`, so they agree.
+    const executionScopeFields = {
+      projectId: hostedBody.projectId,
+      chatSessionId: body.chatSessionId,
+      scenarioId,
+      executionBindingVersion: resolvedExecution.executionBindingVersion,
+      ...(executionScope ? { executionScope } : {}),
+      ...(resolvedExecution.harness
+        ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop }
+        : {}),
+    };
+    // Started now, and awaited where the stream is prepared, only when the
+    // backend says the row `bind` would check is already bound (see the helper).
+    const executionBinding = startBoundConversationExecutionCheck(
+      executionBound,
+      conversationExecutionArgs({
+        manager,
+        scope: executionScopeFields,
+        authHeader: c.req.header("authorization"),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      }),
+    );
     const tools = await prepareManagedTools({
       c,
       rawBody,
@@ -204,6 +238,7 @@ export async function handleManagedChatTurn(
       builtInTools,
       effectiveSystemPrompt,
     } = tools;
+    timing.mark("tools");
     try {
       const sourceType = turnMode === "recorded" ? "scenario" : "direct";
       // Mirrors the sourceType branch — scenario surface stays "scenario", the
@@ -318,7 +353,7 @@ export async function handleManagedChatTurn(
         (!modelPluginAdmission || !modelPluginBearer || !modelPluginSubject)
       )
         throw new Error("App context unavailable for this chat");
-      const readTurnContext = (
+      const readTurnContext = async (
         references: string[],
         admission: NonNullable<typeof modelPluginAdmission>,
       ) =>
@@ -326,7 +361,7 @@ export async function handleManagedChatTurn(
           c,
           references,
           admission,
-          bearer: modelPluginBearer!,
+          bearer: admission.getAuthorization ? await admission.getAuthorization() : modelPluginBearer!,
           actor: {
             actorId: admission.actorId,
             projectId: admission.projectId,
@@ -350,7 +385,7 @@ export async function handleManagedChatTurn(
         pluginModelContextPolicy(hostRuntimeConfig).turnMaxBytes,
       );
       const appMessages = await withGlobalOwnerFallback(
-        (admission) =>
+        async (admission) =>
           preparePluginMessageTurn({
             c,
             intent: body.pluginMessage,
@@ -362,7 +397,7 @@ export async function handleManagedChatTurn(
             serverIds: effectiveServerIds,
             threadId: body.chatSessionId,
             admission,
-            bearer: modelPluginBearer,
+            bearer: admission?.getAuthorization ? await admission.getAuthorization() : modelPluginBearer,
           }),
         modelPluginAdmission,
         body.pluginMessage === undefined ? undefined : globalPluginAdmission,
@@ -403,10 +438,6 @@ export async function handleManagedChatTurn(
                   ) ?? {},
               }
             : {}),
-          localMcpRuntimeRequired:
-            localIngress &&
-            (body.localMcpRuntimeRequired === true ||
-              localMachine?.localBrowserRequested === true),
           customProviders: body.customProviders,
           ...(localIngress &&
           (turnRail === "local" ||
@@ -516,19 +547,15 @@ export async function handleManagedChatTurn(
           },
         },
         persist: {
+          getAuthorization: turnAuthorization?.getAuthorization,
+          ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
-          executionBindingVersion: resolvedExecution.executionBindingVersion,
+          ...executionScopeFields,
           executionTarget: toResumeExecutionTarget(executionTarget),
-          chatSessionId: body.chatSessionId,
-          projectId: hostedBody.projectId,
           sourceType,
           origin,
           ...(turnMode === "recorded" && surface ? { surface } : {}),
-          scenarioId,
           accessVersion,
-          // Phase 3: forward the runtime-config scope into the harness path
-          // (alongside the bash-tool path threaded above).
-          ...(executionScope ? { executionScope } : {}),
           // The conversation's box: its binding for a harness turn, and its
           // heartbeat to stop when the turn's stream completes.
           ...(scenarioBox ? { scenarioBox } : {}),
@@ -536,12 +563,8 @@ export async function handleManagedChatTurn(
           authenticatedUserId,
           ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
-          ...(resolvedExecution.harness
-            ? {
-                harness: resolvedExecution.harness,
-                agentLoop: resolvedExecution.agentLoop,
-                ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
-              }
+          ...(resolvedExecution.harness && harnessExecutionTarget
+            ? { harnessExecutionTarget }
             : {}),
           // Harness-engine delivery of the environment's resolved skills.
           // Presence (even empty) is what makes it authoritative downstream.
@@ -672,6 +695,9 @@ export async function handleManagedChatTurn(
           respectToolVisibility,
         },
         runtime: {
+          turnAuthorization,
+          turnTiming: timing,
+          ...(executionBinding ? { executionBinding } : {}),
           authHeader: c.req.header("authorization"),
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
@@ -718,8 +744,11 @@ export async function handleManagedChatTurn(
           dispose: () => resources.dispose(),
         },
       });
+      timing.mark("streamPreparation");
       streamOwnsResources = true;
-      return resources.response(response, c.req.raw.signal);
+      return resources.response(response, c.req.raw.signal, {
+        "Server-Timing": timing.serverTiming(),
+      });
     } catch (error) {
       // The bridge can hold rows created before the throw (e.g. an elicitation
       // during a tool call that then failed); withdraw them so no answerable
@@ -729,66 +758,7 @@ export async function handleManagedChatTurn(
     }
   } catch (error) {
     await resources.dispose();
-    // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
-    if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
-      const firstUrl = Object.values(oauthServerUrls)[0];
-      const msg = error instanceof Error ? error.message : String(error);
-      return webError(
-        c,
-        401,
-        ErrorCode.UNAUTHORIZED,
-        msg,
-        {
-          oauthRequired: true,
-          serverUrl: firstUrl,
-        },
-        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
-      );
-    }
-    const pluginRefusal = pluginChatRefusal(error);
-    if (pluginRefusal)
-      return webError(
-        c,
-        pluginRefusal.status,
-        pluginRefusal.code,
-        pluginRefusal.message,
-        pluginRefusal.details,
-      );
-    // `webErrorFromRoute`, not `webError` — this call dropped
-    // `routeError.normalized`, so the envelope carried no `origin` and no
-    // `x-mcpjam-error-origin` header. This is the ORG-AWARE hosted chat path,
-    // the one the client actually selects, and the client's reporter has
-    // nothing but the status by the time it runs: without the verdict it
-    // guesses `mcpjam` from the 500 and pages us for the user's own MCP
-    // server.
-    //
-    // `mapTargetServerError`, because that header is exactly what a 5xx loses:
-    // Cloudflare swaps an origin 5xx for its own error page, so a connection
-    // failure to the user's MCP server arrived at the browser as a bare 502
-    // and was reported as an MCPJam outage anyway.
-    //
-    // Declared HERE and not in the shared mapper because a chat turn's
-    // outbound connections are to the user's own servers — that is what the
-    // route exists to do, and it is the path the misattribution was measured
-    // on. Not a proof: this catch also spans the turn's Convex work, so an
-    // MCPJam-side failure inside it is downgraded too. That residue is
-    // accepted deliberately — it is one route rather than every `/api/web/*`
-    // route (including `server-secrets`, which reaches nothing but Convex, and
-    // the router-wide `onError`, where the hop is unknown), so a real Convex
-    // outage still pages us from everywhere else.
-    //
-    // An `UPSTREAM_HTTP_ERROR` is no longer masked as a hosted 500, and its
-    // message quotes the server's response body, so it is reported like every
-    // other MCP route's failure: by its status line (MJ-001). Other failures
-    // here span the model provider and Convex, and keep their own wording.
-    const routeError = mapTargetServerError(error);
-    const envelope = rpcCollector?.buildEnvelope() as
-      Record<string, unknown> | undefined;
-    const projected =
-      routeError.code === ErrorCode.UPSTREAM_HTTP_ERROR
-        ? projectRouteFailure(routeError, error, envelope)
-        : { routeError, logs: envelope };
-    return webErrorFromRoute(c, projected.routeError, projected.logs);
+    return managedTurnFailureResponse(c, error, oauthServerUrls, rpcCollector);
   } finally {
     if (!streamOwnsResources) await resources.dispose();
   }

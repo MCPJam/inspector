@@ -26,6 +26,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   canManageOrgCredits,
@@ -122,12 +123,17 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryState,
+  type ChatHistoryStateSession,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
-import { PRE_SEND_SYNC_TIMEOUT_MS } from "@/components/chat-v2/history/pre-send-sync";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { useProjectServers } from "@/hooks/useViews";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
@@ -862,12 +868,10 @@ export function ChatTabV2({
     ]
   );
 
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, effectiveHostedProjectId);
+
   const refreshCurrentHistorySession = useCallback(
-    async ({
-      retries = 0,
-      markRead = false,
-      signal,
-    }: { retries?: number; markRead?: boolean; signal?: AbortSignal } = {}) => {
+    async ({ retries = 0, markRead = false } = {}) => {
       if (!showHistoryRail) {
         return null;
       }
@@ -878,14 +882,17 @@ export function ChatTabV2({
 
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail(
-            {
-              sessionId: activeHistorySessionId ?? undefined,
-              chatSessionId,
-              projectId: effectiveHostedProjectId ?? undefined,
-            },
-            { signal },
-          );
+          const detail = await getChatHistoryState({
+            sessionId: activeHistorySessionId ?? undefined,
+            chatSessionId,
+            projectId: effectiveHostedProjectId ?? undefined,
+          });
+          if (
+            !isCurrentHistoryTarget({ chatSessionId, projectId: effectiveHostedProjectId }) ||
+            detail.session.chatSessionId !== chatSessionId
+          ) {
+            return null;
+          }
           setActiveHistorySessionId(detail.session._id);
           setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
@@ -916,6 +923,7 @@ export function ChatTabV2({
       chatSessionId,
       effectiveHostedProjectId,
       hasConversationMessages,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
@@ -982,12 +990,21 @@ export function ChatTabV2({
   ]);
 
   const ensureThreadReadyForSend = useCallback(async () => {
-    let detail: ChatHistoryDetailSession | null = null;
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+        visibility: pendingDirectVisibility,
+      })
+    ) {
+      return true;
+    }
+    const target = { chatSessionId, projectId: effectiveHostedProjectId };
+    let detail: ChatHistoryStateSession | null = null;
     try {
-      // Bounded: the composer's send lock waits on this request.
-      detail = await refreshCurrentHistorySession({
-        signal: AbortSignal.timeout(PRE_SEND_SYNC_TIMEOUT_MS),
-      });
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
@@ -998,6 +1015,11 @@ export function ChatTabV2({
     }
     if (detail) {
       return true;
+    }
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) {
+      return false;
     }
 
     if (activeHistorySessionId) {
@@ -1010,8 +1032,14 @@ export function ChatTabV2({
     return true;
   }, [
     activeHistorySessionId,
+    chatSessionId,
     detachHistorySession,
+    effectiveHostedProjectId,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(
@@ -1190,8 +1218,11 @@ export function ChatTabV2({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: effectiveHostedProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread."
             );
@@ -1201,7 +1232,14 @@ export function ChatTabV2({
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      detachHistorySession,
+      effectiveHostedProjectId,
+      isCurrentHistoryTarget,
+      refreshCurrentHistorySession,
+    ]
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);

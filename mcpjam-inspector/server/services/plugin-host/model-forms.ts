@@ -1,3 +1,4 @@
+import { createInlineMrtrCollector } from "./inline-mrtr.js";
 import { modelApps } from "./model-apps.js";
 import {
   OPENAI_LEGACY_FORM_EXTENSION,
@@ -10,7 +11,7 @@ import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import type { ModelToolExecutor } from "../../utils/model-tool-executor.js";
 import type { PluginWorkspaceAdmission } from "./admission.js";
-import { pluginInstances, type PluginInstanceIdentity } from "./instances.js";
+import { pluginInstances, type PluginInstanceIdentity, type PluginFormOwner } from "./instances.js";
 import { createPluginRequestRuntime } from "./request-runtime.js";
 import { RequestOwnedToolInvoker } from "./request-invoker.js";
 import { createPluginInvocationReceiptPort } from "./receipt-store.js";
@@ -27,6 +28,11 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
   }) => Promise<unknown>;
   const active = new Map<string, Handler>();
   const tails = new Map<string, Promise<void>>();
+  const answer = (serverId: string, request: { params?: Record<string, unknown> }) => {
+    const handler = active.get(serverId);
+    if (!handler) throw new PluginInvocationError("INSTANCE_DENIED");
+    return handler(request);
+  };
   const handlers = Object.fromEntries(
     serverIds.map((id) => [
       id,
@@ -38,9 +44,7 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
           // Withheld again if this connection lands on a 2026 era.
           legacyClaim: OPENAI_LEGACY_FORM_EXTENSION,
           handler: (request: { params?: Record<string, unknown> }) => {
-            const handler = active.get(id);
-            if (!handler) throw new PluginInvocationError("INSTANCE_DENIED");
-            return handler(request);
+            return answer(id, request);
           },
         },
       ],
@@ -48,6 +52,10 @@ export function createModelFormDispatch(serverIds: readonly string[]) {
   ) as NonNullable<MCPClientManagerOptions["extensionRequestHandlers"]>;
   return {
     handlers,
+    inlineCollectorForServer(serverId: string) {
+      if (!serverIds.includes(serverId)) return undefined;
+      return createInlineMrtrCollector(serverId, (request) => answer(serverId, request));
+    },
     async run<T>(
       serverId: string,
       handler: Handler,
@@ -93,8 +101,17 @@ export function createModelFormExecutor(options: {
   /** Only independently qualified connection profiles enter this adapter. */
   eligibleServerIds: readonly string[];
   dispatch: ReturnType<typeof createModelFormDispatch>;
-}): ModelToolExecutor {
-  return async (execution, run) => {
+  inlineMrtr?: boolean;
+}) {
+  const originals = new Map<string, {
+    model: PluginFormOwner;
+    invoker: RequestOwnedToolInvoker;
+    active: number;
+    release?: () => void;
+  }>();
+  let disposed = false;
+  const execute: ModelToolExecutor = async (execution, run) => {
+    if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
     if (!options.eligibleServerIds.includes(execution.serverKey)) return run();
     if (
       !options.serverIds.includes(execution.serverKey) ||
@@ -150,18 +167,32 @@ export function createModelFormExecutor(options: {
     };
     // Subject belongs to the credential binding, never the serialized owner.
     const { subject: _subject, ...owner } = instance.owner;
-    const model = { ...instance, owner };
-    const releaseOwner = pluginInstances.retainModelOwner(model, signal);
+    let original = originals.get(owner.instanceId);
+    if (!original) {
+      if (originals.size >= 2048) throw new PluginInvocationError("INVOCATION_LIMIT");
+      const model = { ...instance, owner };
+      original = {
+        model,
+        active: 0,
+        invoker: new RequestOwnedToolInvoker(owner, () => {
+          pluginInstances.getFormOwner(owner, options.identity);
+        }),
+      };
+      originals.set(owner.instanceId, original);
+    }
+    const model = original.model;
+    if (original.active === 0)
+      original.release = pluginInstances.retainModelOwner(model, options.c.req.raw.signal);
+    original.active++;
     const runtime = createPluginRequestRuntime(
       options.c,
       options.admission,
       options.bearer,
       binding,
       model,
+      { inlineMrtr: options.inlineMrtr },
     );
-    const invoker = new RequestOwnedToolInvoker(owner, () => {
-      pluginInstances.getFormOwner(owner, options.identity);
-    });
+    const invoker = original.invoker;
     const params = {
       name: execution.toolName,
       arguments: execution.input as Record<string, unknown>,
@@ -197,19 +228,28 @@ export function createModelFormExecutor(options: {
           approve: async () => false,
           admit: (_auth, _id, currentSignal) =>
             options.admission.revalidate({ signal: currentSignal }),
-          execute: (auth, _next, currentSignal) =>
-            options.dispatch.run(
+          execute: async (auth, _next, currentSignal) => {
+            const result = await options.dispatch.run(
               execution.serverKey,
-              runtime.handleLegacyForm,
+              runtime.handleOwnedForm,
               currentSignal,
               () =>
-                runtime.runOwnedLegacy(
+                runtime.runOwnedForm(
                   auth,
                   execution.toolCallId,
                   currentSignal,
                   run,
                 ),
-            ),
+            );
+            if (result instanceof PluginInvocationSuspension)
+              throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
+            const completed = await runtime.resolve(execution.toolName, currentSignal);
+            if (completed.revision !== initial.revision)
+              throw new PluginInvocationError("INSTANCE_HOST_CHANGED");
+            return modelApps.publish(
+              result, model, execution.toolName, initial.revision, completed.tool._meta,
+            );
+          },
           classifyFailure: () => "unknown",
         },
         "model",
@@ -219,17 +259,30 @@ export function createModelFormExecutor(options: {
       );
       if (result instanceof PluginInvocationSuspension)
         throw new PluginInvocationError("CONTINUATION_PROTOCOL_DENIED");
-      return modelApps.publish(
-        result,
-        model,
-        execution.toolName,
-        initial.revision,
-        initial.tool._meta,
-      );
+      return result;
     } finally {
-      invoker.close();
-      await runtime.release();
-      releaseOwner();
+      try {
+        await runtime.release();
+      } finally {
+        original.active--;
+        if (original.active === 0) {
+          original.release?.();
+          original.release = undefined;
+        }
+      }
     }
   };
+  // Native turns have no durable receipt port. Keep their data-only receipts
+  // until the turn ends so a duplicate callback returns the same App token.
+  return Object.assign(execute, {
+    dispose() {
+      disposed = true;
+      for (const original of originals.values()) {
+        original.invoker.close();
+        original.release?.();
+        original.release = undefined;
+      }
+      originals.clear();
+    },
+  });
 }

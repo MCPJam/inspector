@@ -21,6 +21,7 @@ const CLOUD_COMMAND_FILES = [
   "auth.ts",
   "cloud.ts",
   "cloud-link.ts",
+  "conformance-cloud.ts",
   "environments.ts",
   "clients.ts",
   "eval.ts",
@@ -59,6 +60,13 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "compat.ts",
         "conformance.ts",
         "conformance-run.ts",
+        // Local, like `tasks.ts`: `mcpjam events` connects to a server
+        // directly (and, for webhook delivery, runs a receiver on THIS
+        // machine); it never touches a project or an API key. Its shared
+        // context and its `watch` verb live in the two sibling modules.
+        "events.ts",
+        "events-context.ts",
+        "events-watch.ts",
         "inspector.ts",
         "mcp.ts",
         "oauth.ts",

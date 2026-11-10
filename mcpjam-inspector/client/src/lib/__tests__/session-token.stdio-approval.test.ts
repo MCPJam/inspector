@@ -37,6 +37,7 @@ describe("authFetch hosted bearer on the stdio approval route", () => {
   for (const path of [
     "/api/mcp/servers/reconnect",
     "/api/mcp/servers/approve-command",
+    "/api/mcp/servers/command-approval",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, {
@@ -47,4 +48,13 @@ describe("authFetch hosted bearer on the stdio approval route", () => {
       expect(headersOf(0).Authorization).toBe("Bearer hosted-bearer");
     });
   }
+  it.each([
+    "https://untrusted.example/api/mcp/servers/command-approval",
+    "/api/mcp/servers/command-approval-extra",
+    "/api/mcp/servers/command-approval/nested",
+  ])("does not attach the bearer outside the exact trusted review route: %s", async (path) => {
+    await sessionToken.authFetch(path, { method: "POST" });
+    expect(headersOf(0).Authorization).toBeUndefined();
+  });
+
 });

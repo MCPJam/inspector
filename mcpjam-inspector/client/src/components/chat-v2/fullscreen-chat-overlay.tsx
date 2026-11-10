@@ -39,6 +39,10 @@ import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
 import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
+import {
+  ContextAttachmentList,
+  type ContextAttachment,
+} from "./chat-input/attachments/context-attachment-chip";
 
 function extractTextFromUnknown(value: unknown): string {
   if (typeof value === "string") return value.trim();
@@ -504,6 +508,7 @@ function MessageList({
 }
 
 function Composer({
+  contextAttachments,
   value,
   onChange,
   placeholder,
@@ -518,6 +523,7 @@ function Composer({
   activeSubmitButtonClassName,
   inactiveSubmitButtonClassName,
 }: {
+  contextAttachments: ContextAttachment[];
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
@@ -557,6 +563,11 @@ function Composer({
       className={composerClassName}
       style={composerStyle}
     >
+      {contextAttachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-6 pt-3">
+          <ContextAttachmentList attachments={contextAttachments} />
+        </div>
+      )}
       <div className="flex items-center gap-2 px-6 py-3">
         <TextareaAutosize
           value={value}
@@ -626,6 +637,7 @@ function Composer({
 }
 
 type FullscreenChatOverlayProps = {
+  contextAttachments?: ContextAttachment[];
   startupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
   messages: UIMessage[];
@@ -662,6 +674,7 @@ type FullscreenChatOverlayProps = {
   contained?: boolean;
 };
 export function FullscreenChatOverlay({
+  contextAttachments = [],
   startupPhase,
   chatSessionId,
   messages,
@@ -727,6 +740,7 @@ export function FullscreenChatOverlay({
             </div>
           ) : null}
           <Composer
+            contextAttachments={contextAttachments}
             value={input}
             onChange={onInputChange}
             placeholder={placeholder}

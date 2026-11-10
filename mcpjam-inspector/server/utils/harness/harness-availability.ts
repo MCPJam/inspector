@@ -1,3 +1,5 @@
+import { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
+export { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
 /**
  * Cheap, synchronous pre-flight for a harness-typed host (Claude Code | Codex).
  *
@@ -23,7 +25,7 @@ import {
   getCanonicalModelId,
   hostedProviderFromCanonicalId,
 } from "@/shared/types";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { isHostedModelDefinition } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
@@ -32,10 +34,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import {
   harnessOrgProviderUnsupportedReason,
-  harnessRunsOnOrgProvider,
   type HarnessModelPurpose,
   type HarnessKeyPolicy,
 } from "@/shared/harness-model-support";
+import { harnessRunsOnConnection } from "@/shared/harness-connection-api";
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -119,6 +121,9 @@ export function harnessModelPurposeForSourceType(
 ): HarnessModelPurpose {
   if (sourceType === "direct") return "chat";
   if (sourceType === "swarm") return "swarm";
+  // An MCP Events trigger run is unattended and its results are reviewed
+  // later, so it takes the strict (eval) reading, like anything unlabelled.
+  if (sourceType === "event") return "eval";
   return "eval";
 }
 
@@ -130,10 +135,10 @@ export function harnessModelPurposeForSourceType(
  *  - external-account harness: the host must carry the runtime's sentinel
  *    ({@link externalAccountHostModelRefusalReason}); nothing else applies.
  *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`)
- *    OR the turn's saved selection names an org connection whose provider
- *    this harness runs on (Claude Code → Anthropic, Codex → OpenAI), which
- *    runs on the organization's own key. An org connection to any other
- *    provider is `model-provider-unsupported`; a local provider stays
+ *    OR the turn's saved selection names an org connection that serves the
+ *    API this harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI
+ *    Responses), which runs on the organization's own key. Any other org
+ *    connection is `model-provider-unsupported`; a local provider stays
  *    `model-not-hosted`. Then the harness-model evidence table at the
  *    adapter's pinned runtime version must admit the CANONICAL id for
  *    `purpose`: `unsupported` is refused (`model-unsupported`); `unknown` is
@@ -164,15 +169,9 @@ export function harnessModelRefusal(args: {
   }
   const orgSelection = orgHarnessSelection(args.selection);
   if (orgSelection) {
-    // The provider of the connection, from the resolved picker row. The
-    // backend resolves the connection id itself at lease start and refuses a
-    // mismatch; this only spares the turn a doomed start.
-    if (
-      !harnessRunsOnOrgProvider(
-        adapter.id,
-        orgSelectionProvider(args.model, orgSelection),
-      )
-    ) {
+    // The backend resolves the connection id itself at lease start and
+    // refuses a mismatch; this only spares the turn a doomed start.
+    if (!orgSelectionServesHarness(adapter.id, args.model, orgSelection)) {
       return {
         refusal: {
           kind: "model-provider-unsupported",
@@ -222,21 +221,34 @@ export function orgHarnessSelection(
 }
 
 /**
- * The provider an org turn's connection serves: the resolved row's, or — for
- * a caller that carries only the selection — the canonical id's creator
- * prefix (`anthropic/claude-sonnet-4.5` → `anthropic`). When both are known
- * and disagree, the saved selection is inconsistent with its row: no provider,
- * so the turn is refused here rather than at lease start.
+ * Whether an org turn's connection serves the API `harnessId` speaks. The
+ * connection is the resolved row's provider, or, for a caller that carries
+ * only the selection, the provider the canonical id names
+ * (`anthropic/claude-sonnet-4.5` → `anthropic`). When the row names one, the
+ * provider the id names must serve that API too: otherwise the saved
+ * selection is inconsistent with its row, and the turn is refused here rather
+ * than at lease start.
  */
-function orgSelectionProvider(
+function orgSelectionServesHarness(
+  harnessId: string,
   model: { provider?: string },
   selection: OrgHarnessSelection,
-): string | undefined {
-  const prefix = selection.modelId.includes("/")
+): boolean {
+  const named = selection.modelId.includes("/")
     ? hostedProviderFromCanonicalId(selection.modelId)
     : undefined;
-  if (model.provider && prefix && model.provider !== prefix) return undefined;
-  return model.provider ?? prefix;
+  const providerKey = model.provider ?? named;
+  if (
+    providerKey === undefined ||
+    !harnessRunsOnConnection(harnessId, { providerKey })
+  ) {
+    return false;
+  }
+  return (
+    !model.provider ||
+    !named ||
+    harnessRunsOnConnection(harnessId, { providerKey: named })
+  );
 }
 
 /**
@@ -247,8 +259,8 @@ function orgSelectionProvider(
  * covers an external-account harness, which this predicate excludes.
  *
  * True when a brokered harness is requested and the model either is
- * MCPJam-provided (the hosted rail) or comes from an org connection whose
- * provider the harness runs on. A turn on any other rail never runs the
+ * MCPJam-provided (the hosted rail) or comes from an org connection that
+ * serves the harness's API. A turn on any other rail never runs the
  * harness; the preflight refuses it before it starts.
  */
 export function runsHarness(args: {
@@ -261,10 +273,7 @@ export function runsHarness(args: {
   if (adapter.modelAccess === "external-account") return false;
   const orgSelection = orgHarnessSelection(args.selection);
   return orgSelection
-    ? harnessRunsOnOrgProvider(
-        adapter.id,
-        orgSelectionProvider(args.model, orgSelection),
-      )
+    ? orgSelectionServesHarness(adapter.id, args.model, orgSelection)
     : isHostedModelDefinition(args.model);
 }
 
@@ -298,13 +307,15 @@ export function externalAccountHostModelRefusalReason(args: {
   harnessId: HarnessId;
   /** The model id to hold to the rule. See the note above on which one. */
   modelId: string;
+  requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
   if (adapter.modelAccess !== "external-account") return undefined;
-  if (isRuntimeChosenModelSentinel(args.modelId)) return undefined;
+  const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
+  if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (
-    `The ${adapter.displayName} client chooses its own model and cannot use "${args.modelId}". ` +
-    "Reset this client's model selection or choose a client that supports your model."
+    `The ${adapter.displayName} client cannot use "${modelId}". ` +
+    "Choose a model from your organization's Cursor account."
   );
 }
 
@@ -421,43 +432,6 @@ export function harnessReasoningEffortRefusalReason(args: {
  * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
  * the same posture a runtime that can't pause already gets.
  */
-export function harnessToolApprovalRefusalReason(args: {
-  adapter: HarnessRuntimeAdapter;
-  requireToolApproval: boolean;
-  /** Whether the host has any selected MCP servers. Selects whether the
-   *  MCP-surface arm applies; the native-surface arm applies regardless. */
-  hasSelectedMcpServers: boolean;
-  /** Nobody can answer an approval on this run (evals, swarms). */
-  unattended?: boolean;
-}): string | undefined {
-  if (!args.requireToolApproval) return undefined;
-  const name = args.adapter.displayName;
-  if (args.unattended) {
-    return (
-      `The ${name} client cannot wait for tool approval in evals or swarms. ` +
-      "Turn off tool approvals for this client to continue."
-    );
-  }
-  // The runtime runs its own native tools in-sandbox. If it can't pause on
-  // those, approval is unsound for the whole turn — servers or no servers.
-  if (!args.adapter.supportsNativeToolApproval) {
-    return (
-      `The ${name} client does not support interactive tool approval. ` +
-      "Turn off tool approvals for this client or choose another client."
-    );
-  }
-  const mcpToolApproval =
-    args.adapter.mcpDelivery === "harness"
-      ? args.adapter.supportsMcpToolApproval
-      : args.adapter.supportsHostExecutedToolApproval;
-  if (args.hasSelectedMcpServers && !mcpToolApproval) {
-    return (
-      `The ${name} client cannot wait for approval of MCP server tools. ` +
-      "Turn off tool approvals for this client or choose another client."
-    );
-  }
-  return undefined;
-}
 
 /**
  * Why a harness was refused, as a value rather than a sentence.
@@ -475,8 +449,8 @@ export type HarnessUnavailableKind =
   | "computers-unconfigured"
   | "tool-approval"
   | "model-not-hosted"
-  /** An organization connection whose provider this harness does not run on
-   *  (an OpenAI connection on Claude Code, say). */
+  /** An organization connection that does not serve this harness's API (an
+   *  OpenAI connection on Claude Code, say). */
   | "model-provider-unsupported"
   | "model-unsupported"
   /** The evidence table has not verified this model on the harness's runtime
@@ -511,6 +485,7 @@ export type HarnessAvailability =
   | { ok: false; kind: HarnessUnavailableKind; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
+  mcpClient?: "mcpjam" | "harness";
   /** The harness this host runs — selects the capability set. */
   harnessId: HarnessId;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
@@ -608,7 +583,7 @@ export function checkHarnessRuntimeAvailable(args: {
   unattended?: boolean;
   /**
    * The turn's saved model selection, when it has one. A `source: 'org'`
-   * selection naming a connection whose provider this harness runs on is
+   * selection naming a connection that serves this harness's API is
    * admitted on the organization's own key instead of `model-not-hosted`;
    * the backend resolves the connection id authoritatively at lease start.
    */
@@ -670,6 +645,7 @@ export function checkHarnessRuntimeAvailable(args: {
   // can never disagree about which combinations are sound.
   const approvalRefusal = harnessToolApprovalRefusalReason({
     adapter,
+    mcpClient: args.mcpClient,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     unattended: args.unattended === true,

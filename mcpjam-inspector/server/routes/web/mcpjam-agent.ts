@@ -1,3 +1,4 @@
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { EVAL_DESCRIBE_ONLY_AGENT, evalAgentScopeSchema, evalAgentSystemPrompt, EVAL_AGENT_TOOL_NAMES } from "../../../shared/eval-agent-scope.js";
 import {
   AGENT_MAX_STEPS,
@@ -754,6 +755,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
 
       return c.json({
         html,
+        sourceReceipt: await sandboxSourceReceipt(c, { serverId: PLATFORM_SERVER_ID, resourceUri: resolvedResourceUri, toolCallId: body.toolId }, html, uiMeta.csp),
         csp: effectiveCspMode === "permissive" ? undefined : uiMeta.csp,
         permissions: uiMeta.permissions,
         permissive: effectiveCspMode === "permissive",

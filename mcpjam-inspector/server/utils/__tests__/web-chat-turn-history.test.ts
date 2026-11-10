@@ -47,7 +47,8 @@ vi.mock("../chat-v2-orchestration.js", () => ({
 vi.mock("../chat-ingestion.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   persistChatSessionToConvex: vi.fn(
-    async (args: { sessionMessages: unknown[] }) => {
+    async (args: { sessionMessages: unknown[]; authorizationFailure?: { status?: number } }) => {
+      if (args.authorizationFailure) return { outcome: "failed", failureKind: "http_error", status: args.authorizationFailure.status };
       state.persisted.push(args.sessionMessages);
       return { outcome: "saved" };
     },
@@ -284,6 +285,7 @@ async function runTurn(
     onChunk?: (chunk: any) => void;
     model?: Record<string, unknown>;
     chatSessionId?: string;
+    getAuthorization?: () => Promise<string>;
   } = {},
 ): Promise<any[]> {
   const response = await streamWebChatTurn({
@@ -305,6 +307,7 @@ async function runTurn(
       originalMessages: uiMessages,
       selectedServerIds: [],
       captureToolSnapshot: false,
+      getAuthorization: options.getAuthorization,
     },
     runtime: {
       authHeader: "Bearer test-token",
@@ -1137,4 +1140,27 @@ describe("App message presentation persistence", () => {
     expect(modelRequests.at(-1)!.raw).toContain("Underlying model instruction");
     expect(modelRequests.at(-1)!.raw).not.toContain("Visible App item");
   });
+});
+
+
+it("resolves authorization at final persistence without rerunning the completed model turn", async () => {
+  const getAuthorization = vi.fn(async () => {
+    expect(modelRequests).toHaveLength(1);
+    return "Bearer renewed-at-completion";
+  });
+  await runTurn([user("u1", "one reply")], { getAuthorization });
+  expect(getAuthorization).toHaveBeenCalledOnce();
+  expect(modelRequests).toHaveLength(1);
+  const { persistChatSessionToConvex } = await import("../chat-ingestion.js");
+  expect(vi.mocked(persistChatSessionToConvex)).toHaveBeenLastCalledWith(expect.objectContaining({ authHeader: "Bearer renewed-at-completion" }));
+});
+
+it("returns a failed receipt when final save authorization is unavailable, without rerunning the turn", async () => {
+  const { WebRouteError, ErrorCode } = await import("../../routes/web/errors.js");
+  const getAuthorization = vi.fn(async () => { throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, "Session check unavailable"); });
+  const chunks = await runTurn([user("u1", "one reply")], { getAuthorization });
+  expect(getAuthorization).toHaveBeenCalledOnce();
+  expect(modelRequests).toHaveLength(1);
+  expect(state.persisted).toEqual([]);
+  expect(chunks).toContainEqual(expect.objectContaining({ type: "data-persist-receipt", data: expect.objectContaining({ outcome: "failed", failureKind: "http_error" }) }));
 });

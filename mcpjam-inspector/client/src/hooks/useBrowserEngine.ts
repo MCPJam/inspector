@@ -30,7 +30,7 @@ export function useBrowserEngine(
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environmentMode =
-    scope === "conversation" && environmentsEnabled && Boolean(environmentId);
+    scope === "conversation" && !authLoading && Boolean(user) && environmentsEnabled && Boolean(environmentId);
   const boundLocation = useActiveChatSessionStore((state) =>
     state.browserLocation?.projectId === projectId &&
     state.browserLocation.sessionId === state.sessionId

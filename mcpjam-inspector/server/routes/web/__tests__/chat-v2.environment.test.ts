@@ -783,13 +783,14 @@ describe("web chat-v2 — environment execution target", () => {
       }) as typeof fetch;
     }
 
-    const environmentTurn = () => {
+    const environmentTurn = (model = BASE_BODY.model) => {
       const { app, token } = createWebTestApp();
       return postJson(
         app,
         "/api/web/chat-v2",
         {
           ...BASE_BODY,
+          model,
           executionTarget: { kind: "environment", environmentId: "env_1" },
         },
         token
@@ -828,12 +829,14 @@ describe("web chat-v2 — environment execution target", () => {
       });
     });
 
-    it.each(["claude-code", "codex", "cursor"])("%s omits an authorization refusal from harness delivery", async (harness) => {
+    it.each(["claude-code", "codex", "cursor", "opencode"])("%s omits an authorization refusal from harness delivery", async (harness) => {
       convexQueryMock.mockResolvedValue({ ...ENV_SPEC, host: {
         ...ENV_SPEC.host, runtimeConfig: { ...ENV_SPEC.host.runtimeConfig, harness, ...(harness === "cursor" ? { modelId: "cursor/auto" } : {}) },
       } });
       needsSignIn("env-server-1");
-      const response = await environmentTurn();
+      const response = await environmentTurn(harness === "cursor"
+        ? { id: "cursor/auto", provider: "cursor", name: "Auto" }
+        : BASE_BODY.model);
       expect(response.status, await response.clone().text()).toBe(200);
       expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(expect.objectContaining({
         selectedServers: ["env-server-1", "env-server-2"],

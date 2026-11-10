@@ -11,7 +11,7 @@ import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
-import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
+import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
@@ -32,7 +32,13 @@ import {
 } from "./use-saved-run-reports";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { RunResultRing } from "./RunResultRing";
+import {
+  ConformanceHistoryFilters,
+  searchAndSortHistory,
+  type HistorySort,
+} from "./ConformanceHistoryFilters";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
+import { conformanceRunTargetName } from "./conformance-run-target";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -96,9 +102,19 @@ export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
+/** Runs per page while History shows the newest first. */
+const HISTORY_PAGE_SIZE = 20;
+/**
+ * Runs per page while History reads every run. The backend matches runs by
+ * server only and orders them by date only, so search and the name sort work
+ * on the whole history, not on the pages loaded so far.
+ */
+const HISTORY_READ_ALL_PAGE_SIZE = 100;
+
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page.
+ * opens the run's detail page. Above it, a search box, a server filter and a
+ * sort, laid out like the Swarms sessions filters.
  */
 export function ConformanceHistory({
   projectId,
@@ -110,12 +126,35 @@ export function ConformanceHistory({
 }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [rows, setRows] = useState<ConformanceRunListItem[]>([]);
-  const navigate = useAppNavigate();
+  /** A saved server's id, or null for every server. */
+  const [serverFilter, setServerFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<HistorySort>("newest");
+  const openRun = useOpenRunFromHistory(projectId);
+
+  const query = search.trim().toLowerCase();
+  // One server's runs all share a name, so the name sort needs no more of
+  // them than are loaded. A search does.
+  const readsEveryRun =
+    query.length > 0 || (sort === "server" && serverFilter === null);
+  /** History is paging forward on its own, on the large page. */
+  const [readAll, setReadAll] = useState(false);
+  /** Once there are runs, the toolbar stays up through every reload. */
+  const [hadRuns, setHadRuns] = useState(false);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
     projectId
-      ? ({ projectId, paginationOpts: { numItems: 20, cursor } } as any)
+      ? ({
+          projectId,
+          // The backend filters by server on its index, so a filtered list
+          // pages through that server's runs alone.
+          ...(serverFilter ? { targetKey: `server:${serverFilter}` } : {}),
+          paginationOpts: {
+            numItems: readAll ? HISTORY_READ_ALL_PAGE_SIZE : HISTORY_PAGE_SIZE,
+            cursor,
+          },
+        } as any)
       : "skip",
   ) as
     | {
@@ -124,6 +163,16 @@ export function ConformanceHistory({
         continueCursor: string;
       }
     | undefined;
+
+  // A list that is already complete has nothing left to read.
+  if (readsEveryRun && !readAll && page && !page.isDone) setReadAll(true);
+  // Paging forward leaves only the last page watched: once cleared, go back to
+  // the first page, so new and finishing runs show again.
+  if (!readsEveryRun && readAll) {
+    setReadAll(false);
+    setCursor(null);
+  }
+  if (rows.length > 0 && !hadRuns) setHadRuns(true);
 
   useEffect(() => {
     if (!page) return;
@@ -134,96 +183,173 @@ export function ConformanceHistory({
     });
   }, [cursor, page]);
 
+  // Search and the name sort keep loading pages until the history is complete.
+  useEffect(() => {
+    if (readAll && page && !page.isDone) setCursor(page.continueCursor);
+  }, [readAll, page]);
+
   const serverLabel = (run: ConformanceRunListItem) =>
-    (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
-    run.targetKey.replace(/^server:/, "");
+    conformanceRunTargetName(run, serverNames);
+
+  const changeServerFilter = (next: string | null) => {
+    if (next === serverFilter) return;
+    // Another server is another list: start it from its first page.
+    setServerFilter(next);
+    setCursor(null);
+    setRows([]);
+    setReadAll(false);
+  };
 
   // "Load more" changes the query's cursor, and the query reads undefined
   // again while that page loads: only the first page may replace the table.
-  if (page === undefined && rows.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        Loading run history…
-      </p>
-    );
+  // Only the first load returns early: a reload keeps the toolbar and its focus.
+  if (!hadRuns && serverFilter === null) {
+    if (page === undefined && rows.length === 0) {
+      return (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading run history…
+        </p>
+      );
+    }
+
+    if (rows.length === 0) {
+      return (
+        <EmptyState
+          icon={FlaskConical}
+          title="No conformance runs yet"
+          className="h-auto py-10"
+          description="Runs from the Inspector, the CLI, GitHub, and the API land here."
+        />
+      );
+    }
   }
 
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No conformance runs yet"
-        className="h-auto py-10"
-        description="Runs from the Inspector, the CLI, GitHub, and the API land here."
-      />
-    );
-  }
+  const visibleRows = searchAndSortHistory(rows, {
+    query,
+    sort,
+    texts: (run) => [
+      serverLabel(run),
+      run.protocolVersion ?? "Auto",
+      HISTORY_SOURCE_LABEL[run.source] ?? run.source,
+    ],
+    serverName: serverLabel,
+  });
+  const readingEveryRun = readAll && (!page || !page.isDone);
+  const filteredServerName = serverFilter
+    ? (serverNames?.get(serverFilter) ?? serverFilter)
+    : null;
 
   const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
   const columns =
     "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
   const cell = "min-w-0 truncate";
 
+  const notice = (text: string, status = false) => (
+    <p
+      className="px-1 text-sm text-muted-foreground"
+      role={status ? "status" : undefined}
+    >
+      {text}
+    </p>
+  );
+
   return (
     <section className="space-y-3" aria-label="Run history">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
-          <span className={`${cell} ${header}`}>SERVER</span>
-          <span className={`${cell} ${header}`}>PROTOCOL</span>
-          <span className={`${cell} ${header}`}>SCORE</span>
-          <span className={`${cell} ${header}`}>CHECKS</span>
-          <span className={`${cell} ${header}`}>RESULT</span>
-          <span className={`${cell} ${header}`}>DATE</span>
-          <span className={`${cell} ${header}`}>SOURCE</span>
-        </div>
-        <ul>
-          {rows.map((run) => (
-            <li
-              key={run._id}
-              className="border-t border-border/60 first:border-t-0"
-            >
-              <button
-                type="button"
-                className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
-                data-testid="conformance-history-row"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  navigate(buildConformanceRunPath(run._id, projectId));
-                }}
-              >
-                <span className={`${cell} text-sm font-semibold`}>
-                  {serverLabel(run)}
-                </span>
-                <span className={`${cell} text-[13px] text-muted-foreground`}>
-                  {run.protocolVersion ?? "Auto"}
-                </span>
-                <span
-                  className={`${cell} text-sm tabular-nums ${
-                    run.score == null ? "text-muted-foreground" : ""
-                  }`}
-                >
-                  {run.score == null ? "—" : `${run.score}%`}
-                </span>
-                <span className={`${cell} text-sm font-semibold tabular-nums`}>
-                  {run.passed}/{run.applicable}
-                </span>
-                <span className="flex min-w-0 items-center">
-                  <RunResultRing run={run} />
-                </span>
-                <span className="whitespace-nowrap text-[13px] text-muted-foreground">
-                  {historyDateFormat.format(run.createdAt)}
-                </span>
-                <span className={`${cell} text-[13px] text-muted-foreground`}>
-                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <ConformanceHistoryFilters
+        search={search}
+        onSearchChange={setSearch}
+        serverFilter={serverFilter}
+        onServerFilterChange={changeServerFilter}
+        serverNames={serverNames}
+        sort={sort}
+        onSortChange={setSort}
+      />
 
-      {page === undefined ? (
+      {readingEveryRun && rows.length > 0
+        ? notice("Loading every run…", true)
+        : null}
+
+      {page === undefined && rows.length === 0 ? (
+        notice("Loading run history…", true)
+      ) : rows.length === 0 ? (
+        notice(
+          filteredServerName
+            ? `No runs for ${filteredServerName} yet.`
+            : "No conformance runs yet.",
+          true,
+        )
+      ) : visibleRows.length === 0 ? (
+        readingEveryRun ? null : (
+          <p
+            className="px-1 text-sm text-muted-foreground"
+            role="status"
+            data-testid="conformance-history-no-match"
+          >
+            No runs match &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
+            <span className={`${cell} ${header}`}>SERVER</span>
+            <span className={`${cell} ${header}`}>PROTOCOL</span>
+            <span className={`${cell} ${header}`}>SCORE</span>
+            <span className={`${cell} ${header}`}>CHECKS</span>
+            <span className={`${cell} ${header}`}>RESULT</span>
+            <span className={`${cell} ${header}`}>DATE</span>
+            <span className={`${cell} ${header}`}>SOURCE</span>
+          </div>
+          <ul>
+            {visibleRows.map((run) => (
+              <li
+                key={run._id}
+                className="border-t border-border/60 first:border-t-0"
+              >
+                <button
+                  type="button"
+                  className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
+                  data-testid="conformance-history-row"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openRun(run._id);
+                  }}
+                >
+                  <span className={`${cell} text-sm font-semibold`}>
+                    {serverLabel(run)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {run.protocolVersion ?? "Auto"}
+                  </span>
+                  <span
+                    className={`${cell} text-sm tabular-nums ${
+                      run.score == null ? "text-muted-foreground" : ""
+                    }`}
+                  >
+                    {run.score == null ? "—" : `${run.score}%`}
+                  </span>
+                  <span
+                    className={`${cell} text-sm font-semibold tabular-nums`}
+                  >
+                    {run.passed}/{run.applicable}
+                  </span>
+                  <span className="flex min-w-0 items-center">
+                    <RunResultRing run={run} />
+                  </span>
+                  <span className="whitespace-nowrap text-[13px] text-muted-foreground">
+                    {historyDateFormat.format(run.createdAt)}
+                  </span>
+                  <span className={`${cell} text-[13px] text-muted-foreground`}>
+                    {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
         <Button variant="outline" size="sm" disabled>
           Loading…
         </Button>
@@ -254,7 +380,7 @@ export function ConformanceRunDetailPage({
   serverSettings?: SavedRunServerSettings;
   serversLoading?: boolean;
 }) {
-  const navigate = useAppNavigate();
+  const back = useRunBack();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
@@ -301,8 +427,7 @@ export function ConformanceRunDetailPage({
   const savedServerName = detail.serverId
     ? serverNames?.get(detail.serverId)
     : undefined;
-  const serverName =
-    savedServerName ?? detail.targetKey.replace(/^server:/, "");
+  const serverName = conformanceRunTargetName(detail, serverNames);
   const finished = detail.status === "completed";
 
   if (settingsOpen && savedServerName && serverSettings) {
@@ -320,8 +445,8 @@ export function ConformanceRunDetailPage({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* The same chrome as a run on screen, so a saved run reads like it. */}
       <DetailPageHeader
-        backLabel="Conformance History"
-        onBack={() => navigate("/conformance?view=history")}
+        backLabel={back.label}
+        onBack={back.onBack}
         backTestId="conformance-saved-run-back"
         title={
           <h1
@@ -372,18 +497,18 @@ export function ConformanceRunDetailPage({
             detail.status !== "timed_out" &&
             detail.status !== "cancelled"
           }
+          // A suite's own row already says why it is incomplete; the card
+          // repeats the run's reason only when no suite carries it (e.g. a
+          // suite that never reported).
+          note={
+            detail.incompleteReason &&
+            !detail.reports.some(
+              (report) => report.incompleteReason === detail.incompleteReason,
+            )
+              ? detail.incompleteReason
+              : null
+          }
         />
-        {/* A suite's own row already says why it is incomplete; repeat the
-            run's reason here only when no suite carries it (e.g. a suite
-            that never reported). */}
-        {detail.incompleteReason &&
-        !detail.reports.some(
-          (report) => report.incompleteReason === detail.incompleteReason,
-        ) ? (
-          <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
-            {detail.incompleteReason}
-          </p>
-        ) : null}
 
         <ConformanceAdvice groups={advice} />
 

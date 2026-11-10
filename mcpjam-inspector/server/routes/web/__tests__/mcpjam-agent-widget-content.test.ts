@@ -82,6 +82,12 @@ const SHOW_SERVERS_URI = "ui://mcpjam/show-servers.html";
 
 function makeApp() {
   const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("workosUserId", "fixture-user");
+    c.set("workosSessionId", "fixture-session");
+    c.set("authMethod", "authkit_jwt");
+    await next();
+  });
   app.route("/api/web/mcpjam-agent", mcpjamAgent);
   return app;
 }
@@ -102,6 +108,7 @@ function post(app: Hono, body: unknown, headers: Record<string, string> = {}) {
 }
 
 beforeEach(() => {
+  vi.stubEnv("SANDBOX_VIEW_SIGNING_SECRET", "fixture-signing-secret-with-at-least-32-characters");
   managerState.constructedConfigs.length = 0;
   managerState.readResource.mockReset();
   managerState.listTools.mockReset();
@@ -324,3 +331,5 @@ describe("eval-scoped agent requests", () => {
     } finally { delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS; }
   });
 });
+
+afterEach(() => { vi.unstubAllEnvs(); });
