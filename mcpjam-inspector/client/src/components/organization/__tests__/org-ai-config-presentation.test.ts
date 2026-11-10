@@ -108,34 +108,37 @@ describe("featureGuidance", () => {
     }
   });
 
-  it("names the vendor each harness runtime runs on", () => {
+  it("names the providers and gateways each harness runtime runs on", () => {
     expect(
       featureGuidance(feature({ id: "harness", status: "ready" }), {
         eligibleConnectionIds: ["conn_1"],
         canManage: true,
       }),
     ).toBe(
-      "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.",
+      "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.",
     );
     expect(HARNESS_ORG_KEYS_GUIDANCE).not.toMatch(/MCPJam/);
-    for (const status of ["unconfigured", "unsupported"] as const) {
-      expect(
-        featureGuidance(feature({ id: "harness", status }), {
-          eligibleConnectionIds: ["conn_1"],
-          canManage: true,
-        }),
-      ).toBe(
-        "Add an Anthropic provider for Claude Code or an OpenAI provider for Codex in Providers.",
-      );
-      expect(
-        featureGuidance(feature({ id: "harness", status }), {
-          eligibleConnectionIds: [],
-          canManage: false,
-        }),
-      ).toBe(
-        "Ask an organization admin to add an Anthropic provider for Claude Code or an OpenAI provider for Codex.",
-      );
-    }
+    const guidance = (
+      status: "unconfigured" | "unsupported",
+      canManage: boolean,
+    ) =>
+      featureGuidance(feature({ id: "harness", status }), {
+        eligibleConnectionIds: canManage ? ["conn_1"] : [],
+        canManage,
+      });
+    expect(guidance("unconfigured", true)).toBe(
+      "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers.",
+    );
+    expect(guidance("unconfigured", false)).toBe(
+      "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.",
+    );
+    // A connection exists that no harness runs on: turn its API on first.
+    expect(guidance("unsupported", true)).toBe(
+      "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider.",
+    );
+    expect(guidance("unsupported", false)).toBe(
+      "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.",
+    );
     // A rejected key is the general fix.
     expect(
       featureGuidance(

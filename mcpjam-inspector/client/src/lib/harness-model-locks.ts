@@ -8,13 +8,14 @@ import { isRuntimeAccountModel } from "@/shared/model-provider";
  * So an incompatible row stays listed, disabled, with the server's own reason.
  *
  * Whose key pays is decided first, per ROW: a harness with a qualified
- * org-key path (Claude Code, Codex) runs an MCPJam-provided row on MCPJam's
- * key, or a row from an organization connection that serves the API the
- * harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI Responses)
+ * org-key path runs an MCPJam-provided row on MCPJam's key, or a row from an
+ * organization connection that serves the API the harness speaks (Claude Code
+ * and OpenCode: Anthropic Messages, Codex and Copilot CLI: OpenAI Responses)
  * on the organization's key, read on the canonical id that row's saved
- * selection names. OpenCode is platform-funded only. Any other row (a key on
- * this machine, an org connection a harness cannot run on) is refused, exactly
- * as the server refuses it.
+ * selection names. A gateway row is read on the catalog model its entry maps
+ * to (`gatewayHarnessModel`), and an unmapped one is refused. Any other row
+ * (a key on this machine, an org connection a harness cannot run on) is
+ * refused, exactly as the server refuses it.
  *
  * While the organization requires its own provider keys (`HarnessKeyPolicy`),
  * MCPJam-provided models are off: a brokered harness runs only on an
@@ -28,12 +29,16 @@ import {
   harnessTakesOrgKeys,
 } from "@/shared/harness-connection-api";
 import {
+  gatewayHarnessModel,
+  isGatewayModelId,
+  type HarnessGatewayModel,
+} from "@/shared/harness-gateway-model";
+import {
   harnessModelSupport,
   harnessModelVerdictAdmits,
   harnessNoRunnableModelReason,
   harnessOrgProviderUnsupportedReason,
   harnessPinnedVersion,
-  harnessRunsOnOrgProvider,
   type HarnessKeyPolicy,
   type HarnessModelPurpose,
 } from "@/shared/harness-model-support";
@@ -103,7 +108,7 @@ function harnessIsBrokered(harnessId: string): boolean {
  * cannot run there at all. See the module comment for the rule.
  *
  * A harness that never takes an org key (Cursor, on the customer's own
- * Cursor account; OpenCode, platform-funded only) reads the table alone.
+ * Cursor account) reads the table alone.
  */
 export function harnessRowModelId(
   model: ModelDefinition,
@@ -139,6 +144,14 @@ export function harnessRowModelId(
           ),
         }
       : { modelId: String(model.id), rail: "hosted" };
+  }
+  if (model.orgProvider && model.gateway) {
+    const gateway = gatewayHarnessModel(
+      target.harnessId,
+      model.gateway,
+      runtimeVersionOf(target),
+    );
+    return "refusal" in gateway ? gateway : { ...gateway, rail: "org" };
   }
   if (
     model.orgProvider &&
@@ -186,14 +199,17 @@ export function harnessRowRefusalReason(
  * Why a SAVED choice (an id and, when it has one, its selection) cannot run on
  * `target` — for a surface that holds choices rather than picker rows (the
  * composer's resolve, `expandModelChoices`). A local selection never runs on a
- * brokered harness; an org selection runs only where the provider its
- * canonical id's prefix names serves the harness's API (the server, which
- * knows the connection's provider, re-checks at admission).
+ * brokered harness. An org selection on a vendor runs only where the provider
+ * its canonical id's prefix names serves the harness's API. An org selection
+ * on a gateway is judged on its gateway model (`gateway`, which a caller that
+ * holds the org config passes); without it, lease start judges it. The server
+ * re-checks the connection at admission either way.
  */
 export function harnessChoiceRefusalReason(
   choice: {
     modelId: string;
     selection?: Pick<ModelSelection, "source"> | null;
+    gateway?: HarnessGatewayModel;
   },
   target: HarnessModelTarget | null | undefined,
   purpose: HarnessModelPurpose,
@@ -202,11 +218,27 @@ export function harnessChoiceRefusalReason(
     return "Choose a Cursor client to use this model.";
   if (!target) return undefined;
   const source = choice.selection?.source;
+  if (source === "org" && isGatewayModelId(choice.modelId)) {
+    if (!choice.gateway) {
+      return harnessTakesOrgKeys(target.harnessId)
+        ? undefined
+        : harnessOrgProviderUnsupportedReason(target.harnessId);
+    }
+    const gateway = gatewayHarnessModel(
+      target.harnessId,
+      choice.gateway,
+      runtimeVersionOf(target),
+    );
+    return "refusal" in gateway ? gateway.refusal : undefined;
+  }
   if (source === "org") {
     const vendor = choice.modelId.includes("/")
       ? hostedProviderFromCanonicalId(choice.modelId)
       : undefined;
-    if (!harnessRunsOnOrgProvider(target.harnessId, vendor)) {
+    if (
+      !vendor ||
+      !harnessRunsOnConnection(target.harnessId, { providerKey: vendor })
+    ) {
       return harnessOrgProviderUnsupportedReason(target.harnessId);
     }
   }
@@ -287,10 +319,11 @@ export function harnessModelLockReasonsByRow(
  * organization connection that serves the harness's API (run on the org's
  * key), that the evidence table admits for chat on their canonical id. A row
  * the table has not verified (`unknown`) stays enabled, with its reason as a
- * warning, because the server runs it in chat with the same warning. Nothing
- * runnable leaves every row disabled, and the caller shows the empty state;
- * the catalog is returned unlocked only for an external-account harness
- * (Cursor), whose account picks the model.
+ * warning, because the server runs it in chat with the same warning; a
+ * gateway row runs only on `supported`, which lease start requires of it.
+ * Nothing runnable leaves every row disabled, and the caller shows the empty
+ * state; the catalog is returned unlocked only for an external-account
+ * harness (Cursor), whose account picks the model.
  *
  * Under the organization's key policy (`policy.requireOrgKeys`) a saved model
  * the policy no longer allows (`ORG_KEYS_MODEL_REASON`) is kept as it is: the

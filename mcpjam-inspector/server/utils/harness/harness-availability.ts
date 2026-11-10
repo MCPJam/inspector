@@ -37,7 +37,12 @@ import {
   type HarnessModelPurpose,
   type HarnessKeyPolicy,
 } from "@/shared/harness-model-support";
-import { harnessRunsOnConnection } from "@/shared/harness-connection-api";
+import {
+  harnessRunsOnConnection,
+  harnessTakesOrgKeys,
+  harnessWireApi,
+} from "@/shared/harness-connection-api";
+import { isGatewayModelId } from "@/shared/harness-gateway-model";
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -136,15 +141,19 @@ export function harnessModelPurposeForSourceType(
  *    ({@link externalAccountHostModelRefusalReason}); nothing else applies.
  *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`)
  *    OR the turn's saved selection names an org connection that serves the
- *    API this harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI
- *    Responses), which runs on the organization's own key. Any other org
- *    connection is `model-provider-unsupported`; a local provider stays
- *    `model-not-hosted`. Then the harness-model evidence table at the
- *    adapter's pinned runtime version must admit the CANONICAL id for
- *    `purpose`: `unsupported` is refused (`model-unsupported`); `unknown` is
- *    refused for evals and swarms (`model-unverified`, "not verified for
- *    <harness> <version>") and allowed in Playground chat, where the same
- *    sentence comes back as `warning`.
+ *    API this harness speaks (Claude Code and OpenCode: Anthropic Messages,
+ *    Codex and Copilot CLI: OpenAI Responses), which runs on the
+ *    organization's own key. Any other org connection is
+ *    `model-provider-unsupported`; a local provider stays `model-not-hosted`.
+ *    Then the harness-model evidence table at the adapter's pinned runtime
+ *    version must admit the CANONICAL id for `purpose`: `unsupported` is
+ *    refused (`model-unsupported`); `unknown` is refused for evals and swarms
+ *    (`model-unverified`, "not verified for <harness> <version>") and allowed
+ *    in Playground chat, where the same sentence comes back as `warning`.
+ *  - a gateway selection (`custom:*`) skips the table here: the catalog model
+ *    its entry maps to, and the APIs the gateway serves, are on the
+ *    connection, which lease start reads and refuses with the backend's code
+ *    and reason (on a box, `/reserve` does before anything is installed).
  */
 export function harnessModelRefusal(args: {
   keyPolicy?: HarnessKeyPolicy;
@@ -187,6 +196,7 @@ export function harnessModelRefusal(args: {
       },
     };
   }
+  if (orgSelection && isGatewayModelId(orgSelection.modelId)) return {};
   // Evidence is read on the CANONICAL id: an org row's own id is the native
   // one (`claude-sonnet-4-5`), which the table does not know.
   const verdict = adapter.modelSupport(
@@ -228,12 +238,20 @@ export function orgHarnessSelection(
  * provider the id names must serve that API too: otherwise the saved
  * selection is inconsistent with its row, and the turn is refused here rather
  * than at lease start.
+ *
+ * A gateway selection's id names the gateway, never the vendor of the model
+ * behind it, so no creator prefix decides it: the gateway's APIs do. This
+ * server does not hold them, so it admits any harness that takes organization
+ * keys and speaks an API, and lease start judges the gateway.
  */
 function orgSelectionServesHarness(
   harnessId: string,
   model: { provider?: string },
   selection: OrgHarnessSelection,
 ): boolean {
+  if (isGatewayModelId(selection.modelId)) {
+    return harnessTakesOrgKeys(harnessId) && harnessWireApi(harnessId) !== null;
+  }
   const named = selection.modelId.includes("/")
     ? hostedProviderFromCanonicalId(selection.modelId)
     : undefined;
