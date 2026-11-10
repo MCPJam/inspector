@@ -50,6 +50,7 @@ import {
   shouldTouchActivity,
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
+import { browserBoxAwake } from "../../utils/computers/browser-box-awake.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -353,7 +354,7 @@ export function createComputerBrowserFramesWsHandler(
           info.value.projectId !== claims.projectId
         ) {
           refusal = { code: CLOSE_UNAUTHORIZED, reason: "invalid token" };
-        } else if (info.value.status !== (claims.computerId ? "ready" : "live")) {
+        } else if (!browserBoxAwake(target, info.value.status)) {
           // Free: the status came back in the read we already made for the
           // ownership check. A paused box has no daemon answering, so opening
           // the upstream would fail anyway — this just says WHY, so the pane
@@ -554,14 +555,14 @@ export function createComputerBrowserFramesWsHandler(
 
         /**
          * A watching pane issues no COMMANDS, so nothing else keeps the session
-         * row fresh or the box awake — and the idle sweep would reap a browser
-         * somebody is looking at.
+         * row fresh. Whether watching keeps the box awake is the backend's call
+         * (it never does: a desktop pauses five minutes after the last input).
          */
         const touch = () => {
           watched = false;
           // THE BACKEND HAS THE LAST WORD, exactly as `/keepalive` lets it.
-          // `touchSession` answers `counted: false` once the browser has gone
-          // long enough without a real command, which is the ceiling that
+          // `touchSession` answers `counted: false` for watching, which is
+          // never use, and that answer is what
           // stops a pane left open over a weekend holding a metered box awake
           // forever. Firing `touchActivity` regardless discarded that answer
           // and bumped `lastActiveAt` anyway, so the idle sweep never came —
