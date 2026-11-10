@@ -9,6 +9,9 @@ export type ForwardingRuntimeContract = {
   correlationKey?: string;
   /** Shared MCPJam handlers may fulfill input alongside this runtime. */
   ownedInput?: boolean;
+  /** MCPJam's client never stands in for this runtime's own, so a turn the
+   *  profiled bridge would carry keeps its configured route instead. */
+  passThroughOnly?: true;
   refresh<T extends HarnessV1>(
     runtime: T,
     servers: HarnessMcpJson["mcpServers"],

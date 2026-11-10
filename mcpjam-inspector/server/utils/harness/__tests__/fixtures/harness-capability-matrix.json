@@ -193,6 +193,12 @@
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "forwardingRuntime": {
+        "configurationVersion": "acp-forward-v1",
+        "ownedInput": false,
+        "passThroughOnly": true,
+        "runtimeVersion": "2026.11.05-86047df"
+      },
       "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",

@@ -1739,6 +1739,17 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   }
   expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
   expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
-  expect(getHarnessAdapter("cursor").forwardingRuntime).toBeUndefined();
+  // Cursor forwards on pass-through only: approval bindings correlate its
+  // calls, it declines elicitation itself, and its config never changes.
+  const cursor = getHarnessAdapter("cursor").forwardingRuntime;
+  expect(cursor).toMatchObject({
+    runtimeVersion: getHarnessAdapter("cursor").pinnedRuntimeVersion,
+    configurationVersion: "acp-forward-v1",
+    ownedInput: false,
+    passThroughOnly: true,
+  });
+  expect(cursor).not.toHaveProperty("correlationKey");
+  const runtime = { harnessId: "cursor" } as never;
+  expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });
