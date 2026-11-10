@@ -292,8 +292,9 @@ describe("session-stable forwarding", () => {
     const input = { providerIdentifier: "server", toolName: "read", args: {} };
     expect(prepared.isForwardedTool("acp_tool_1", input)).toBe(true);
     expect(prepared.isForwardedTool("acp_tool_2", { command: "ls" })).toBe(false);
-    // A name alone is not an attribution for this runtime.
-    expect(prepared.isForwardedTool("mcp__server__read", {})).toBe(false);
+    // Host-executed tools carry the registered server in their names.
+    expect(prepared.isForwardedTool("mcp__server__read", {})).toBe(true);
+    expect(prepared.isForwardedTool("mcp__unknown__read", {})).toBe(false);
     await expect(prepared.readToolResult("server", "acp_tool_1")).resolves.toBeUndefined();
     await prepared.stop();
   });
