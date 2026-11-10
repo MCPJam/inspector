@@ -291,6 +291,7 @@ export function OverallScoreCard({
   blockedBySignIn = 0,
   timedOut = 0,
   action,
+  note,
 }: {
   score: ScoreSummary | undefined;
   serverName: string;
@@ -316,6 +317,11 @@ export function OverallScoreCard({
   timedOut?: number;
   /** Shown at the end of the verdict line, e.g. a link to the saved run. */
   action?: ReactNode;
+  /**
+   * Why the run ended early, e.g. "Run stopped before every requested suite
+   * settled". It sits under the verdict it explains, inside the card.
+   */
+  note?: string | null;
 }) {
   // No number while the run is going: it moves as each suite lands (a clean
   // first suite reads 100% before a later one fails), so it would claim a
@@ -475,6 +481,11 @@ export function OverallScoreCard({
         </div>
         {action}
       </div>
+      {note ? (
+        <p className="-mt-2.5 text-sm text-amber-700 dark:text-amber-400">
+          {note}
+        </p>
+      ) : null}
       {isRunning ? (
         // Indeterminate: the run's length is not known up front.
         <div

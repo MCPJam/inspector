@@ -128,7 +128,7 @@ describe("harnessModelSupport — seed evidence", () => {
     expect(verdict.evidence?.harness).toBe("claude-code");
   });
 
-  it("cursor runs cursor/auto and nothing else", () => {
+  it("Cursor supports its account model namespace", () => {
     expect(
       harnessModelSupport({
         harnessId: "cursor",
@@ -136,6 +136,7 @@ describe("harnessModelSupport — seed evidence", () => {
         modelId: "cursor/auto",
       }).status,
     ).toBe("supported");
+    expect(harnessModelSupport({ harnessId: "cursor", modelId: "cursor/mini" }).status).toBe("supported");
     expect(
       harnessModelSupport({
         harnessId: "cursor",
@@ -316,7 +317,7 @@ describe("evidence table", () => {
       join(here, "..", "harness-model-support-evidence.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "895f54c2803f99cbe19ace63aca4e84ad755cade806c43df2e16f9ee1c0cf0e3",
+      "e1e944557232e20a587048d81ae5fede8a2dd8a9dcd885f01da842a5abd1d1a0",
     );
   });
 

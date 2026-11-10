@@ -496,8 +496,12 @@ export function CatalogRow({
   notApplicable,
 }: {
   entry: CatalogEntry;
-  /** Shown under the row, e.g. the tool a picked check will call. */
-  children?: ReactNode;
+  /**
+   * Shown under the row, e.g. the tool a picked check will call. As a
+   * function it gets whether the row is open, so an off check can show its
+   * field only then.
+   */
+  children?: ReactNode | ((opened: boolean) => ReactNode);
   /** Shown after the title, e.g. that the check needs an input. */
   tag?: ReactNode;
   /**
@@ -516,6 +520,7 @@ export function CatalogRow({
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
+  const extra = typeof children === "function" ? children(expanded) : children;
   const title = (
     <button
       type="button"
@@ -582,7 +587,7 @@ export function CatalogRow({
           {entry.description}
         </div>
       </Collapse>
-      {children ? <div className="pr-1 pb-2 pl-8">{children}</div> : null}
+      {extra ? <div className="pr-1 pb-2 pl-8">{extra}</div> : null}
     </div>
   );
 }
@@ -607,8 +612,8 @@ export function CatalogList({
   note?: string;
   /** Replaces that line, for a list that is not the suite's checks. */
   heading?: string;
-  /** What a row shows under it; see `CatalogRow`'s children. */
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  /** What a row shows under it, given whether it is open; see `CatalogRow`'s children. */
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
   renderTag?: (entry: CatalogEntry) => ReactNode;
   /** Why a row's check does not apply; see `CatalogRow`'s notApplicable. */
@@ -641,7 +646,9 @@ export function CatalogList({
           tag={renderTag?.(entry)}
           notApplicable={notApplicableReason?.(entry)}
         >
-          {renderExtra?.(entry)}
+          {renderExtra
+            ? (opened: boolean) => renderExtra(entry, opened)
+            : undefined}
         </CatalogRow>
       ))}
     </div>

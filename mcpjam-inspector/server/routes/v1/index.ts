@@ -154,6 +154,19 @@ export const V1_EVAL_LAUNCH_ROUTES = [
 ] as const;
 v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
+/**
+ * The conformance start route, refused while draining like eval launches. Its
+ * per-user limit is spent inside the start (`startHostedConformanceRun`), so a
+ * refused request or a retry of an existing run costs nothing.
+ */
+export const V1_CONFORMANCE_START_ROUTE =
+  "/projects/:projectId/servers/:serverId/conformance-runs";
+v1.on(
+  "POST",
+  V1_CONFORMANCE_START_ROUTE,
+  refuseWhileDraining("conformance_run"),
+);
+
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
 // Server groups (immutable standalone server snapshots). Guest-DENIED: the
