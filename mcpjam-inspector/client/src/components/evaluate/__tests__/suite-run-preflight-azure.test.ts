@@ -64,7 +64,7 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
       [azureModel("azure/gpt-5.1-codex-mini")],
       orgConfig,
     );
-    expect(result.orgKeyProblems).toEqual([
+    expect(result.orgConfigProblems).toEqual([
       missing("azure/gpt-5.1-codex-mini"),
     ]);
     expect(hasBlockingPreflight(result)).toBe(true);
@@ -76,7 +76,7 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
       azureModel("azure/gpt-5.1"),
       azureModel("azure/gpt-5.1-codex"),
     ]);
-    expect(result.orgKeyProblems).toEqual([
+    expect(result.orgConfigProblems).toEqual([
       missing("azure/gpt-5.1"),
       missing("azure/gpt-5.1-codex"),
     ]);
@@ -102,7 +102,7 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
       { ...azureModel("azure/gpt-5.1"), selectionKnown: false },
     ],
   ])("leaves %s alone", (_label, model) => {
-    expect(preflight([model]).orgKeyProblems).toBeUndefined();
+    expect(preflight([model]).orgConfigProblems).toBeUndefined();
   });
 
   it.each([
@@ -118,15 +118,68 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
   ] satisfies [string, PreflightModel][])(
     "checks %s the organization's Azure connection runs",
     (_label, model) => {
-      expect(preflight([model]).orgKeyProblems).toEqual([
+      expect(preflight([model]).orgConfigProblems).toEqual([
         missing("azure/gpt-5.1"),
       ]);
       expect(
-        preflight([{ ...model, model: "prod-gpt51" }]).orgKeyProblems,
+        preflight([{ ...model, model: "prod-gpt51" }]).orgConfigProblems,
       ).toBeUndefined();
-      expect(preflight([model], { providers: [] }).orgKeyProblems).toBeUndefined();
+      expect(preflight([model], { providers: [] }).orgConfigProblems).toBeUndefined();
     },
   );
+
+  it("leaves an unlabelled row alone when the Azure connection is disabled", () => {
+    const disabled = { providers: [{ ...azureConnection, enabled: false }] };
+    expect(
+      preflight([{ model: "azure/gpt-5.1", provider: "azure" }], disabled)
+        .orgConfigProblems,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ["deleted", { providers: [] }],
+    ["disabled", { providers: [{ ...azureConnection, enabled: false }] }],
+  ] satisfies [string, PreflightOrgConfig][])(
+    "names no deployment for an org selection whose Azure connection was %s",
+    (_label, orgConfig) => {
+      // The runner refuses the missing connection (`credential_missing`)
+      // first, so "add a deployment" would point at the wrong fix.
+      expect(
+        preflight([azureModel("azure/gpt-5.1")], orgConfig).orgConfigProblems,
+      ).toBeUndefined();
+    },
+  );
+
+  it("still names the deployment when another Azure connection is enabled", () => {
+    const orgConfig = {
+      providers: [
+        { ...azureConnection, enabled: false },
+        { ...azureConnection, id: "orgprov_azure_2" },
+      ],
+    };
+    expect(
+      preflight([azureModel("azure/gpt-5.1")], orgConfig).orgConfigProblems,
+    ).toEqual([missing("azure/gpt-5.1")]);
+  });
+
+  it("gives a legacy row only the key-policy problem under the policy", () => {
+    // The runner checks the policy first: adding a deployment wouldn't let
+    // this row run, so the sheet doesn't ask for one.
+    const problems = preflight(
+      [
+        {
+          model: "azure/gpt-5.1",
+          provider: "azure",
+          selection: { modelId: "azure/gpt-5.1", source: "legacy" },
+        },
+      ],
+      policyConfig,
+    ).orgConfigProblems;
+    expect(problems).toHaveLength(1);
+    expect(problems?.[0]).toMatch(
+      /^azure\/gpt-5\.1 isn't saved with an organization provider connection/,
+    );
+  });
 
   it("checks a judge saved without a deployment", () => {
     const result = preflight([], config, {
@@ -134,7 +187,7 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
       modelId: "azure/gpt-5.1",
       selection: azureModel("azure/gpt-5.1").selection,
     });
-    expect(result.orgKeyProblems).toEqual([missing("azure/gpt-5.1")]);
+    expect(result.orgConfigProblems).toEqual([missing("azure/gpt-5.1")]);
   });
 
   it("checks a model a client passes to its environment", () => {
@@ -169,6 +222,6 @@ describe("preflight for an Azure OpenAI model with no deployment", () => {
       environmentServerRefs: [],
     });
     const result = runPreflight({ ...plan, servers: {}, orgConfig: config });
-    expect(result.orgKeyProblems).toEqual([missing(modelId)]);
+    expect(result.orgConfigProblems).toEqual([missing(modelId)]);
   });
 });

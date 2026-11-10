@@ -172,7 +172,7 @@ import {
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
-import { AZURE_PROVIDER_KEY } from "@/shared/azure-deployment";
+import { hasAzureConnection } from "@/shared/azure-deployment";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -3653,22 +3653,6 @@ const executeTestCase = async (params: {
       },
     ]);
   }
-  // Azure runs only a named deployment. A case without a saved org selection
-  // (written as `{ model, provider }`, saved before selections, or a legacy
-  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
-  // Only when the organization has an Azure connection (the resolved config
-  // lists enabled ones only): without one, the missing connection is the
-  // problem, and the run sheet applies the same rule.
-  const azureRefusal =
-    orgByokRuntime?.kind === "cloud" &&
-    orgModelConfig?.providers.some(
-      (provider) => provider.providerKey === AZURE_PROVIDER_KEY,
-    )
-      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
-          modelId: String(modelDefinition.id),
-        })
-      : undefined;
-  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   if (requireOrgKeys && !externalAccount) {
     // Only the cloud org route remains: a local runtime, or no org route at
     // all (which would fall through to this machine's keys), is refused. The
@@ -3693,6 +3677,21 @@ const executeTestCase = async (params: {
       ]);
     }
   }
+  // Azure runs only a named deployment. A case without a saved org selection
+  // (written as `{ model, provider }`, saved before selections, or a legacy
+  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  // After the policy check, in `resolveLocalModelSelection`'s order. Skipped
+  // only when the organization's config is known and has no Azure connection:
+  // then the missing connection is the problem, as on the run sheet. A config
+  // that failed to load is not that.
+  const azureRefusal =
+    orgByokRuntime?.kind === "cloud" &&
+    (!orgModelConfig || hasAzureConnection(orgModelConfig.providers))
+      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
+          modelId: String(modelDefinition.id),
+        })
+      : undefined;
+  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   // The case's settings, resolved ONCE for every iteration below on the
   // route it takes (per-run override > saved selection > host defaults).
   // Legacy cases (no selection) keep the runners' own host/override rule.

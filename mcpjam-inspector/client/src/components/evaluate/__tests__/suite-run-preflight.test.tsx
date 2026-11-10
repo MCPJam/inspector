@@ -405,14 +405,14 @@ describe("RunPreflightNotices", () => {
   it("asks a member for the org's Cursor key once, without the model hint", () => {
     const key =
       "Ask an org admin to add a Cursor key in Organization → AI providers.";
-    const notices = (orgKeyProblems: string[]) => (
+    const notices = (orgConfigProblems: string[]) => (
       <RunPreflightNotices
         preflight={{
           disconnected: [],
           removed: [],
           refused: [],
           disabledProviders: [],
-          orgKeyProblems,
+          orgConfigProblems,
           serverName: (ref) => ref,
         }}
       />
@@ -764,21 +764,21 @@ describe("runPreflight while the organization requires its own keys", () => {
     });
 
     expect(preflight.disabledProviders).toEqual([]);
-    expect(preflight.orgKeyProblems).toHaveLength(4);
-    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+    expect(preflight.orgConfigProblems).toHaveLength(4);
+    expect(preflight.orgConfigProblems!.join("\n")).toMatch(
       /anthropic\/claude-haiku-4\.5 is an MCPJam-provided model/,
     );
-    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+    expect(preflight.orgConfigProblems!.join("\n")).toMatch(
       /llama3\.2:latest runs on a personal or local key/,
     );
-    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+    expect(preflight.orgConfigProblems!.join("\n")).toMatch(
       /openai\/gpt-4o uses an organization provider connection that can't run it/,
     );
-    expect(preflight.orgKeyProblems!.join("\n")).toMatch(
+    expect(preflight.orgConfigProblems!.join("\n")).toMatch(
       /The judge is an MCPJam-provided model/,
     );
     expect(
-      preflight.orgKeyProblems!.every((problem) =>
+      preflight.orgConfigProblems!.every((problem) =>
         problem.endsWith("Choose a model from an organization provider."),
       ),
     ).toBe(true);
@@ -809,7 +809,7 @@ describe("runPreflight while the organization requires its own keys", () => {
         },
       },
     });
-    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(preflight.orgConfigProblems).toBeUndefined();
     expect(hasBlockingPreflight(preflight)).toBe(false);
   });
 
@@ -822,7 +822,7 @@ describe("runPreflight while the organization requires its own keys", () => {
       models: [{ model: "claude-sonnet-4-5", provider: "anthropic" }],
       orgConfig: policy,
     });
-    expect(preflight.orgKeyProblems).toEqual([
+    expect(preflight.orgConfigProblems).toEqual([
       "claude-sonnet-4-5 isn't saved with an organization provider connection, which this organization requires. Choose a model from an organization provider.",
     ]);
     expect(hasBlockingPreflight(preflight)).toBe(true);
@@ -858,8 +858,8 @@ describe("runPreflight while the organization requires its own keys", () => {
         ],
       },
     });
-    expect(refused.orgKeyProblems).toHaveLength(1);
-    expect(refused.orgKeyProblems![0]).toMatch(
+    expect(refused.orgConfigProblems).toHaveLength(1);
+    expect(refused.orgConfigProblems![0]).toMatch(
       /uses an organization provider connection that can't run it/,
     );
     // An older backend sends no verdict: not eligible under the policy.
@@ -870,7 +870,7 @@ describe("runPreflight while the organization requires its own keys", () => {
         servers: {},
         models,
         orgConfig: { ...policy, providers: [noVerdict] },
-      }).orgKeyProblems,
+      }).orgConfigProblems,
     ).toHaveLength(1);
     // The verdict never looks at keys: an eligible connection with no saved
     // key can't run the model either.
@@ -883,7 +883,7 @@ describe("runPreflight while the organization requires its own keys", () => {
           ...policy,
           providers: [{ ...anthropic, hasSecret: false }],
         },
-      }).orgKeyProblems,
+      }).orgConfigProblems,
     ).toHaveLength(1);
   });
 
@@ -904,7 +904,7 @@ describe("runPreflight while the organization requires its own keys", () => {
       orgConfig: policy,
       judge: { kind: "default" },
     });
-    expect(preflight.orgKeyProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
+    expect(preflight.orgConfigProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
     expect(CHOOSE_ORG_JUDGE_MODEL).toBe(
       "Choose a judge model from an organization provider.",
     );
@@ -919,7 +919,7 @@ describe("runPreflight while the organization requires its own keys", () => {
       orgConfig: { ...policy, aiKeyPolicy: { requireOrgKeys: false } },
       judge: { kind: "default" },
     });
-    expect(preflight.orgKeyProblems).toBeUndefined();
+    expect(preflight.orgConfigProblems).toBeUndefined();
     expect(hasBlockingPreflight(preflight)).toBe(false);
   });
 
@@ -989,7 +989,7 @@ describe("runPreflight while the organization requires its own keys", () => {
           removed: [],
           refused: [],
           disabledProviders: [],
-          orgKeyProblems: ["The judge is an MCPJam-provided model."],
+          orgConfigProblems: ["The judge is an MCPJam-provided model."],
           serverName: (ref) => ref,
           manageModels,
         }}
@@ -1067,11 +1067,11 @@ describe("an organization model chosen for an environment or matrix cell, under 
       ] as never);
 
     const org = preflightFor({ targets: cell(orgGpt5).targets });
-    expect(org.orgKeyProblems).toBeUndefined();
+    expect(org.orgConfigProblems).toBeUndefined();
     expect(hasBlockingPreflight(org)).toBe(false);
 
     const hosted = preflightFor({ targets: cell(hostedGpt5).targets });
-    expect(hosted.orgKeyProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
+    expect(hosted.orgConfigProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
     expect(hasBlockingPreflight(hosted)).toBe(true);
   });
 
@@ -1093,14 +1093,14 @@ describe("an organization model chosen for an environment or matrix cell, under 
     const org = preflightFor({
       targets: plannedPreflight(plan, environments).targets,
     });
-    expect(org.orgKeyProblems).toBeUndefined();
+    expect(org.orgConfigProblems).toBeUndefined();
 
     const hosted = preflightFor({
       targets: plannedPreflight(plan, [
         { ...environments[0]!, modelSelection: hostedGpt5 as never },
       ]).targets,
     });
-    expect(hosted.orgKeyProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
+    expect(hosted.orgConfigProblems?.join("\n")).toMatch(MCPJAM_PROVIDED);
   });
 
   it("carries an attached environment's selection when no cells are planned", () => {
@@ -1112,12 +1112,12 @@ describe("an organization model chosen for an environment or matrix cell, under 
     expect(
       preflightFor({
         environments: [{ ...environment, modelSelection: orgGpt5 }],
-      }).orgKeyProblems,
+      }).orgConfigProblems,
     ).toBeUndefined();
     expect(
       preflightFor({
         environments: [{ ...environment, modelSelection: hostedGpt5 }],
-      }).orgKeyProblems?.join("\n"),
+      }).orgConfigProblems?.join("\n"),
     ).toMatch(MCPJAM_PROVIDED);
   });
 
@@ -1133,13 +1133,13 @@ describe("an organization model chosen for an environment or matrix cell, under 
       preflightFor({
         targets: [{ hostId: "claude" }],
         hosts: hostWith(orgGpt5),
-      }).orgKeyProblems,
+      }).orgConfigProblems,
     ).toBeUndefined();
     expect(
       preflightFor({
         targets: [{ hostId: "claude" }],
         hosts: hostWith(hostedGpt5),
-      }).orgKeyProblems?.join("\n"),
+      }).orgConfigProblems?.join("\n"),
     ).toMatch(MCPJAM_PROVIDED);
   });
 
@@ -1153,7 +1153,7 @@ describe("an organization model chosen for an environment or matrix cell, under 
             modelSelection: { ...orgGpt5, modelId: "openai/gpt-5-mini" },
           },
         ],
-      }).orgKeyProblems?.join("\n"),
+      }).orgConfigProblems?.join("\n"),
     ).toMatch(MCPJAM_PROVIDED);
   });
 

@@ -15,10 +15,7 @@ import {
 } from "@/shared/org-ai-key-policy";
 import { INSPECTOR_RUN_POLICY_REASON } from "@/lib/org-keys-refusal";
 import { gatewayModelFor } from "@/shared/harness-gateway-model";
-import {
-  AZURE_DEPLOYMENT_REQUIRED_REASON,
-  azureDeploymentName,
-} from "@/shared/azure-deployment";
+import { AZURE_DEPLOYMENT_REQUIRED_REASON } from "@/shared/azure-deployment";
 import {
   isUsableOrgConnection,
   type OrgAiKeyPolicyView,
@@ -288,7 +285,9 @@ export function buildAvailableModelsFromOrgConfig(
   }).map((m) => {
     const provider = orgProviderByKey.get(m.provider);
     const row = provider ? { ...m, orgProvider: orgStamp(provider) } : m;
-    return row.provider === "azure" && !azureDeploymentName({ modelId: row.id })
+    // Only reached with no deployments listed, and every static Azure row is a
+    // catalog id (`azure/…`) that names none, so each one is locked.
+    return row.provider === "azure"
       ? {
           ...row,
           disabled: true,

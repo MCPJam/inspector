@@ -27,6 +27,7 @@ import {
   AZURE_PROVIDER_KEY,
   azureDeploymentMissingReason,
   azureDeploymentName,
+  hasAzureConnection,
 } from "@/shared/azure-deployment";
 import {
   harnessDisplayName,
@@ -313,9 +314,10 @@ function orgKeyJudgeProblem(
 /**
  * An Azure OpenAI model that runs on the organization's connection without a
  * deployment: Azure runs only the deployments an admin named, so every
- * attempt would be refused. A legacy or unlabelled row runs there too when
- * the organization has an Azure connection, and its saved id is what the
- * runner sends.
+ * attempt would be refused. A legacy or unlabelled row runs there too, and
+ * its saved id is what the runner sends. With no enabled Azure connection,
+ * the missing connection is the problem, as the runner reports it, so there
+ * is no deployment problem to name.
  */
 function azureDeploymentProblem(
   orgConfig: PreflightOrgConfig,
@@ -323,17 +325,9 @@ function azureDeploymentProblem(
 ): string | null {
   if (model.selectionKnown === false) return null;
   if (orgModelVendor(orgConfig, model) !== AZURE_PROVIDER_KEY) return null;
+  if (!hasAzureConnection(orgConfig.providers)) return null;
   const orgSelection =
     model.selection?.source === "org" ? model.selection : undefined;
-  if (
-    !orgSelection &&
-    !orgConfig.providers.some(
-      (provider) =>
-        provider.providerKey === AZURE_PROVIDER_KEY && provider.enabled,
-    )
-  ) {
-    return null;
-  }
   return azureDeploymentName({
     modelId: orgSelection?.modelId ?? model.model,
     nativeModelId: orgSelection?.nativeModelId,
@@ -345,22 +339,32 @@ function azureDeploymentProblem(
 /**
  * Every problem with the organization's AI configuration a launch can't
  * start with, once each: under the key policy, {@link orgKeyProblemsOf}; with
- * or without it, an Azure model or judge saved without a deployment.
+ * or without it, an Azure model or judge saved without a deployment. Like the
+ * runner, the policy is checked first: a model the policy already refuses
+ * gets no deployment problem, since adding a deployment wouldn't let it run.
  */
 export function orgConfigProblemsOf(
   orgConfig: PreflightOrgConfig,
   models: readonly PreflightModel[],
   judge?: PreflightJudge,
 ): string[] {
+  const policy = orgRequiresOwnKeys(orgConfig);
   const problems = new Set(
-    orgRequiresOwnKeys(orgConfig)
-      ? orgKeyProblemsOf(orgConfig, models, judge)
-      : [],
+    policy ? orgKeyProblemsOf(orgConfig, models, judge) : [],
   );
-  const judged =
-    judge?.kind === "explicit" ? [...models, judgePreflightModel(judge)] : models;
-  for (const model of judged) {
+  for (const model of models) {
+    if (policy && orgKeyProblemsOf(orgConfig, [model]).length > 0) continue;
     const problem = azureDeploymentProblem(orgConfig, model);
+    if (problem) problems.add(problem);
+  }
+  if (
+    judge?.kind === "explicit" &&
+    !(policy && orgKeyJudgeProblem(orgConfig, judge))
+  ) {
+    const problem = azureDeploymentProblem(
+      orgConfig,
+      judgePreflightModel(judge),
+    );
     if (problem) problems.add(problem);
   }
   return [...problems];

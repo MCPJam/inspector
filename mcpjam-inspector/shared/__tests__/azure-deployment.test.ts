@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { azureDeploymentName } from "../azure-deployment";
+import { azureDeploymentName, hasAzureConnection } from "../azure-deployment";
 
 describe("azureDeploymentName", () => {
   it.each([
@@ -14,5 +14,17 @@ describe("azureDeploymentName", () => {
 
   it("never derives a deployment by stripping the provider prefix", () => {
     expect(azureDeploymentName({ modelId: "azure/gpt-5.1-codex-mini" })).toBeUndefined();
+  });
+});
+
+describe("hasAzureConnection", () => {
+  it.each([
+    ["an enabled Azure row", [{ providerKey: "azure", enabled: true }], true],
+    ["a resolved Azure row (the backend lists enabled ones only)", [{ providerKey: "azure" }], true],
+    ["a disabled Azure row", [{ providerKey: "azure", enabled: false }], false],
+    ["no Azure row", [{ providerKey: "openai", enabled: true }], false],
+    ["no rows", [], false],
+  ])("%s", (_label, providers, expected) => {
+    expect(hasAzureConnection(providers)).toBe(expected);
   });
 });

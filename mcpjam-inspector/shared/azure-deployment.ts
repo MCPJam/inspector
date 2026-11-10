@@ -27,6 +27,21 @@ export function azureDeploymentName(selection: {
   return bare && !bare.includes("/") ? bare : undefined;
 }
 
+/**
+ * Whether the organization has an enabled Azure OpenAI connection. A row with
+ * no `enabled` flag counts as enabled: the backend's resolved config lists
+ * enabled connections only, while the browser's config and a client-sent one
+ * also carry disabled rows.
+ */
+export function hasAzureConnection(
+  providers: ReadonlyArray<{ providerKey: string; enabled?: boolean }>,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.providerKey === AZURE_PROVIDER_KEY && provider.enabled !== false,
+  );
+}
+
 /** Why an Azure model row with no deployment can't be picked. */
 export const AZURE_DEPLOYMENT_REQUIRED_REASON =
   "This model has no Azure deployment. Add a deployment name in Organization → AI providers.";

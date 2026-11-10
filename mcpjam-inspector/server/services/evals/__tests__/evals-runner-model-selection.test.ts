@@ -295,14 +295,18 @@ describe("eval runner reads saved model selections", () => {
     const paged = errorSpy.mock.calls.find(
       ([message]) => message === "[evals] Test case failed:",
     );
-    const refusal = warnSpy.mock.calls.find(
+    const refusals = warnSpy.mock.calls.filter(
       ([message]) =>
         message ===
         "[evals] Test case refused by the organization's AI configuration:",
-    )?.[1] as { code?: string; message?: string } | undefined;
+    );
+    const refusal = refusals[0]?.[1] as
+      | { code?: string; message?: string }
+      | undefined;
     errorSpy.mockRestore();
     warnSpy.mockRestore();
     expect(paged).toBeUndefined();
+    expect(refusals).toHaveLength(1);
     expect(refusal?.code).toBe(code);
     expect(refusal?.message).toMatch(new RegExp(`^${code}: `));
   }
@@ -677,6 +681,64 @@ describe("eval runner reads saved model selections", () => {
         },
       );
       expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
+    });
+
+    it("still refuses an unlabelled case when the organization's config failed to load", async () => {
+      // The launch routes log a failed config read and pass none: an unknown
+      // config is not a known absence of the Azure connection.
+      await expectPolicyRefused(
+        run(
+          { model: AZURE_CATALOG.modelId, provider: "azure" },
+          { orgModelConfigTarget: { projectId: "project-1" } },
+        ),
+        "invalid_model",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("leaves an unlabelled case to the backend when the only Azure connection is disabled", async () => {
+      // A client-sent config can carry disabled rows the backend would drop.
+      await run(
+        { model: AZURE_CATALOG.modelId, provider: "azure" },
+        {
+          orgModelConfigTarget: { projectId: "project-1" },
+          orgModelConfig: {
+            providers: [
+              { providerKey: "azure", apiKey: "sk-azure", enabled: false },
+            ],
+          },
+        },
+      );
+      expect(requestTo("/stream/org")).toMatchObject({ providerKey: "azure" });
+    });
+
+    it("refuses on the key policy first when the Azure connection isn't eligible", async () => {
+      // `resolveLocalModelSelection`'s order: adding a deployment wouldn't
+      // let this case run, so the deployment is not what it is refused for.
+      await expectPolicyRefused(
+        run(
+          { model: AZURE_CATALOG.modelId, provider: "azure" },
+          {
+            orgModelConfigTarget: { projectId: "project-1" },
+            orgModelConfig: {
+              aiKeyPolicy: { requireOrgKeys: true },
+              providers: [
+                {
+                  providerKey: "azure",
+                  exportDenied: true,
+                  policyEligibility: {
+                    eligible: false,
+                    code: "org_keys_required",
+                    message: "This connection can't be used under the policy.",
+                  },
+                },
+              ],
+            },
+          },
+        ),
+        "org_keys_required",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("runs an unlabelled deployment name on /stream/org", async () => {
