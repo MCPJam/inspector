@@ -72,6 +72,22 @@ describe("ConformanceSharedPage", () => {
     useSharedArtifactMock.mockReset();
   });
 
+  it.each([
+    ["the server's name when the share names it", "asana", "asana"],
+    ["Shared run for a share with no name", undefined, "Shared run"],
+    ["Shared run for a blank name", "  ", "Shared run"],
+  ])("titles the score card with %s", (_label, serverName, shown) => {
+    useSharedArtifactMock.mockReturnValue({
+      loading: false,
+      error: null,
+      redeem: null,
+      artifact: { ...sharedRun(), serverName },
+    });
+    render(<ConformanceSharedPage token="tok" />);
+    const card = screen.getByText(/^OVERALL SCORE/).parentElement!;
+    expect(within(card).getByText(shown)).toBeInTheDocument();
+  });
+
   it("shows saved missing-input checks as gray Not run rows with setup copy", () => {
     const message =
       "no probe tool could be selected automatically: tools are chosen by `execution.taskSupport`";

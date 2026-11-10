@@ -31,6 +31,10 @@ import {
   type LoadReport,
   type SavedReportCase,
 } from "./use-saved-run-reports";
+import type {
+  SharedConformanceArtifact,
+  SharedSuiteReport,
+} from "./conformance-shared-artifact";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { RunResultRing } from "./RunResultRing";
 import {
@@ -658,38 +662,6 @@ function SavedSuiteRow({
   );
 }
 
-/** One suite as a shared artifact stores it: the redacted SDK report. */
-type SharedSuiteReport = {
-  outcome?: string;
-  passed?: boolean;
-  incompleteReason?: string;
-  score?: {
-    score?: number;
-    outcome?: string;
-    applicable?: number;
-    passed?: number;
-    failed?: number;
-    couldNotRun?: number;
-  };
-  groups?: Array<{ cases?: SavedReportCase[] }>;
-  advisories?: unknown;
-};
-
-type SharedConformanceArtifact = {
-  score?: number | null;
-  outcome?: ConformanceRunListItem["outcome"];
-  applicable?: number;
-  passed?: number;
-  failed?: number;
-  couldNotRun?: number;
-  notApplicable?: number;
-  advisoryCount?: number;
-  protocolVersion?: string | null;
-  requestedSuites?: string[];
-  createdAt?: number;
-  reports?: Record<string, SharedSuiteReport>;
-};
-
 /** A shared suite in the shape the run page's rows read, from its own score. */
 function sharedSuiteRow(
   suiteKind: string,
@@ -763,7 +735,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
               }
             : undefined
         }
-        serverName="Shared run"
+        serverName={run.serverName?.trim() || "Shared run"}
         version={run.protocolVersion ?? "Auto"}
       />
       <ConformanceAdvice
