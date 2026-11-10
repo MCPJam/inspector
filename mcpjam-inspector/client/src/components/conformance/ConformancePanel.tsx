@@ -569,32 +569,28 @@ export function ConformanceContent({
                     ? "This run is waiting for you to sign in."
                     : ""}
                 </p>
-                {oauth.waitingForAuth ? (
+                {oauth.waitingForAuth && !oauth.popupBlocked ? (
                   // At the top of the run, and pinned there while it scrolls:
                   // the run cannot finish until someone signs in, and inside
                   // the OAuth suite at the end of the page this read as a run
-                  // that never stops loading.
+                  // that never stops loading. A blocked window gets the
+                  // OAuthPopupBlockedDialog instead, with the same choices.
                   <div
                     data-testid="conformance-oauth-prompt"
                     className="sticky top-0 z-10 mb-3 space-y-2 rounded-lg border border-border bg-popover px-4 py-3 text-sm shadow-sm"
                   >
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      {oauth.popupBlocked ? (
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                      ) : (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      )}
-                      {oauth.popupBlocked
-                        ? "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page."
-                        : "Waiting for browser authorization..."}
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Waiting for browser authorization...
                     </div>
-                    {/* Always offer a way forward: a blocked popup used to
-                        leave the spinner alone until the session expired. */}
+                    {/* Always offer a way forward: a sign-in window closed
+                        early used to leave the spinner alone until the
+                        session expired. */}
                     <div className="flex gap-2">
                       {oauth.authorizationUrl ? (
                         <Button
                           size="sm"
-                          variant={oauth.popupBlocked ? "default" : "outline"}
+                          variant="outline"
                           onClick={openAuthorizationWindow}
                         >
                           Open sign-in page
