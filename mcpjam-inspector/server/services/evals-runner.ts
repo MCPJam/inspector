@@ -5298,7 +5298,6 @@ const runLocalIteration = async ({
         null,
       );
       prepared = await prepareChatV2({
-        connectionsByServerId: {},
         mcpClientManager,
         selectedServers,
         modelDefinition,
@@ -7014,7 +7013,6 @@ const runHostedIterationWithBrowser = async (
     );
 
     prepared = await prepareChatV2({
-      connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,

@@ -1736,6 +1736,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     });
   });
 
+  it("lets a turn use the accounts the manager was authorized with", async () => {
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+    const options = vi.mocked(orchestration.prepareChatV2).mock.calls.at(-1)?.[0];
+    expect(options).toBeDefined();
+    // No override: prepareChatV2 reads the manager's account groups, which
+    // exist only when a launcher sent the suite's chosen accounts.
+    expect(options).not.toHaveProperty("connectionsByServerId");
+  });
+
   it("resolves persisted hosted server names to the live manager ids", async () => {
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",

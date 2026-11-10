@@ -1182,6 +1182,65 @@ describe("web auth manager batching", () => {
     ).toEqual([a, b]);
   });
 
+  it("connects only a suite's chosen account, under the bare server key", async () => {
+    const dummy = "b".repeat(32);
+    const requests: Array<{ body: any }> = [];
+    global.fetch = vi.fn(async (_input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)) });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              updatedAt: 123,
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            oauthAccountSet: "applied",
+            oauthAccessToken: "token-dummy",
+            oauthCredentialId: dummy,
+            oauthConnections: [
+              {
+                connectionId: dummy,
+                isDefault: false,
+                label: "Dummy",
+                accessToken: "token-dummy",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    mcpClientManagerMock.mockClear();
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { connectionIdSets: { "server-1": [dummy] } },
+    );
+
+    expect(requests[0].body.connectionIdSets).toEqual({ "server-1": [dummy] });
+    expect(requests[0].body.includeConnections).toBeUndefined();
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs)).toEqual(["server-1"]);
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-dummy");
+    expect(result.connectionsByServerId?.["server-1"]).toEqual([
+      expect.objectContaining({ connectionId: dummy, key: "server-1" }),
+    ]);
+  });
+
   describe("a member's only login", () => {
     const credential = "c".repeat(32);
     const single = (overrides: Record<string, unknown> = {}) => ({

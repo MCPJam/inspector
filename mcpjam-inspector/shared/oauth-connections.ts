@@ -28,12 +28,25 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
    */
   implicit?: true;
 }
-export function connectionLabel(c: OAuthConnection, index = 0): string {
+export interface ConnectionLabelOptions {
+  /**
+   * For names other people read, such as eval runs a teammate opens: skip the
+   * profile email, and any rename or profile name that is an address.
+   */
+  withoutEmail?: boolean;
+}
+export function connectionLabel(
+  c: OAuthConnection,
+  index = 0,
+  options?: ConnectionLabelOptions,
+): string {
+  const usable = (value?: string) =>
+    value && !(options?.withoutEmail && value.includes("@")) ? value : undefined;
   return (
-    c.label ||
-    c.profile?.email ||
-    c.profile?.name ||
-    c.profile?.nickname ||
+    usable(c.label) ||
+    (options?.withoutEmail ? undefined : c.profile?.email) ||
+    usable(c.profile?.name) ||
+    usable(c.profile?.nickname) ||
     `Account ${index + 1}`
   );
 }
@@ -49,8 +62,11 @@ export function connectionLabel(c: OAuthConnection, index = 0): string {
  */
 export function connectionLabels(
   connections: readonly OAuthConnection[],
+  options?: ConnectionLabelOptions,
 ): string[] {
-  const base = connections.map((c, index) => connectionLabel(c, index));
+  const base = connections.map((c, index) =>
+    connectionLabel(c, index, options),
+  );
   const seen = new Map<string, number>();
   for (const label of base) seen.set(label, (seen.get(label) ?? 0) + 1);
 
@@ -67,6 +83,7 @@ export function connectionLabels(
     ];
     for (const qualifier of qualifiers) {
       if (!qualifier || qualifier === base[index]) continue;
+      if (options?.withoutEmail && qualifier.includes("@")) continue;
       const candidate = `${base[index]} (${qualifier})`;
       if (taken.has(candidate)) continue;
       taken.add(candidate);

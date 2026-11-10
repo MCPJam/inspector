@@ -1619,7 +1619,7 @@ export async function runHarnessTurn(
       // same MCP tool twice.
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
-      const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
+      const accountGroups = getManagerConnections(mcpClientManager) ?? {};
       const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) });
       let nativeMcpDelivery = dispatch.mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE

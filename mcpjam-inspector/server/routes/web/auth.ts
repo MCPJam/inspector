@@ -23,6 +23,10 @@ import {
 } from "../../../shared/oauth-connections.js";
 import { setManagerConnections } from "../../utils/mcp-connections.js";
 import {
+  accountSetGroup,
+  type ConnectionIdSets,
+} from "../../utils/oauth-account-sets.js";
+import {
   recordConnectionEffectiveAuth,
   stampAuthChallenge,
   withStampedAuthChallenge,
@@ -609,6 +613,8 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthCredentialId?: string;
   oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
+  /** How the backend answered `connectionIdSets`; see `oauth-account-sets.ts`. */
+  oauthAccountSet?: "applied" | "shared";
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
    * How long to wait before retrying, when the reason is transient. Sent with
@@ -853,6 +859,7 @@ export async function authorizeBatch(
     pluginComputerRuntime?: boolean;
     connectionId?: string;
     connectionIds?: Record<string, string>;
+    connectionIdSets?: ConnectionIdSets;
     includeConnections?: boolean;
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
@@ -882,6 +889,9 @@ export async function authorizeBatch(
           ? { connectionIds: options.connectionIds }
           : {}),
         ...(options?.includeConnections ? { includeConnections: true } : {}),
+        ...(options?.connectionIdSets
+          ? { connectionIdSets: options.connectionIdSets }
+          : {}),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
@@ -1512,6 +1522,8 @@ export async function createAuthorizedManager(
     /** Build transports only for the explicitly pinned accounts. */
     onlySelectedConnections?: boolean;
     connectionIds?: Record<string, string>;
+    /** Run each listed server with exactly these accounts, refusing otherwise. */
+    connectionIdSets?: ConnectionIdSets;
     accessScope?: "project_member" | "chat_v2";
     /**
      * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
@@ -1744,6 +1756,7 @@ export async function createAuthorizedManager(
       includeConnections:
         options?.multiConnection || options?.onlySelectedConnections,
       connectionIds: options?.connectionIds,
+      connectionIdSets: options?.connectionIdSets,
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
@@ -1825,6 +1838,18 @@ export async function createAuthorizedManager(
         }));
       }
     }
+  }
+
+  for (const [id, set] of Object.entries(options?.connectionIdSets ?? {})) {
+    const auth = batch.results[id];
+    if (!auth?.ok) continue;
+    const group = accountSetGroup({
+      serverId: id,
+      serverName: displayNameForServer(id, serverNamesById, auth.serverConfig),
+      auth,
+      set,
+    });
+    if (group) connectionsByServerId[id] = group;
   }
 
   // PASS 1 — validate the WHOLE batch before any server does side-effecting
