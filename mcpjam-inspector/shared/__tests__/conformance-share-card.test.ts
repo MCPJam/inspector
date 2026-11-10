@@ -86,17 +86,34 @@ describe("conformance share card", () => {
     );
   });
 
-  it("draws checks that need input apart from checks that could not run", () => {
-    const footerFills = (data: ConformanceShareCardData) =>
-      [...svgOf(data).matchAll(/<rect [^>]*y="522"[^>]*fill="([^"]+)"/g)].map(
-        (match) => match[1]!,
-      );
-    // Passed, could not run, needs input and n/a: four segments, four colors.
-    const split = footerFills(card({ applicable: 26 }));
-    expect(split).toHaveLength(4);
-    expect(new Set(split).size).toBe(4);
-    // When every unrun check only needs input, no bar on the card is amber.
-    const amber = footerFills(card())[1]!;
+  it("draws only scored checks on the bars", () => {
+    const footerBar = (data: ConformanceShareCardData) =>
+      [
+        ...svgOf(data).matchAll(
+          /<rect [^>]*y="522" width="([^"]+)"[^>]*fill="([^"]+)"/g,
+        ),
+      ].map((match) => ({ width: Number(match[1]), fill: match[2]! }));
+    // Passed and could not run; the need-input and n/a checks get no segment.
+    const split = footerBar(card({ applicable: 26 }));
+    expect(split).toHaveLength(2);
+    expect(new Set(split.map((part) => part.fill)).size).toBe(2);
+    // When every unrun check only needs input, every bar is one green fill.
+    const green = split[0]!.fill;
+    const amber = split[1]!.fill;
+    const inputOnlyData = card({
+      outcome: "passed",
+      applicable: 24,
+      suites: [
+        {
+          kind: "protocol",
+          applicable: 24,
+          passed: 24,
+          failed: 0,
+          couldNotRun: 4,
+        },
+      ],
+    });
+    expect(footerBar(inputOnlyData)).toEqual([{ width: 1056, fill: green }]);
     const inputOnly = svgOf(
       card({
         outcome: "passed",
@@ -113,6 +130,7 @@ describe("conformance share card", () => {
       }),
     );
     expect(inputOnly).not.toContain(`fill="${amber}"`);
+    expect(inputOnly).toContain(`width="330" height="6" fill="${green}"`);
   });
 
   it("keeps the denominator, the unrun and the not-applicable checks", () => {
@@ -121,15 +139,15 @@ describe("conformance share card", () => {
     );
   });
 
-  it("tells checks that need input from checks that could not run", () => {
+  it("leaves checks that only need input off the checks line", () => {
     // Two of the four unrun checks need an input, so they are not applicable:
-    // the same split describeConformanceScore makes.
+    // the same split describeConformanceScore makes. Only the other two show.
     expect(shareCardChecksLine(card({ applicable: 26 }))).toBe(
-      "24/26 checks passed · 2 need input · 2 could not run · 2 n/a",
+      "24/26 checks passed · 2 could not run · 2 n/a",
     );
     expect(
-      shareCardChecksLine(card({ applicable: 27, couldNotRun: 4 })),
-    ).toContain("1 needs input · 3 could not run");
+      shareCardChecksLine(card({ applicable: 24, outcome: "passed" })),
+    ).toBe("24/24 checks passed · 2 n/a");
   });
 
   it("says how many checks the profile does not score yet", () => {
@@ -202,12 +220,12 @@ describe("conformance share card", () => {
 
   it("wraps the checks line before it runs into the footer", () => {
     const busy = card({
-      applicable: 120,
-      passed: 100,
-      failed: 12,
-      couldNotRun: 14,
-      notApplicable: 9,
-      pending: 7,
+      applicable: 1194,
+      passed: 1000,
+      failed: 120,
+      couldNotRun: 80,
+      notApplicable: 900,
+      pending: 70,
     });
     const svg = svgOf(busy);
     const lines = [...svg.matchAll(/<text x="72" y="(\d+)"[^>]*>([^<]*)/g)]
