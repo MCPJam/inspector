@@ -37,8 +37,8 @@
  * SIGKILL for anything still alive after the grace period.
  *
  * The command prints the stopped pids, space-separated, and nothing when there
- * was nothing to stop. It always exits 0: reaping is housekeeping, never a
- * reason to fail a turn.
+ * was nothing to stop. Spawn housekeeping exits 0; exact teardown reports
+ * failure if process inspection or forced termination cannot be confirmed.
  */
 
 import { posix } from "node:path";
@@ -51,11 +51,12 @@ export const BRIDGE_REAP_GRACE_MS = 3_000;
 const REAPER_SCRIPT = String.raw`
 const fs = require("fs");
 const own = process.argv[1];
-const sessionsRoots = [process.argv[2], ...process.argv.slice(4)];
 const graceMs = Number(process.argv[3]);
+const exactOnly = process.argv[4] === "exact";
+const sessionsRoots = [process.argv[2], ...process.argv.slice(exactOnly ? 5 : 4)];
 const IDLE = new Set(["starting", "init", "waiting", "done"]);
 let pids = [];
-try { pids = fs.readdirSync("/proc").filter((p) => /^[0-9]+$/.test(p) && Number(p) !== process.pid); } catch {}
+try { pids = fs.readdirSync("/proc").filter((p) => /^[0-9]+$/.test(p) && Number(p) !== process.pid); } catch { if (exactOnly) process.exit(1); }
 const reap = [];
 for (const pid of pids) {
   let argv;
@@ -65,10 +66,25 @@ for (const pid of pids) {
   const dir = at >= 0 ? argv[at + 1] : "";
   if (!dir || !sessionsRoots.some((root) => dir.startsWith(root))) continue;
   if (dir === own) { reap.push(Number(pid)); continue; }
+  if (exactOnly) continue;
   let meta;
   try { meta = JSON.parse(fs.readFileSync(dir + "/bridge-meta.json", "utf8")); } catch { continue; }
   const superseded = typeof meta.pid === "number" && meta.pid !== Number(pid);
   if (superseded || IDLE.has(meta.state)) reap.push(Number(pid));
+}
+if (exactOnly) {
+  let added = true;
+  while (added) {
+    added = false;
+    for (const pid of pids) {
+      if (reap.includes(Number(pid))) continue;
+      try {
+        const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
+        const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+        if (reap.includes(parent)) { reap.push(Number(pid)); added = true; }
+      } catch {}
+    }
+  }
 }
 const alive = (pid) => {
   try {
@@ -84,7 +100,12 @@ const settle = () => {
   const left = reap.filter(alive);
   if (left.length > 0 && Date.now() < deadline) return void setTimeout(settle, 50);
   signal(left, "SIGKILL");
-  console.log(reap.join(" "));
+  if (exactOnly && left.length > 0) {
+    setTimeout(() => {
+      if (left.some(alive)) process.exitCode = 1;
+      process.stdout.write(reap.join(" ") + "\n");
+    }, 100);
+  } else process.stdout.write(reap.join(" ") + "\n");
 };
 if (reap.length > 0) {
   signal(reap, "SIGTERM");
@@ -106,6 +127,7 @@ const STATE_RUNS = `${HARNESS_STATE_DIRECTORY_NAME}/.agent-runs/`;
 export function reapHarnessBridgesCommand(
   ownStateDir: string,
   graceMs: number = BRIDGE_REAP_GRACE_MS,
+  exactOnly = false,
 ): string {
   if (!posix.isAbsolute(ownStateDir)) {
     throw new Error(`not an absolute bridge state dir: ${ownStateDir}`);
@@ -123,6 +145,7 @@ export function reapHarnessBridgesCommand(
     shellSingleQuote(ownStateDir),
     shellSingleQuote(sessionsRoot),
     String(graceMs),
+    ...(exactOnly ? ["exact"] : []),
     ...(legacyRoot ? [shellSingleQuote(legacyRoot)] : []),
   ].join(" ");
 }

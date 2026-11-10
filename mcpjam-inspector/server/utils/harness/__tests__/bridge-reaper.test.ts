@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -157,6 +157,50 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
           child.once("exit", (_code, sig) => resolve(sig)),
         )
       : Promise.resolve(child.signalCode);
+
+  it.each([".agent-runs", ".ai-sdk-harness/.agent-runs"])("exact teardown in %s stops the session and child but preserves idle siblings", async (runs) => {
+    const home = root();
+    const dir = join(home, runs);
+    const own = join(dir, "chat-a", "bridge");
+    const childFile = join(dir, "child-pid");
+    const target = await bridge(own, "running", {
+      script: `
+      import { writeFileSync } from "node:fs";
+      import { spawn } from "node:child_process";
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+      writeFileSync(${JSON.stringify(childFile)}, String(child.pid));
+    `,
+    });
+    const sibling = await bridge(join(dir, "chat-b", "bridge"), "waiting");
+    const olderSibling = await bridge(join(home, ".agent-runs", "older-chat", "bridge"), "waiting");
+    const childPid = Number(readFileSync(childFile, "utf8"));
+    try {
+      const output = execFileSync(
+        "/bin/sh",
+        ["-c", reapHarnessBridgesCommand(own, 300, true)],
+        { encoding: "utf8" },
+      );
+      expect(output.split(/\s+/)).toContain(String(target.pid));
+      expect(output.split(/\s+/)).toContain(String(childPid));
+      await exited(target);
+      expect(running(sibling)).toBe(true);
+      expect(running(olderSibling)).toBe(true);
+      let alive = false;
+      try {
+        const stat = readFileSync(`/proc/${childPid}/stat`, "utf8");
+        alive = stat[stat.lastIndexOf(")") + 2] !== "Z";
+      } catch {
+        /* A removed proc entry confirms the child exited. */
+      }
+      expect(alive).toBe(false);
+    } finally {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        /* Already stopped. */
+      }
+    }
+  });
 
   it("A pauses on an approval, B starts: A's bridge survives for the decision", async () => {
     const dir = root();

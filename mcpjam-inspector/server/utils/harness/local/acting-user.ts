@@ -48,6 +48,7 @@ import {
   AuthKitVerificationError,
   verifyAuthKitToken,
 } from "../../../services/authkit-jwt.js";
+import { isOrgBoundCredential } from "../../org-bound-credential.js";
 
 /**
  * The one accepted actor, in the one canonical form.
@@ -268,7 +269,7 @@ export function contextCredentialClass(c: {
   // `surfaceKind` names the surface (`discord_service`, and whatever is added
   // next), so it is matched by suffix rather than enumerated.
   if (method === "guest") return "guest";
-  if (method === "workos_api_key") return "api-key";
+  if (isOrgBoundCredential(method)) return "api-key";
   if (method.endsWith("_service")) return "service";
   return null;
 }

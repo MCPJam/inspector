@@ -4,7 +4,9 @@ import { hasServiceCredential } from "../service-credential.js";
 import type { Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
-import { setRequestLocal } from "../../middleware/request-local.js";
+import { getRequestLocal, setRequestLocal } from "../../middleware/request-local.js";
+import { resolveAgentRegistrationCaller } from "../agent-registration-caller.js";
+import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
@@ -30,10 +32,10 @@ export async function prepareBackgroundRequestAuthorization(
 ): Promise<(() => Promise<string>) | undefined> {
   const method = c.get("authMethod");
   if (
-    (!HOSTED_MODE && !(options.includeNativeApiKey && method === "workos_api_key")) ||
+    (!HOSTED_MODE && !(options.includeNativeApiKey && isOrgBoundCredential(method))) ||
     !hasServiceCredential() ||
     c.get("guestId") ||
-    (method !== "authkit_jwt" && method !== "workos_api_key")
+    (method !== "authkit_jwt" && !isOrgBoundCredential(method))
   )
     return;
   const prepare = () => abortable(
@@ -49,17 +51,13 @@ export async function prepareBackgroundRequestAuthorization(
   const organizationId = c.get("mcpjamOrganizationId");
   const resolve = async () => {
     const signal = AbortSignal.timeout(10_000);
-    if (method === "workos_api_key") {
-      // The normal request memo predates the long turn. Recheck the same key,
-      // including its current organization binding, before using delegation.
-      setRequestLocal(c, "workosApiKeyValidation", undefined);
-      setRequestLocal(c, "workosApiKeyBinding", undefined);
-      const refusal = await abortable(
-        bearerAuthMiddleware(c, async () => {}),
+    if (isOrgBoundCredential(method)) {
+      const refused = await abortable(
+        recheckOrgBoundCredential(c, method),
         signal,
       );
       if (
-        refusal ||
+        refused ||
         c.get("workosUserId") !== subject ||
         c.get("mcpjamOrganizationId") !== organizationId
       ) {
@@ -81,4 +79,33 @@ export async function prepareBackgroundRequestAuthorization(
     inFlight ??= resolve().finally(() => { inFlight = undefined; });
     return inFlight;
   };
+}
+
+/**
+ * Recheck an org-bound caller before a deferred use; true means refused. The
+ * normal request memo predates the long turn. An `sk_` key is revalidated from
+ * scratch, current organization binding included. An agent token lives five
+ * minutes and may have expired mid-turn, so the agent's user and organization
+ * are resolved again from the claims it arrived with: work it started
+ * completes, and org membership is still checked where the delegated token is
+ * minted.
+ */
+async function recheckOrgBoundCredential(
+  c: Context,
+  method: "workos_api_key" | "workos_agent",
+): Promise<boolean> {
+  if (method === "workos_agent") {
+    const claims = getRequestLocal(c, "workosAgentClaims");
+    if (!claims) return true;
+    const caller = await resolveAgentRegistrationCaller(claims);
+    setRequestLocal(c, "workosAgentCaller", caller);
+    return (
+      !caller.ok ||
+      caller.workosUserId !== c.get("workosUserId") ||
+      caller.mcpjamOrganizationId !== c.get("mcpjamOrganizationId")
+    );
+  }
+  setRequestLocal(c, "workosApiKeyValidation", undefined);
+  setRequestLocal(c, "workosApiKeyBinding", undefined);
+  return Boolean(await bearerAuthMiddleware(c, async () => {}));
 }
