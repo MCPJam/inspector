@@ -137,7 +137,6 @@ export function PlaygroundEnvironmentSection({
         >
           <ErrorCard
             error={describeEnvironmentError(previewError)}
-            variant="inline"
             // Retry is pointless for a zero-servers failure — the resolve is
             // deterministic and would fail identically. Offer the thing that
             // actually fixes it instead. Note the preview FAILED, so there is

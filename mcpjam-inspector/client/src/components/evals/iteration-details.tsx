@@ -1242,7 +1242,7 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
+      {iterationError && <ErrorCard key={iteration._id} error={iterationError} />}
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"

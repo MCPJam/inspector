@@ -133,7 +133,10 @@
     "dev:app:processes:win32": "concurrently --raw \"npm run telemetry:watch\" \"npm run dev:server\" \"npm run dev:client\"",
     "test:visual:app": "node scripts/visual/build.mjs && playwright test --config playwright.visual.config.ts && node scripts/visual/check-app-archives.mjs",
     "visual:app:upload": "node scripts/visual/check-app-archives.mjs && CHROMATIC_ARCHIVE_LOCATION=.playwright/visual-results chromatic --playwright --exit-zero-on-changes",
-    "postinstall": "node scripts/patch-harness-approvals.mjs"
+    "postinstall": "node scripts/patch-harness-approvals.mjs",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "typecheck:storybook": "tsc --noEmit -p tsconfig.storybook.json"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.113",
@@ -280,6 +283,8 @@
     "@playwright/test": "1.63.0",
     "@posthog/rollup-plugin": "^1.6.0",
     "@sentry/cli": "^2.58.6",
+    "@storybook/addon-docs": "^10.6.6",
+    "@storybook/react-vite": "^10.6.6",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
@@ -308,6 +313,7 @@
     "png-to-ico": "^3.0.2",
     "prettier": "^3.9.8",
     "run-script-os": "^1.1.6",
+    "storybook": "^10.6.6",
     "tailwindcss": "^4.1.11",
     "terser": "^5.51.2",
     "tsup": "^8.3.5",

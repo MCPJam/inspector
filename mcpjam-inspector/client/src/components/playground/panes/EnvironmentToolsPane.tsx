@@ -137,7 +137,6 @@ export function EnvironmentToolsPane({
           <div className="py-6 px-2">
             <ErrorCard
               error={describeEnvironmentError(error)}
-              variant="inline"
               // A zero-servers environment is not a transient failure, so Retry
               // would only fail again. Send the user where the fix is instead.
               {...(isNoServersError(error)
