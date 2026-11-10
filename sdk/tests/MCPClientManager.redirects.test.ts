@@ -17,10 +17,17 @@ import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import { createPinnedStreamingFetch } from "../src/oauth/pinned-stream-fetch.js";
 
 type JsonRpcBody = { id?: number; method: string };
-type Seen = { path: string; method: string; authorization?: string };
+/** Every HTTP request the fixture received; `method` is the JSON-RPC one, POSTs only. */
+type Seen = {
+  verb: string;
+  path: string;
+  method?: string;
+  authorization?: string;
+};
 type Route = (path: string, body: JsonRpcBody) => string | undefined;
 
 const PROTOCOL_VERSION = "2025-11-25";
+const PROTECTED_METHODS = ["tools/call", "resources/read", "prompts/get"];
 const stops: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -64,19 +71,18 @@ async function startServer(
 ): Promise<{ origin: string; seen: Seen[] }> {
   const seen: Seen[] = [];
   const server = http.createServer(async (req, res) => {
-    if (req.method !== "POST") {
+    const verb = req.method ?? "GET";
+    const path = req.url ?? "/";
+    const authorization = req.headers.authorization;
+    if (verb !== "POST") {
+      seen.push({ verb, path, authorization });
       res.writeHead(405).end();
       return;
     }
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString()) as JsonRpcBody;
-    const path = req.url ?? "/";
-    seen.push({
-      path,
-      method: body.method,
-      authorization: req.headers.authorization,
-    });
+    seen.push({ verb, path, method: body.method, authorization });
     const location = route(path, body);
     if (location) {
       res
@@ -157,7 +163,7 @@ describe("MCPClientManager behind a redirecting URL", () => {
     expect(tool).toMatchObject({ content: [{ type: "text", text: "drawn" }] });
     expect(resource.contents[0]).toMatchObject({ uri: "ui://fixture/app.html" });
     expect(prompt.messages).toHaveLength(1);
-    for (const method of ["tools/call", "resources/read", "prompts/get"]) {
+    for (const method of PROTECTED_METHODS) {
       expect(
         seen.filter((entry) => entry.method === method).map((e) => e.path)
       ).toEqual(["/", "/mcp"]);
@@ -179,26 +185,41 @@ describe("MCPClientManager behind a redirecting URL", () => {
 
     await runProtectedCalls(manager);
 
-    for (const rpc of ["tools/call", "resources/read", "prompts/get"]) {
+    for (const rpc of PROTECTED_METHODS) {
       expect(
         dialed.filter((entry) => entry.rpc === rpc).map((entry) => entry.url)
       ).toEqual([`${origin}/`, `${origin}/mcp`]);
     }
   });
 
-  it("refuses a redirect to another origin, naming it, without sending stored headers there", async () => {
+  it("refuses a cross-origin redirect on each protected call, naming it, without sending stored headers there", async () => {
+    // The connection is served in place; only the protected calls are sent
+    // elsewhere, so each refusal is that call's own, not the connect's.
     const target = await startServer(() => undefined);
-    const redirector = await startServer((path) =>
-      path === "/" ? `${target.origin}/mcp` : undefined
+    const redirector = await startServer((path, body) =>
+      path === "/mcp" && PROTECTED_METHODS.includes(body.method)
+        ? `${target.origin}/mcp`
+        : undefined
     );
-
-    const error = await connect(`${redirector.origin}/`, {
+    const manager = await connect(`${redirector.origin}/mcp`, {
       requestInit: { headers: { authorization: "Bearer stored-secret" } },
-    }).catch((caught: unknown) => caught);
+    });
+    const refusal = `Redirect to ${target.origin}/mcp not followed`;
 
-    expect(String(error)).toContain(
-      `Redirect to ${target.origin}/mcp not followed`
-    );
+    await expect(
+      manager.executeTool("fixture", "create_view", {})
+    ).rejects.toThrow(refusal);
+    await expect(
+      manager.readResource("fixture", { uri: "ui://fixture/app.html" })
+    ).rejects.toThrow(refusal);
+    await expect(
+      manager.getPrompt("fixture", { name: "greet" })
+    ).rejects.toThrow(refusal);
+    for (const method of PROTECTED_METHODS) {
+      expect(
+        redirector.seen.filter((entry) => entry.method === method)
+      ).toHaveLength(1);
+    }
     expect(target.seen).toEqual([]);
   });
 
