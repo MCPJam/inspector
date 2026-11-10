@@ -6,6 +6,7 @@ import { ExecutionControlError } from "../../../utils/harness/forwarding/executi
 import type { MrtrLegMiddleware } from "@mcpjam/sdk";
 
 const state = vi.hoisted(() => ({
+  sourceReceipt: vi.fn(async () => "signed-source"),
   userId: "user",
   scope: vi.fn(),
   control: vi.fn(),
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   ask: vi.fn(),
   tools: [{ name: "write", _meta: { ui: { visibility: ["app"] } } }],
 }));
+vi.mock("../../../services/sandbox-view-source.js", () => ({ sandboxSourceReceipt: state.sourceReceipt }));
 vi.mock("../../../utils/harness/forwarding/retained-resources", async original => ({...await original<typeof import("../../../utils/harness/forwarding/retained-resources")>(), readRetainedResourceScope: state.retained, retainedProfileFingerprint: () => "legacy-profile"}));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "user-token",
@@ -340,7 +342,8 @@ it("loads initial widget HTML using the same bound resource route", async () => 
   state.resources.mockResolvedValue({ resources: [] });
   const response = await boundResource({ method: "widget/content", request: { serverId: "server", resourceUri: "ui://app", toolId: "call", toolName: "app", toolInput: {}, injectOpenAiCompat: true, cspMode: "permissive", template: "ui://app" } });
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true });
+  expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true, sourceReceipt: "signed-source" });
+  expect(state.sourceReceipt).toHaveBeenCalledWith(expect.anything(), { serverId: "server", resourceUri: "ui://app", toolCallId: "call" }, expect.stringContaining("Original App"), expect.anything(), "project");
   expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
 });
 

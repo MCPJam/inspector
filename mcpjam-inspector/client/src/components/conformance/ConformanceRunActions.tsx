@@ -34,6 +34,10 @@ export type SavedRunServerSettings = {
     selection: ConformanceSelection,
     inputs?: ConformanceProbes,
   ) => Promise<void>;
+  /** Each server's saved run timeout override, by name. */
+  timeouts?: Record<string, number>;
+  /** Saves a server's run timeout; null goes back to the default. */
+  saveTimeout?: (serverName: string, seconds: number | null) => Promise<void>;
 };
 
 /**
@@ -191,6 +195,18 @@ export function SavedRunSettings({
       inputs={settings.inputs?.[serverName] ?? initial?.inputs}
       onSave={(selection, inputs) =>
         settings.save(serverName, selection, inputs)
+      }
+      timeoutSeconds={
+        // `Object.hasOwn`, as the Conformance page reads the same map: a
+        // server named like a built-in ("constructor") must not get one.
+        settings.timeouts && Object.hasOwn(settings.timeouts, serverName)
+          ? settings.timeouts[serverName]
+          : undefined
+      }
+      onSaveTimeout={
+        settings.saveTimeout
+          ? (seconds) => settings.saveTimeout!(serverName, seconds)
+          : undefined
       }
       onBack={onBack}
     />

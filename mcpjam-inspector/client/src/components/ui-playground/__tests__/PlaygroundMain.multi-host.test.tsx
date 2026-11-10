@@ -267,6 +267,7 @@ vi.mock("@/hooks/useViews", () => ({
 
 vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: vi.fn(),
+  getChatHistoryState: vi.fn(),
   chatHistoryAction: vi.fn().mockResolvedValue({ ok: true }),
 }));
 

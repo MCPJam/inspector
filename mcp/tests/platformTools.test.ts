@@ -177,6 +177,7 @@ const PLAIN_TOOLS = [
   "get_conformance_run",
   "list_conformance_runs",
   "get_conformance_report",
+  "get_conformance_check",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -458,6 +459,11 @@ describe("platform tool registration", () => {
       "get_server_skill",
       "read_server_skill_file",
       "check_host_compatibility",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -713,6 +719,26 @@ describe("platform tool registration", () => {
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
     }
 
+    // A conformance start costs no MCPJam credits, but the server's saved
+    // settings can name a tool that writes, so it is not an additive write.
+    expect(annotationsOf("start_conformance_run")).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    for (const name of [
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
+    ]) {
+      expect(annotationsOf(name), name).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
+    }
+
     for (const registration of registrations) {
       const { title, ...hints } = registration.config.annotations ?? {};
       // Claude's directory reads `annotations.title` and ignores the top-level
@@ -960,6 +986,69 @@ describe("runPlatformOperation", () => {
     expect(result.structuredContent?.error).toEqual({
       code: "FORBIDDEN",
       message: "Denied",
+    });
+  });
+
+  it("keeps a refusal's code and gated feature, and nothing else of its details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "Conformance is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              feature: "conformance",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Conformance is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "conformance" },
+    });
+  });
+
+  it("keeps a feature-gate code even when the refusal names no feature", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "This feature is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "This feature is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE" },
     });
   });
 

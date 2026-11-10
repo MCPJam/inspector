@@ -99,6 +99,13 @@ export function withoutHeldCreditsSentence(text: string): string {
   return text.replace(HOLDS_COMMITTED_SENTENCE_TEXT, " ");
 }
 
+/** An exhaustion in MCPJam's own words, which no vendor's limit uses. */
+const MCPJAM_EXHAUSTION_PHRASES: readonly RegExp[] = [
+  /mcpjam[\w\s-]{0,40}model limit/i,
+  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
+  /\bThis request needs about \d+ MCPJam credits\b/i,
+];
+
 /**
  * What an exhaustion SAYS, in words. Kept apart from the codes because the
  * codes also ride a hold (`user_rate_limit` is the generic code for both), so
@@ -106,10 +113,18 @@ export function withoutHeldCreditsSentence(text: string): string {
  * that is only a hold.
  */
 export const EXHAUSTION_PHRASES: readonly RegExp[] = [
-  /mcpjam[\w\s-]{0,40}model limit/i,
-  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
-  /\bThis request needs about \d+ MCPJam credits\b/i,
+  ...MCPJAM_EXHAUSTION_PHRASES,
   /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i,
+];
+
+/**
+ * MCPJam's own credit and spend refusals in its own words, codes aside: what
+ * tells MCPJam's limit from a vendor's that words its own limits alike.
+ */
+export const MCPJAM_LIMIT_PHRASES: readonly RegExp[] = [
+  ...MCPJAM_EXHAUSTION_PHRASES,
+  /\bout of MCPJam credits\b/i,
+  /\bspend budget (?:is )?reached\b/i,
 ];
 
 /**

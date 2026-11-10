@@ -38,11 +38,11 @@ import type {
 } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
-  buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   type PersistChatOutcome,
@@ -630,7 +630,7 @@ export function handleLocalOrgChatModel(
   try {
     assertOrgModelAllowed(provider, modelId);
     llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(provider, modelId),
+      buildGuardedOrgModel(provider, modelId),
       options.admission,
       modelId,
       attempts,

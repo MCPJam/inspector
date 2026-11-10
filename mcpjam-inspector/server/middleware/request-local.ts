@@ -1,4 +1,8 @@
 import type { Context } from "hono";
+import type {
+  AgentRegistrationCaller,
+  AgentRegistrationClaims,
+} from "../services/agent-registration-caller.js";
 
 /**
  * Typed request-local store, layered over Hono's `c.set` / `c.get`.
@@ -15,6 +19,12 @@ import type { Context } from "hono";
  * stays immediate.
  */
 export interface RequestLocalMap {
+  /** Successful project authorization, usable only with this request's bearer. */
+  authorizedProject: {
+    projectId: string;
+    organizationId: string;
+    bearer: string;
+  };
   /** Server-owned same-identity resolver for an active long-running turn. */
   turnAuthorizationBearer: () => Promise<string>;
   workosApiKeyValidation: unknown;
@@ -38,6 +48,13 @@ export interface RequestLocalMap {
    * caches above defend against).
    */
   workosRateLimitConsumed: boolean;
+  /**
+   * The claims of a `workos_agent` bearer, kept so a long turn can resolve the
+   * same user and org again after the 5-minute token has expired.
+   */
+  workosAgentClaims: AgentRegistrationClaims;
+  /** Memoized agent resolution, for the same reason as the caches above. */
+  workosAgentCaller: AgentRegistrationCaller;
 }
 
 export function getRequestLocal<K extends keyof RequestLocalMap>(
