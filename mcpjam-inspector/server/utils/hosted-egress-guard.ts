@@ -488,7 +488,13 @@ const MAX_GUARDED_REDIRECTS = 20;
  * developer's laptop is not an egress decision.
  */
 export function createGuardedFetch(
-  options: { resolver?: EgressHostResolver; hosted?: boolean; baseFetch?: typeof fetch } = {}
+  options: {
+    resolver?: EgressHostResolver;
+    hosted?: boolean;
+    baseFetch?: typeof fetch;
+    /** Names the refused URL in the error; defaults to "Request URL". */
+    label?: string;
+  } = {},
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
   const baseFetch = options.baseFetch ?? fetch;
@@ -534,10 +540,14 @@ export function createGuardedFetch(
     const rejectsRedirect = currentInit.redirect === "error";
 
     for (let hop = 0; hop <= MAX_GUARDED_REDIRECTS; hop++) {
-      await assertAllowedHostedTargetUrl(currentUrl, "Request URL", {
-        resolver: options.resolver,
-        hosted: true,
-      });
+      await assertAllowedHostedTargetUrl(
+        currentUrl,
+        options.label ?? "Request URL",
+        {
+          resolver: options.resolver,
+          hosted: true,
+        },
+      );
 
       const response = await baseFetch(currentUrl, {
         ...currentInit,

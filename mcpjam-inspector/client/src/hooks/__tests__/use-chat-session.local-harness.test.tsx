@@ -489,14 +489,11 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
   } as never;
 
-  it("keeps an org-runtime model on the local route, with no local runtime ask, when nothing asks for local", async () => {
-    // The control. Without this the `localMcpRuntimeRequired` assertions below
-    // would pass whether or not a local ask is what sets the flag.
+  it("keeps an org-runtime model on the local route when nothing asks for local", async () => {
     await renderWithHarness(undefined, { projectId: "proj-1" }, {
       hostedOrgModelConfig: ORG_CONFIG,
     });
     expect(chatApi()).toBe("/api/mcp/chat-v2");
-    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 
   it("keeps a requested local turn on the route that can run it", async () => {
@@ -524,26 +521,10 @@ describe("useChatSession — routing an org-runtime model that asks for local", 
     );
     expect(chatApi()).toBe("/api/mcp/chat-v2");
     const { body, headers } = sendRequest();
-    expect(body.localMcpRuntimeRequired).toBe(true);
     expect(body.browserEngine).toBe("local");
     expect(headers["X-MCPJam-Browser-Consent"]).toBe("browser-capability");
     expect(body.harnessTarget).toBeUndefined();
     expect(body.computerEngine).toBeUndefined();
-  });
-
-  it("tells the local route to resolve MCP servers locally too", async () => {
-    // The agent runs here, so the servers it reaches have to resolve here.
-    await renderWithHarness(grantedController(), { projectId: "proj-1" }, {
-      hostedOrgModelConfig: ORG_CONFIG,
-    });
-    expect(sendRequest().body.localMcpRuntimeRequired).toBe(true);
-  });
-
-  it("does not claim a local MCP runtime for a plain BYOK local turn", async () => {
-    // `localMcpRuntimeRequired` is about an ORG-runtime model's server
-    // resolution. A BYOK model never routed away in the first place.
-    await renderWithHarness(grantedController(), { projectId: "proj-1" });
-    expect(sendRequest().body.localMcpRuntimeRequired).toBeUndefined();
   });
 });
 

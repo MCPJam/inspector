@@ -256,18 +256,21 @@ const HOSTED_HARNESS_ARGS = {
   },
 };
 
-/** A recipe exactly as the registry's hosted adapter builds it. */
-async function loadHostedRecipe(harnessId) {
+/** Preserve both the base recipe and the warm executable the turn selects. */
+async function loadHostedRecipe(harnessId, warm = false) {
   const registry = await loadHarnessRegistry();
-  const harness = registry
-    .getHarnessAdapter(harnessId)
-    .createHarness(HOSTED_HARNESS_ARGS[harnessId]);
+  const adapter = registry.getHarnessAdapter(harnessId);
+  let harness = adapter.createHarness({ ...HOSTED_HARNESS_ARGS[harnessId], warmAgent: warm });
+  if (warm) {
+    const { withWarmBridgeBootstrap } = await tsModule("../server/utils/harness/warm-bridge-files.ts");
+    harness = withWarmBridgeBootstrap(harness);
+  }
   return { bootstrap: await harness.getBootstrap() };
 }
 
 /** The patched Claude Code recipe exactly as a hosted turn builds it. */
-async function loadClaudeCodeRecipe() {
-  return loadHostedRecipe("claude-code");
+async function loadClaudeCodeRecipe(warm) {
+  return loadHostedRecipe("claude-code", warm);
 }
 
 /**
@@ -275,7 +278,7 @@ async function loadClaudeCodeRecipe() {
  * generated bridge bundle that has drifted from its sources (it is a build
  * product, gitignored, and a stale one would bake a bridge nobody reviewed).
  */
-async function loadCodexAppServerRecipe() {
+async function loadCodexAppServerRecipe(warm) {
   const generatedPath = join(
     here,
     "../server/utils/harness/codex-appserver/bootstrap/generated/codex-appserver-bridge.bundled.ts",
@@ -301,7 +304,7 @@ async function loadCodexAppServerRecipe() {
         "`npm run bundle:codex-appserver-bridge` and try again",
     );
   }
-  return loadHostedRecipe("codex");
+  return loadHostedRecipe("codex", warm);
 }
 
 function readPins() {
@@ -357,6 +360,7 @@ export async function resolveHarnessBake() {
   const sources = [
     {
       loadRecipe: loadClaudeCodeRecipe,
+      warm: true,
       runtimeVersion: HARNESS_PINNED_VERSIONS["claude-code"],
       vendor: {
         kind: "claude-agent-sdk",
@@ -369,6 +373,7 @@ export async function resolveHarnessBake() {
     },
     {
       loadRecipe: loadCodexAppServerRecipe,
+      warm: true,
       runtimeVersion: HARNESS_PINNED_VERSIONS.codex,
       vendor: {
         kind: "codex-checksums",
@@ -382,7 +387,8 @@ export async function resolveHarnessBake() {
       sentinels: () => [],
     },
     {
-      loadRecipe: () => loadHostedRecipe("copilot-cli"),
+      loadRecipe: (warm) => loadHostedRecipe("copilot-cli", warm),
+      warm: true,
       runtimeVersion: HARNESS_PINNED_VERSIONS["copilot-cli"],
       vendor: { kind: "github-copilot-sdk", sdkVersion: "1.0.11" },
       sentinels: () => [],
@@ -418,42 +424,45 @@ export async function resolveHarnessBake() {
 
   const recipes = [];
   for (const source of sources) {
-    const { bootstrap } = await source.loadRecipe();
-    const files = recipeFiles(bootstrap);
-    const bridge = files.find((file) => file.name === "bridge.mjs");
-    if (!bridge)
-      throw new Error(`${bootstrap.harnessId} recipe has no bridge.mjs`);
-    const sentinels = source.sentinels(bridge.content);
-    if (bootstrap.harnessId === "claude-code" && sentinels.length === 0) {
-      throw new Error(
-        "the Claude Code bridge carries none of the MCPJam patch sentinels; " +
-          "refusing to bake a bridge that may be the vendor's",
-      );
+    for (const warm of source.warm ? [false, true] : [false]) {
+      const { bootstrap } = await source.loadRecipe(warm);
+      const files = recipeFiles(bootstrap);
+      const bridgeName = warm ? "warm-bridge.mjs" : "bridge.mjs";
+      const bridge = files.find((file) => file.name === bridgeName);
+      if (!bridge)
+        throw new Error(`${bootstrap.harnessId} recipe has no ${bridgeName}`);
+      const sentinels = source.sentinels(bridge.content);
+      if (bootstrap.harnessId === "claude-code" && sentinels.length === 0) {
+        throw new Error(
+          "the Claude Code bridge carries none of the MCPJam patch sentinels; " +
+            "refusing to bake a bridge that may be the vendor's",
+        );
+      }
+      const identity = bake.harnessRecipeIdentity(bootstrap);
+      recipes.push({
+        harnessId: bootstrap.harnessId,
+        runtimeVersion: source.runtimeVersion,
+        bootstrapDir: bootstrap.bootstrapDir,
+        dir: bootstrap.bootstrapDir.split("/").pop(),
+        identity,
+        marker: bake.harnessBootstrapMarkerName(identity),
+        files: files
+          .map((file) => ({
+            name: file.name,
+            sha256: sha256(file.content),
+            bytes: Buffer.byteLength(file.content),
+          }))
+          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+        commands: bootstrap.commands,
+        bridge: {
+          name: bridgeName,
+          sha256: sha256(bridge.content),
+          sentinels,
+        },
+        vendor: source.vendor,
+        contents: files,
+      });
     }
-    const identity = bake.harnessRecipeIdentity(bootstrap);
-    recipes.push({
-      harnessId: bootstrap.harnessId,
-      runtimeVersion: source.runtimeVersion,
-      bootstrapDir: bootstrap.bootstrapDir,
-      dir: bootstrap.bootstrapDir.split("/").pop(),
-      identity,
-      marker: bake.harnessBootstrapMarkerName(identity),
-      files: files
-        .map((file) => ({
-          name: file.name,
-          sha256: sha256(file.content),
-          bytes: Buffer.byteLength(file.content),
-        }))
-        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-      commands: bootstrap.commands,
-      bridge: {
-        name: "bridge.mjs",
-        sha256: sha256(bridge.content),
-        sentinels,
-      },
-      vendor: source.vendor,
-      contents: files,
-    });
   }
 
   for (const recipe of recipes) {

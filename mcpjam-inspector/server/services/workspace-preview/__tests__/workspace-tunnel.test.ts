@@ -98,10 +98,18 @@ describe("ensureWorkspaceTunnel", () => {
     expect(ws.commands.at(-1)).toBe("exec node /tmp/mcpjam-preview/tunnel.mjs");
   });
 
-  it("sends a private workspace's traffic token on the tunnel handshake only", async () => {
-    const ws = fakeWorkspace({ trafficAccessToken: "tok" });
-    const tunnel = await ensureWorkspaceTunnel(ws.sandbox, { pollMs: 1 });
-    expect(tunnel.upstreamHeaders).toEqual({ "e2b-traffic-access-token": "tok" });
+  it("refuses a private preview before starting a sidecar or issuing a browser grant", async () => {
+    const ws = fakeWorkspace({});
+    const previewGrant = vi.fn();
+    await expect(
+      preparePreviewNavigation({
+        url: "http://localhost:5173",
+        client: { previewGrant },
+        attach: async () => ({ ...ws.sandbox, privateAppPorts: true }),
+      }),
+    ).rejects.toMatchObject({ code: "private_workspace" });
+    expect(ws.commands).toEqual([]);
+    expect(previewGrant).not.toHaveBeenCalled();
   });
 
   it("shares one start between concurrent first navigations", async () => {

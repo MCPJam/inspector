@@ -31,7 +31,7 @@ export interface PreviewGrant {
   port: number;
   /** `wss://` or `ws://` base the workspace tunnel is reached at. */
   upstreamUrl: string;
-  /** Routing or traffic headers the provider needs on the tunnel handshake. */
+  /** Only routing headers for the configured sandbox proxy. */
   upstreamHeaders: Record<string, string>;
   /** This port's key, derived by the inspector from the workspace secret. */
   key: string;
@@ -41,7 +41,7 @@ export type PreviewGrantResult =
   | { ok: true; port: number }
   | { ok: false; error: "invalid_grant" | "port_unavailable" };
 
-const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const ROUTING_HEADERS = new Set(["e2b-sandbox-id", "e2b-sandbox-port"]);
 const HEADER_VALUE = /^[\x20-\x7e]{0,4096}$/;
 
 /** A body is a grant only if every field is exactly what the tunnel needs. */
@@ -67,7 +67,7 @@ export function parsePreviewGrant(body: unknown): PreviewGrant | undefined {
   if (upstreamHeaders !== undefined) {
     if (typeof upstreamHeaders !== "object" || upstreamHeaders === null) return undefined;
     for (const [name, value] of Object.entries(upstreamHeaders)) {
-      if (!HEADER_NAME.test(name) || typeof value !== "string" || !HEADER_VALUE.test(value))
+      if (!ROUTING_HEADERS.has(name.toLowerCase()) || typeof value !== "string" || !HEADER_VALUE.test(value))
         return undefined;
       headers[name] = value;
     }

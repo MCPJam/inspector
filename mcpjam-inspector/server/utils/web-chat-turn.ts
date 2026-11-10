@@ -1,4 +1,6 @@
 import type { TurnAuthorization } from "../services/turn-authorization.js";
+import type { TurnTiming } from "./turn-timing.js";
+import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
@@ -9,7 +11,7 @@ import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
-import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertConversationExecution, conversationExecutionArgs } from './harness/conversation-execution.js';
 import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
@@ -39,13 +41,20 @@ import { findMalformedHistory } from "./client-history-shape.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
 import type { FailureCapture } from "./agent-failure-capture.js";
 import { type SandboxNoticeReason } from "@/shared/sandbox-notice";
-import { emitHistoryNotice, emitSandboxNotices } from "./turn-notices.js";
+import {
+  emitHistoryNotice,
+  emitReasoningEffortNotice,
+  emitSandboxNotices,
+} from "./turn-notices.js";
 import { emitPluginServersUnavailable } from "./plugin-server-isolation.js";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import { directChatEffort } from "./chat-reasoning-effort.js";
+import {
+  directChatEffort,
+  withoutCustomProviderEffort,
+} from "./chat-reasoning-effort.js";
 import type {
   AuthChallengePolicy,
   Harness,
@@ -436,7 +445,6 @@ export interface WebChatTurnPrepareInputs {
   requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
   directProvider?: DirectProviderInput;
-  localMcpRuntimeRequired?: boolean;
   modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
@@ -574,6 +582,10 @@ export interface WebChatTurnPrepareInputs {
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
   turnAuthorization?: TurnAuthorization;
+  /** This turn's stage timing; the harness adds its stages and first text. */
+  turnTiming?: TurnTiming;
+  /** The execution-binding check, when the route already started it. */
+  executionBinding?: EarlyStart<void>;
   localScopeStepUp?: {
     bindingKey: string;
     resumeRequest?: ScopeStepUpResumeRequest;
@@ -752,7 +764,20 @@ export async function streamChatTurn(
   args: StreamWebChatTurnArgs,
   source: "managed" | "standalone",
 ): Promise<Response> {
-  const { manager, prepare, persist, runtime } = args;
+  const { manager, persist, runtime } = args;
+  const { prepare, omitted: omittedEffort } = withoutCustomProviderEffort(
+    args.prepare,
+  );
+  if (omittedEffort) {
+    logger.warn(
+      "[web-chat-turn] a custom provider connection takes no reasoning effort; running the turn without it",
+      {
+        modelId: String(prepare.modelDefinition.id),
+        effort: omittedEffort,
+        chatSessionId: persist.chatSessionId,
+      },
+    );
+  }
   if (!persist.harness) assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
   const { c } = runtime;
   if (source === "standalone" && (HOSTED_MODE || persist.projectId ||
@@ -948,6 +973,7 @@ export async function streamChatTurn(
   const emitTurnNotices = (writer: ElicitationChunkWriter): void => {
     runtime.onStreamWriterReady?.(writer);
     emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+    emitReasoningEffortNotice(writer, omittedEffort !== undefined);
     emitPluginServersUnavailable(writer, persist.chatSessionId, {
       ...prepare.isolatedServers,
       failed: unavailableServers,
@@ -1198,15 +1224,10 @@ export async function streamChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
-  await assertConversationExecution({
-    mcpClientManager: manager,
-    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
-    origin: persist.scenarioId ? "scenario" : "playground",
-    executionBindingVersion: persist.executionBindingVersion,
-    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
-    harness: persist.harness, agentLoop: persist.agentLoop,
-    authHeader: runtime.authHeader, signal: runtime.abortSignal,
-  });
+  if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
+  else await assertConversationExecution(conversationExecutionArgs({
+    manager, scope: persist, authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  }));
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1698,11 +1719,14 @@ export async function streamChatTurn(
     // Cloud-only providers skip the /stream/org/resolve round-trip — the
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
+    // Every eligible provider asks, local-only MCP servers or not: the cloud
+    // route refuses a local-runtime connection (`local_runtime_required`),
+    // and either runtime runs this turn's tools from this process.
     // A refusal by the organization's AI-key policy (a local-runtime
     // connection when the org requires its own keys, a connection that is
     // gone) is answered as the refusal it is, never as an outage and never by
     // falling back to another rail.
-    const orgRuntime: OrgProviderRuntime = !prepare.localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
+    const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
       ? await resolveOrgProviderRuntime(
           persist.projectId,
           providerKey,
@@ -1982,6 +2006,7 @@ export async function streamChatTurn(
     harnessHostCapabilities: prepare.harnessHostCapabilities,
     harnessStartupRequestId: prepare.harnessStartupRequestId,
     turnAuthorization: runtime.turnAuthorization,
+    ...(runtime.turnTiming ? { turnTiming: runtime.turnTiming } : {}),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
