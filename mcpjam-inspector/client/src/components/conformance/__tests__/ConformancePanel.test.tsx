@@ -4082,9 +4082,10 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await clickRun();
 
-    await screen.findByText(
-      "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page.",
-    );
+    // The blocked-window dialog asks; the note at the top of the run would
+    // repeat the same message and buttons, so it waits until the window opens.
+    await screen.findByRole("alertdialog");
+    expect(screen.queryByTestId("conformance-oauth-prompt")).toBeNull();
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
