@@ -137,7 +137,7 @@ describe("AddProviderDialog", () => {
     type("gateway-secret", "sk-wrong");
     submitTest();
     expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(screen.getByText("The provider needs a valid API key")).toBeInTheDocument();
+    expect(screen.getByText("The provider needs a valid API key. Update the key and test again.")).toBeInTheDocument();
     await waitFor(() => expect(document.activeElement).toBe(field("gateway-secret")));
     expect(addButton()).toBeDisabled();
   });
