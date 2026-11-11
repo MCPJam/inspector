@@ -2469,12 +2469,20 @@ export function PlaygroundMain({
     },
     [activeProjectId, multiModelSessionGeneration, setPaneTarget],
   );
+  const connectedServerNames = useMemo(
+    () =>
+      Object.keys(servers).filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      ),
+    [servers],
+  );
   const paneControls = useComparePaneControls({
     sections: skillsSection,
     active: isMultiHostMode,
     panes: comparePanes,
     resolutions: clientResolutions,
     sharedServers: selectedServers,
+    connectedServers: connectedServerNames,
     serverIdByName: serversByName,
     orgConfig: hostedOrgModelConfig,
     restorePanes,

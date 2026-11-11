@@ -90,11 +90,14 @@ function serverCount(count: number): string {
  * servers, and its place in the lineup. Every change touches one pane. The
  * Tools sidebar follows the pane whose settings were opened last.
  */
+const NO_SERVERS: readonly string[] = [];
+
 export function useComparePaneControls({
   active,
   panes,
   resolutions,
   sharedServers,
+  connectedServers = NO_SERVERS,
   serverIdByName,
   orgConfig,
   restorePanes,
@@ -111,6 +114,8 @@ export function useComparePaneControls({
   resolutions: readonly PlaygroundClientResolution[];
   /** The composer's servers, which every pane uses unless it narrows them. */
   sharedServers: readonly string[];
+  /** Connected servers a pane can add even when the chat does not use them. */
+  connectedServers?: readonly string[];
   serverIdByName: ReadonlyMap<string, string>;
   orgConfig: OrgVisibleConfig | undefined;
   restorePanes: (panes: readonly RecoveryPane[]) => void;
@@ -425,7 +430,7 @@ export function useComparePaneControls({
           : null
         : serverIdByName.size === 0
           ? null
-          : [...new Set([...sharedServers, ...servers])]
+          : [...new Set([...sharedServers, ...servers, ...connectedServers])]
               .filter((name) => serverIdByName.has(name))
               .map((name) => ({ name, enabled: servers.includes(name) }));
       const enabledServers = environment
@@ -567,6 +572,7 @@ export function useComparePaneControls({
       });
     },
     [
+      connectedServers,
       environmentServers,
       openPaneId,
       orgConfig,
