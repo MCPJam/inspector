@@ -25,6 +25,7 @@
  *    shell `cat` (exec output is capped at 16k).
  */
 import matter from "gray-matter";
+import { HOSTED_MODE } from "../../config.js";
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import {
   convexAdoptComputerSkills,
@@ -183,7 +184,11 @@ function parseAdoptCandidate(
  * of the snapshot claim, and `executionScope` does not cover it: eval runs set
  * no execution scope at all.
  *
- * `HARNESS_SKILL_ADOPTION_DISABLED=1` remains the operator-side kill switch.
+ * The hosted app never adopts. Whatever runs on the box can write a SKILL.md
+ * there, including commands a model chose after reading an MCP server's
+ * output, and adopting it would turn that text into a skill the person's later
+ * turns load. A self-hosted Inspector adopts unless its operator sets
+ * `HARNESS_SKILL_ADOPTION_DISABLED=1`.
  */
 export function shouldAdoptSandboxSkills(args: {
   runSucceeded: boolean;
@@ -198,8 +203,10 @@ export function shouldAdoptSandboxSkills(args: {
   hasExecutionScope: boolean;
   hasCredentials: boolean;
   hasFileSession: boolean;
-  adoptionDisabled: boolean;
 }): boolean {
+  if (HOSTED_MODE || process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1") {
+    return false;
+  }
   return (
     args.runSucceeded &&
     !args.aborted &&
@@ -209,8 +216,7 @@ export function shouldAdoptSandboxSkills(args: {
     !args.skillsArePinned &&
     !args.hasExecutionScope &&
     args.hasCredentials &&
-    args.hasFileSession &&
-    !args.adoptionDisabled
+    args.hasFileSession
   );
 }
 
