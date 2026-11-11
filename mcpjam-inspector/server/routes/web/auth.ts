@@ -21,9 +21,13 @@ import {
   connectionLabels,
   type AuthorizedOAuthConnection,
 } from "../../../shared/oauth-connections.js";
-import { setManagerConnections } from "../../utils/mcp-connections.js";
+import {
+  setManagerAuthorizedCredentials,
+  setManagerConnections,
+} from "../../utils/mcp-connections.js";
 import {
   accountSetGroup,
+  SAVED_ACCOUNT_UNAVAILABLE,
   type ConnectionIdSets,
 } from "../../utils/oauth-account-sets.js";
 import {
@@ -1519,11 +1523,11 @@ export async function createAuthorizedManager(
     /** Set only from the server-resolved host Computer setting. */
     pluginComputerRuntime?: boolean;
     multiConnection?: boolean;
-    /** Build transports only for the explicitly pinned accounts. */
-    onlySelectedConnections?: boolean;
     connectionIds?: Record<string, string>;
     /** Run each listed server with exactly these accounts, refusing otherwise. */
     connectionIdSets?: ConnectionIdSets;
+    /** One message for every account-set refusal, for callers with their own copy. */
+    accountSetRefusal?: string;
     accessScope?: "project_member" | "chat_v2";
     /**
      * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
@@ -1753,8 +1757,7 @@ export async function createAuthorizedManager(
     uniqueServerIds,
     {
       pluginComputerRuntime: options?.pluginComputerRuntime,
-      includeConnections:
-        options?.multiConnection || options?.onlySelectedConnections,
+      includeConnections: options?.multiConnection,
       connectionIds: options?.connectionIds,
       connectionIdSets: options?.connectionIdSets,
       accessScope: options?.accessScope,
@@ -1769,16 +1772,9 @@ export async function createAuthorizedManager(
       serverNamesById[serverId] = storedName.trim();
     }
   }
-  if (options?.multiConnection || options?.onlySelectedConnections) {
+  if (options?.multiConnection) {
     for (const [id, auth] of Object.entries(batch.results)) {
       if (auth.ok) {
-        const selectedId = options.onlySelectedConnections
-          ? options.connectionIds?.[id]
-          : undefined;
-        // Selected-account authorization returns one credential, not the account list.
-        if (selectedId && !auth.oauthConnections && auth.oauthCredentialId === selectedId && auth.oauthAccessToken) {
-          auth.oauthConnections = [{connectionId: selectedId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: false}];
-        }
         // A member's only login on a server arrives as the default credential,
         // not as an account list (the backend lists two or more). Without a
         // group its calls carry no connection, so a sign-in continuation binds
@@ -1786,8 +1782,6 @@ export async function createAuthorizedManager(
         // Same rails as the stored-token path below: OAuth or discover only,
         // never XAA or a bearer header, whose tokens the group would override.
         if (
-          !selectedId &&
-          options.multiConnection &&
           !auth.oauthConnections &&
           auth.oauthCredentialId &&
           auth.oauthAccessToken &&
@@ -1799,18 +1793,8 @@ export async function createAuthorizedManager(
           auth.oauthConnections = [{connectionId: auth.oauthCredentialId, accessToken: auth.oauthAccessToken, credentialAuthorizedAt: auth.oauthCredentialAuthorizedAt, isDefault: true, implicit: true}];
         }
         const live = (auth.oauthConnections ?? []).filter(
-          (c) =>
-            c.accessToken &&
-            !c.needsReauth &&
-            (selectedId === undefined || c.connectionId === selectedId),
+          (c) => c.accessToken && !c.needsReauth,
         );
-        if (options.onlySelectedConnections && (!selectedId || !live.length)) {
-          throw new WebRouteError(
-            403,
-            ErrorCode.FORBIDDEN,
-            "The account saved with this task is unavailable. Reconnect that account to continue.",
-          );
-        }
         // A disconnected default must not hide another usable account.
         auth.oauthAccessToken ||= live[0]?.accessToken;
         // Every row dead (no token, or all needing reauthorization) is NOT a
@@ -1848,6 +1832,7 @@ export async function createAuthorizedManager(
       serverName: displayNameForServer(id, serverNamesById, auth.serverConfig),
       auth,
       set,
+      refusal: options?.accountSetRefusal,
     });
     if (group) connectionsByServerId[id] = group;
   }
@@ -2858,6 +2843,7 @@ export async function createAuthorizedManager(
   }
   if (Object.keys(connectionsByServerId).length)
     setManagerConnections(manager, connectionsByServerId);
+  setManagerAuthorizedCredentials(manager, Object.fromEntries(Object.entries(batch.results).flatMap(([serverId, auth]) => auth.ok && auth.oauthCredentialId ? [[serverId, auth.oauthCredentialId]] : [])));
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
   const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
   for (const [key, config] of connectionEntries) {
@@ -3132,6 +3118,10 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
   },
 ): Promise<T> {
   const { manager, body, refusedServers } = await createManualHostedConnection(
@@ -3217,6 +3207,10 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** The accounts each server runs with, for a launcher that has a saved choice. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
   },
@@ -3257,6 +3251,17 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   // The strongly-typed `body` is passed through to `fn` unchanged.
   const raw = body as Record<string, unknown>;
   const { serverIds, oauthTokens, serverNames } = resolveConnectionParams(raw);
+  // A request pinned to one saved account (a task) connects only that server.
+  const pinnedSets =
+    typeof raw.connectionId === "string" && typeof raw.serverId === "string"
+      ? { [raw.serverId]: [raw.connectionId] }
+      : undefined;
+  if (pinnedSets && serverIds.some((id) => !pinnedSets[id])) {
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN, SAVED_ACCOUNT_UNAVAILABLE);
+  }
+  const chosenSets = pinnedSets
+    ? undefined
+    : await options?.connectionIdSetsForBody?.(rawBody);
   const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
   const accessScope =
     raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
@@ -3377,13 +3382,11 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       pluginComputerRuntime:
         options?.pluginComputerRuntime !== false && !!runHostConfig?.computer,
       ...(options?.lazyConnect ? { lazyConnect: true } : {}),
-      ...(typeof raw.connectionId === "string" &&
-      typeof raw.serverId === "string"
-        ? {
-            connectionIds: { [raw.serverId]: raw.connectionId },
-            onlySelectedConnections: true,
-          }
-        : {}),
+      ...(pinnedSets
+        ? { connectionIdSets: pinnedSets, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE }
+        : chosenSets
+          ? { connectionIdSets: chosenSets }
+          : {}),
       accessScope,
       scenarioId,
       accessVersion,
@@ -3552,6 +3555,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<Record<string, unknown> | undefined>;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    connectionIdSetsForBody?: (
+      rawBody: Record<string, unknown>,
+    ) => Promise<ConnectionIdSets | undefined>;
     /**
      * Runs on the raw body after it is read and BEFORE it is parsed or any
      * server is connected. The hook an environment launch uses to resolve its
@@ -3613,6 +3620,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,
+        connectionIdSetsForBody: options?.connectionIdSetsForBody,
       },
     );
 

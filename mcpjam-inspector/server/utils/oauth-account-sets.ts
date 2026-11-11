@@ -11,9 +11,9 @@ import type { ConvexBatchAuthorizeSuccess } from "../routes/web/auth.js";
  */
 export type ConnectionIdSets = Readonly<Record<string, readonly string[]>>;
 
-function refuse(message: string): never {
-  throw new WebRouteError(403, ErrorCode.FORBIDDEN, message);
-}
+/** The refusal for a request pinned to one saved account, such as a task. */
+export const SAVED_ACCOUNT_UNAVAILABLE =
+  "The account saved with this task is unavailable. Reconnect that account to continue.";
 
 /**
  * The account group a server runs with when its launcher sent a set, or
@@ -33,8 +33,13 @@ export function accountSetGroup(args: {
   serverName: string;
   auth: ConvexBatchAuthorizeSuccess;
   set: readonly string[];
+  /** Replaces every refusal message below, for callers with their own copy. */
+  refusal?: string;
 }): McpToolConnection[] | undefined {
   const { serverId, serverName, auth, set } = args;
+  const refuse: (message: string) => never = (message) => {
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN, args.refusal ?? message);
+  };
   if (auth.oauthAccountSet === "shared") return undefined;
   if (auth.oauthAccountSet !== "applied") {
     // A token without the backend's answer means the set was ignored, and
@@ -52,7 +57,10 @@ export function accountSetGroup(args: {
     );
   }
   const listed = auth.oauthConnections ?? [];
-  const labels = connectionLabels(listed, { withoutEmail: true });
+  // The backend names accounts over the person's whole list, so a name here
+  // matches the one in suite settings; the local rule covers an older backend.
+  const fallback = connectionLabels(listed, { withoutEmail: true });
+  const labels = listed.map((c, index) => c.displayName ?? fallback[index]);
   const byId = new Map(
     listed.map((c, index) => [c.connectionId, { c, label: labels[index] }]),
   );

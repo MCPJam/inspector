@@ -57,6 +57,7 @@ import {
   callerContextFromHono,
 } from "../auth.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
+import { SAVED_ACCOUNT_UNAVAILABLE } from "../../../utils/oauth-account-sets.js";
 import { parseChallengeHeader } from "@mcpjam/sdk";
 import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 import { buildHostConnectionPins } from "../../../services/host-connection-pins.js";
@@ -278,9 +279,11 @@ describe("web auth manager batching", () => {
     global.fetch = vi.fn(async () => Response.json({results: {"server-1": {
       ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
       oauthAccessToken: "selected-token", oauthCredentialId: returnedId, oauthCredentialAuthorizedAt: 42,
+      oauthAccountSet: "applied",
+      oauthConnections: returnedId ? [{connectionId: returnedId, isDefault: false, accessToken: "selected-token", credentialAuthorizedAt: 42}] : [],
       serverConfig: {updatedAt: 123, transportType: "http", url: "https://fixture.example/mcp", useOAuth: true},
     }}})) as typeof fetch;
-    const run = createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, undefined, undefined, {lazyConnect: true, onlySelectedConnections: true, connectionIds: {"server-1": "saved-account"}});
+    const run = createAuthorizedManager({}, "bearer", "project", ["server-1"], 10_000, undefined, undefined, {lazyConnect: true, connectionIdSets: {"server-1": ["saved-account"]}, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE});
     if (returnedId !== "saved-account") {
       await expect(run).rejects.toThrow("The account saved with this task is unavailable");
       expect(mcpClientManagerMock).not.toHaveBeenCalled();
@@ -288,7 +291,8 @@ describe("web auth manager batching", () => {
     }
     const result = await run;
     const key = result.connectionsByServerId?.["server-1"][0]?.key;
-    expect(key).toBe("server-1#saved-account");
+    // The pinned account is the server's only connection, so it owns the bare key.
+    expect(key).toBe("server-1");
     if (!key) throw Error("Missing selected connection");
     const config = result.authorizedServerConfigs?.[key];
     if (!config || !("url" in config)) throw Error("Missing selected HTTP config");
@@ -297,7 +301,9 @@ describe("web auth manager batching", () => {
     expect(getManagerResourceSnapshot(result.manager, key)?.credentialAuthorizedAt).toBe(42);
     const wireBody = vi.mocked(global.fetch).mock.calls[0][1]?.body;
     if (typeof wireBody !== "string") throw Error("Missing authorization request body");
-    expect(JSON.parse(wireBody)).toMatchObject({includeConnections: true, connectionIds: {"server-1": "saved-account"}});
+    const sent = JSON.parse(wireBody);
+    expect(sent).toMatchObject({connectionIdSets: {"server-1": ["saved-account"]}});
+    expect(sent.includeConnections).toBeUndefined();
   });
 
   it.each([
@@ -319,12 +325,18 @@ describe("web auth manager batching", () => {
               oauthCredentialId: "saved-credential",
               oauthCredentialAuthorizedAt: 42,
               internalLogContext: { userId: "resolved-owner" },
+              // A pinned request is answered with only the pinned account.
+              ...(connectionId ? { oauthAccountSet: "applied" } : {}),
               oauthConnections: [
-                {
-                  connectionId: "other-account",
-                  accessToken: "other-token",
-                  isDefault: true,
-                },
+                ...(connectionId
+                  ? []
+                  : [
+                      {
+                        connectionId: "other-account",
+                        accessToken: "other-token",
+                        isDefault: true,
+                      },
+                    ]),
                 {
                   connectionId: "saved-account",
                   accessToken: "saved-token",
@@ -364,8 +376,8 @@ describe("web auth manager batching", () => {
       const authorization = JSON.parse(
         String(vi.mocked(global.fetch).mock.calls[0][1]?.body),
       );
-      expect(authorization.connectionIds).toEqual(
-        connectionId ? { "server-1": connectionId } : undefined,
+      expect(authorization.connectionIdSets).toEqual(
+        connectionId ? { "server-1": [connectionId] } : undefined,
       );
       const [configs, options] = mcpClientManagerMock.mock.calls[0];
       expect(options.lazyConnect).toBe(lazyConnect ? true : undefined);
@@ -433,22 +445,16 @@ describe("web auth manager batching", () => {
                 url: "https://fixture.example/mcp",
                 useOAuth: true,
               },
-              oauthConnections: [
-                {
-                  connectionId: "default",
-                  accessToken: "default-token",
-                  isDefault: true,
-                },
-                ...(revoked
-                  ? [
-                      {
-                        connectionId: "saved-account",
-                        accessToken: "stale-token",
-                        needsReauth: true,
-                      },
-                    ]
-                  : []),
-              ],
+              oauthAccountSet: "applied",
+              oauthConnections: revoked
+                ? [
+                    {
+                      connectionId: "saved-account",
+                      accessToken: "stale-token",
+                      needsReauth: true,
+                    },
+                  ]
+                : [],
             },
           },
         }),

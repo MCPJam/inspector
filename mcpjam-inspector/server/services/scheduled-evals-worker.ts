@@ -19,6 +19,7 @@
  * write surface have their own `SCHEDULED_EVALS_ENABLED` gate).
  */
 
+import { loadSuiteConnectionIdSets } from "./evals/suite-account-choices.js";
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
@@ -263,6 +264,10 @@ export async function executeClaimedRun(
       { failClosed: true },
     );
 
+    // The schedule runs as its owner, so it uses the owner's saved accounts.
+    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+      suiteId: claimed.suiteId,
+    });
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal. There is no request
     // to read the XAA issuer from, so it comes from the deployment's public
@@ -278,6 +283,7 @@ export async function executeClaimedRun(
       {
         serverNames: selection.serverNames,
         pluginComputerRuntime: false,
+        ...(connectionIdSets ? { connectionIdSets } : {}),
         xaaIssuer: resolveConfiguredXaaIssuer(),
         xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
       },

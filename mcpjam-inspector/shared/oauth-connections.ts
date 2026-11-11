@@ -17,6 +17,11 @@ export interface OAuthConnection {
   expiresAt?: number;
 }
 export interface AuthorizedOAuthConnection extends OAuthConnection {
+  /**
+   * The backend's name for the account when it was asked for an account set:
+   * no email, and numbered over the person's whole list for that server.
+   */
+  displayName?: string;
   /** Canonical per-account timestamp, including the legacy createdAt fallback. */
   credentialAuthorizedAt?: number;
   accessToken?: string | null;
