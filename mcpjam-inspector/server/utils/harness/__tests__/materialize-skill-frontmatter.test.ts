@@ -15,8 +15,24 @@ function fakeSession() {
     writeTextFile: async (args) => {
       writes.push(args);
     },
+    run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
   };
   return { session, writes };
+}
+
+/** A box whose SKILL.md writes all fail, recording each command it runs. */
+function failingWriteSession(run?: FrontmatterSession["run"]) {
+  const commands: string[] = [];
+  const session: FrontmatterSession = {
+    writeTextFile: async () => {
+      throw new Error("box unreachable");
+    },
+    run: async (args) => {
+      commands.push(args.command);
+      return run ? run(args) : { exitCode: 0, stdout: "", stderr: "" };
+    },
+  };
+  return { session, commands };
 }
 
 const skill = (over: Partial<RuntimeSkill>): RuntimeSkill => ({
@@ -179,6 +195,7 @@ describe("materializeSkillFrontmatter", () => {
       writeTextFile: async (args) => {
         box.set(args.path, args.content);
       },
+      run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
     };
     const res = await materializeSkillFrontmatter({
       session,
@@ -230,11 +247,18 @@ describe("materializeSkillFrontmatter", () => {
   });
 
   it("is fail-soft: a write error skips that skill, never throws", async () => {
+    // Neither skill carries `allowedTools`, so a failed write can't leave a
+    // grant behind: no removal, no thrown error.
     const writes: string[] = [];
+    const commands: string[] = [];
     const session: FrontmatterSession = {
       writeTextFile: async ({ path }) => {
         if (path.includes("/boom/")) throw new Error("box unreachable");
         writes.push(path);
+      },
+      run: async ({ command }) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: "", stderr: "" };
       },
     };
     const res = await materializeSkillFrontmatter({
@@ -254,6 +278,51 @@ describe("materializeSkillFrontmatter", () => {
     });
     expect(res).toEqual({ rewritten: 1, skipped: 1 });
     expect(writes).toEqual([`${SKILLS_BASE}/fine/SKILL.md`]);
+    expect(commands).toEqual([]);
+  });
+
+  it("removes a skill that carries allowedTools from the box when its rewrite fails", async () => {
+    // A reused box may still hold the grant from an earlier write, so the
+    // skill comes off the box and the turn runs without it.
+    const { session, commands } = failingWriteSession();
+    const res = await materializeSkillFrontmatter({
+      session,
+      skills: [
+        skill({
+          name: "git-helper",
+          extraFrontmatter: { license: "MIT", allowedTools: ["Bash(*)"] },
+        }),
+      ],
+    });
+    expect(res).toEqual({ rewritten: 0, skipped: 1 });
+    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
+  });
+
+  it.each([
+    [
+      "exits non-zero",
+      async () => ({ exitCode: 1, stdout: "", stderr: "Permission denied" }),
+    ],
+    [
+      "throws",
+      async () => {
+        throw new Error("box unreachable");
+      },
+    ],
+  ])("stops the turn when that removal %s", async (_, run) => {
+    const { session, commands } = failingWriteSession(run);
+    await expect(
+      materializeSkillFrontmatter({
+        session,
+        skills: [
+          skill({
+            name: "git-helper",
+            extraFrontmatter: { allowedTools: ["Bash(*)"] },
+          }),
+        ],
+      }),
+    ).rejects.toThrow('Could not update or remove the skill "git-helper"');
+    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
   });
 
   it("never interpolates an invalid skill name into a box path", async () => {
