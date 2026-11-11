@@ -11,7 +11,6 @@ import {
   agentReceives,
   authoredPin,
   namePin,
-  pluginPin,
   preparedRunSkills,
   serverPin,
 } from "../../../test/support/skill-delivery";
