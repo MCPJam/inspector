@@ -1,31 +1,45 @@
+/**
+ * The Skills previews, read off the turn's skill plan (`resolveTurnSkills`):
+ * which skills the turn's engine is handed, and why it leaves the others out.
+ *
+ * The Compare pane previews its own next turn ({@link previewPaneSkills}): a
+ * named environment, or a client with the caller's live project skills. The
+ * Evaluate page previews an eval run of each of a suite's environments
+ * ({@link previewSuiteSkills}), which freezes their skills at start.
+ *
+ * A read of the inputs to a turn. Do not compose an environment, start a box,
+ * fetch supporting files, or return an artifact from the runtime spec.
+ */
 import type { ConvexHttpClient } from "convex/browser";
 import type {
   PaneSkillRow,
-  PaneSkillsRequest,
   PaneSkillsPreview,
+  PaneSkillsRequest,
+  SuiteSkillsPreview,
+  SuiteSkillsPreviewRequest,
 } from "../../../shared/pane-skills-preview.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
-import {
-  getHarnessAdapter,
-  harnessSupportsSkills,
-} from "../../utils/harness/registry.js";
-import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { convexListSkillsForRuntime } from "../../utils/computers/convex-skills-client.js";
-import { composeLivePlusSkills } from "../../utils/harness/skill-delivery.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import type { RuntimeStandaloneSkill } from "./effective-capabilities.js";
 import {
-  allEffectiveSkills,
-  buildLiveEffectiveCapabilities,
-  resolveEffectiveCapabilities,
-  withLiveProjectSkills,
-} from "./effective-capabilities.js";
-import { fetchPluginRuntimeAttribution } from "./plugin-attribution.js";
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "./plugin-attribution.js";
 import { applyPluginVersionOverride } from "./plugin-override.js";
-import { resolveEnvironmentForRuntime, runtimeSkills } from "./runtime.js";
+import {
+  resolveEnvironmentForRuntime,
+  runtimeSelectors,
+  type ResolvedEnvironmentRuntime,
+} from "./runtime.js";
+import {
+  resolveTurnSkills,
+  turnRuntime,
+  type TurnRuntime,
+  type TurnSkills,
+} from "./turn-skills.js";
 
-/** A read of the inputs to a turn. Do not compose an environment, start a box,
- * fetch supporting files, or return an artifact from the runtime spec. */
 export async function previewPaneSkills(
   client: ConvexHttpClient,
   bearer: string,
@@ -40,7 +54,7 @@ export async function previewPaneSkills(
         overrides: { serverIds },
       })
     : undefined;
-  let config;
+  let runtime: TurnRuntime = { kind: "agent" };
   if (spec) {
     if (
       target.kind === "client" &&
@@ -52,7 +66,7 @@ export async function previewPaneSkills(
         "The client setup changed. Reopen its settings.",
       );
     }
-    config = spec.host.runtimeConfig;
+    runtime = turnRuntime(runtimeSelectors(spec.host.runtimeConfig));
   } else if (target.kind === "client") {
     const host = await fetchHostRuntimeConfig({
       hostId: target.hostId,
@@ -66,20 +80,8 @@ export async function previewPaneSkills(
         "Couldn't load this client.",
       );
     }
-    config = host.config;
+    runtime = turnRuntime(host.config);
   }
-  const { harnessId: harness } = resolveAgentLoop({
-    agentLoop: config?.agentLoop,
-    harness: config?.harness,
-  });
-  const attribution = spec
-    ? await fetchPluginRuntimeAttribution(client, {
-        projectId,
-        pluginVersionIds: (spec.pluginVersions ?? []).map(
-          (p) => p.pluginVersionId,
-        ),
-      })
-    : null;
   if (!spec && pluginVersionIds?.length) {
     throw new WebRouteError(
       409,
@@ -87,6 +89,9 @@ export async function previewPaneSkills(
       "The plugin setup is still loading.",
     );
   }
+  const attribution = spec
+    ? await attributionOf(client, projectId, spec)
+    : null;
   const narrowed =
     spec && pluginVersionIds !== undefined
       ? applyPluginVersionOverride({
@@ -95,83 +100,197 @@ export async function previewPaneSkills(
           retainedVersionIds: pluginVersionIds,
         })
       : undefined;
-  const effective = narrowed?.spec ?? spec;
-  const rows = new Map<string, PaneSkillRow>();
-  function add(
-    skill: Pick<PaneSkillRow, "skillId" | "name" | "description">,
-    channels: PaneSkillRow["channels"],
-  ) {
-    if (!rows.has(skill.skillId)) {
-      rows.set(skill.skillId, {
-        skillId: skill.skillId,
-        name: skill.name,
-        description: skill.description,
-        channels,
-        reason: null,
-      });
-    }
-  }
-  for (const skill of spec?.skills ?? []) add(skill, skill.channels ?? []);
-  for (const skill of spec?.serverSkills ?? [])
-    add(
-      {
-        skillId: skill.serverSkillId,
-        name: skill.ref,
-        description: skill.description,
-      },
-      ["mcp-server"],
-    );
-
-  const withPool = target.kind === "client";
-  const unsupported = harness !== undefined && !harnessSupportsSkills(harness);
-  const delivered = new Set<string>();
-  const invalid = new Set<string>();
-  if (harness && !unsupported) {
-    const adapter = getHarnessAdapter(harness);
-    const pins = effective ? runtimeSkills(effective) : [];
-    const live = withPool
-      ? await convexListSkillsForRuntime(bearer, projectId)
+  const pool =
+    target.kind === "client"
+      ? await readProjectSkills(runtime, { projectId, bearer, signal })
       : undefined;
-    for (const skill of live ?? []) add(skill, ["project"]);
-    // Only composed client turns merge by folder. A bare native turn gives
-    // its adapter the unmodified live catalog.
-    const skills =
-      live && effective
-        ? (composeLivePlusSkills(live, pins).skills ?? [])
-        : (live ?? pins);
-    const prepared = adapter.prepareSkills(skills);
-    for (const skill of prepared.delivered) delivered.add(skill.skillId);
-    const skipped = new Set(prepared.skipped.map((skill) => skill.name));
-    for (const skill of skills)
-      if (skipped.has(skill.name)) invalid.add(skill.skillId);
-  } else {
-    const pool = withPool
-      ? await listCloudRuntimeSkills({ projectId, authHeader: bearer, signal })
-      : [];
-    for (const skill of pool) add(skill, ["project"]);
-    if (!unsupported) {
-      const live = buildLiveEffectiveCapabilities({ standaloneSkills: pool });
-      const set = effective
-        ? withLiveProjectSkills(
-            resolveEffectiveCapabilities(effective, attribution),
-            live,
-          )
-        : live;
-      for (const skill of allEffectiveSkills(set)) delivered.add(skill.skillId);
-    }
+  const dropped = new Set(narrowed?.droppedSkillIds);
+  const skills = resolveTurnSkills({
+    source: spec
+      ? {
+          kind: "environment",
+          spec: narrowed?.spec ?? spec,
+          attribution,
+          pluginDisabled: (spec.skills ?? []).filter((skill) =>
+            dropped.has(skill.skillId),
+          ),
+          ...(pool ? { liveExtras: { projectSkills: pool } } : {}),
+        }
+      : { kind: "live", liveExtras: { projectSkills: pool ?? [] } },
+    runtime,
+  });
+  return previewOf(skills, rowsOf(spec, attribution, pool));
+}
+
+/**
+ * Each of a suite's environments, as an eval run of it would deliver: the run
+ * freezes the environment's skills at start and takes nothing live. An
+ * environment the backend refuses to resolve is reported in its entry.
+ */
+export async function previewSuiteSkills(
+  client: ConvexHttpClient,
+  { projectId, environmentIds }: SuiteSkillsPreviewRequest,
+): Promise<SuiteSkillsPreview> {
+  const environments = await Promise.all(
+    [...new Set(environmentIds)].map(async (environmentId) => {
+      try {
+        const spec = await resolveEnvironmentForRuntime(client, {
+          projectId,
+          environmentId,
+        });
+        const attribution = await attributionOf(client, projectId, spec);
+        const skills = resolveTurnSkills({
+          source: { kind: "environment", spec, attribution, frozen: true },
+          runtime: turnRuntime(runtimeSelectors(spec.host.runtimeConfig)),
+        });
+        const preview = previewOf(skills, rowsOf(spec, attribution));
+        return { environmentId, ok: true as const, preview };
+      } catch (error) {
+        // A refusal belongs to its environment; anything else fails the read.
+        if (!(error instanceof WebRouteError) || error.status >= 500)
+          throw error;
+        const { status, message } = error;
+        return {
+          environmentId,
+          ok: false as const,
+          error: { status, message },
+        };
+      }
+    }),
+  );
+  return { environments };
+}
+
+function attributionOf(
+  client: ConvexHttpClient,
+  projectId: string,
+  spec: ResolvedEnvironmentRuntime,
+): Promise<PluginRuntimeAttribution | null> {
+  return fetchPluginRuntimeAttribution(client, {
+    projectId,
+    pluginVersionIds: (spec.pluginVersions ?? []).map((p) => p.pluginVersionId),
+  });
+}
+
+/** The project's skills, read the way the turn's engine reads them. */
+async function readProjectSkills(
+  runtime: TurnRuntime,
+  ctx: { projectId: string; bearer: string; signal?: AbortSignal },
+): Promise<RuntimeStandaloneSkill[]> {
+  if (runtime.kind === "agent") {
+    return listCloudRuntimeSkills({
+      projectId: ctx.projectId,
+      authHeader: ctx.bearer,
+      signal: ctx.signal,
+    });
   }
-  const disabled = new Set(narrowed?.droppedSkillIds);
-  for (const row of rows.values()) {
-    if (delivered.has(row.skillId)) continue;
-    row.reason = disabled.has(row.skillId)
-      ? "plugin-disabled"
-      : unsupported
-        ? "unsupported-harness"
-        : harness && row.channels.includes("mcp-server")
-          ? "server-skill-unsupported"
-          : invalid.has(row.skillId)
-            ? "invalid-skill-name"
-            : "name-collision";
+  const skills = await convexListSkillsForRuntime(ctx.bearer, ctx.projectId);
+  return skills.map((skill) => ({
+    skillId: skill.skillId,
+    ref: skill.name,
+    name: skill.name,
+    description: skill.description,
+    content: skill.content,
+    aggregateHash: skill.aggregateHash,
+    files: [],
+    channels: [],
+  }));
+}
+
+type Row = Omit<PaneSkillRow, "reason" | "omittedFromCatalog">;
+
+/** One row per skill the turn's inputs name, in their order. */
+function rowsOf(
+  spec: ResolvedEnvironmentRuntime | undefined,
+  attribution: PluginRuntimeAttribution | null,
+  pool?: readonly RuntimeStandaloneSkill[],
+): Row[] {
+  const rows = new Map<string, Row>();
+  const add = (row: Row) => {
+    if (!rows.has(row.skillId)) rows.set(row.skillId, row);
+  };
+  for (const skill of spec?.skills ?? []) {
+    const channels = skill.channels ?? [];
+    // The resolved entry carries its revision only in its provenance row.
+    const version = revision(skill.provenance?.projectSkillVersionNumber);
+    add({
+      skillId: skill.skillId,
+      name: skill.name,
+      description: skill.description,
+      channels,
+      origin: {
+        kind:
+          channels.includes("plugin") ||
+          attribution?.skillOrigins.has(skill.skillId)
+            ? "plugin"
+            : "library",
+      },
+      ...(version
+        ? {
+            version: {
+              number: version,
+              pinned: skill.provenance?.versionPinned === true,
+            },
+          }
+        : {}),
+    });
   }
-  return { skills: [...rows.values()], deliveredCount: delivered.size };
+  for (const skill of spec?.serverSkills ?? []) {
+    const version = revision(skill.versionNumber);
+    add({
+      skillId: skill.serverSkillId,
+      name: skill.ref,
+      description: skill.description,
+      channels: ["mcp-server"],
+      origin: { kind: "mcp-server", server: skill.serverLabel },
+      ...(version ? { version: { number: version } } : {}),
+    });
+  }
+  for (const skill of pool ?? []) {
+    add({
+      skillId: skill.skillId,
+      name: skill.name,
+      description: skill.description,
+      channels: ["project"],
+      origin: { kind: "library" },
+    });
+  }
+  return [...rows.values()];
+}
+
+/** A revision number an older backend may leave out. */
+function revision(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function previewOf(skills: TurnSkills, rows: Row[]): PaneSkillsPreview {
+  const verdicts = new Map<
+    string,
+    Pick<PaneSkillRow, "reason" | "omittedFromCatalog">
+  >();
+  const unlisted = { reason: null, omittedFromCatalog: true } as const;
+  for (const ref of skills.delivered) {
+    verdicts.set(
+      ref.skillId,
+      "omittedFromCatalog" in ref && ref.omittedFromCatalog === true
+        ? unlisted
+        : { reason: null },
+    );
+  }
+  for (const { ref, reason } of skills.excluded) {
+    // A skill left out of the prompt's skill list still loads by its ref.
+    if (reason === "omitted-from-catalog") verdicts.set(ref.skillId, unlisted);
+    // No plan applies a cap, and the wire has no reason to show for one.
+    else if (reason !== "over-cap") verdicts.set(ref.skillId, { reason });
+  }
+  const shown = rows.flatMap((row) => {
+    const verdict = verdicts.get(row.skillId);
+    return verdict ? [{ ...row, ...verdict }] : [];
+  });
+  return {
+    skills: shown,
+    deliveredCount: shown.filter((row) => row.reason === null).length,
+  };
 }

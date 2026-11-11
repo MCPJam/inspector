@@ -7,20 +7,28 @@
  * hand-written answer: once for the surface's plan (`resolveTurnSkills`), and
  * once for what reaches the engine, read through the code the engine runs:
  * MCPJam's agent's prompt and tools from `prepareChatV2`, a harness's box from
- * its pinned skill path. Checking the plan against the engine alone would pass
- * if both were wrong the same way.
+ * the skill path its turn takes. Checking the plan against the engine alone
+ * would pass if both were wrong the same way.
+ *
+ * A preview plans a turn it does not run, so its engine check reads the turn
+ * it previews: the eval run for the Evaluate page, a live turn for Compare.
  */
 import { describe, expect, it } from "vitest";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
-import type {
-  ServerSkillsVia,
-  SkillExclusionReason,
-  TurnSkills,
+import {
+  resolveTurnSkills,
+  type ServerSkillsVia,
+  type SkillExclusionReason,
+  type TurnRuntime,
+  type TurnSkills,
 } from "../turn-skills";
 import {
   agentReceives,
   boxReceives,
+  evalEnvironment,
+  liveBoxReceives,
+  personalRuntimeSkill,
+  personalSkill,
   preparedRunSkills,
 } from "../../../test/support/skill-delivery";
 
@@ -48,8 +56,8 @@ interface Expected {
 interface PlannedTurn {
   skills: TurnSkills;
   skillsAtTurn?: Array<Record<string, unknown>>;
-  /** The copies a harness turn on this surface writes to its box. */
-  box: PinnedSkillArtifact[];
+  /** The skill folders a harness turn on this surface writes to its box. */
+  box: string[];
 }
 
 interface Surface {
@@ -67,6 +75,23 @@ const noSkillsOn = (refs: string[]): Expected => ({
   recorded: [],
 });
 
+const runtimeOf = (engine: Engine): TurnRuntime =>
+  engine === "mcpjam-agent"
+    ? { kind: "agent" }
+    : { kind: "harness", harnessId: engine };
+
+/** The box of a harness turn; MCPJam's agent has none. */
+const harnessBox = (engine: Engine, box: () => string[]) =>
+  engine === "mcpjam-agent" ? [] : box();
+
+/** A preview records nothing: it plans a turn it does not run. */
+function previewing(rows: Record<Engine, Expected>): Record<Engine, Expected> {
+  const preview = { ...rows };
+  for (const engine of ENGINES)
+    preview[engine] = { ...rows[engine], recorded: [] };
+  return preview;
+}
+
 /** An eval run's iteration, from the run's frozen skills. */
 const EVAL: Surface = {
   name: "eval",
@@ -79,7 +104,9 @@ const EVAL: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: run.pinnedHarnessSkills,
+      box: harnessBox(engine, () =>
+        boxReceives(engine, run.pinnedHarnessSkills),
+      ),
     };
   },
   expected: {
@@ -113,8 +140,103 @@ const EVAL: Surface = {
   },
 };
 
+/**
+ * The Evaluate page's preview of the eval fixture's environment, which an
+ * eval run freezes into the eval surface's pins: the same rows as that run.
+ */
+const EVALUATE_PREVIEW: Surface = {
+  name: "evaluate preview",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    const run = await preparedRunSkills();
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "environment", spec, attribution, frozen: true },
+        runtime: runtimeOf(engine),
+      }),
+      box: harnessBox(engine, () =>
+        boxReceives(engine, run.pinnedHarnessSkills),
+      ),
+    };
+  },
+  expected: previewing(EVAL.expected),
+};
+
+/** A live turn on the fixture environment, and the same with a client's own
+ *  skills beside it. */
+const liveRows = (extra: string[]): Record<Engine, Expected> => {
+  const refs = ["release-notes", "acme/summarize", "docs/search", ...extra];
+  // Until server skills reach a harness as tools, a live harness turn
+  // leaves a captured server skill off its box.
+  const harness: Expected = {
+    delivered: ["release-notes", "summarize", ...extra],
+    excluded: [["docs/search", "server-skill-unsupported"]],
+    serverSkillsVia: "none",
+    recorded: [],
+  };
+  return {
+    "mcpjam-agent": {
+      delivered: refs,
+      excluded: [],
+      serverSkillsVia: "agent-tools",
+      recorded: [],
+    },
+    "claude-code": harness,
+    codex: harness,
+    cursor: noSkillsOn(refs),
+    opencode: noSkillsOn(refs),
+    "copilot-cli": noSkillsOn(refs),
+  };
+};
+
+/** The Compare pane's preview of a named environment's next turn. */
+const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
+  name: "compare preview, named environment",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "environment", spec, attribution },
+        runtime: runtimeOf(engine),
+      }),
+      box: harnessBox(engine, () => liveBoxReceives(engine, spec)),
+    };
+  },
+  expected: liveRows([]),
+};
+
+/** The Compare pane's preview of a client turn: its hidden environment plus
+ *  the caller's own pool, personal skills included. */
+const COMPARE_CLIENT_PREVIEW: Surface = {
+  name: "compare preview, client with its own skills",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    const pool = [personalSkill()];
+    return {
+      skills: resolveTurnSkills({
+        source: {
+          kind: "environment",
+          spec,
+          attribution,
+          liveExtras: { projectSkills: pool },
+        },
+        runtime: runtimeOf(engine),
+      }),
+      box: harnessBox(engine, () =>
+        liveBoxReceives(engine, spec, [personalRuntimeSkill()]),
+      ),
+    };
+  },
+  expected: liveRows(["my-notes"]),
+};
+
 /** Each surface joins as one entry here, with its own plan and rows. */
-const SURFACES: Surface[] = [EVAL];
+const SURFACES: Surface[] = [
+  EVAL,
+  EVALUATE_PREVIEW,
+  COMPARE_ENVIRONMENT_PREVIEW,
+  COMPARE_CLIENT_PREVIEW,
+];
 
 const ROWS = SURFACES.flatMap((surface) =>
   ENGINES.map((engine) => ({ surface, engine })),
@@ -144,9 +266,7 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
       );
       expect(received.tools).toContain("loadSkill");
     } else {
-      expect(boxReceives(engine, box).sort()).toEqual(
-        [...expected.delivered].sort(),
-      );
+      expect([...box].sort()).toEqual([...expected.delivered].sort());
       // A harness gets its skills on its box, never as agent tools too.
       expect((await agentReceives(skills, { harness: engine })).tools).toEqual(
         [],
