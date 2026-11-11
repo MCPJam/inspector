@@ -4395,7 +4395,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       modelVisibleMcpToolResults: {},
       mcpToolResultImageRendering: {},
       hostStyle: "gemini",
-      modelId: "google/gemini-3-pro",
+      modelId: "google/gemini-3.5-flash-lite",
       systemPrompt: "",
       temperature: 0.7,
       requireToolApproval: false,

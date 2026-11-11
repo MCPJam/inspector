@@ -2739,7 +2739,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "gemini",
-        modelId: "google/gemini-3-pro",
+        modelId: "google/gemini-3.5-flash-lite",
         temperature: 0.7,
         requireToolApproval: false,
       });
