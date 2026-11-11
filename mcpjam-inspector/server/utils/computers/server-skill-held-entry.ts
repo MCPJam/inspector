@@ -25,16 +25,16 @@ import {
   serverSkillLoads,
   type ActingServerSkill,
   type ServerSkillLoad,
-} from "../../shared/server-skill-banner.js";
+} from "../../../shared/server-skill-banner.js";
 import {
   manifestDigestSetHash,
   SERVER_SKILL_REF_RE,
   skillUriHashHex,
-} from "../../shared/server-skill-refs.js";
+} from "../../../shared/server-skill-refs.js";
 import {
   isMarkedClientProvenance,
   isMarkedUnverifiedCall,
-} from "./history-provenance.js";
+} from "../history-provenance.js";
 
 /** Anything with a scheme is treated as a skill URI, not a relative path. */
 function looksLikeUri(value: string): boolean {

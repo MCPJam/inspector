@@ -15,20 +15,22 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
-  MAX_SERVER_SKILL_PROMPT_BYTES,
-  applyActingServerSkillGate,
-  manifestApprovalHash,
   resolveProviderSlugs,
-  serverSkillBanner,
   slugifyServerLabel,
   withServerSkills,
 } from "../server-skill-tools.js";
+import {
+  MAX_SERVER_SKILL_PROMPT_BYTES,
+  manifestApprovalHash,
+  serverSkillBanner,
+} from "../computers/server-skill-reads.js";
 import {
   actingServerSkills,
   mentionsServerSkill,
 } from "../../../shared/server-skill-banner.js";
 import {
   actingServerSkillGateCanFire,
+  applyActingServerSkillGate,
   unwrapActingServerSkillGate,
 } from "../server-skill-acting-gate.js";
 import {
