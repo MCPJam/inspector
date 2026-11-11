@@ -72,6 +72,22 @@ const shared = vi.hoisted(() => {
     refuseSettingsWrites: false,
     /** Holds a request while its catalog loads, as a cold connection would. */
     catalogHold: undefined as undefined | (() => Promise<void>),
+    /** Refuses a Settings App's view, as a policy the sandbox rejects would. */
+    refuseView: false,
+    childIssues: 0,
+  };
+});
+vi.mock("../../../services/sandbox-view-source.js", async (original) => {
+  const actual =
+    await original<typeof import("../../../services/sandbox-view-source.js")>();
+  return {
+    ...actual,
+    sandboxSourceReceipt: async (
+      ...args: Parameters<typeof actual.sandboxSourceReceipt>
+    ) => {
+      if (shared.refuseView) throw new Error("The view was refused.");
+      return actual.sandboxSourceReceipt(...args);
+    },
   };
 });
 vi.mock("../../../services/plugin-host/invocation.js", async (original) => {
@@ -97,6 +113,7 @@ vi.mock("../../../services/plugin-host/local-store.js", async (original) => {
             (shared.refuseSettingsWrites && body.action === "settings")
           )
             throw new PluginInvocationError(unavailable);
+          if (body.action === "issue-child") shared.childIssues++;
           return handle(body, signal);
         };
       },
@@ -295,6 +312,8 @@ beforeEach(() => {
   shared.storeDown = false;
   shared.refuseSettingsWrites = false;
   shared.catalogHold = undefined;
+  shared.refuseView = false;
+  shared.childIssues = 0;
   hold = undefined;
   Object.assign(plugin, {
     values: { ...settingsFixture().values },
@@ -576,6 +595,23 @@ describe("Settings Apps across replicas", () => {
     expect(refused.status).toBe(403);
     expect((await refused.json()).code).toBe("INSTANCE_UNAVAILABLE");
     expect(plugin.resets).toBe(0);
+  });
+
+  it("leaves no Settings App behind when its view is refused", async () => {
+    const [a] = await replicas(1);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    shared.refuseView = true;
+    const refused = await a.post("app/open", {
+      ...scope,
+      instanceToken: token,
+      toolName: "reset",
+    });
+    expect(refused.status).not.toBe(200);
+    expect(shared.childIssues).toBe(0);
+    shared.refuseView = false;
+    await openApp(a, token);
+    expect(shared.childIssues).toBe(1);
   });
 
   it("closes only its own Settings Apps, never another row the user holds", async () => {

@@ -163,6 +163,10 @@ const childSnapshotSchema = z.strictObject({
 });
 export type PluginSettingsChild = z.infer<typeof childSnapshotSchema>;
 
+/** A new Settings App child's token, minted before anything is bound to it. */
+export const newPluginSettingsChildToken = () =>
+  randomBytes(32).toString("base64url");
+
 /** Open an App from a Settings App action as a row of its own, so any replica
  * can serve its calls. The backend admits it only while the Settings App
  * lives and its stored document lists the action at this revision. */
@@ -170,13 +174,13 @@ export async function issuePluginSettingsChild(
   token: string,
   actor: PluginInstanceIdentity,
   state: Pick<PluginSettingsState, "instance" | "expiresAt">,
+  childToken: string,
   app: { action: string; revision: string; resourceUri: string },
   signal: AbortSignal,
 ) {
   const port = createPluginInstanceControlPort(actor);
   if (!port?.issueChild)
     throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
-  const childToken = randomBytes(32).toString("base64url");
   const snapshot: PluginSettingsChild = {
     kind: "settings-child",
     version: 1,

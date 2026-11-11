@@ -12,6 +12,7 @@ import { settingsOperation } from "../../services/plugin-host/settings-operation
 import {
   closePluginSettingsChild,
   issuePluginSettingsChild,
+  newPluginSettingsChildToken,
   readPluginSettingsChild,
   readPluginSettingsState,
   storePluginSettingsDocument,
@@ -549,13 +550,9 @@ routes.post("/app/open", (c) =>
         )
       )
         throw denied();
-      const childToken = await issuePluginSettingsChild(
-        body.instanceToken,
-        actor,
-        await readPluginSettingsState(body.instanceToken, actor, c.req.raw.signal),
-        { action: body.toolName, revision: action.revision, resourceUri: uri },
-        c.req.raw.signal,
-      );
+      // The view's receipt comes before the child's row, so an App whose
+      // view is refused leaves no row behind to count against its quota.
+      const childToken = newPluginSettingsChildToken();
       const sourceReceipt = await sandboxSourceReceipt(
         c,
         {
@@ -566,6 +563,14 @@ routes.post("/app/open", (c) =>
         widgetContent.html,
         widgetContent.csp,
         body.projectId,
+      );
+      await issuePluginSettingsChild(
+        body.instanceToken,
+        actor,
+        await readPluginSettingsState(body.instanceToken, actor, c.req.raw.signal),
+        childToken,
+        { action: body.toolName, revision: action.revision, resourceUri: uri },
+        c.req.raw.signal,
       );
       return c.json({
         childToken,

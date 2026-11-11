@@ -28,15 +28,15 @@ export function memorySettingsState(
     ) => {
       stored.set(token, content);
     },
+    newPluginSettingsChildToken: () => crypto.randomUUID(),
     issuePluginSettingsChild: async (
       _token: string,
       _actor: unknown,
       state: { instance: unknown },
+      childToken: string,
       app: { action: string; revision: string },
     ) => {
-      const childToken = crypto.randomUUID();
       children.set(childToken, { parent: state.instance, ...app });
-      return childToken;
     },
     readPluginSettingsChild: async (
       childToken: string,
