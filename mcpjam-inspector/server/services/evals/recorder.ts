@@ -850,12 +850,18 @@ export const startSuiteRunWithRecorder = async ({
         ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
       ],
     };
-    response = await retrySuiteStartOnConflict(() =>
-      convexClient.mutation(
-        "testSuites:startTestSuiteRun" as any,
-        mutationArgs,
-      ),
-    );
+    const start = (args: Record<string, unknown>) =>
+      retrySuiteStartOnConflict(() =>
+        convexClient.mutation("testSuites:startTestSuiteRun" as any, args),
+      );
+    response = await start(mutationArgs).catch((error: unknown) => {
+      // A backend that predates run accounts rejects the argument outright.
+      // Every run carries it, so start without it there rather than fail
+      // every launch; that backend has nowhere to keep it anyway.
+      if (!/extra field `?accountsAtRun/.test(String(error))) throw error;
+      const { accountsAtRun: _unsupported, ...older } = mutationArgs;
+      return start(older);
+    });
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
