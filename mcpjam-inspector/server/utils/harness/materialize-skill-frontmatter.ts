@@ -30,6 +30,7 @@
  *  - Does NOT touch `skillsFingerprint` — the skill's contentHash already folds
  *    extras in, so an extras edit forks the session and re-runs this pass.
  */
+import { parse as parseYaml } from "yaml";
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import type { SkillExtraFrontmatterInput } from "../computers/convex-skills-client.js";
 import type { RuntimeSkill } from "./runtime-skills.js";
@@ -103,16 +104,35 @@ function hasExtras(
   return !!extra && Object.keys(extra).length > 0;
 }
 
-/** A frontmatter key a runtime or MCPJam's own parser reads as a tool grant. */
-const GRANT_KEY = /^\s*["']?allowed[-_]?tools["']?\s*:/im;
+/** A SKILL.md's leading `---` frontmatter block; group 1 is its YAML. */
+const FRONTMATTER_BLOCK =
+  /^﻿?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/;
 
 /**
- * Whether a SKILL.md lists pre-approved tools. Scans the whole file when it
- * has no frontmatter block to delimit, so an unusual file errs toward yes.
+ * Whether a SKILL.md may grant tools: its frontmatter, parsed as YAML, has a
+ * top-level `allowed-tools` key in any spelling (`allowed_tools`,
+ * `allowedTools`, any case). Fails closed: no frontmatter block, frontmatter
+ * that doesn't parse, or frontmatter that isn't a mapping all count as a
+ * grant. Parsed with `yaml` directly: gray-matter picks its parser from the
+ * opening line, and this text comes from the box.
  */
 export function hasAllowedToolsGrant(skillMd: string): boolean {
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(skillMd)?.[1];
-  return GRANT_KEY.test(frontmatter ?? skillMd);
+  const match = FRONTMATTER_BLOCK.exec(skillMd);
+  if (!match) return true;
+  let data: unknown;
+  try {
+    // Merge keys on, so a grant pulled in through `<<` is seen; warnings off,
+    // since the text is the box's, while errors still throw.
+    data = parseYaml(match[1] ?? "", { merge: true, logLevel: "error" });
+  } catch {
+    return true;
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return true;
+  }
+  return Object.keys(data).some(
+    (key) => key.replace(/[\s_-]/g, "").toLowerCase() === "allowedtools",
+  );
 }
 
 /**
@@ -121,7 +141,8 @@ export function hasAllowedToolsGrant(skillMd: string): boolean {
  * description, body and files, so when only the extras change it leaves the
  * file an earlier write put on a reused box, and that file can list
  * `allowed-tools` the stored extras no longer have. A file with no grant stays.
- * One with a grant comes off the box, so the turn runs without the skill.
+ * One that may grant tools ({@link hasAllowedToolsGrant}) comes off the box,
+ * so the turn runs without the skill.
  * Throws, which stops the turn before the model runs, when the file can't be
  * read or the folder can't be removed.
  */

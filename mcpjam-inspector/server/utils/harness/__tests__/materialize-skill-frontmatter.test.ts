@@ -179,10 +179,15 @@ describe("generateSkillMdWithExtras", () => {
 
 describe("hasAllowedToolsGrant", () => {
   it.each([
-    ["the pass's own JSON list", STALE_GRANT_MD, true],
+    ["a block mapping with a flow list", STALE_GRANT_MD, true],
     [
       "a comma string",
       "---\nname: s\ndescription: d\nallowed-tools: Bash, Read\n---\n\nc\n",
+      true,
+    ],
+    [
+      "a flow mapping",
+      "---\n{name: s, description: d, allowed-tools: [Bash]}\n---\n\nc\n",
       true,
     ],
     [
@@ -191,8 +196,23 @@ describe("hasAllowedToolsGrant", () => {
       true,
     ],
     [
+      "a single-quoted, upper-case key",
+      "---\nname: s\n'ALLOWED-TOOLS': Read\n---\n\nc\n",
+      true,
+    ],
+    [
       "the camelCase key",
       "---\nname: s\nallowedTools: [Read]\n---\n\nc\n",
+      true,
+    ],
+    [
+      "the underscore key",
+      "---\nname: s\nallowed_tools: Read\n---\n\nc\n",
+      true,
+    ],
+    [
+      "a merge key",
+      "---\nbase: &b {allowed-tools: [Bash]}\nname: s\n<<: *b\n---\n\nc\n",
       true,
     ],
     ["the adapter's SKILL.md", ADAPTER_MD, false],
@@ -201,9 +221,27 @@ describe("hasAllowedToolsGrant", () => {
       "---\nname: s\ndescription: d\n---\n\nallowed-tools: Read\n",
       false,
     ],
-    ["a file with no frontmatter block", "allowed-tools: Read\n", true],
-  ])("reads %s", (_, md, expected) => {
+    [
+      "the key only nested under metadata",
+      '---\nname: s\nmetadata: {"allowed-tools": "Read"}\n---\n\nc\n',
+      false,
+    ],
+  ])("finds the grant in %s", (_, md, expected) => {
     expect(hasAllowedToolsGrant(md)).toBe(expected);
+  });
+
+  it.each([
+    ["malformed YAML", "---\nname: [unclosed\n---\n\nc\n"],
+    ["duplicate keys", "---\nname: s\nname: t\n---\n\nc\n"],
+    ["a list, not a mapping", "---\n- allowed-tools\n---\n\nc\n"],
+    ["a scalar, not a mapping", "---\njust text\n---\n\nc\n"],
+    ["no frontmatter block", "allowed-tools: Read\n"],
+    [
+      "an opening line with a language marker",
+      "---js\n({ name: 's' })\n---\n",
+    ],
+  ])("fails closed on %s", (_, md) => {
+    expect(hasAllowedToolsGrant(md)).toBe(true);
   });
 });
 
@@ -339,6 +377,22 @@ describe("materializeSkillFrontmatter", () => {
     // file on the box decides, and the skill comes off the box.
     const { session, commands } = failingWriteSession({
       onBox: STALE_GRANT_MD,
+    });
+    const res = await materializeSkillFrontmatter({
+      session,
+      skills: [
+        skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
+      ],
+    });
+    expect(res).toEqual({ rewritten: 0, skipped: 1 });
+    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
+  });
+
+  it("removes the skill when its rewrite fails and the box's SKILL.md frontmatter doesn't parse", async () => {
+    // A grant can't be ruled out, so the file counts as one.
+    const { session, commands } = failingWriteSession({
+      onBox:
+        '---\nname: git-helper\nallowed-tools: ["Bash(*)"\n---\n\nUse git.\n',
     });
     const res = await materializeSkillFrontmatter({
       session,
