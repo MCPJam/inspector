@@ -1238,6 +1238,38 @@ Cancel a pending connection request, releasing the concurrent-connection slot it
 
 Cancelling is idempotent — calling it twice on the same request is safe. Use this when an authorization was abandoned (link opened in the wrong browser, consent screen closed) and you want to free the slot before starting over.
 
+### `cloud projects servers revisions`
+
+List a saved server's stored revisions, newest first. A revision is a capture of the server's tools and server info, recorded whenever they change. These read stored data and never connect to the server, so they work for stdio servers too.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--limit <n>` | No | Revisions per page, 1 to 200 (default 50) |
+| `--cursor <cursor>` | No | `nextCursor` from the previous page |
+
+### `cloud projects servers revision`
+
+Read one stored revision: every tool's definition and the server info it reported.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | Revision number |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud projects servers revision-diff`
+
+Compare two stored revisions: tools added, removed and changed with both definitions, and server info changes with both values.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | The later revision |
+| `--from <number>` | No | The revision to compare against (default: the one before) |
+| `--project <id-or-name>` | No | Project name or ID |
+
 ---
 
 ## `inspector` commands

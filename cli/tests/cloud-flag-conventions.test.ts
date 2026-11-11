@@ -34,6 +34,7 @@ const CLOUD_COMMAND_FILES = [
   "readiness-lazy-auth.ts",
   "studies.ts",
   "secrets.ts",
+  "server-revisions.ts",
   "sessions.ts",
   "sessions-browser.ts",
   "skills.ts",
