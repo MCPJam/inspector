@@ -1256,6 +1256,7 @@ export {
   parseProgressiveToolsEnv,
   resolveActiveToolNames,
   shouldForceInitialToolSearch,
+  toolIdLoadedEarlierInStep,
 } from "./progressive-discovery/discovery.js";
 export type {
   ProgressiveDiscoveryOptions,

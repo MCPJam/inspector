@@ -1711,7 +1711,12 @@ function inputMatchesSchema(
     return false;
   }
   try {
-    return new DialectAwareJsonSchemaValidator().getValidator(
+    // An unknown dialect is not validated at all, so it must not admit a guess.
+    return new DialectAwareJsonSchemaValidator({
+      onUnknownDialect: () => {
+        throw new Error("Unsupported JSON Schema dialect");
+      },
+    }).getValidator(
       schema as Parameters<DialectAwareJsonSchemaValidator["getValidator"]>[0],
     )(input).valid;
   } catch {
@@ -4515,10 +4520,15 @@ async function processOneStep(ctx: StepContext): Promise<{
           ) {
             return false;
           }
+          // A load the backend refused never ran, so it loads nothing.
           const toolId = toolIdLoadedEarlierInStep(
             progressivePlan.catalog,
             toolName,
-            priorParts,
+            priorParts.filter(
+              (part) =>
+                part.type !== "tool-call" ||
+                !isRejectedToolCallMetadata(part.providerOptions),
+            ),
           );
           const def = toolDefsByName.get(toolName);
           if (!toolId || !def || !inputMatchesSchema(def.inputSchema, input)) {

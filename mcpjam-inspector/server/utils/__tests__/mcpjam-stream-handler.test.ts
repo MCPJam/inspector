@@ -407,22 +407,37 @@ describe("mcpjam-stream-handler", () => {
       properties: { team: { type: "string" } },
       required: ["team"],
     };
-    const runLoadAndCall = async (input: unknown) => {
+    const runLoadAndCall = async (
+      input: unknown,
+      {
+        schema = squadSchema as Record<string, unknown>,
+        loadRefused = false,
+      } = {},
+    ) => {
       vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
         { name: "search_mcp_tools", inputSchema: { type: "object" } },
         { name: "load_mcp_tools", inputSchema: { type: "object" } },
-        { name: "show_squad", inputSchema: squadSchema },
+        { name: "show_squad", inputSchema: schema },
       ]);
-      // What Haiku sent: the load and the call in one step. The step offered
-      // only the meta-tools, so the backend refused the call.
-      global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
-          {
+      const loadChunk = loadRefused
+        ? {
+            type: "tool-input-error",
+            toolCallId: "load-1",
+            toolName: "load_mcp_tools",
+            input: { names: ["show_squad"] },
+            errorText: "Invalid input for tool load_mcp_tools",
+          }
+        : {
             type: "tool-input-available",
             toolCallId: "load-1",
             toolName: "load_mcp_tools",
             input: { names: ["show_squad"] },
-          },
+          };
+      // What Haiku sent: the load and the call in one step. The step offered
+      // only the meta-tools, so the backend refused the call.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          loadChunk,
           {
             type: "tool-input-start",
             toolCallId: "call-1",
@@ -508,6 +523,30 @@ describe("mcpjam-stream-handler", () => {
       expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
       expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
       expect(discoveryState.loadedToolIds.size).toBe(0);
+    });
+
+    it("still fails the call when the tool's schema dialect cannot be checked", async () => {
+      const { callChunks } = await runLoadAndCall(
+        {},
+        {
+          schema: {
+            ...squadSchema,
+            $schema: "http://json-schema.org/draft-04/schema#",
+          },
+        },
+      );
+
+      expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
+    });
+
+    it("still fails the call when the backend refused the load", async () => {
+      const { callChunks, discoveryState } = await runLoadAndCall(
+        { team: "Barcelona" },
+        { loadRefused: true },
+      );
+
+      expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
+      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
     });
   });
 
