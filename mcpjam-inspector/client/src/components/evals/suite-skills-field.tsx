@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { Label } from "@mcpjam/design-system/label";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
 import type { HostListItem } from "@/hooks/useClients";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -15,54 +16,93 @@ import { fetchSkillsPreview } from "@/lib/apis/web/skills-preview-api";
 import type { PaneSkillsPreview } from "@/shared/pane-skills-preview";
 import {
   SKILLS_READ_ONLY_REASON,
-  editedSkillSelection,
   skillDeliveryLines,
   suiteSkillState,
   type SuiteSkillsEdit,
+  type SuiteSkillsSource,
 } from "./suite-skills";
+import {
+  leftOutChange,
+  libraryChange,
+  scopeChange,
+  scopedServerSkillCount,
+  serverChange,
+  serverSkillState,
+  skillScopeState,
+  suiteSkillsMixed,
+} from "./suite-skill-channels";
 
 export function SuiteSkillsField({
   projectId,
   environments,
   disabled,
   editable,
+  scopeOffered,
+  labelAbove = false,
   onEdit,
 }: {
   projectId: string;
-  environments: readonly ProjectEnvironmentView[];
+  environments: readonly SuiteSkillsSource[];
   disabled: boolean;
   /** False when the backend can't derive from the stored environment. */
   editable: boolean;
+  /** The backend stores "All shared Library skills" (`allSharedLibrarySkillScope`). */
+  scopeOffered: boolean;
+  /** For a form whose labels sit over their fields. */
+  labelAbove?: boolean;
   onEdit: (skills: SuiteSkillsEdit) => void;
 }) {
   const skillsEnabled = useSkillsEnabled();
   if (!skillsEnabled) return null;
   const { value, across } = suiteSkillState(environments);
-  return (
+  const server = serverSkillState(environments);
+  const pill = (
+    <SkillsPill
+      variant="field"
+      projectId={projectId}
+      value={value}
+      across={across}
+      readOnly={!editable}
+      notice={
+        !editable
+          ? SKILLS_READ_ONLY_REASON
+          : suiteSkillsMixed(environments)
+            ? "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client."
+            : undefined
+      }
+      allLibrary={
+        scopeOffered
+          ? {
+              state: skillScopeState(environments),
+              serverSkillCount: scopedServerSkillCount(environments),
+              onToggle: (on) => onEdit((row) => scopeChange(row, on)),
+              onLeaveOut: (skillId, rest) =>
+                onEdit((row) => leftOutChange(row, skillId, rest)),
+            }
+          : undefined
+      }
+      serverSkills={{
+        ...server,
+        serverAttachmentIds: environments.map(
+          (row) => row.serverAttachmentId ?? null,
+        ),
+        onChange: (edit) => onEdit((row) => serverChange(row, edit)),
+      }}
+      // With no client yet there is no environment to hold a skill.
+      disabled={disabled || environments.length === 0}
+      testId="suite-clients-skills"
+      onChange={(_next, edit) => onEdit((row) => libraryChange(row, edit))}
+    />
+  );
+  return labelAbove ? (
+    <div className="space-y-2">
+      <Label>Skills</Label>
+      <div className="max-w-sm">{pill}</div>
+    </div>
+  ) : (
     <div className="flex min-w-[15rem] max-w-sm flex-1 items-center gap-2">
       <span className="text-xs font-medium text-muted-foreground">Skills</span>
-      <div className="min-w-0 flex-1">
-        <SkillsPill
-          variant="field"
-          projectId={projectId}
-          value={value}
-          across={across}
-          readOnly={!editable}
-          notice={
-            !editable
-              ? SKILLS_READ_ONLY_REASON
-              : across.partialIds.size
-                ? "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client."
-                : undefined
-          }
-          // With no client yet there is no environment to hold a skill.
-          disabled={disabled || environments.length === 0}
-          testId="suite-clients-skills"
-          onChange={(_next, edit) =>
-            onEdit((row) => editedSkillSelection(row.skillSelection, edit))
-          }
-        />
-      </div>
+      <div className="min-w-0 flex-1">{pill}</div>
     </div>
   );
 }
@@ -165,7 +205,7 @@ export function SuiteSkillsHints({
           }),
         )
       : [];
-  const mixed = suiteSkillState(environments).across.partialIds.size > 0;
+  const mixed = suiteSkillsMixed(environments);
   if (!lines.length && !mixed && delivery.status !== "failed") return null;
   return (
     <div

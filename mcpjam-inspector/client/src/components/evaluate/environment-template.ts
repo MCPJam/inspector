@@ -42,6 +42,7 @@ export type EnvironmentComposition = Pick<
   ProjectEnvironmentView,
   | "serverAttachmentId"
   | "skillSelection"
+  | "skillScope"
   | "serverSkillSelection"
   | "secretSelection"
   | "pluginVersionIds"
@@ -61,6 +62,7 @@ export function environmentComposition(
     out.serverAttachmentId = environment.serverAttachmentId;
   if (environment.skillSelection?.skillIds.length)
     out.skillSelection = environment.skillSelection;
+  if (environment.skillScope) out.skillScope = environment.skillScope;
   if (environment.serverSkillSelection?.serverSkillIds.length)
     out.serverSkillSelection = environment.serverSkillSelection;
   if (environment.secretSelection?.secretIds.length)
@@ -93,6 +95,7 @@ export function compositionKey(
           ]),
         ]
       : null,
+    c.skillScope ?? null,
     c.serverSkillSelection
       ? [
           c.serverSkillSelection.serverSkillIds,
@@ -224,6 +227,7 @@ export function composeAdhocStack(
       ? { serverAttachmentId: c.serverAttachmentId }
       : {}),
     ...(skillSelection ? { skillSelection } : {}),
+    ...(c.skillScope ? { skillScope: c.skillScope } : {}),
     ...(c.computerEnvironmentId
       ? { computerEnvironmentId: c.computerEnvironmentId }
       : {}),

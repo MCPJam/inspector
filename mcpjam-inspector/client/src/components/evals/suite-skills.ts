@@ -13,6 +13,8 @@ import {
   type SkillSelectionEdit,
 } from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
 import type {
+  ProjectEnvironmentServerSkillSelection,
+  ProjectEnvironmentSkillScope,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -21,10 +23,24 @@ import type {
   PaneSkillsPreview,
 } from "@/shared/pane-skills-preview";
 
-/** Each environment's next skill selection; `undefined` leaves it as it is. */
+/**
+ * An environment's skill fields. As a change, absent keeps a field and `null`
+ * clears it; as a reading, both mean none.
+ */
+export type SuiteSkillsChange = {
+  skillSelection?: ProjectEnvironmentSkillSelection | null;
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
+  skillScope?: ProjectEnvironmentSkillScope | null;
+};
+
+/** What the Skills field reads from an environment, or from a new suite's setup. */
+export type SuiteSkillsSource = SuiteSkillsChange &
+  Pick<ProjectEnvironmentView, "serverAttachmentId">;
+
+/** Each environment's next skill fields; `undefined` leaves it as it is. */
 export type SuiteSkillsEdit = (
-  environment: ProjectEnvironmentView,
-) => ProjectEnvironmentSkillSelection | null | undefined;
+  environment: SuiteSkillsSource,
+) => SuiteSkillsChange | undefined;
 
 /**
  * Why the field is read only: the backend cannot derive from the stored
@@ -51,10 +67,38 @@ function versionsBySkill(
   );
 }
 
+/**
+ * Skills an environment selects against the cap, which Library and server
+ * picks share. The scope is resolved and capped when a run starts instead.
+ */
+export function selectedSkillCount(row: SuiteSkillsSource): number {
+  return (
+    (row.skillScope ? 0 : (row.skillSelection?.skillIds.length ?? 0)) +
+    (row.serverSkillSelection?.serverSkillIds.length ?? 0)
+  );
+}
+
 export function suiteSkillState(
-  environments: readonly Pick<ProjectEnvironmentView, "skillSelection">[],
+  environments: readonly SuiteSkillsSource[],
 ): SuiteSkillState {
-  const each = environments.map((row) => versionsBySkill(row.skillSelection));
+  // An environment on the scope selects no list: the scope row stands for it.
+  const listed = environments.filter((row) => !row.skillScope);
+  return sharedPicks(
+    listed.map((row) => row.skillSelection),
+    listed.map(selectedSkillCount),
+  );
+}
+
+/**
+ * What every one of `selections` holds at the same version, and what a
+ * picker over all of them needs to know. `counts` are each environment's
+ * skills against the cap.
+ */
+export function sharedPicks(
+  selections: readonly (ProjectEnvironmentSkillSelection | null | undefined)[],
+  counts: readonly number[],
+): SuiteSkillState {
+  const each = selections.map(versionsBySkill);
   const ids = [...new Set(each.flatMap((versions) => [...versions.keys()]))];
   const shared = ids.filter((skillId) =>
     each.every(
@@ -65,12 +109,12 @@ export function suiteSkillState(
   );
   const across: SkillSelectionAcross = {
     partialIds: new Set(ids.filter((id) => !shared.includes(id))),
-    largestCount: Math.max(0, ...each.map((versions) => versions.size)),
+    largestCount: Math.max(0, ...counts),
     // Only an environment that lacks the skill grows when it is added.
     canAdd: (skillId) =>
       each.every(
-        (versions) =>
-          versions.has(skillId) || versions.size < MAX_ENVIRONMENT_SKILLS,
+        (versions, index) =>
+          versions.has(skillId) || counts[index]! < MAX_ENVIRONMENT_SKILLS,
       ),
   };
   if (!shared.length) return { value: null, across };

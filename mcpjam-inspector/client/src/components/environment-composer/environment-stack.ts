@@ -22,6 +22,8 @@
  */
 import type {
   ProjectEnvironmentSecretSelection,
+  ProjectEnvironmentServerSkillSelection,
+  ProjectEnvironmentSkillScope,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -135,6 +137,9 @@ export type EnvironmentStack = {
   /** Optional; null/empty = each client's own server picks. */
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  /** Set only by the create-suite page's Skills field. */
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection | null;
+  skillScope?: ProjectEnvironmentSkillScope | null;
   computerEnvironmentId: string | null;
   /**
    * Model-choice axis. Default is "one inherit cell per client" — exactly
