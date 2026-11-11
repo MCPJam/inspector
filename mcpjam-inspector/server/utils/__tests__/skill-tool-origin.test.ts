@@ -1,12 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { createSkillTools } from "../skill-tools";
 import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
 import { withServerSkills } from "../server-skill-tools";
-import {
-  createCloudSkillTools,
-  createPinnedSkillTools,
-} from "../computers/cloud-skill-tools";
+import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
 import { SKILL_TOOL_NAMES } from "@/shared/eval-matching";
 import { toolOrigin } from "@/shared/tool-origin";
 import {
@@ -46,13 +42,7 @@ it("marks all server skill tools builtin while keeping MCP identity authoritativ
   ).toMatchObject({ toolOrigin: "builtin", toolName: "listSkills" });
 });
 
-it("tags live cloud tools and records real pinned skill loading as builtin", async () => {
-  const live = createCloudSkillTools({
-    authHeader: "Bearer test",
-    projectId: "project",
-  });
-  for (const definition of Object.values(live))
-    expect(definition).toHaveProperty("_toolOrigin", "builtin");
+it("records real pinned skill loading as builtin", async () => {
   const context = createAiSdkEvalTraceContext(Date.now());
   registerAiSdkPrepareStep(context, 0);
   const pinned = createPinnedSkillTools([
@@ -75,15 +65,12 @@ it("tags live cloud tools and records real pinned skill loading as builtin", asy
   ).toMatchObject({ toolOrigin: "builtin", toolName: "loadSkill" });
 });
 
-it("tags local and resolved skill implementations without changing their policy", () => {
-  const local = createSkillTools();
+it("tags resolved skill implementations without changing their policy", () => {
   const effective = createEffectiveSkillTools({
     skills: [],
     pluginRefs: new Set(),
     serverRefs: new Set(),
   });
-  for (const tools of [local, effective]) {
-    for (const definition of Object.values(tools))
-      expect(definition).toHaveProperty("_toolOrigin", "builtin");
-  }
+  for (const definition of Object.values(effective))
+    expect(definition).toHaveProperty("_toolOrigin", "builtin");
 });

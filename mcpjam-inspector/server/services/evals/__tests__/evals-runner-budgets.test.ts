@@ -66,10 +66,9 @@ vi.mock("../../../utils/chat-helpers", async () => {
   };
 });
 
-// Stub the chat-side tool/system/temperature pipeline. The real implementation
-// in `chat-v2-orchestration` pulls in `getSkillToolsAndPrompt`, which touches
-// the filesystem outside HOSTED_MODE; the eval test environment doesn't need
-// that. Return a minimal `PrepareChatV2Result` shape — the actual tool set
+// Stub the chat-side tool/system/temperature pipeline in
+// `chat-v2-orchestration`; the eval test environment doesn't need the real
+// one. Return a minimal `PrepareChatV2Result` shape — the actual tool set
 // stays empty (matching `mcpClientManager.getToolsForAiSdk` → `{}`), and the
 // engine swap only depends on the named output fields.
 // PR 3 of the engine consolidation: `runIterationViaBackend` now drives

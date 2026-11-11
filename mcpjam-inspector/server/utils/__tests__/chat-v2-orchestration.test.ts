@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../skill-tools.js", () => ({
-  getSkillToolsAndPrompt: vi.fn(),
-}));
-
 vi.mock("../computers/cloud-skills.js", async () => {
   const actual = await vi.importActual<
     typeof import("../computers/cloud-skills.js")
@@ -28,7 +24,6 @@ import {
   type AppToolEntry,
   type UiToolEntry,
 } from "../chat-v2-orchestration";
-import { getSkillToolsAndPrompt } from "../skill-tools";
 import { listCloudSkills } from "../computers/cloud-skills";
 import {
   buildExaWebSearchTool,
@@ -50,10 +45,6 @@ function mockManager(tools: Record<string, unknown>) {
 }
 
 beforeEach(() => {
-  vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
-    tools: {},
-    systemPromptSection: "",
-  });
   vi.mocked(listCloudSkills).mockReset();
 });
 

@@ -133,117 +133,17 @@ function budgetedCatalogBody(
 
 /**
  * Strengthened trigger: when the user names a skill or a task clearly
- * matches one's purpose, load it before acting. Mirrors/upgrades the
- * local-FS wording in `skill-tools.ts`.
+ * matches one's purpose, load it before acting.
  */
 const SKILLS_TRIGGER =
   `You have access to the following skills. When the user names a skill ` +
   `or a task clearly matches one's purpose, load it with \`loadSkill\` ` +
   `before acting.`;
 
-// File-tools sentence — only for paths that ALSO expose listSkillFiles/readSkillFile
-// (the live cloud path). The pinned surface serves only file-free pins
-// (decision 8c), so it omits this to avoid advertising absent tools. A run
-// whose pins DO carry files takes the ref-addressed surface instead
-// (INS-5 — `skillsSource: pinned-effective`).
-const SKILLS_FILE_TOOLS_SENTENCE =
-  `After loading a skill, you can use \`listSkillFiles\` and \`readSkillFile\` ` +
-  `to access any supporting files (scripts, references, assets) that the skill provides.`;
-
-function buildSkillsPromptSection(args: {
-  catalogBody: string;
-  fileTools: boolean;
-}): string {
+function buildSkillsPromptSection(args: { catalogBody: string }): string {
   const parts = ["## Skills", "", SKILLS_TRIGGER, "", args.catalogBody];
-  if (args.fileTools) {
-    parts.push("", SKILLS_FILE_TOOLS_SENTENCE);
-  }
   return `\n\n${parts.join("\n")}`;
 }
-
-export function createCloudSkillTools(ctx: CloudSkillsContext) {
-  return {
-    loadSkill: tool({
-      description:
-        "Load a skill's full instructions by name. Use when a task matches a skill's purpose.",
-      inputSchema: z.object({
-        name: z
-          .string()
-          .describe("The skill name to load (e.g., 'pdf-processing')."),
-      }),
-      execute: async ({ name }) => {
-        if (!NAME_RE.test(name)) {
-          return `Error: Invalid skill name format "${name}". Skill names contain only lowercase letters, numbers, and hyphens.`;
-        }
-        try {
-          const skill = await getCloudSkillByName(ctx, name);
-          if (!skill) return `Error: Skill "${name}" not found.`;
-          return `# Skill: ${skill.name}\n\n${skill.content}`;
-        } catch (err) {
-          return `Error loading skill "${name}": ${errMessage(err)}`;
-        }
-      },
-    }),
-
-    listSkillFiles: tool({
-      description:
-        "List a skill's supporting files (scripts, references, assets). Use after loadSkill when a skill mentions supporting files.",
-      inputSchema: z.object({
-        name: z.string().describe("The skill name."),
-      }),
-      execute: async ({ name }) => {
-        if (!NAME_RE.test(name)) {
-          return `Error: Invalid skill name format "${name}".`;
-        }
-        try {
-          const skill = await getCloudSkillByName(ctx, name);
-          if (!skill) return `Error: Skill "${name}" not found.`;
-          const files = await listCloudSkillFiles(ctx, skill.skillId);
-          if (files.length === 0) {
-            return `Skill "${name}" has no supporting files.`;
-          }
-          return (
-            `Supporting files for "${name}":\n\n` +
-            files.map((f) => `- ${f.path} (${f.size} bytes)`).join("\n") +
-            `\n\nUse \`readSkillFile\` to read one.`
-          );
-        } catch (err) {
-          return `Error listing files for "${name}": ${errMessage(err)}`;
-        }
-      },
-    }),
-
-    readSkillFile: tool({
-      description:
-        "Read the contents of a skill's supporting file by its relative path (e.g., 'scripts/fill.py').",
-      inputSchema: z.object({
-        name: z.string().describe("The skill name."),
-        path: z
-          .string()
-          .describe("Relative path within the skill (e.g., 'scripts/fill.py')."),
-      }),
-      execute: async ({ name, path }) => {
-        if (!NAME_RE.test(name)) {
-          return `Error: Invalid skill name format "${name}".`;
-        }
-        try {
-          const skill = await getCloudSkillByName(ctx, name);
-          if (!skill) return `Error: Skill "${name}" not found.`;
-          const file = await readCloudSkillFile(ctx, skill.skillId, path);
-          if (!file.isText) {
-            return `File "${path}" is binary (${file.mimeType}, ${file.size} bytes) and can't be shown as text.`;
-          }
-          return `# ${path}\n\n${file.content ?? ""}`;
-        } catch (err) {
-          return `Error reading "${path}" from "${name}": ${errMessage(err)}`;
-        }
-      },
-    }),
-  };
-}
-
-export type CloudSkillTools = ReturnType<typeof createCloudSkillTools>;
-export type CloudSkillToolSet = Partial<CloudSkillTools>;
 
 class CloudSkillsFetchTimeoutError extends CloudSkillsError {
   constructor() {
@@ -277,12 +177,6 @@ export function skillsFailureFrom(
   };
 }
 
-export type CloudSkillToolsAndPrompt = {
-  tools: CloudSkillToolSet;
-  systemPromptSection: string;
-  skillsFetchFailed?: SkillsFetchFailure;
-};
-
 /**
  * The project's Convex skills as one origin of an `EffectiveCapabilitySet`.
  *
@@ -290,15 +184,13 @@ export type CloudSkillToolsAndPrompt = {
  * carry project skills without the exclusive `cloudSkills` branch the chat
  * orchestrator used to take.
  *
- * Everything here stays LAZY, exactly as `createCloudSkillTools` already
- * behaves: the catalog costs one query, and a body or a file list is fetched
- * only for the skill the model actually asks for. Eager-loading a 200-skill
- * project on every turn to build a listing the model mostly ignores is the
- * failure this shape avoids.
+ * Everything here stays LAZY: the catalog costs one query, and a body or a
+ * file list is fetched only for the skill the model actually asks for.
+ * Eager-loading a 200-skill project on every turn to build a listing the
+ * model mostly ignores is the failure this shape avoids.
  *
  * Throws on catalog failure so the caller can distinguish it from a genuinely
- * empty project — `getCloudSkillToolsAndPrompt` turns that into
- * `skillsFetchFailed`, and callers of this function do the same.
+ * empty project.
  */
 export async function listCloudRuntimeSkills(
   ctx: CloudSkillsContext
@@ -359,73 +251,9 @@ export async function listCloudRuntimeSkills(
 }
 
 /**
- * Cloud equivalent of `getSkillToolsAndPrompt`. Fetches the catalog at
- * prompt-build time, inlines names+descriptions, and advertises `loadSkill`
- * (+ file tools). Failure or timeout → empty tools/stanza plus
- * `skillsFetchFailed` (distinguishable from a genuine empty project).
- * Zero skills → empty tools/stanza, no marker.
- */
-export async function getCloudSkillToolsAndPrompt(
-  ctx: CloudSkillsContext,
-  options?: { modelContextTokens?: number }
-): Promise<CloudSkillToolsAndPrompt> {
-  const started = Date.now();
-  try {
-    const skills = await raceWithTimeout(
-      listCloudSkills(ctx),
-      CLOUD_SKILLS_FETCH_TIMEOUT_MS
-    );
-    const latencyMs = Date.now() - started;
-    logger.info("[cloud-skills] catalog fetch", {
-      latencyMs,
-      skillCount: skills.length,
-      projectId: ctx.projectId,
-    });
-    if (skills.length === 0) {
-      return { tools: {}, systemPromptSection: "" };
-    }
-    const { body, omittedRefs } = budgetedCatalogBody(
-      skills,
-      options?.modelContextTokens
-    );
-    if (omittedRefs.length > 0) {
-      logger.warn(
-        "[cloud-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
-        { omitted: omittedRefs, total: skills.length }
-      );
-    }
-    return {
-      tools: createCloudSkillTools(ctx),
-      systemPromptSection: buildSkillsPromptSection({
-        catalogBody: body,
-        fileTools: true,
-      }),
-    };
-  } catch (err) {
-    const skillsFetchFailed = skillsFailureFrom(err, Date.now() - started);
-    logger.warn(
-      "[cloud-skills] catalog fetch failed; skipping skill tools for this turn",
-      {
-        errorClass: skillsFetchFailed.errorClass,
-        status: skillsFetchFailed.status,
-        latencyMs: skillsFetchFailed.latencyMs,
-        projectId: ctx.projectId,
-        message: skillsFetchFailed.message,
-      }
-    );
-    return {
-      tools: {},
-      systemPromptSection: "",
-      skillsFetchFailed,
-    };
-  }
-}
-
-/**
  * PINNED skill tools for eval runs — an in-memory closure over frozen skill
- * content (from `configSnapshot.pinnedSkills`). Mirrors the live cloud
- * `loadSkill` tool (same NAME, NAME_RE, error strings) so the model behaves
- * the same and the matcher's skill exemption still applies — but `execute()`
+ * content (from `configSnapshot.pinnedSkills`). The tool is named `loadSkill`
+ * so the matcher's skill exemption still applies — but `execute()`
  * does ZERO network I/O (a mid-run skill edit can't change behavior between
  * iterations, which is the whole point of pinning). The discovery catalog is
  * inlined in the prompt (sorted + budgeted), not a `listSkills` tool. The
@@ -467,10 +295,10 @@ export type PinnedSkillTools = ReturnType<typeof createPinnedSkillTools>;
 export type PinnedSkillToolSet = Partial<PinnedSkillTools>;
 
 /**
- * Pinned equivalent of `getCloudSkillToolsAndPrompt`. Inlines the frozen
+ * The pinned tools plus a prompt stanza that inlines the frozen
  * names+descriptions (sorted + budgeted). Empty list → empty tools + empty
  * stanza (defensive — the runner already maps empty pins to `kind:"none"`).
- * Omits the file-tools sentence (decision 8c pins are file-free).
+ * Omits file-tools guidance (decision 8c pins are file-free).
  */
 export function getPinnedSkillToolsAndPrompt(
   skills: PinnableSkill[],
@@ -496,7 +324,6 @@ export function getPinnedSkillToolsAndPrompt(
     tools: createPinnedSkillTools(skills),
     systemPromptSection: buildSkillsPromptSection({
       catalogBody: body,
-      fileTools: false,
     }),
   };
 }
