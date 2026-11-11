@@ -33,7 +33,11 @@ import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
-import { redactedReadRefusalError } from "./convex-read-errors.js";
+import {
+  ConvexHttpStatusError,
+  redactedReadRefusalError,
+  translateConvexReadError,
+} from "./convex-read-errors.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 
@@ -98,14 +102,25 @@ function toEnvironmentDto(row: EnvironmentRow) {
   };
 }
 
+const ENVIRONMENT_NOT_FOUND =
+  "Environment or project not found, or you do not have access to it.";
+
 function translateConvexWriteError(error: unknown): WebRouteError {
+  // Convex's HTTP layer answered before the function ran, so the write
+  // translator's prose fallbacks would read "401 Unauthorized" as a 404 and a
+  // proxy's 500 as our own 500. The status says which failure it was.
+  if (error instanceof ConvexHttpStatusError) {
+    return translateConvexReadError(error, {
+      scope: "v1.images",
+      notFoundMessage: ENVIRONMENT_NOT_FOUND,
+    });
+  }
   return translateConvexError(error, {
     resource: "Environment",
     // Convex collapses "project missing", "not a member", "env missing", and
     // the shared-env admin gate into generic errors; keep the v1 message
     // neutral rather than leaking which.
-    notFoundMessage:
-      "Environment or project not found, or you do not have access to it.",
+    notFoundMessage: ENVIRONMENT_NOT_FOUND,
     fallbackMessage: "Environment write rejected by the platform",
     // The admin gate here also guards SHARED environments, so answering 403
     // would confirm the resource exists to someone who cannot otherwise see it.
@@ -138,10 +153,8 @@ async function readEnvironmentInProject(
     // in production — answers the same neutral 404 instead of the write
     // translator's terminal 500 (MJ-021).
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexWriteError(error)
     );
   }
   if (!env || env.projectId !== projectId) {
@@ -259,10 +272,8 @@ images.get("/projects/:projectId/images", async (c) => {
   } catch (error) {
     // Project-scoped list: same masked-refusal reading as the detail read.
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexWriteError(error)
     );
   }
   return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
@@ -311,10 +322,8 @@ images.post("/projects/:projectId/images/validate", async (c) => {
     // Saves nothing, so this is a read — and the only one on the route, so it
     // scopes the path's project id: same reading as the list (MJ-021).
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexWriteError(error)
     );
   }
   return v1Resource(c, result);

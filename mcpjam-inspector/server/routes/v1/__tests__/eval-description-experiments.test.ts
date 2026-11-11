@@ -66,6 +66,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 import { isGuestAllowedV1Request } from "../guest-allowed-paths.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -896,6 +897,31 @@ describe("eval description experiments", () => {
       expect(((await res.json()) as { message?: string }).message).toBe(
         "Eval run not found",
       );
+    });
+
+    it.each([
+      [
+        "a refusal as 404",
+        new Error("Test suite run not found or unauthorized"),
+        404,
+      ],
+      // The body reads as "not visible", but the function never ran.
+      [
+        "a Convex 401 as 401",
+        new ConvexHttpStatusError(401, "Unauthorized"),
+        401,
+      ],
+    ])("answers %s", async (_label, error, status) => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => {
+          throw error;
+        },
+      });
+      const res = await request(
+        "GET",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+      );
+      expect(res.status).toBe(status);
     });
   });
 });

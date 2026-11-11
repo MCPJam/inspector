@@ -231,6 +231,7 @@ import {
   translateImportIneligibleError,
 } from "./convex-errors.js";
 import {
+  ConvexHttpStatusError,
   classifyConvexReadError,
   translateConvexReadError,
 } from "./convex-read-errors.js";
@@ -1143,8 +1144,14 @@ export const MAX_RUN_GROUP_TARGETS = 10;
  * Convex throws generic Errors from queries; the common authorization
  * failures ("not found", "unauthorized", "Not a member") all mean the same
  * thing to a v1 caller: this run/suite is not visible to you.
+ *
+ * Never a `ConvexHttpStatusError`: that answer came from Convex's HTTP layer
+ * before the function ran, so it cannot be a refusal, and its body ("401
+ * Unauthorized", "404 Not Found") would otherwise read as one. The read
+ * translator answers it from its status instead.
  */
 function isConvexNotVisibleError(error: unknown): boolean {
+  if (error instanceof ConvexHttpStatusError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /not found|unauthorized|not a member/i.test(message);
 }

@@ -54,6 +54,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -197,6 +198,27 @@ describe("v1 images routes", () => {
       expect(((await res.json()) as { code?: string }).code).not.toBe(
         "VALIDATION_ERROR"
       );
+    });
+
+    it.each([
+      [
+        "a Convex 401 as 401",
+        new ConvexHttpStatusError(401, "Unauthorized"),
+        401,
+      ],
+      [
+        "a proxy's 500 as 502",
+        new ConvexHttpStatusError(500, "500 Internal Server Error"),
+        502,
+      ],
+    ])("answers %s, read from the status", async (_label, error, status) => {
+      // By body text the write translator reads these as 404 and 500.
+      convexQueryMock.mockRejectedValueOnce(error);
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images",
+      );
+      expect(res.status).toBe(status);
     });
 
     it("404s a missing environment", async () => {
