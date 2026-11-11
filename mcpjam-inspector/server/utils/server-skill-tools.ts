@@ -63,34 +63,29 @@ import {
 import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
 import { enumeratedResources } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
-import { buildServerSkillBanner } from "../../shared/server-skill-banner.js";
 import {
   SERVER_SKILL_REF_RE,
   assignServerSlugs,
   assignSkillRefs,
-  manifestDigestSetHash,
   slugifyServerLabel,
 } from "../../shared/server-skill-refs.js";
 import {
   heldEntryConflict,
   messagesOf,
-  resolveSkillRelativeReference,
-} from "./server-skill-held-entry.js";
-
-export {
-  ACTING_SERVER_SKILL_GATED_TOOLS,
-  applyActingServerSkillGate,
-} from "./server-skill-acting-gate.js";
+} from "./computers/server-skill-held-entry.js";
+import {
+  listLiveServerSkillFiles,
+  loadLiveServerSkill,
+  loadLiveServerSkillByUri,
+  manifestApprovalHash,
+  readLiveServerSkillFile,
+  type CatalogEntry,
+} from "./computers/server-skill-reads.js";
 
 export { slugifyServerLabel };
 import {
-  getVerifiedServerSkill,
-  isServerSkillRefusalError,
   listServerSkillCatalog,
-  readVerifiedServerSkillFile,
   serverSkillsActive,
-  type ServerSkillSummary,
-  type VerifiedServerSkill,
 } from "./server-skills.js";
 
 /** Anything with a scheme is treated as a skill URI, not a ref or a name. */
@@ -104,11 +99,6 @@ export interface ServerSkillProvider {
   serverLabel: string;
   /** Host-assigned slug derived from the label, unique across providers. */
   serverSlug: string;
-}
-
-interface CatalogEntry extends ServerSkillSummary {
-  ref: string;
-  serverLabel: string;
 }
 
 /**
@@ -126,90 +116,6 @@ export function resolveProviderSlugs(
     ...server,
     serverSlug,
   }));
-}
-
-/**
- * The digest-set hash an approval binds to.
- *
- * Covers every manifest URI AND digest, sorted, so adding a file, removing
- * one, or changing one file's bytes all produce a different approval. This is
- * the SEP's "bind approval to the digest set" rule made concrete. The same
- * hash goes into the origin banner, where it is the HELD ENTRY a later file
- * read is checked against; the shared implementation is what lets the
- * playground popover write the same banner.
- */
-export async function manifestApprovalHash(
-  resources: ReadonlyArray<{ uri: string; digest: string }>
-): Promise<string> {
-  return manifestDigestSetHash(resources);
-}
-
-/**
- * Re-exported from `shared/server-skill-banner.ts`.
- *
- * The definition lives in `shared/` because the playground popover fabricates
- * a synthetic `loadSkill` message that must BYTE-MATCH this tool's output —
- * two copies of the text would drift the moment one is edited.
- */
-export const serverSkillBanner = buildServerSkillBanner;
-
-/**
- * The cap on skill content this wrapper will put into ONE TOOL RESULT.
- *
- * Distinct from the verification cap in the SDK, which is the spec's 16 MiB
- * per-skill budget: a host MUST accept a conforming skill of that size, and
- * MCPJam verifies and lists one. This cap governs something else, how many
- * bytes one `loadSkill` or `readSkillFile` result places in a model turn.
- * Without it a server-controlled SKILL.md or supporting file of 16 MiB would
- * go digest-verified into a single tool result, the provider request and the
- * chat history, some millions of tokens at once, and nothing else in the
- * chat pipeline bounds a tool's output.
- *
- * 256 KiB is about 64k tokens, within the context of the models the host
- * serves, and twice the 128 KiB that applied before the re-sync, which
- * refused skills of ordinary size.
- *
- * REFUSED, never truncated. A clipped skill is instructions that end
- * mid-sentence, and the model cannot tell that from a skill that simply said
- * less.
- */
-export const MAX_SERVER_SKILL_PROMPT_BYTES = 256 * 1024;
-
-/**
- * Returns the text, or a refusal naming both numbers when it is too large for
- * a turn.
- */
-function withinPromptBudget(
-  text: string,
-  what: string
-): { ok: true; text: string } | { ok: false; error: string } {
-  const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes <= MAX_SERVER_SKILL_PROMPT_BYTES) return { ok: true, text };
-  return {
-    ok: false,
-    error:
-      `Error (too_large_for_prompt): ${what} is ${bytes} bytes, over the ` +
-      `${MAX_SERVER_SKILL_PROMPT_BYTES}-byte limit for content placed in a ` +
-      `model turn. It verified correctly; MCPJam declines to inject it rather ` +
-      `than truncate it into instructions that end mid-sentence.`,
-  };
-}
-
-/** Renders a refusal as a tool result the model (and the user) can act on. */
-function refusalText(error: unknown): string {
-  if (isServerSkillRefusalError(error)) {
-    const { refusal } = error;
-    const details = [
-      refusal.resourceUri ? `file: ${refusal.resourceUri}` : undefined,
-      refusal.field ? `field: ${refusal.field}` : undefined,
-      refusal.expected ? `expected: ${refusal.expected}` : undefined,
-      refusal.actual ? `actual: ${refusal.actual}` : undefined,
-    ].filter(Boolean);
-    return details.length > 0
-      ? `Error (${refusal.kind}): ${refusal.message}\n${details.join("\n")}`
-      : `Error (${refusal.kind}): ${refusal.message}`;
-  }
-  return `Error: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 interface CatalogState {
@@ -616,26 +522,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
     return { kind: "base" };
   }
 
-  async function loadEntry(
-    entry: CatalogEntry
-  ): Promise<VerifiedServerSkill | string> {
-    try {
-      return await getVerifiedServerSkill(args.manager, {
-        serverId: entry.serverId,
-        uri: entry.skillUri,
-        // A LISTED skill is loaded against the listing entry we already have,
-        // so the frontmatter compared is the one the catalog showed the user.
-        entry: {
-          uri: entry.skillUri,
-          frontmatter: entry.frontmatter,
-          resources: entry.resources,
-        },
-      });
-    } catch (error) {
-      return refusalText(error);
-    }
-  }
-
   interface ReadSkillFileInput {
     name: string;
     path: string;
@@ -648,9 +534,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
 
   const fileApprovalKey = (input: ReadSkillFileInput): string =>
     JSON.stringify([input.name, input.path]);
-
-  const resourceUriFor = (entry: CatalogEntry, path: string): string =>
-    resolveSkillRelativeReference(entry.skillUri, path);
 
   async function rememberApprovedFileManifest(
     input: ReadSkillFileInput
@@ -821,56 +704,17 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
 
         if (target.kind === "server-ref") {
-          if (target.entry.unloadable) {
-            // The REASON, not a hardcoded `no_resources`. A server declaring
-            // `"resources": "dynamic"` otherwise surfaced as
-            // `Error (no_resources): This skill generates its content per
-            // request…` — the exact collapse the separate kind exists to
-            // prevent.
-            return `Error (${target.entry.unloadable.reason}): ${target.entry.unloadable.message}`;
-          }
-          const loaded = await loadEntry(target.entry);
-          if (typeof loaded === "string") return loaded;
-          const budgeted = withinPromptBudget(
-            loaded.content,
-            `Skill "${target.entry.ref}"`
-          );
-          if (!budgeted.ok) return budgeted.error;
-          return (
-            serverSkillBanner({
-              ref: target.entry.ref,
-              serverLabel: target.entry.serverLabel,
-              skillUri: target.entry.skillUri,
-              digestSet: await manifestApprovalHash(loaded.resources),
-            }) + budgeted.text
-          );
+          return loadLiveServerSkill(args.manager, target.entry);
         }
 
         // Direct-URI path: `skills/get` first, so an UNLISTED skill is
         // verifiable by URI alone.
-        const provider = providerById.get(target.serverId);
-        try {
-          const loaded = await getVerifiedServerSkill(args.manager, {
-            serverId: target.serverId,
-            uri: target.uri,
-            entry: approval.binding?.entry,
-          });
-          const budgeted = withinPromptBudget(
-            loaded.content,
-            `Skill "${loaded.skillUri}"`
-          );
-          if (!budgeted.ok) return budgeted.error;
-          return (
-            serverSkillBanner({
-              ref: `${provider?.serverSlug ?? target.serverId}/${loaded.name}`,
-              serverLabel: provider?.serverLabel ?? target.serverId,
-              skillUri: loaded.skillUri,
-              digestSet: await manifestApprovalHash(loaded.resources),
-            }) + budgeted.text
-          );
-        } catch (error) {
-          return refusalText(error);
-        }
+        return loadLiveServerSkillByUri(args.manager, {
+          serverId: target.serverId,
+          uri: target.uri,
+          provider: providerById.get(target.serverId),
+          entry: approval.binding?.entry,
+        });
       },
     }),
     // ALWAYS, regardless of the host's approval policy: this admits untrusted
@@ -908,17 +752,7 @@ export function withServerSkills<T extends Record<string, unknown>>(
       // server added since the load is not a file of the loaded skill.
       const conflict = await heldEntryConflict(entry, messagesOf(options));
       if (conflict) return conflict;
-      const files = entry.resources.filter(
-        (resource) => resource.uri !== entry.skillUri
-      );
-      if (files.length === 0) {
-        return `Skill "${entry.ref}" advertises no supporting files.`;
-      }
-      return (
-        `Supporting files for "${entry.ref}" (manifest of ${files.length}):\n\n` +
-        files.map((file) => `- ${file.uri}`).join("\n") +
-        `\n\nUse \`readSkillFile\` with one of these URIs. Any other URI will be refused.`
-      );
+      return listLiveServerSkillFiles(entry);
     },
   });
 
@@ -952,33 +786,12 @@ export function withServerSkills<T extends Record<string, unknown>>(
         if (approved === UNRESOLVED) {
           return "Error (manifest_unbound): this skill's file manifest could not be resolved before the approval, so the approval did not cover its contents. Request it again.";
         }
-        // Prefer the manifest bound at approval time; otherwise this call's.
-        // Either way the read is confined to the skill's OWN manifest —
-        // `readVerifiedServerSkillFile` refuses anything absent from it — so an
-        // unlisted file stays unreadable.
-        const approvedEntry = approved?.entry ?? {
-          uri: entry.skillUri,
-          resources: entry.resources,
-        };
-        const resourceUri = resourceUriFor(entry, input.path);
-        try {
-          const file = await readVerifiedServerSkillFile(args.manager, {
-            serverId: entry.serverId,
-            entry: approvedEntry,
-            resourceUri,
-          });
-          const budgeted = withinPromptBudget(file.text, `"${file.uri}"`);
-          if (!budgeted.ok) return budgeted.error;
-          // Origin on the file too: it is skill content entering context.
-          return (
-            `# ${file.uri}\n\n` +
-            `> Origin: MCP server "${entry.serverLabel}", a file of skill ${entry.ref}. ` +
-            `Untrusted server-provided content.\n\n` +
-            budgeted.text
-          );
-        } catch (error) {
-          return refusalText(error);
-        }
+        return readLiveServerSkillFile(
+          args.manager,
+          entry,
+          input.path,
+          approved
+        );
       },
     }),
     // Same rule as loadSkill: a supporting file is skill content, and its
