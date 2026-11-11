@@ -405,6 +405,7 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Connect stateless-mcp" }),
     );
+    expect(second).toHaveBeenCalledWith("stateless-mcp");
     const edited = vi.fn();
     playgroundState.activeServerNames = ["another-server"];
     act(() => {
@@ -416,12 +417,9 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
       );
     });
     await act(async () => finish(ready("stateless-mcp")));
-    expect(playgroundState.onSelectMultipleServers).toHaveBeenCalledWith([
-      "another-server",
-      "stateless-mcp",
-    ]);
-    expect(edited).toHaveBeenCalledWith("stateless-mcp");
-    expect(second).not.toHaveBeenCalled();
+    expect(playgroundState.onSelectMultipleServers).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(edited).not.toHaveBeenCalled();
     expect(first).not.toHaveBeenCalled();
   });
 
@@ -487,6 +485,9 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
 describe("PlaygroundLeftRail — Compare panes", () => {
   beforeEach(() => {
     playgroundState.activeServerNames = ["GitHub", "Docs"];
+    playgroundState.servers = {
+      Docs: createServer({ name: "Docs", connectionStatus: "connected" }),
+    };
     playgroundState.paneServers.mockClear();
     playgroundState.builtinHostId.mockClear();
     useComparePaneStore.setState({ panes: [], selectedPaneId: null });

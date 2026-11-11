@@ -120,18 +120,16 @@ export function useComparePaneControls({
   const publishPanes = useComparePaneStore((state) => state.publishPanes);
   const selectPane = useComparePaneStore((state) => state.selectPane);
 
-  // A client pane that narrowed the chat's servers keeps only those still in
-  // it. An environment pane's servers are the environment's, narrowed on the
+  // An explicit client pane selection can include a server outside the chat. An environment pane's servers are the environment's, narrowed on the
   // wire (`environmentOverrides`), never the chat's.
   const paneServerNames = useCallback(
     (pane: RecoveryPane): string[] | null =>
       pane.serverIds == null || pane.target.kind === "environment"
         ? null
-        : sharedServers.filter((name) => {
-            const serverId = serverIdByName.get(name);
-            return !!serverId && pane.serverIds!.includes(serverId);
-          }),
-    [sharedServers, serverIdByName],
+        : Array.from(serverIdByName)
+            .filter(([, id]) => pane.serverIds!.includes(id))
+            .map(([name]) => name),
+    [serverIdByName],
   );
 
   const options = useMemo(
@@ -208,13 +206,13 @@ export function useComparePaneControls({
     (pane: RecoveryPane, name: string, enabled: boolean) => {
       const current = paneServerNames(pane) ?? [...sharedServers];
       const names = enabled
-        ? sharedServers.filter(
-            (entry) => entry === name || current.includes(entry),
-          )
+        ? [...new Set([...current, name])]
         : current.filter((entry) => entry !== name);
       // Back to every server of the chat: follow it again, so servers added
       // later reach this pane too.
-      const follows = names.length === sharedServers.length;
+      const follows =
+        names.length === sharedServers.length &&
+        sharedServers.every((entry) => names.includes(entry));
       setPaneOverrides(pane.paneId, {
         serverIds: follows
           ? null
@@ -397,7 +395,7 @@ export function useComparePaneControls({
           : null
         : serverIdByName.size === 0
           ? null
-          : sharedServers
+          : [...new Set([...sharedServers, ...servers])]
               .filter((name) => serverIdByName.has(name))
               .map((name) => ({ name, enabled: servers.includes(name) }));
       const enabledServers = environment

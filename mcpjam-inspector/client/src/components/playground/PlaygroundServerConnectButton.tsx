@@ -23,6 +23,7 @@ interface PlaygroundServerConnectButtonProps {
     names: string[],
     options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
+  onChooseServer?: (name: string) => void;
   onConnected?: (name: string) => void;
   onPendingChange: (pending: boolean) => void;
 }
@@ -32,6 +33,7 @@ export function PlaygroundServerConnectButton({
   catalogKnown,
   onAddServer,
   ensureServersReady,
+  onChooseServer,
   onConnected,
   onPendingChange,
 }: PlaygroundServerConnectButtonProps) {
@@ -75,6 +77,8 @@ export function PlaygroundServerConnectButton({
     onPendingChange(true);
     track("connecting_server", { location: "playground_tools_rail" });
     try {
+      // Persist the pane choice before OAuth can navigate away.
+      onChooseServer?.(name);
       const result = await ensureServersReady([name], {
         allowInteractiveOAuthFlow: true,
       });

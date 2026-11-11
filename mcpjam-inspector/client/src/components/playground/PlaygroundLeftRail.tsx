@@ -203,7 +203,10 @@ function ToolsBody({
     [scope],
   );
   const activeServerNames = serverNames
-    ? state.activeServerNames.filter((name) => serverNames.includes(name))
+    ? serverNames.filter((name) => {
+        const status = state.servers[name]?.connectionStatus;
+        return status === "connected" || status === "connecting";
+      })
     : state.activeServerNames;
   // The agent browser the previewed host attaches, if any: the six `browser_*`
   // tools plus whatever the page it has open offers. Resolved HERE, beside the
@@ -340,7 +343,9 @@ function ZeroServerToolsBody({
               catalogKnown={state.areServersHydrated}
               onAddServer={onConnect}
               ensureServersReady={state.ensureServersReady}
+              onChooseServer={onConnected}
               onConnected={(name) => {
+                if (onConnected) return;
                 const selected = state.selectedServerNames?.length
                   ? state.selectedServerNames
                   : state.activeServerNames;
@@ -349,7 +354,6 @@ function ZeroServerToolsBody({
                     ...new Set([...selected, name]),
                   ]);
                 }
-                onConnected?.(name);
               }}
               onPendingChange={onPendingChange}
             />
