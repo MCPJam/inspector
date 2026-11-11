@@ -35,6 +35,13 @@ export interface ProgressiveStepSettings {
 /** The fields of a finished step's tool call that `noteStep` reads. */
 type StepToolCall = { toolCallId: string; invalid?: boolean; error?: unknown };
 
+/** A meta-tool call as it starts. */
+type StartedCall = {
+  toolCallId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+};
+
 export interface ProgressiveTurn {
   /** `search_mcp_tools` and `load_mcp_tools`, to add to the prompt's tools. */
   metaTools: ToolSet;
@@ -43,6 +50,19 @@ export interface ProgressiveTurn {
   noteStep(toolCalls: ReadonlyArray<StepToolCall>): void;
   /** Calls the AI SDK refused because their tool was not loaded; none ran. */
   refusedCallIds: ReadonlySet<string>;
+}
+
+/**
+ * A host's Progressive tools setting. A host that leaves it unset gets
+ * `whenUnset`: Auto for saved clients and templates, as hosted runs read
+ * them. Without a host there is no setting, and every tool is sent.
+ */
+export function readDiscoveryMode(
+  host: { progressiveToolDiscovery?: boolean } | undefined,
+  whenUnset: "auto" | undefined
+): ProgressiveDiscoveryEnabled {
+  if (!host) return false;
+  return host.progressiveToolDiscovery ?? whenUnset ?? false;
 }
 
 /**
@@ -55,6 +75,12 @@ export function startProgressiveTurn(args: {
   mode: ProgressiveDiscoveryEnabled;
   /** Earlier turns, so a tool they loaded stays loaded. */
   priorMessages?: ReadonlyArray<ModelMessage>;
+  /**
+   * Gets each search or load call as it starts. A step that fails never
+   * finishes, so this keeps its meta-tool calls in the partial result, as the
+   * runner keeps the MCP calls it started.
+   */
+  onCallStarted?: (call: StartedCall) => void;
 }): ProgressiveTurn | undefined {
   if (args.mode === false) return undefined;
   const catalog = buildToolCatalog(args.tools);
@@ -80,12 +106,29 @@ export function startProgressiveTurn(args: {
     hydrateDiscoveryStateFromHistory(state, args.priorMessages, catalog);
   }
   const refusedCallIds = new Set<string>();
+  const metaTools = createProgressiveMetaTools({
+    getCatalog: () => catalog,
+    state,
+    policy: plan.policy,
+  });
+  const notify = args.onCallStarted;
+  for (const [name, tool] of Object.entries(metaTools)) {
+    const execute = tool.execute;
+    if (!notify || !execute) continue;
+    metaTools[name] = {
+      ...tool,
+      execute: (input, options) => {
+        notify({
+          toolCallId: options.toolCallId,
+          toolName: name,
+          arguments: input as Record<string, unknown>,
+        });
+        return execute(input, options);
+      },
+    };
+  }
   return {
-    metaTools: createProgressiveMetaTools({
-      getCatalog: () => catalog,
-      state,
-      policy: plan.policy,
-    }),
+    metaTools,
     prepareStep(stepNumber) {
       // Promote what `load_mcp_tools` loaded on the previous step.
       commitNewlyLoaded(state);

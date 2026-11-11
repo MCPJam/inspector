@@ -25,8 +25,10 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import { withProviderSafeToolNames } from "./provider-tool-names.js";
-import { startProgressiveTurn } from "./progressive-discovery/turn.js";
-import type { ProgressiveDiscoveryEnabled } from "./progressive-discovery/discovery.js";
+import {
+  readDiscoveryMode,
+  startProgressiveTurn,
+} from "./progressive-discovery/turn.js";
 import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
@@ -374,8 +376,6 @@ export class HostRunner implements HostExecutor {
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
   private readonly progressiveToolDiscoveryWhenUnset: "auto" | undefined;
-  /** The host's Progressive tools setting, with unset read as above. */
-  private readonly progressiveDiscovery: ProgressiveDiscoveryEnabled;
   /**
    * Description rewrites applied after visibility filtering. Stored so
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
@@ -412,14 +412,8 @@ export class HostRunner implements HostExecutor {
           this.hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
-    // Without a host there is no setting, and every tool is sent as before.
     this.progressiveToolDiscoveryWhenUnset =
       config.progressiveToolDiscoveryWhenUnset;
-    this.progressiveDiscovery = this.hostSnapshot
-      ? (this.hostSnapshot.progressiveToolDiscovery ??
-        this.progressiveToolDiscoveryWhenUnset ??
-        false)
-      : false;
 
     // Resolve the model: explicit field wins; otherwise pull from host
     // snapshot; if neither, the discriminated-union types should have
@@ -961,8 +955,13 @@ export class HostRunner implements HostExecutor {
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
       const discovery = startProgressiveTurn({
         tools: this.tools,
-        mode: this.progressiveDiscovery,
+        mode: readDiscoveryMode(
+          this.hostSnapshot,
+          this.progressiveToolDiscoveryWhenUnset
+        ),
         priorMessages: contextMessages,
+        onCallStarted: (call) =>
+          pendingStepToolCalls.push({ ...call, shortCircuited: false }),
       });
       if (discovery) {
         toolDefinitions.push(

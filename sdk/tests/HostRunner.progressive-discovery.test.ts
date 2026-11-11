@@ -251,6 +251,56 @@ describe("HostRunner progressive tool discovery", () => {
     expect(result.toolsCalled()).toContain("ctrl_tool_7");
   });
 
+  it("keeps a failed step's search and load calls in the partial result", async () => {
+    const tools = makeTools(30);
+    // Its result can't be turned into model output, so its step fails before
+    // it finishes.
+    tools.ctrl_tool_7 = dynamicTool({
+      description: "Looks up CTRL record kind 7.",
+      inputSchema: jsonSchema({ type: "object", properties: {} }),
+      execute: async () => ({ content: [] }),
+      toModelOutput: () => {
+        throw new Error("unreadable result");
+      },
+    });
+    let id = 0;
+    const call = (toolName: string, input: unknown) => ({
+      type: "tool-call" as const,
+      toolCallId: `call-${++id}`,
+      toolName,
+      input: JSON.stringify(input),
+    });
+    const steps = [
+      [call("search_mcp_tools", { query: "kind 7" })],
+      [call("load_mcp_tools", { names: ["ctrl_tool_7"] })],
+      [
+        call("load_mcp_tools", { names: ["ctrl_tool_8"] }),
+        call("ctrl_tool_7", {}),
+      ],
+    ];
+    let step = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => ({
+        content: steps[step++] ?? [],
+        finishReason: { unified: "tool-calls" as const, raw: "tool_use" },
+        usage: {
+          inputTokens: { total: 5, noCache: 5, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 2, text: 2, reasoning: 0 },
+        },
+        warnings: [],
+      }),
+    });
+    const result = await runner(true, tools, model).run("Look up record x");
+
+    expect(result.hasError()).toBe(true);
+    expect(result.toolsCalled()).toEqual([
+      "search_mcp_tools",
+      "load_mcp_tools",
+      "load_mcp_tools",
+      "ctrl_tool_7",
+    ]);
+  });
+
   it("returns an error result when a server tool uses a meta-tool's name", async () => {
     const tools = {
       ...makeTools(2),

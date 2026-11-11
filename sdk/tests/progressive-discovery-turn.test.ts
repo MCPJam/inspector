@@ -6,7 +6,10 @@ import {
   type ModelMessage,
   type ToolSet,
 } from "ai";
-import { startProgressiveTurn } from "../src/progressive-discovery/turn.js";
+import {
+  readDiscoveryMode,
+  startProgressiveTurn,
+} from "../src/progressive-discovery/turn.js";
 import {
   META_TOOL_LOAD,
   META_TOOL_SEARCH,
@@ -31,6 +34,20 @@ function execute(tools: ToolSet, name: string, input: unknown) {
   if (!run) throw new Error(`no executable tool ${name}`);
   return run(input as never, callOptions);
 }
+
+describe("readDiscoveryMode", () => {
+  it("reads the host's setting, and unset only as the caller says", () => {
+    expect(
+      readDiscoveryMode({ progressiveToolDiscovery: true }, undefined)
+    ).toBe(true);
+    expect(readDiscoveryMode({ progressiveToolDiscovery: false }, "auto")).toBe(
+      false
+    );
+    expect(readDiscoveryMode({}, undefined)).toBe(false);
+    expect(readDiscoveryMode({}, "auto")).toBe("auto");
+    expect(readDiscoveryMode(undefined, "auto")).toBe(false);
+  });
+});
 
 describe("startProgressiveTurn", () => {
   it("does nothing when the setting is off", () => {
