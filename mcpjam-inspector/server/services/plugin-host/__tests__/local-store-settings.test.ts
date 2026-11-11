@@ -46,7 +46,13 @@ async function openSettings(binding = settingsBinding()) {
     env: {},
     hosted: false,
   })!;
-  const opened = await new PluginInstanceRegistry().openActivationPersistent(
+  // A one-minute lease keeps the Settings App's expiry well inside the
+  // store's 30-minute ceiling, so a child that outlives it is refused for
+  // that reason, however fast the test runs.
+  const opened = await new PluginInstanceRegistry(
+    undefined,
+    60_000,
+  ).openActivationPersistent(
     identity,
     binding,
     signal(),
