@@ -59,6 +59,8 @@ import {
 } from "@/hooks/use-org-model-config";
 import { OrganizationAiCards } from "./OrganizationAiCards";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { AddProviderDialog } from "./gateway/AddProviderDialog";
+import { CustomProviderStatus } from "./gateway/CustomProviderStatus";
 import { GatewayDialog } from "./gateway/GatewayDialog";
 
 // ---------------------------------------------------------------------------
@@ -427,6 +429,15 @@ function OrganizationProviderSettings({
                   configured={!!cp.hasSecret || !!cp.baseUrl}
                   isAdmin={isAdmin}
                   isCustom
+                  detail={
+                    gatewaysEnabled ? (
+                      <CustomProviderStatus
+                        provider={cp}
+                        requireOrgKeys={requireOrgKeys}
+                        onOpen={isAdmin ? () => openEditCustom(cp) : undefined}
+                      />
+                    ) : undefined
+                  }
                   onConfigure={() => openEditCustom(cp)}
                   onRemove={() =>
                     openDeleteConfirm(
@@ -506,14 +517,23 @@ function OrganizationProviderSettings({
         />
       ) : null}
 
-      {/* Custom provider dialog; the gateway editor behind its flag */}
+      {/* Custom provider dialog; add now, configure later behind its flag */}
       {gatewaysEnabled ? (
-        <GatewayDialog
-          {...customDialogProps}
-          organizationId={organizationId}
-          existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
-          requireOrgKeys={requireOrgKeys}
-        />
+        <>
+          <AddProviderDialog
+            {...customDialogProps}
+            open={customDialogOpen && !editingCustom}
+            organizationId={organizationId}
+            existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
+          />
+          <GatewayDialog
+            {...customDialogProps}
+            open={customDialogOpen && !!editingCustom}
+            organizationId={organizationId}
+            existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
+            requireOrgKeys={requireOrgKeys}
+          />
+        </>
       ) : (
         <OrgCustomProviderDialog {...customDialogProps} />
       )}

@@ -69,6 +69,42 @@ function withMapping(model: GatewayModel, modelId: string): GatewayModel {
   return modelId ? { ...next, modelId, mappingSource: "admin" } : next;
 }
 
+/** A model the provider serves but didn't list, added by its name. */
+export function GatewayAddModel({
+  models,
+  onChange,
+}: {
+  models: GatewayModel[];
+  onChange: (models: GatewayModel[]) => void;
+}) {
+  const [added, setAdded] = useState("");
+  const addModel = () => {
+    const name = added.trim();
+    if (!name || models.some((model) => model.nativeModelId === name)) return;
+    onChange([...models, { nativeModelId: name }]);
+    setAdded("");
+  };
+  return (
+    <div className="flex gap-2">
+      <Input
+        aria-label="Add a model"
+        placeholder="Add a model the provider serves"
+        value={added}
+        onChange={(event) => setAdded(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          addModel();
+        }}
+      />
+      <Button type="button" variant="outline" onClick={addModel}>
+        <Plus className="size-4" />
+        Add
+      </Button>
+    </div>
+  );
+}
+
 /**
  * The gateway's models: each gateway name, the catalog model it runs as, and
  * the capability values an admin can correct. A corrected value reads "Set by
@@ -84,7 +120,6 @@ export function GatewayModelTable({
   onChange: (models: GatewayModel[]) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [added, setAdded] = useState("");
   const needle = query.trim().toLowerCase();
   const visible = models.filter(
     (model) =>
@@ -98,12 +133,6 @@ export function GatewayModelTable({
         model.nativeModelId !== nativeModelId ? [model] : next ? [next] : [],
       ),
     );
-  const addModel = () => {
-    const name = added.trim();
-    if (!name || models.some((model) => model.nativeModelId === name)) return;
-    onChange([...models, { nativeModelId: name }]);
-    setAdded("");
-  };
 
   return (
     <div className="space-y-2">
@@ -118,22 +147,9 @@ export function GatewayModelTable({
             className="pl-8"
           />
         </div>
-        <Input
-          aria-label="Add a model"
-          placeholder="Add a model the provider serves"
-          value={added}
-          onChange={(event) => setAdded(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            addModel();
-          }}
-          className="min-w-48 flex-1"
-        />
-        <Button type="button" variant="outline" size="sm" onClick={addModel}>
-          <Plus className="mr-1 size-4" />
-          Add
-        </Button>
+        <div className="min-w-48 flex-1">
+          <GatewayAddModel models={models} onChange={onChange} />
+        </div>
       </div>
       <div className="rounded-md border border-border/60">
         <Table>
