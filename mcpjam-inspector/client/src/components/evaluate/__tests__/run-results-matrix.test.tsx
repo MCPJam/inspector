@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { comparisonKey } from "@mcpjam/sdk/browser";
@@ -10,6 +10,27 @@ import {
   cellResult,
 } from "../run-results-matrix-model";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+
+const judgeFixture = vi.hoisted<{
+  run: EvalSuiteRun | null;
+  retry: ReturnType<typeof vi.fn>;
+}>(() => ({
+  run: null,
+  retry: vi.fn(),
+}));
+vi.mock("../../evals/use-selected-run", () => ({
+  useSelectedRun: () => ({ run: judgeFixture.run }),
+}));
+vi.mock("../../evals/use-goal-completion", () => ({
+  useGoalCompletion: () => ({
+    requestGoalCompletion: judgeFixture.retry,
+    canRequest: true,
+  }),
+}));
+beforeEach(() => {
+  judgeFixture.run = null;
+  judgeFixture.retry.mockReset();
+});
 
 vi.mock("convex/react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("convex/react")>()),
@@ -803,6 +824,115 @@ describe("run results matrix", () => {
       expect(screen.queryByRole("option", { name: "Pending" })).toBeNull();
     },
   );
+});
+
+describe("iteration drawer outcome judge", () => {
+  async function openJudgedIteration(
+    status: EvalSuiteRun["goalCompletionStatus"],
+    cases: NonNullable<EvalSuiteRun["goalCompletion"]>["cases"] = [],
+  ) {
+    judgeFixture.run = run("one", {
+      goalCompletionStatus: status,
+      goalCompletion: {
+        summary: "Outcome grading",
+        generatedAt: 1,
+        modelUsed: "openai/gpt-5-mini",
+        threshold: 0.7,
+        cases,
+      },
+    });
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        iterations={[
+          iteration("pass", "one", {
+            iterationNumber: 1,
+            testCaseSnapshot: {
+              title: "Refund order",
+              caseKey: "refund",
+              model: "sonnet",
+              provider: "anthropic",
+              query: "Refund the order",
+              expectedOutput: "Reports the refund confirmation",
+              expectedToolCalls: [],
+            },
+          }),
+        ]}
+        hostNamesById={names}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Claude · sonnet",
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open iteration 1 details",
+      }),
+    );
+    return within(screen.getByRole("dialog"));
+  }
+
+  const verdict = {
+    caseKey: "refund",
+    iterationId: "pass",
+    gradingKey: "refund#1",
+    score: 1,
+    passed: true,
+    reason: "The refund confirmation matched the tool result.",
+    rubricHits: [],
+    status: "scored" as const,
+  };
+
+  it("shows the saved judge observation from the full run", async () => {
+    const drawer = await openJudgedIteration("completed", [verdict]);
+    const row = drawer.getByText("Outcome achieved").closest("li");
+    expect(row).toHaveAttribute("data-state", "passed");
+    expect(row).toHaveTextContent(verdict.reason);
+    expect(row).not.toHaveTextContent("No observation recorded");
+  });
+
+  it("does not borrow a sibling iteration's outcome", async () => {
+    const drawer = await openJudgedIteration("completed", [
+      {
+        ...verdict,
+        iterationId: "other",
+        gradingKey: "refund#2",
+      },
+    ]);
+    expect(drawer.queryByText(verdict.reason)).toBeNull();
+    expect(drawer.getByText("Not run for this iteration")).toBeVisible();
+  });
+
+  it("shows judging while the outcome is pending", async () => {
+    const drawer = await openJudgedIteration("pending");
+    expect(drawer.getByText("Judging…")).toBeVisible();
+  });
+
+  it("offers an explicit retry when the judge failed", async () => {
+    const drawer = await openJudgedIteration("failed");
+    expect(
+      drawer.getByText("The judge could not grade this iteration"),
+    ).toBeVisible();
+    await userEvent.click(drawer.getByRole("button", { name: "Retry" }));
+    expect(judgeFixture.retry).toHaveBeenCalledWith(undefined, true);
+  });
+
+  it("shows an individual grading error without treating its score as a pass", async () => {
+    const drawer = await openJudgedIteration("completed", [
+      {
+        ...verdict,
+        status: "error",
+        reason: "The provider rejected the grading request.",
+      },
+    ]);
+    const row = drawer.getByText("Outcome achieved").closest("li");
+    expect(row).toHaveAttribute("data-state", "error");
+    expect(row).toHaveTextContent("The provider rejected the grading request.");
+    expect(drawer.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
 });
 
 describe("test-name navigation", () => {
