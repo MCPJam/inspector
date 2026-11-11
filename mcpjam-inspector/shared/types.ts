@@ -501,6 +501,7 @@ export enum Model {
   GPT_5_6_LUNA = "gpt-5.6-luna",
   GPT_5_6_SOL = "gpt-5.6-sol",
   GPT_5_6_TERRA = "gpt-5.6-terra",
+  GPT_6_LUNA = "gpt-6-luna",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
@@ -625,6 +626,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.GPT_5_6_TERRA,
     name: "GPT-5.6 Terra",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_6_LUNA,
+    name: "GPT-6 Luna",
     provider: "openai",
     contextLength: 1050000,
   },
