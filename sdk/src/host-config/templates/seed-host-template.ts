@@ -2195,7 +2195,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => ({
       ...emptyHostConfigInputV2({
         hostStyle: "copilot-cli",
-        modelId: "openai/gpt-6-luna",
+        modelId: "openai/gpt-5.5",
         temperature: 1,
         requireToolApproval: true,
         harness: "copilot-cli",

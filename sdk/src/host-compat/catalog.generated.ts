@@ -2721,7 +2721,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       hostStyle: "copilot-cli",
-      modelId: "openai/gpt-6-luna",
+      modelId: "openai/gpt-5.5",
       systemPrompt: "",
       temperature: 1,
       requireToolApproval: true,
