@@ -8,10 +8,10 @@ import {
 } from "../turn-skills";
 import { buildLiveEffectiveCapabilities } from "../effective-capabilities";
 import {
+  agentLoads,
   agentReceives,
   authoredPin,
   namePin,
-  pluginPin,
   preparedRunSkills,
   serverPin,
 } from "../../../test/support/skill-delivery";
@@ -112,29 +112,35 @@ describe("resolveTurnSkills", () => {
 
   describe("a skill list over the model's budget", () => {
     // 1,000 tokens leave the list 80 characters: one skill and its line.
+    const budget = { modelContextTokens: 1_000 };
     const longDescription = "x".repeat(45);
     const pins = ["alpha", "bravo", "charlie"].map((name) =>
       namePin(name, { description: longDescription }),
     );
+    const unlisted = (skills: TurnSkills) =>
+      skills.delivered
+        .filter((ref) => ref.omittedFromCatalog)
+        .map((ref) => ref.ref);
 
-    it("leaves the omitted skills out of the list", async () => {
+    // The model is not told about a skill the list leaves out, but its tools
+    // load it when named, as when the person asks for it or picks it with `/`.
+    it("still delivers the skills the list leaves out", async () => {
       const run = await preparedRunSkills(pins);
       const skills = resolveTurnSkills({
         source: run.pinnedSkillSource,
         runtime: AGENT,
-        modelContextTokens: 1_000,
+        ...budget,
       });
-      expect(refs(skills)).toEqual(["alpha"]);
-      expect(reasons(skills)).toEqual([
-        ["bravo", "omitted-from-catalog"],
-        ["charlie", "omitted-from-catalog"],
-      ]);
-      expect(
-        (await agentReceives(skills, { modelContextTokens: 1_000 })).listed,
-      ).toEqual(["alpha"]);
+      expect(refs(skills)).toEqual(["alpha", "bravo", "charlie"]);
+      expect(unlisted(skills)).toEqual(["bravo", "charlie"]);
+      expect(skills.excluded).toEqual([]);
+      expect((await agentReceives(skills, budget)).listed).toEqual(["alpha"]);
+      expect(await agentLoads(skills, "charlie", budget)).toBe(
+        "# Skill: charlie\n\n# charlie",
+      );
     });
 
-    it("leaves the omitted skills out of the ref list", async () => {
+    it("still delivers a skill with files that the list leaves out", async () => {
       const run = await preparedRunSkills([
         ...pins,
         authoredPin({ description: longDescription }),
@@ -142,16 +148,35 @@ describe("resolveTurnSkills", () => {
       const skills = resolveTurnSkills({
         source: run.pinnedSkillSource,
         runtime: AGENT,
-        modelContextTokens: 1_000,
+        ...budget,
       });
-      const received = await agentReceives(skills, {
-        modelContextTokens: 1_000,
-      });
-      expect(refs(skills)).toEqual(received.listed);
-      expect(skills.excluded.map(({ reason }) => reason)).toEqual([
-        "omitted-from-catalog",
-        "omitted-from-catalog",
-        "omitted-from-catalog",
+      expect(refs(skills)).toEqual([
+        "alpha",
+        "bravo",
+        "charlie",
+        "release-notes",
+      ]);
+      expect(unlisted(skills)).toEqual(["bravo", "charlie", "release-notes"]);
+      expect(skills.excluded).toEqual([]);
+      expect((await agentReceives(skills, budget)).listed).toEqual(["alpha"]);
+      expect(await agentLoads(skills, "release-notes", budget)).toBe(
+        "# Skill: release-notes\n\n# Release notes\n\nRun scripts/check.sh first.",
+      );
+    });
+
+    it("records the skills the list leaves out", async () => {
+      const run = await preparedRunSkills(pins);
+      const rows = toSkillsAtTurn(
+        resolveTurnSkills({
+          source: run.pinnedSkillSource,
+          runtime: AGENT,
+          ...budget,
+        }),
+      );
+      expect(rows.map((row) => row.name)).toEqual([
+        "alpha",
+        "bravo",
+        "charlie",
       ]);
     });
   });
