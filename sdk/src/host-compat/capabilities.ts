@@ -53,7 +53,11 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
 export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline", "fullscreen"],
-  cspFrameDomains: false,
+  // From Claude's embedded-sites doc, not a probe: the origins a view declares
+  // in `_meta.ui.csp.frameDomains` load once a Verified listing or the user
+  // allows them
+  // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+  cspFrameDomains: true,
   cspBaseUriDomains: false,
   cspConnectDomains: { fetch: true, xhr: true, websocket: true },
   cspResourceDomains: {

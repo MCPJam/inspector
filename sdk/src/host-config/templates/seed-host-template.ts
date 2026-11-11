@@ -736,10 +736,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -990,10 +993,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
