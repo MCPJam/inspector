@@ -425,6 +425,37 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     expect(first).not.toHaveBeenCalled();
   });
 
+  it("keeps a retry pending when an earlier attempt finishes after returning to the project", async () => {
+    withSavedServer();
+    const attempts: Array<(result: EnsureServersReadyResult) => void> = [];
+    playgroundState.ensureServersReady.mockImplementation(
+      () =>
+        new Promise<EnsureServersReadyResult>((resolve) => {
+          attempts.push(resolve);
+        }),
+    );
+    const startReconnect = () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Connect stateless-mcp" }),
+      );
+    };
+    const { rerender } = render(<PlaygroundLeftRail projectId="first" />);
+    startReconnect();
+    rerender(<PlaygroundLeftRail projectId="second" />);
+    rerender(<PlaygroundLeftRail projectId="first" />);
+    startReconnect();
+    playgroundState.activeServerNames = ["stateless-mcp"];
+    rerender(<PlaygroundLeftRail projectId="first" />);
+
+    await act(async () => attempts[0](ready("stateless-mcp")));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connecting to stateless-mcp",
+    );
+    await act(async () => attempts[1](ready("stateless-mcp")));
+    expect(screen.getByTestId("multi-server-pane")).toBeInTheDocument();
+  });
+
   it("discards the previous project's open picker and pending feedback after switching projects", async () => {
     withSavedServer();
     let finish: ((result: EnsureServersReadyResult) => void) | undefined;

@@ -47,7 +47,7 @@ export function PlaygroundServerConnectButton({
   useLayoutEffect(() => {
     latestOnConnected.current = onConnected;
   }, [onConnected]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
@@ -101,8 +101,10 @@ export function PlaygroundServerConnectButton({
       }
     } finally {
       inFlight.current = false;
-      if (mounted.current) setPendingName(null);
-      onPendingChange(false);
+      if (mounted.current) {
+        setPendingName(null);
+        onPendingChange(false);
+      }
     }
   };
 
