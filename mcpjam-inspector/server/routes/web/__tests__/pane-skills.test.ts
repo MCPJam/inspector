@@ -90,14 +90,15 @@ describe("per-pane Skills preview", () => {
     vi.resetAllMocks();
     serve();
   });
+  const viaTools = "takes the server's skill through MCPJam's skill tools";
   it.each([
-    ["claude-code", 2, "server-skill-unsupported"],
-    ["codex", 2, "server-skill-unsupported"],
-    ["cursor", 0, "unsupported-harness"],
-    [undefined, 3, null],
+    ["claude-code", viaTools, 3, null],
+    ["codex", viaTools, 3, null],
+    ["cursor", "takes no skills", 0, "unsupported-harness"],
+    [undefined, "is MCPJam's agent", 3, null],
   ])(
-    "predicts delivered count and capture support for %s",
-    async (agentLoop, deliveredCount, reason) => {
+    "predicts the delivered count for %s, which %s",
+    async (agentLoop, _why, deliveredCount, reason) => {
       serve({ ...spec, host: { hostId: "h1", runtimeConfig: { agentLoop } } });
       const response = await preview(named);
       expect(response.status).toBe(200);
@@ -153,13 +154,17 @@ describe("per-pane Skills preview", () => {
     );
     expect((await preview(bare)).status).toBe(404);
   });
-  it("merges the native live pool with plugin pins by folder and deduplicates IDs", async () => {
+  it("merges the native live pool with plugin pins by folder and deduplicates IDs, beside the server skill Claude Code takes through MCPJam's skill tools", async () => {
     serve({ ...spec, environmentOrigin: "adhoc" });
     const response = await preview({ ...bare, environmentId: "env1" });
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data.deliveredCount).toBe(3);
+    expect(data.deliveredCount).toBe(4);
     expect(data.skills).toHaveLength(5);
+    expect(data.skills[2]).toMatchObject({
+      channels: ["mcp-server"],
+      reason: null,
+    });
     expect(data.skills[3]).toMatchObject({
       skillId: "s4",
       reason: "name-collision",
@@ -293,8 +298,8 @@ describe("suite Skills preview", () => {
         (entry: { environmentId: string }) => entry.environmentId,
       ),
     ).toEqual(["env1", "env2", "gone"]);
-    // A run copies a captured server skill onto a harness's box, which the
-    // Compare pane's live turn on the same environment leaves off.
+    // A hosted run of Claude Code takes the captured server skill through
+    // MCPJam's skill tools, as the Compare pane's turn does.
     expect(environments[0]).toMatchObject({
       ok: true,
       preview: { deliveredCount: 3 },
