@@ -219,3 +219,76 @@ describe("minimal shared entrypoint plan", () => {
       expect(() => pluginEntrypointPlan(tool, selection as never)).toThrow();
   });
 });
+
+describe("the plan under a client's entry-point rules", () => {
+  const CLAUDE = {
+    entrypointVisibility: "require-model",
+    entrypointNames: "no-double-separators",
+    entrypointQuickActions: "hide",
+  } as const;
+  const action = {
+    title: "Create",
+    icons: [{ src: "https://example.com/icon.svg" }],
+    target: { type: "tool", name: "create" },
+  };
+  const source = (name: string, visibility?: string[]) => ({
+    name,
+    _meta: {
+      ui: { resourceUri: "ui://fixture", ...(visibility ? { visibility } : {}) },
+      "openai/ui": { entrypoints: [{ type: "global", quickAction: action }] },
+    },
+  });
+  const quickAction = () =>
+    ({ kind: "quick-action", requestId: crypto.randomUUID() }) as const;
+
+  it("refuses a quick action while quick actions are hidden", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("library"), quickAction(), CLAUDE),
+    ).toThrow("PLUGIN_QUICK_ACTION_UNAVAILABLE");
+    expect(
+      pluginEntrypointPlan(source("library"), quickAction(), {
+        ...CLAUDE,
+        entrypointQuickActions: "show",
+      }).params.name,
+    ).toBe("create");
+  });
+
+  it("refuses a quick action on a tool hidden from the model", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("library", ["app"]), quickAction(), {
+        ...CLAUDE,
+        entrypointQuickActions: "show",
+      }),
+    ).toThrow("PLUGIN_QUICK_ACTION_UNAVAILABLE");
+  });
+
+  it("refuses to open a name with double separators", () => {
+    expect(() =>
+      pluginEntrypointPlan(source("foo__bar"), { kind: "global" }, CLAUDE),
+    ).toThrow("PLUGIN_ENTRYPOINT_UNOPENABLE");
+    expect(
+      pluginEntrypointPlan(source("foo_bar"), { kind: "global" }, CLAUDE)
+        .params,
+    ).toEqual({ name: "foo_bar", arguments: {} });
+  });
+
+  it("keeps ChatGPT's plan, and an open App's re-resolution, as before", () => {
+    for (const behavior of [
+      undefined,
+      {
+        entrypointVisibility: "ignore",
+        entrypointNames: "any",
+        entrypointQuickActions: "show",
+      } as const,
+    ]) {
+      expect(
+        pluginEntrypointPlan(source("foo__bar", ["app"]), quickAction(), behavior)
+          .params.name,
+      ).toBe("create");
+      expect(
+        pluginEntrypointPlan(source("foo__bar"), { kind: "global" }, behavior)
+          .params.name,
+      ).toBe("foo__bar");
+    }
+  });
+});

@@ -1129,3 +1129,154 @@ describe("owned App source receipts", () => {
     });
   });
 });
+
+describe("entry points under a client's rules", () => {
+  const CLAUDE = {
+    displayHints: "ui",
+    displayStart: "inline-then-move",
+    entrypointVisibility: "require-model",
+    entrypointWithoutFullscreen: "inline",
+    entrypointNames: "no-double-separators",
+    entrypointQuickActions: "hide",
+  };
+  const CHATGPT = {
+    displayHints: "openai/ui",
+    displayStart: "hint-first",
+    entrypointVisibility: "ignore",
+    entrypointWithoutFullscreen: "refuse",
+    entrypointNames: "any",
+    entrypointQuickActions: "show",
+  };
+  const global = (
+    name: string,
+    extra: { visibility?: string[]; quickAction?: boolean } = {},
+  ) => ({
+    name,
+    inputSchema: { type: "object", properties: {} },
+    _meta: {
+      ui: {
+        resourceUri: `ui://${name}`,
+        ...(extra.visibility ? { visibility: extra.visibility } : {}),
+      },
+      "openai/ui": {
+        entrypoints: [
+          {
+            type: "global",
+            ...(extra.quickAction
+              ? {
+                  quickAction: {
+                    title: "New sketch",
+                    icons: [{ src: "https://fixture.invalid/new.svg" }],
+                    target: { type: "tool", name, arguments: {} },
+                  },
+                }
+              : {}),
+          },
+        ],
+      },
+    },
+  });
+  const tools = [
+    global("open-app"),
+    global("app-only", { visibility: ["app"] }),
+    global("foo__bar"),
+    global("sketch", { quickAction: true }),
+  ];
+  const listed = (result: {
+    entries: { toolName: string; kind: string; unopenable?: string[] }[];
+  }) =>
+    result.entries.map(({ toolName, kind, unopenable }) => ({
+      toolName,
+      kind,
+      ...(unopenable ? { unopenable } : {}),
+    }));
+
+  it("lists only model-visible tools, flags unopenable names and hides quick actions for Claude", async () => {
+    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE });
+    const result = await (await post("discover", body)).json();
+    expect(listed(result)).toEqual([
+      { toolName: "open-app", kind: "global" },
+      { toolName: "foo__bar", kind: "global", unopenable: ["__"] },
+      { toolName: "sketch", kind: "global" },
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        level: "warning",
+        code: "PLUGIN_ENTRYPOINT_HIDDEN",
+        serverId: "saved-id",
+        details: { tools: ["app-only"] },
+      }),
+    ]);
+  });
+
+  it.each([
+    ["ChatGPT's rules", CHATGPT],
+    ["no rules", undefined],
+  ])("lists every declared entry point under %s, as before", async (_label, behavior) => {
+    f.catalog.mockResolvedValue({ tools, ...(behavior ? { behavior } : {}) });
+    const result = await (await post("discover", body)).json();
+    expect(listed(result)).toEqual([
+      { toolName: "open-app", kind: "global" },
+      { toolName: "app-only", kind: "global" },
+      { toolName: "foo__bar", kind: "global" },
+      { toolName: "sketch", kind: "global" },
+      { toolName: "sketch", kind: "quick-action" },
+    ]);
+    expect(result.diagnostics).toBeUndefined();
+  });
+
+  it("refuses to open a name Claude can't open, with a Logs row naming the characters", async () => {
+    const readResource = vi.fn().mockRejectedValue(new Error("read"));
+    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE, manager: { readResource } });
+    const refused = await post("activation/open", {
+      ...body,
+      threadId: "thread",
+      toolName: "foo__bar",
+      kind: "global",
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      code: "PLUGIN_ENTRYPOINT_UNOPENABLE",
+      description: expect.stringContaining("Rename the tool"),
+      diagnostics: [
+        expect.objectContaining({
+          level: "error",
+          code: "PLUGIN_ENTRYPOINT_UNOPENABLE",
+          serverId: "saved-id",
+          title: 'Entry point refused: foo__bar has "__" in its name',
+        }),
+      ],
+    });
+    expect(readResource).not.toHaveBeenCalled();
+    expect(f.open).not.toHaveBeenCalled();
+    // ChatGPT opens the same tool: it reaches the UI read.
+    f.catalog.mockResolvedValue({ tools, behavior: CHATGPT, manager: { readResource } });
+    await post("activation/open", {
+      ...body,
+      threadId: "thread",
+      toolName: "foo__bar",
+      kind: "global",
+    });
+    expect(readResource).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a quick action for Claude and runs it for ChatGPT", async () => {
+    const readResource = vi.fn().mockRejectedValue(new Error("read"));
+    const open = () =>
+      post("activation/open", {
+        ...body,
+        threadId: "thread",
+        toolName: "sketch",
+        kind: "quick-action",
+        requestId: crypto.randomUUID(),
+      });
+    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE, manager: { readResource } });
+    const refused = await open();
+    expect(refused.status).toBe(400);
+    expect(readResource).not.toHaveBeenCalled();
+    f.catalog.mockResolvedValue({ tools, behavior: CHATGPT, manager: { readResource } });
+    await open();
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(f.open).not.toHaveBeenCalled();
+  });
+});

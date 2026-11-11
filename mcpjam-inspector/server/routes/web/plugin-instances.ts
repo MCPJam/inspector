@@ -109,9 +109,15 @@ import {
 import { pluginInstances } from "../../services/plugin-host/instances.js";
 import { PluginInvocationError } from "../../services/plugin-host/invocation.js";
 import {
+  assertPluginEntrypointOpenable,
   pluginActivationFromCatalog,
   resolvePluginActivation,
 } from "../../services/plugin-host/activation.js";
+import {
+  entrypointIssues,
+  hiddenEntrypointDiagnostics,
+  quickActionsShown,
+} from "../../../shared/plugin-entry-checks.js";
 import {
   pluginBindingDigest,
   pluginResourceUri,
@@ -441,6 +447,9 @@ instances.post("/discover", (c) =>
       const allowed = (kind: keyof typeof PLUGIN_ENTRYPOINT_EXTENSIONS) =>
         catalog.extensions?.capabilities[PLUGIN_ENTRYPOINT_EXTENSIONS[kind]] !==
         false;
+      // The client's entry-point rules: some tools aren't listed, and a
+      // listed one may be flagged as refused on open.
+      const hidden: string[] = [];
       const entries = catalog.tools.flatMap((tool) => {
         const kinds = pluginEntrypointKinds(tool).filter(
           (kind) => (kind === "thread" || kind === "global") && allowed(kind),
@@ -451,7 +460,14 @@ instances.post("/discover", (c) =>
         } catch {
           return [];
         }
-        const action = pluginQuickAction(tool);
+        const issues = entrypointIssues(tool, catalog.behavior);
+        if (issues.hidden) {
+          hidden.push(tool.name);
+          return [];
+        }
+        const action = quickActionsShown(catalog.behavior)
+          ? pluginQuickAction(tool)
+          : undefined;
         const toolIcons = icons.toolIcons(
           (tool as { icons?: unknown }).icons,
         );
@@ -460,6 +476,7 @@ instances.post("/discover", (c) =>
             toolName: tool.name,
             title: pluginEntrypointTitle(tool),
             kind,
+            ...(issues.unopenable ? { unopenable: issues.unopenable } : {}),
             ...(toolIcons.length ? { toolIcons } : {}),
           })),
           ...(action && allowed("quick-action")
@@ -489,6 +506,7 @@ instances.post("/discover", (c) =>
           : undefined;
       const diagnostics = [
         ...pluginEntrypointDiagnostics(catalog.tools, body.serverId),
+        ...hiddenEntrypointDiagnostics(hidden, body.serverId),
         ...mention.diagnostics,
       ];
       return c.json({
@@ -1011,7 +1029,12 @@ instances.post("/activation/open", (c) =>
       }
       const activation =
         selector.kind === "quick-action"
-          ? pluginActivationFromCatalog(catalog, body.toolName, selector)
+          ? pluginActivationFromCatalog(
+              catalog,
+              body.toolName,
+              selector,
+              catalog.behavior,
+            )
           : undefined;
       const current =
         activation?.resource ??
@@ -1072,7 +1095,14 @@ instances.post("/activation/open", (c) =>
         ? { file: { name: file.name, resourceUri: "host-resource://pending" } }
         : {};
       if (file) pluginFileEntrypointPlan(current.tool, previewInput);
-      else if (!activation) pluginEntrypointPlan(current.tool, selector);
+      else if (!activation) {
+        assertPluginEntrypointOpenable(
+          current.tool,
+          catalog.behavior,
+          body.serverId,
+        );
+        pluginEntrypointPlan(current.tool, selector, catalog.behavior);
+      }
       if (!activation)
         pluginToolCallValidation(
           current.tool,

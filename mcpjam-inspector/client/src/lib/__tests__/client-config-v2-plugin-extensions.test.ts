@@ -103,19 +103,19 @@ describe("draft setters on a Claude client", () => {
 
   it("one toggle changes one switch, storing only what differs from Claude's defaults", () => {
     let draft = emptyHostConfigInputV2({ hostStyle: "claude" });
-    expect(on(draft)).toEqual(["displayModes"]);
+    expect(on(draft)).toEqual(["sidebarApps", "displayModes"]);
     draft = setPluginExtensionCapabilityOnDraft(draft, "forms", true);
     expect(saved(draft)).toEqual({
       enabled: true,
       capabilities: { forms: true },
     });
-    expect(on(draft)).toEqual(["displayModes", "forms"]);
+    expect(on(draft)).toEqual(["sidebarApps", "displayModes", "forms"]);
     draft = setPluginExtensionCapabilityOnDraft(draft, "displayModes", false);
-    expect(on(draft)).toEqual(["forms"]);
+    expect(on(draft)).toEqual(["sidebarApps", "forms"]);
     draft = setPluginExtensionCapabilityOnDraft(draft, "forms", false);
     draft = setPluginExtensionCapabilityOnDraft(draft, "displayModes", true);
     expect(saved(draft)).toEqual({ enabled: true });
-    expect(on(draft)).toEqual(["displayModes"]);
+    expect(on(draft)).toEqual(["sidebarApps", "displayModes"]);
   });
 
   it("master off then on brings back Claude's defaults", () => {
@@ -140,7 +140,7 @@ describe("draft setters on a Claude client", () => {
     draft = setPluginExtensionCapabilityOnDraft(draft, "forms", true);
     expect(saved(draft)).toEqual({
       enabled: true,
-      capabilities: { displayModes: false, forms: true },
+      capabilities: { sidebarApps: false, displayModes: false, forms: true },
     });
     expect(on(draft)).toEqual(["forms"]);
   });

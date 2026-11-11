@@ -93,15 +93,19 @@ describe("resolvePluginExtensions", () => {
       resolvePluginExtensions({ hostStyle: "mcpjam", harness: "codex" })
         .enabled
     ).toBe(true);
-    // Claude clients get only the extension Claude documents.
-    for (const hostStyle of ["claude", "claude-desktop"]) {
+    // Claude clients get only the extensions Claude documents: entry points
+    // on the web, and display modes everywhere.
+    for (const [hostStyle, on] of [
+      ["claude", ["sidebarApps", "displayModes"]],
+      ["claude-desktop", ["displayModes"]],
+    ] as const) {
       const resolved = resolvePluginExtensions({ hostStyle });
       expect(resolved.enabled, hostStyle).toBe(true);
       expect(
         PLUGIN_EXTENSION_CAPABILITY_KEYS.filter(
           (key) => resolved.capabilities[key]
         )
-      ).toEqual(["displayModes"]);
+      ).toEqual(on);
     }
     for (const hostStyle of [
       "cursor",

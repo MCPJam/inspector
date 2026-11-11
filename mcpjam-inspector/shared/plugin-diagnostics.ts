@@ -127,6 +127,8 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "The App is already running another request. Wait for it to finish.",
   ACTIVATION_SCHEMA_INVALID:
     "The entrypoint tool's input schema doesn't accept the arguments the host must send to open it.",
+  PLUGIN_ENTRYPOINT_UNOPENABLE:
+    "This client can't open an entry point whose tool name has two underscores or two dots in a row, or a dot next to an underscore. Rename the tool.",
   ACTIVATION_BINDING_CHANGED:
     "This App was opened with different settings before. Close it and open it again.",
   // Tool calls

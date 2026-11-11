@@ -182,14 +182,13 @@ const OPENAI_DEFAULTS: PluginExtensionStyleDefaults = Object.freeze({
 });
 
 /**
- * Claude, from its MCP Apps docs. Each comment names the page under
- * claude.com/docs/connectors/building/mcp-apps/ that the value follows.
+ * Claude Desktop, from Claude's MCP Apps docs. Each comment names the page
+ * under claude.com/docs/connectors/building/mcp-apps/ that the value follows.
  */
-const CLAUDE_DEFAULTS: PluginExtensionStyleDefaults = Object.freeze({
+const CLAUDE_DESKTOP_DEFAULTS: PluginExtensionStyleDefaults = Object.freeze({
   enabled: true,
   capabilities: Object.freeze({
-    // entry-points: Claude lists global entry points under its own rules
-    // (the entrypoint fields below), which the sidebar doesn't apply.
+    // entry-points: entry points are documented for Claude on the web only.
     sidebarApps: false,
     // The rest are OpenAI's extensions, which Claude doesn't document: off
     // until someone switches one on.
@@ -227,6 +226,18 @@ const CLAUDE_DEFAULTS: PluginExtensionStyleDefaults = Object.freeze({
 });
 
 /**
+ * Claude on the web lists global entry points (entry-points), under the
+ * entrypoint fields above.
+ */
+const CLAUDE_DEFAULTS: PluginExtensionStyleDefaults = Object.freeze({
+  ...CLAUDE_DESKTOP_DEFAULTS,
+  capabilities: Object.freeze({
+    ...CLAUDE_DESKTOP_DEFAULTS.capabilities,
+    sidebarApps: true,
+  }),
+});
+
+/**
  * Every other style (Cursor, VS Code, Goose, …) is off until the client turns
  * it on, even when it shares ChatGPT's look, then gets ChatGPT's rules.
  */
@@ -243,7 +254,7 @@ export const PLUGIN_EXTENSION_STYLE_DEFAULTS: Readonly<
   chatgpt: OPENAI_DEFAULTS,
   codex: OPENAI_DEFAULTS,
   claude: CLAUDE_DEFAULTS,
-  "claude-desktop": CLAUDE_DEFAULTS,
+  "claude-desktop": CLAUDE_DESKTOP_DEFAULTS,
 });
 
 export interface PluginExtensionStyleInput {
