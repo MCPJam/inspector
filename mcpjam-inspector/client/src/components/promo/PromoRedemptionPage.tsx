@@ -9,12 +9,12 @@ import { PromoCardLayout } from "./PromoCardLayout";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   clearPromoIntent,
+  readPromoCampaign,
   readPromoIntent,
   promoSignInState,
 } from "@/lib/promo-intent";
 import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import {
-  campaignId,
   contextQuery,
   redeemMutation,
   refusalCopy,
@@ -28,7 +28,7 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
   }, []);
   return (
     <div className="space-y-4">
-      <p>You've already redeemed your AGNTCon credits.</p>
+      <p>You've already redeemed your {receipt.campaignLabel} credits.</p>
       <p>
         {receipt.credits.toLocaleString()} credits added to{" "}
         {receipt.organizationName} on{" "}
@@ -48,7 +48,13 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
   );
 }
 
-function ClaimForm({ context }: { context: Ready }) {
+function ClaimForm({
+  campaignId,
+  context,
+}: {
+  campaignId: string;
+  context: Ready;
+}) {
   const redeem = useMutation(redeemMutation);
   const active = useActiveClaim();
   const [code, setCode] = usePromoCode();
@@ -61,12 +67,13 @@ function ClaimForm({ context }: { context: Ready }) {
   const org = context.organizations.find(
     (item) => item.organizationId === orgId,
   );
+  const usesCode = context.mode !== "shared";
   const canSubmit =
     !!org &&
     !!context.account.email &&
-    !!name.trim() &&
-    !!(company ?? org.name).trim() &&
-    !!code.trim() &&
+    (!context.collectLead ||
+      (!!name.trim() && !!(company ?? org.name).trim())) &&
+    (!usesCode || !!code.trim()) &&
     !pending;
   if (receipt) return <ReceiptView receipt={receipt} />;
   async function submit(event: React.FormEvent) {
@@ -77,15 +84,16 @@ function ClaimForm({ context }: { context: Ready }) {
     try {
       const result = await redeem({
         campaignId,
-        code,
-        name,
-        company: company ?? org.name,
+        ...(usesCode ? { code } : {}),
+        name: context.collectLead ? name : "",
+        company: context.collectLead ? (company ?? org.name) : "",
         organizationId: org.organizationId,
       });
       if (!active.current) return;
       if (result.status === "refused")
         setMessage(
-          refusalCopy[result.code] ?? "Could not redeem this card. Try again.",
+          refusalCopy[result.code] ??
+            "Could not redeem these credits. Try again.",
         );
       else {
         clearPromoIntent();
@@ -95,7 +103,7 @@ function ClaimForm({ context }: { context: Ready }) {
       // Do not report the mutation error: it can contain bearer or lead arguments.
       if (!active.current) return;
       setMessage(
-        "Could not confirm redemption. Retry to recover your receipt or redeem the card.",
+        "Could not confirm redemption. Try again to see your receipt or redeem.",
       );
     } finally {
       if (active.current) setPending(false);
@@ -122,7 +130,7 @@ function ClaimForm({ context }: { context: Ready }) {
   );
 }
 
-function SignedInClaim() {
+function SignedInClaim({ campaignId }: { campaignId: string }) {
   const { user } = useAuth();
   const ready = useDbUserReady();
   const context = useQuery(contextQuery, ready ? { campaignId } : "skip");
@@ -135,6 +143,7 @@ function SignedInClaim() {
   return (
     <ClaimForm
       key={`${context.account.userId}:${context.organizations.map((o) => o.organizationId).join(",")}`}
+      campaignId={campaignId}
       context={context}
     />
   );
@@ -143,10 +152,11 @@ function SignedInClaim() {
 export function PromoRedemptionPage() {
   const { user, signIn } = useAuth();
   const [error, setError] = useState("");
+  const [campaignId] = useState(() => readPromoCampaign());
   async function login() {
     writeAppSignInReturnPath("/redeem");
     try {
-      await signIn({ state: promoSignInState() });
+      await signIn({ state: promoSignInState(campaignId) });
     } catch {
       setError("Could not open sign-in. Try again.");
     }
@@ -164,7 +174,7 @@ export function PromoRedemptionPage() {
       >
         <PromoCardLayout signedIn={!!user}>
           {user ? (
-            <SignedInClaim key={user.id} />
+            <SignedInClaim key={user.id} campaignId={campaignId} />
           ) : (
             <div className="space-y-4">
               <Button className="w-full" onClick={login}>

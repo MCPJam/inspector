@@ -54,8 +54,36 @@ export function readPromoIntent(now = Date.now()): string {
   return memory.code;
 }
 
-/** Only a non-secret recovery flag crosses the authentication redirect. */
-export function promoSignInState() {
+const CAMPAIGN_KEY = /^[a-z0-9-]{1,80}$/;
+/** Printed AGNTCon cards link to `/redeem` with no campaign. */
+export const DEFAULT_PROMO_CAMPAIGN = "agntcon-2026";
+
+function campaignOrNull(value: unknown) {
+  return typeof value === "string" && CAMPAIGN_KEY.test(value) ? value : null;
+}
+
+/** The campaign key is printed in a shared QR, so it may live in the URL. */
+export function readPromoCampaign(search = window.location.search) {
+  return (
+    campaignOrNull(new URLSearchParams(search).get("campaign")) ??
+    DEFAULT_PROMO_CAMPAIGN
+  );
+}
+
+function redeemPath(campaign: string | null, manual = false) {
+  const params = new URLSearchParams();
+  if (manual) params.set("manual", "1");
+  if (campaign && campaign !== DEFAULT_PROMO_CAMPAIGN)
+    params.set("campaign", campaign);
+  const query = params.toString();
+  return query ? `/redeem?${query}` : "/redeem";
+}
+
+/**
+ * Only non-secret values cross the authentication redirect: the recovery flag
+ * and the public campaign key, so a lost intent still lands on its campaign.
+ */
+export function promoSignInState(campaign: string) {
   const code = readPromoIntent();
   let stored = false;
   try {
@@ -64,21 +92,33 @@ export function promoSignInState() {
     // Authentication can continue with manual entry when storage is blocked.
     console.debug("Promo intent storage unavailable");
   }
-  return { promoReturn: true, promoManualEntry: !code || !stored };
+  return {
+    promoReturn: true,
+    promoManualEntry: !code || !stored,
+    promoCampaign: campaign,
+  };
 }
 
 export function promoSignInReturn(state: Record<string, unknown> | null) {
   if (state?.promoReturn !== true) return null;
-  return state.promoManualEntry === true ? "/redeem?manual=1" : "/redeem";
+  return redeemPath(
+    campaignOrNull(state.promoCampaign),
+    state.promoManualEntry === true,
+  );
 }
 
 /** Capture before app-bootstrap initializes telemetry or sign-in return state. */
 export function capturePromoIntent() {
   if (window.location.pathname.replace(/\/+$/, "") !== "/redeem") return;
   const url = new URL(window.location.href);
+  const campaign = campaignOrNull(url.searchParams.get("campaign"));
   if (url.searchParams.get("manual") === "1") {
     if (clearPromoIntent()) {
-      window.history.replaceState(window.history.state, "", "/redeem");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        redeemPath(campaign),
+      );
     }
     return;
   }
@@ -88,7 +128,7 @@ export function capturePromoIntent() {
   if (code !== null) {
     if (code.length <= 64) savePromoIntent(code);
     else clearPromoIntent();
-    window.history.replaceState(window.history.state, "", "/redeem");
+    window.history.replaceState(window.history.state, "", redeemPath(campaign));
   }
 }
 

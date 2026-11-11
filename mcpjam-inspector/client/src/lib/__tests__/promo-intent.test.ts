@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   capturePromoIntent,
   clearPromoIntent,
+  readPromoCampaign,
   readPromoIntent,
   savePromoIntent,
   promoSignInState,
@@ -62,8 +63,12 @@ it("discards stale persisted cards after a failed save and authentication redire
     throw new Error("blocked");
   });
   savePromoIntent("CCCCC-DDDDD");
-  const state = promoSignInState();
-  expect(state).toEqual({ promoReturn: true, promoManualEntry: true });
+  const state = promoSignInState("agntcon-2026");
+  expect(state).toEqual({
+    promoReturn: true,
+    promoManualEntry: true,
+    promoCampaign: "agntcon-2026",
+  });
   expect(JSON.stringify(state)).not.toContain("CCCCC");
   window.history.replaceState(null, "", promoSignInReturn(state));
   vi.resetModules();
@@ -78,4 +83,44 @@ it("discards stale persisted cards after a failed save and authentication redire
   vi.restoreAllMocks();
   reloaded.capturePromoIntent();
   expect(window.location.search).toBe("");
+});
+
+describe("campaign key", () => {
+  it("keeps a public campaign key in the URL while stripping the code", () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/redeem?campaign=maven-evals-0a1b2c3d4e&code=SYNTH-ETIC1",
+    );
+    capturePromoIntent();
+    expect(window.location.search).toBe("?campaign=maven-evals-0a1b2c3d4e");
+    expect(readPromoIntent()).toBe("SYNTH-ETIC1");
+    expect(readPromoCampaign()).toBe("maven-evals-0a1b2c3d4e");
+  });
+
+  it("falls back to the AGNTCon campaign for old links and invalid keys", () => {
+    expect(readPromoCampaign("")).toBe("agntcon-2026");
+    expect(readPromoCampaign("?campaign=Not%20A%20Key")).toBe("agntcon-2026");
+  });
+
+  it("returns a new account to its campaign when the stored intent is gone", () => {
+    const state = promoSignInState("maven-evals-0a1b2c3d4e");
+    expect(state.promoManualEntry).toBe(true);
+    const path = promoSignInReturn(state);
+    expect(path).toBe("/redeem?manual=1&campaign=maven-evals-0a1b2c3d4e");
+    window.history.replaceState(null, "", path);
+    capturePromoIntent();
+    expect(window.location.search).toBe("?campaign=maven-evals-0a1b2c3d4e");
+    expect(readPromoCampaign()).toBe("maven-evals-0a1b2c3d4e");
+  });
+
+  it("ignores a forged campaign value in the sign-in state", () => {
+    expect(
+      promoSignInReturn({
+        promoReturn: true,
+        promoManualEntry: false,
+        promoCampaign: "https://evil.example/x",
+      }),
+    ).toBe("/redeem");
+  });
 });
