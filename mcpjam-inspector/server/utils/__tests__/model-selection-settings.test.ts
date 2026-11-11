@@ -158,6 +158,25 @@ describe("resolveEffectiveModelSettings: reasoning effort", () => {
   });
 });
 
+describe("resolveEffectiveModelSettings: a model without temperature", () => {
+  it("refuses a saved temperature on an own-key GPT-6 row", () => {
+    // Org evals and swarms resolve on the native id. The AI SDK would drop the
+    // temperature before OpenAI, while the record claimed it ran.
+    const result = resolveEffectiveModelSettings({
+      route: "direct",
+      modelDefinition: { id: "gpt-6.1-sol", provider: "openai" },
+      selection: { modelId: "openai/gpt-6.1-sol", settings: { temperature: 0.2 } },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: {
+        code: "capability_missing",
+        reason: expect.stringContaining("does not accept a temperature"),
+      },
+    });
+  });
+});
+
 describe("reasoningEffortProviderOptions", () => {
   it("maps each provider's own control", () => {
     expect(
