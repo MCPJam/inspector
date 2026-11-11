@@ -119,7 +119,7 @@ describe("who decides an owned App's display mode", () => {
     const owned = createThreadAppHost(host, handle, "server", "model");
     expect(owned.surface.fixedDisplayMode).toBeUndefined();
   });
-  it("applies the client's display behavior only when the Display modes toggle is on", () => {
+  it("passes displayBehavior through only when one is configured", () => {
     for (const kind of ["model", "global", "thread"] as const) {
       expect(
         createThreadAppHost(host, handle, "server", kind).surface

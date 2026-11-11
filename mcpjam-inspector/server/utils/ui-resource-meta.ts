@@ -410,15 +410,11 @@ export function resolveUiResourceMeta(
   }
 
   // ── preferredDisplayMode ─────────────────────────────────────────────
-  // Two-source chain like `domain`. A malformed content value is ignored and
-  // reported, and the listing still gets its turn, as for `prefersBorder`.
-  const preferredDisplayMode =
-    contentUiMeta.preferredDisplayMode ?? listingUiMeta.preferredDisplayMode;
-  const ignoredPreferredDisplayMode =
-    contentUiMeta.preferredDisplayMode === undefined
-      ? (contentUiMeta.ignoredPreferredDisplayMode ??
-        listingUiMeta.ignoredPreferredDisplayMode)
-      : undefined;
+  // Claude reads this preference from the `resources/read` content item only,
+  // so the listing never supplies or reports it. That also keeps the result
+  // independent of whether another field made us fetch the listing.
+  const preferredDisplayMode = contentUiMeta.preferredDisplayMode;
+  const ignoredPreferredDisplayMode = contentUiMeta.ignoredPreferredDisplayMode;
 
   const usedMetadataSources = new Set(
     Object.values(metadataSources).filter((source) => source !== "none")
