@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, SquareSlash } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,16 @@ export const MAX_ENVIRONMENT_SKILLS = 20;
 export type SkillSelectionEdit =
   | { kind: "add" | "remove"; skillId: string }
   | { kind: "pin"; skillId: string; versionId: string | null };
+
+/** What a picker that edits several environments at once needs to know. */
+export type SkillSelectionAcross = {
+  /** Skills only some of the environments select, shown partly on. */
+  partialIds: ReadonlySet<string>;
+  /** The most skills any one environment selects. */
+  largestCount: number;
+  /** Whether every environment that would get this skill stays within the cap. */
+  canAdd: (skillId: string) => boolean;
+};
 
 /**
  * Why a listed skill can't be pinned, in the reader's words.
@@ -103,7 +114,7 @@ export function ProjectEnvironmentSkillsPicker({
   value,
   onChange,
   disabled = false,
-  partialIds,
+  across,
 }: {
   projectId: string;
   value: ProjectEnvironmentSkillSelection | null | undefined;
@@ -112,12 +123,7 @@ export function ProjectEnvironmentSkillsPicker({
     edit: SkillSelectionEdit,
   ) => void;
   disabled?: boolean;
-  /**
-   * Skills that only some of the edited environments select, shown partly on.
-   * A click turns one fully on, at Latest. They have no version control: the
-   * environments may hold them at different versions.
-   */
-  partialIds?: ReadonlySet<string>;
+  across?: SkillSelectionAcross;
 }) {
   const [skills, setSkills] = useState<SkillListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -158,10 +164,11 @@ export function ProjectEnvironmentSkillsPicker({
       new Map((value?.versionPins ?? []).map((p) => [p.skillId, p.versionId])),
     [value],
   );
-  // Partly-on skills count toward the cap: adding a skill adds it to every
-  // environment, including the one that already holds the most.
-  const selectedCount = selectedIds.size + (partialIds?.size ?? 0);
+  const partialIds = across?.partialIds;
+  const selectedCount = across?.largestCount ?? selectedIds.size;
   const atCap = selectedCount >= MAX_ENVIRONMENT_SKILLS;
+  const canAdd = (skillId: string) =>
+    across ? across.canAdd(skillId) : !atCap;
   // Pinned ids the shared-skills list doesn't return: the skill was unshared,
   // deleted, or moved out of the project. Without a row they are invisible AND
   // unremovable, yet they still count toward the footer and still ship on
@@ -207,7 +214,7 @@ export function ProjectEnvironmentSkillsPicker({
   const toggle = (skillId: string, checked: boolean) => {
     const next = new Set(selectedIds);
     if (checked) {
-      if (atCap && !partialIds?.has(skillId)) return;
+      if (!canAdd(skillId)) return;
       next.add(skillId);
     } else {
       next.delete(skillId);
@@ -265,12 +272,15 @@ export function ProjectEnvironmentSkillsPicker({
           const partial = !checked && (partialIds?.has(skillId) ?? false);
           const rejection = pinRejection(skill);
           const ineligible = rejection !== null;
-          const capBlocked = !checked && !partial && atCap;
+          const capBlocked = !checked && !canAdd(skillId);
+          // Ineligible and partly on: only its own button removes it.
+          const removeOnly = partial && ineligible;
           // Ineligibility (and the cap) block NEW selections only — a skill that
           // was pinned and later became ineligible must stay uncheckable so the
           // user can repair the selection.
           const rowDisabled =
-            disabled || capBlocked || (ineligible && !checked && !partial);
+            disabled ||
+            (!removeOnly && (capBlocked || (ineligible && !checked)));
           const row = (
             <Label
               key={skillId}
@@ -282,12 +292,8 @@ export function ProjectEnvironmentSkillsPicker({
             >
               <Checkbox
                 checked={partial ? "indeterminate" : checked}
-                // A partly-on skill that has since become ineligible can only
-                // be removed: turning it on would add a skill the save refuses.
-                onCheckedChange={(next) =>
-                  toggle(skillId, next === true && !(partial && ineligible))
-                }
-                disabled={rowDisabled}
+                onCheckedChange={(next) => toggle(skillId, next === true)}
+                disabled={rowDisabled || removeOnly}
                 aria-label={skill.name}
               />
               <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
@@ -309,7 +315,14 @@ export function ProjectEnvironmentSkillsPicker({
                     {skill.description}
                   </span>
                 ) : null}
+                {removeOnly ? (
+                  <RemoveEverywhere
+                    disabled={disabled}
+                    onRemove={() => toggle(skillId, false)}
+                  />
+                ) : null}
               </span>
+              {/* Partly-on rows have none: their versions may differ. */}
               {checked ? (
                 <SkillVersionControl
                   projectId={projectId}
@@ -342,7 +355,7 @@ export function ProjectEnvironmentSkillsPicker({
             <Checkbox
               checked={selectedIds.has(skillId) ? true : "indeterminate"}
               onCheckedChange={() => toggle(skillId, false)}
-              disabled={disabled}
+              disabled={disabled || !selectedIds.has(skillId)}
               aria-label={`Unavailable skill ${skillId} (remove)`}
             />
             <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
@@ -356,6 +369,12 @@ export function ProjectEnvironmentSkillsPicker({
               <span className="truncate text-[11px] text-muted-foreground">
                 No longer in the project library. Remove it to save.
               </span>
+              {selectedIds.has(skillId) ? null : (
+                <RemoveEverywhere
+                  disabled={disabled}
+                  onRemove={() => toggle(skillId, false)}
+                />
+              )}
             </span>
           </Label>
         ))}
@@ -369,6 +388,35 @@ export function ProjectEnvironmentSkillsPicker({
         only.
       </p>
     </div>
+  );
+}
+
+/**
+ * The removal for a partly-on skill that can't be turned on everywhere. A
+ * button of its own, because a click on a partly-on checkbox means "on".
+ */
+function RemoveEverywhere({
+  disabled,
+  onRemove,
+}: {
+  disabled: boolean;
+  onRemove: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="mt-1 h-6 self-start px-2 text-[11px]"
+      disabled={disabled}
+      onClick={(event) => {
+        // The row is a label: keep the click from reaching its checkbox.
+        event.preventDefault();
+        onRemove();
+      }}
+    >
+      Remove from every client
+    </Button>
   );
 }
 

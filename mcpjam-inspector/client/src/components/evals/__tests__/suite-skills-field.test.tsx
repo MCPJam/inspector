@@ -220,11 +220,13 @@ describe("Skills field", () => {
     expect(screen.getByTestId("suite-clients-skills")).toHaveTextContent(
       "Mixed skills",
     );
-    expect(screen.getByTestId("suite-skills-mixed-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("suite-skills-mixed-hint")).toHaveTextContent(
+      "These clients use different skills or versions. Checking a skill here sets it at Latest on every client, and clearing one removes it from every client.",
+    );
     expect(await openSkills()).toHaveAttribute("aria-checked", "true");
     expect(
       screen.getByText(
-        "Checking or clearing a skill here sets it on every client.",
+        "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client.",
       ),
     ).toBeInTheDocument();
     const reply = screen.getByLabelText("reply");
@@ -312,7 +314,7 @@ describe("Skills hints", () => {
     ]);
   });
 
-  it("says when the previews fail, and reads them again on Retry", async () => {
+  it("says when the previews fail, and reads them again on Try again", async () => {
     mocks.previews = {
       "chat-env": { deliveredCount: 1, skills: [row("triage")] },
       "codex-env": { deliveredCount: 1, skills: [row("triage")] },
@@ -324,7 +326,7 @@ describe("Skills hints", () => {
         "Couldn’t check which clients load these skills.",
       ),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       await screen.findByText("Every client loads triage."),
     ).toBeInTheDocument();

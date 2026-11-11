@@ -189,7 +189,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/project-environments/NameEnvironmentDialog.tsx", 2],
   ["components/project-environments/ProjectEnvironmentEditor.tsx", 5],
   ["components/project-environments/ProjectEnvironmentSecretsPicker.tsx", 3],
-  ["components/project-environments/ProjectEnvironmentSkillsPicker.tsx", 3],
   ["components/project-environments/ProjectEnvironmentsRoute.tsx", 3],
   ["components/project/ProjectSecretsSection.tsx", 5],
   ["components/PromptsTab.tsx", 4],

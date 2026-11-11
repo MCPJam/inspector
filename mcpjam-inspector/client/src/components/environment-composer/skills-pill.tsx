@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import {
   ProjectEnvironmentSkillsPicker,
+  type SkillSelectionAcross,
   type SkillSelectionEdit,
 } from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
 import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnvironments";
@@ -27,7 +28,7 @@ export function SkillsPill({
   variant = "pill",
   readOnly = false,
   notice,
-  partialIds,
+  across,
 }: {
   projectId: string;
   value: ProjectEnvironmentSkillSelection | null;
@@ -53,12 +54,11 @@ export function SkillsPill({
   readOnly?: boolean;
   /** One line above the list: why it is read only, or what a click does. */
   notice?: string;
-  /** Skills only some of the edited environments select, shown partly on. */
-  partialIds?: ReadonlySet<string>;
+  across?: SkillSelectionAcross;
 }) {
   const [open, setOpen] = useState(false);
   const field = variant === "field";
-  const mixed = (partialIds?.size ?? 0) > 0;
+  const mixed = (across?.partialIds.size ?? 0) > 0;
   const selectedCount = value?.skillIds.length ?? 0;
   const triggerLabel = mixed
     ? "Mixed skills"
@@ -132,7 +132,7 @@ export function SkillsPill({
           value={value}
           onChange={onChange}
           disabled={disabled || readOnly}
-          partialIds={partialIds}
+          across={across}
         />
       </PopoverContent>
     </Popover>

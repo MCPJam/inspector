@@ -28,7 +28,6 @@ export function SuiteSkillsField({
   onEdit,
 }: {
   projectId: string;
-  /** The suite's attached environments. */
   environments: readonly ProjectEnvironmentView[];
   disabled: boolean;
   /** False when the backend can't derive from the stored environment. */
@@ -37,7 +36,7 @@ export function SuiteSkillsField({
 }) {
   const skillsEnabled = useSkillsEnabled();
   if (!skillsEnabled) return null;
-  const { value, partialIds } = suiteSkillState(environments);
+  const { value, across } = suiteSkillState(environments);
   return (
     <div className="flex min-w-[15rem] max-w-sm flex-1 items-center gap-2">
       <span className="text-xs font-medium text-muted-foreground">Skills</span>
@@ -46,13 +45,13 @@ export function SuiteSkillsField({
           variant="field"
           projectId={projectId}
           value={value}
-          partialIds={partialIds}
+          across={across}
           readOnly={!editable}
           notice={
             !editable
               ? SKILLS_READ_ONLY_REASON
-              : partialIds.size
-                ? "Checking or clearing a skill here sets it on every client."
+              : across.partialIds.size
+                ? "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client."
                 : undefined
           }
           // With no client yet there is no environment to hold a skill.
@@ -81,7 +80,6 @@ function useSuiteSkillDelivery(
   projectId: string | null,
   environments: readonly ProjectEnvironmentView[],
 ): Delivery {
-  // Refetched when an environment is swapped or edited, not on each render.
   const key =
     projectId && environments.length
       ? JSON.stringify([
@@ -161,7 +159,7 @@ export function SuiteSkillsHints({
           }),
         )
       : [];
-  const mixed = suiteSkillState(environments).partialIds.size > 0;
+  const mixed = suiteSkillState(environments).across.partialIds.size > 0;
   if (!lines.length && !mixed && delivery.status !== "failed") return null;
   return (
     <div
@@ -180,14 +178,15 @@ export function SuiteSkillsHints({
             variant="ghost"
             onClick={delivery.retry}
           >
-            Retry
+            Try again
           </Button>
         </div>
       ) : null}
       {mixed ? (
         <p data-testid="suite-skills-mixed-hint">
-          These clients use different skills. Checking or clearing one here sets
-          it on every client.
+          These clients use different skills or versions. Checking a skill here
+          sets it at Latest on every client, and clearing one removes it from
+          every client.
         </p>
       ) : null}
     </div>

@@ -23,12 +23,13 @@ describe("suiteSkillState", () => {
       skillIds: ["triage", "reply"],
       versionPins: [pinned("reply", "reply-v4")],
     };
-    expect(
-      suiteSkillState([
-        { skillSelection: selection },
-        { skillSelection: { ...selection } },
-      ]),
-    ).toEqual({ value: selection, partialIds: new Set() });
+    const state = suiteSkillState([
+      { skillSelection: selection },
+      { skillSelection: { ...selection } },
+    ]);
+    expect(state.value).toEqual(selection);
+    expect(state.across.partialIds.size).toBe(0);
+    expect(state.across.largestCount).toBe(2);
   });
 
   it("marks a skill partly on when only some environments select it", () => {
@@ -37,7 +38,7 @@ describe("suiteSkillState", () => {
       { skillSelection: { mode: "explicit", skillIds: ["triage"] } },
     ]);
     expect(state.value).toEqual({ mode: "explicit", skillIds: ["triage"] });
-    expect([...state.partialIds]).toEqual(["reply"]);
+    expect([...state.across.partialIds]).toEqual(["reply"]);
   });
 
   it("marks a skill partly on when the environments run different versions", () => {
@@ -52,14 +53,43 @@ describe("suiteSkillState", () => {
       { skillSelection: { mode: "explicit", skillIds: ["reply"] } },
     ]);
     expect(state.value).toBeNull();
-    expect([...state.partialIds]).toEqual(["reply"]);
+    expect([...state.across.partialIds]).toEqual(["reply"]);
   });
 
   it("is empty when no environment selects a skill", () => {
-    expect(suiteSkillState([{ skillSelection: null }, {}])).toEqual({
-      value: null,
-      partialIds: new Set(),
-    });
+    const state = suiteSkillState([{ skillSelection: null }, {}]);
+    expect(state.value).toBeNull();
+    expect(state.across.partialIds.size).toBe(0);
+    expect(state.across.largestCount).toBe(0);
+  });
+
+  const skills = (prefix: string, count: number) => ({
+    mode: "explicit" as const,
+    skillIds: Array.from({ length: count }, (_, index) => `${prefix}${index}`),
+  });
+
+  it("checks the cap against each environment, not the suite's union", () => {
+    // 20 different skills across the suite, but each client has room.
+    const roomy = suiteSkillState([
+      { skillSelection: skills("a", 10) },
+      { skillSelection: skills("b", 10) },
+    ]);
+    expect(roomy.across.largestCount).toBe(10);
+    expect(roomy.across.canAdd("new")).toBe(true);
+  });
+
+  it("blocks a skill that would take a full environment past the cap", () => {
+    const full = skills("a", 20);
+    const state = suiteSkillState([
+      { skillSelection: full },
+      { skillSelection: { mode: "explicit", skillIds: ["partly"] } },
+    ]);
+    expect(state.across.largestCount).toBe(20);
+    // The full client lacks it, so adding it everywhere would make 21.
+    expect(state.across.canAdd("partly")).toBe(false);
+    expect(state.across.canAdd("new")).toBe(false);
+    // The full client already has this one; the other has room.
+    expect(state.across.canAdd("a0")).toBe(true);
   });
 });
 
@@ -290,9 +320,39 @@ describe("skillDeliveryLines", () => {
         },
       ]),
     ).toEqual([
-      "MCPJam agent loads both skills.",
+      "MCPJam agent loads triage and Reply.",
       "Codex loads triage.",
       "Codex can’t use the name Reply, so its runs leave it out.",
+      "Cursor doesn’t support skills, so its runs get none.",
+    ]);
+  });
+
+  it("counts skills only where the clients load the same ones", () => {
+    // Two clients with two skills each, but not the same two.
+    expect(
+      skillDeliveryLines([
+        { client: "MCPJam agent", preview: preview(row("alpha"), row("beta")) },
+        { client: "Claude Code", preview: preview(row("gamma"), row("delta")) },
+      ]),
+    ).toEqual([
+      "MCPJam agent loads alpha and beta.",
+      "Claude Code loads gamma and delta.",
+    ]);
+    // The same two, with a client that can't load skills beside them.
+    expect(
+      skillDeliveryLines([
+        { client: "MCPJam agent", preview: preview(row("alpha"), row("beta")) },
+        { client: "Claude Code", preview: preview(row("beta"), row("alpha")) },
+        {
+          client: "Cursor",
+          preview: preview(
+            row("alpha", "unsupported-harness"),
+            row("beta", "unsupported-harness"),
+          ),
+        },
+      ]),
+    ).toEqual([
+      "MCPJam agent and Claude Code load both skills.",
       "Cursor doesn’t support skills, so its runs get none.",
     ]);
   });

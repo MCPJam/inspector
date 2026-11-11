@@ -7,7 +7,11 @@
  * way except for the skill a person clicks, which is then set the same way on
  * every client.
  */
-import type { SkillSelectionEdit } from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
+import {
+  MAX_ENVIRONMENT_SKILLS,
+  type SkillSelectionAcross,
+  type SkillSelectionEdit,
+} from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
@@ -32,8 +36,7 @@ export const SKILLS_READ_ONLY_REASON =
 export type SuiteSkillState = {
   /** Skills every environment selects, at the same version. */
   value: ProjectEnvironmentSkillSelection | null;
-  /** Skills only some environments select, or select at different versions. */
-  partialIds: ReadonlySet<string>;
+  across: SkillSelectionAcross;
 };
 
 /** Each selected skill's pinned version id, or `null` for Latest. */
@@ -63,8 +66,17 @@ export function suiteSkillState(
         versions.get(skillId) === each[0]!.get(skillId),
     ),
   );
-  const partialIds = new Set(ids.filter((id) => !shared.includes(id)));
-  if (!shared.length) return { value: null, partialIds };
+  const across: SkillSelectionAcross = {
+    partialIds: new Set(ids.filter((id) => !shared.includes(id))),
+    largestCount: Math.max(0, ...each.map((versions) => versions.size)),
+    // Only an environment that lacks the skill grows when it is added.
+    canAdd: (skillId) =>
+      each.every(
+        (versions) =>
+          versions.has(skillId) || versions.size < MAX_ENVIRONMENT_SKILLS,
+      ),
+  };
+  if (!shared.length) return { value: null, across };
   const versionPins = shared.flatMap((skillId) => {
     const versionId = each[0]!.get(skillId);
     return versionId ? [{ skillId, versionId }] : [];
@@ -75,7 +87,7 @@ export function suiteSkillState(
       skillIds: shared,
       ...(versionPins.length ? { versionPins } : {}),
     },
-    partialIds,
+    across,
   };
 }
 
@@ -132,7 +144,6 @@ type LeftOutReason = Exclude<
 const one = (count: number, singular: string, plural: string) =>
   count === 1 ? singular : plural;
 
-/** "a", "a and b", "a, b and c". */
 function listText(items: readonly string[]): string {
   return items.length < 2
     ? (items[0] ?? "")
@@ -153,10 +164,9 @@ const leftOutLine: Record<
     `${listText(clients)} ${one(clients.length, "has", "have")} the plugin for ${listText(skills)} turned off, so ${one(clients.length, "its", "their")} runs leave ${one(skills.length, "it", "them")} out.`,
 };
 
-/** What a client loads: a count when it loads every skill, else the names. */
-function loadedText(loaded: readonly string[], complete: boolean): string {
-  if (!complete || loaded.length === 1) return listText(loaded);
-  return loaded.length === 2 ? "both skills" : `all ${loaded.length} skills`;
+function countText(names: readonly string[]): string {
+  if (names.length === 1) return names[0]!;
+  return names.length === 2 ? "both skills" : `all ${names.length} skills`;
 }
 
 /**
@@ -172,28 +182,30 @@ export function skillDeliveryLines(
   clients: readonly { client: string; preview: PaneSkillsPreview }[],
 ): string[] {
   const rows = clients.map(({ client, preview }) => {
-    const loaded: string[] = [];
-    const leftOut: { name: string; reason: LeftOutReason }[] = [];
+    const loaded: { id: string; name: string }[] = [];
+    const leftOut: { id: string; name: string; reason: LeftOutReason }[] = [];
     for (const skill of preview.skills) {
       if (skill.channels.includes("mcp-server")) continue;
-      if (skill.reason === null) loaded.push(skill.name);
+      const entry = { id: skill.skillId, name: skill.name };
+      if (skill.reason === null) loaded.push(entry);
       else if (skill.reason !== "server-skill-unsupported")
-        leftOut.push({ name: skill.name, reason: skill.reason });
+        leftOut.push({ ...entry, reason: skill.reason });
     }
-    return { client, loaded, leftOut };
+    const loadedKey = JSON.stringify(loaded.map((skill) => skill.id).sort());
+    return { client, loaded, leftOut, loadedKey };
   });
   if (rows.every((row) => !row.loaded.length && !row.leftOut.length)) return [];
-  const sameLoaded = (row: (typeof rows)[number]) =>
-    JSON.stringify([...row.loaded].sort()) ===
-    JSON.stringify([...rows[0]!.loaded].sort());
-  if (
-    rows.length > 1 &&
-    rows.every((row) => !row.leftOut.length && sameLoaded(row))
-  ) {
-    return [`Every client loads ${loadedText(rows[0]!.loaded, true)}.`];
+  // A count ("both skills") is only true when every client that loads
+  // skills loads the same ones and leaves none out; otherwise name them.
+  const loading = rows.filter((row) => row.loaded.length);
+  const counted =
+    new Set(loading.map((row) => row.loadedKey)).size === 1 &&
+    loading.every((row) => !row.leftOut.length);
+  if (rows.length > 1 && counted && loading.length === rows.length) {
+    return [
+      `Every client loads ${countText(rows[0]!.loaded.map((skill) => skill.name))}.`,
+    ];
   }
-  // One line per distinct outcome, naming every client it covers, in the
-  // order the clients first appear.
   const groups = new Map<
     string,
     { clients: Set<string>; line: (clients: string[]) => string }
@@ -209,31 +221,36 @@ export function skillDeliveryLines(
   };
   for (const row of rows) {
     if (row.loaded.length) {
-      const text = loadedText(row.loaded, !row.leftOut.length);
+      const names = row.loaded.map((skill) => skill.name);
+      const text = counted ? countText(names) : listText(names);
       add(
-        `loads:${text}`,
+        `loads:${row.loadedKey}`,
         row.client,
-        (names) =>
-          `${listText(names)} ${one(names.length, "loads", "load")} ${text}.`,
+        (clients) =>
+          `${listText(clients)} ${one(clients.length, "loads", "load")} ${text}.`,
       );
     } else if (!row.leftOut.length) {
       add(
         "none",
         row.client,
-        (names) =>
-          `${listText(names)} ${one(names.length, "runs", "run")} without skills.`,
+        (clients) =>
+          `${listText(clients)} ${one(clients.length, "runs", "run")} without skills.`,
       );
     }
-    const byReason = new Map<LeftOutReason, string[]>();
-    for (const { name, reason } of row.leftOut)
-      byReason.set(reason, [...(byReason.get(reason) ?? []), name]);
+    const byReason = new Map<LeftOutReason, { id: string; name: string }[]>();
+    for (const skill of row.leftOut)
+      byReason.set(skill.reason, [
+        ...(byReason.get(skill.reason) ?? []),
+        skill,
+      ]);
     for (const [reason, skills] of byReason) {
+      const names = skills.map((skill) => skill.name);
       add(
         reason === "unsupported-harness"
           ? reason
-          : `${reason}:${JSON.stringify(skills)}`,
+          : `${reason}:${JSON.stringify(skills.map((skill) => skill.id))}`,
         row.client,
-        (names) => leftOutLine[reason](names, skills),
+        (clients) => leftOutLine[reason](clients, names),
       );
     }
   }
