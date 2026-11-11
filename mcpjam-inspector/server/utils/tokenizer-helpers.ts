@@ -18,6 +18,8 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
   "claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
   "claude-sonnet-4-0": "anthropic/claude-sonnet-4",
+  "claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+  "claude-haiku-5.5": "anthropic/claude-haiku-5.5",
   "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
   "claude-haiku-4.5": "anthropic/claude-haiku-4.5",
   "claude-3-7-sonnet-latest": "anthropic/claude-3.7-sonnet",
@@ -32,6 +34,8 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "anthropic/claude-opus-4-1": "anthropic/claude-opus-4.1",
   "anthropic/claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
   "anthropic/claude-sonnet-4.5": "anthropic/claude-sonnet-4.5",
+  "anthropic/claude-haiku-5-5": "anthropic/claude-haiku-5.5",
+  "anthropic/claude-haiku-5.5": "anthropic/claude-haiku-5.5",
   "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4.5",
   "anthropic/claude-haiku-4.5": "anthropic/claude-haiku-4.5",
 
