@@ -5,6 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayConnectionTestResult } from "@/shared/gateway-connection";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
@@ -156,6 +157,37 @@ describe("GatewayDialog", () => {
     type("gateway-secret", "sk-other");
     expect(screen.queryByText(/needs the API key again/)).not.toBeInTheDocument();
     expect(save).toBeEnabled();
+  });
+
+  it("unmaps, removes and adds a saved provider's models", async () => {
+    renderDialog({
+      providerKey: "custom:litellm",
+      displayName: "litellm",
+      enabled: true,
+      hasSecret: true,
+      baseUrl: "https://litellm.acme.example/v1",
+      runtimeLocation: "cloud",
+      apis: ["chatCompletions"],
+      models: [
+        { nativeModelId: "claude-sonnet-4.5", modelId: "anthropic/claude-sonnet-4.5", mappingSource: "admin" },
+        { nativeModelId: "house-model" },
+      ],
+    });
+    expect(screen.getByText("2 models · 1 not mapped")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for claude-sonnet-4.5" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Unmap" }));
+    expect(screen.getByText("2 models · 2 not mapped")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for house-model" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove model" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "team-llama-70b" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Add a model" }), { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        models: [{ nativeModelId: "claude-sonnet-4.5" }, { nativeModelId: "team-llama-70b" }],
+      }),
+    );
   });
 
   it("refuses a name another connection already uses", async () => {

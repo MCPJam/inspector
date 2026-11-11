@@ -16,7 +16,10 @@ import type {
   UpsertOrgProviderArgs,
 } from "@/hooks/use-org-model-config";
 import { hostedModelDefinitionsFromSnapshot } from "@/shared/types";
-import { GatewayModelTable } from "./GatewayModelTable";
+import {
+  GatewayCapabilityOverrides,
+  GatewayModelMapping,
+} from "./GatewayModelTable";
 import {
   GatewayConnectionFields,
   GatewayRuntimeField,
@@ -156,7 +159,7 @@ export function GatewayDialog({
         ) : null}
 
         {showDetails ? (
-          // min-w-0 lets the models table scroll inside the dialog's grid.
+          // min-w-0 keeps long model names inside the dialog's grid.
           <div className="min-w-0 space-y-6">
             <div className="space-y-2">
               <Label htmlFor="gateway-name">Name</Label>
@@ -185,13 +188,20 @@ export function GatewayDialog({
               ) : null}
             </div>
             <GatewayWorksWithList rows={worksWith} />
-            <section aria-labelledby="gateway-models" className="space-y-2">
-              <h3 id="gateway-models" className="text-sm font-medium">
-                Models
+            <GatewayModelMapping
+              models={models}
+              catalogIds={catalogIds}
+              onChange={draft.setModels}
+            />
+            <section
+              aria-labelledby="gateway-capabilities"
+              className="space-y-2"
+            >
+              <h3 id="gateway-capabilities" className="text-sm font-medium">
+                Capabilities
               </h3>
-              <GatewayModelTable
+              <GatewayCapabilityOverrides
                 models={models}
-                catalogIds={catalogIds}
                 onChange={draft.setModels}
               />
             </section>
