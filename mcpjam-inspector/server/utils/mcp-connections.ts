@@ -46,6 +46,36 @@ export function connectionsAtTurn(manager: MCPClientManager) {
     : undefined;
 }
 
+/**
+ * The accounts each server was authorized with: an account group's ids, or
+ * the single credential a server without a group connected on. A server on
+ * no stored credential (XAA, a bearer header, none) is listed with no ids, so
+ * the backend can still record it as shared or XAA.
+ */
+export function managerAccountsAtRun(
+  manager: MCPClientManager,
+): Array<{ serverId: string; connectionIds: string[] }> {
+  const groups = getManagerConnections(manager) ?? {};
+  const credentials = authorizedCredentials.get(manager) ?? {};
+  return listBaseServers(manager).map((serverId) => ({
+    serverId,
+    connectionIds:
+      groups[serverId]?.map((c) => c.connectionId) ??
+      (credentials[serverId] ? [credentials[serverId]] : []),
+  }));
+}
+const authorizedCredentials = new WeakMap<
+  MCPClientManager,
+  Readonly<Record<string, string>>
+>();
+/** The stored credential each server authorized with, by server id. */
+export function setManagerAuthorizedCredentials(
+  manager: MCPClientManager,
+  value: Readonly<Record<string, string>>,
+) {
+  authorizedCredentials.set(manager, value);
+}
+
 /** Account aliases are internal; catalog/eval consumers see the base once. */
 export function listBaseServers(
   manager: Partial<Pick<MCPClientManager, "listServers">>,

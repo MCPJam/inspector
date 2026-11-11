@@ -1619,8 +1619,14 @@ export async function runHarnessTurn(
       // same MCP tool twice.
       // Account selectors and resource conversion must execute together in
       // the inspector; native sandbox MCP clients cannot own that dispatch.
-      const accountGroups = evalIterationId ? {} : getManagerConnections(mcpClientManager) ?? {};
-      const dispatch = resolveAgentLoop({ agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" : "mcpjam", hasAccountRouting: hasAccountRouting(accountGroups) });
+      const accountGroups = getManagerConnections(mcpClientManager) ?? {};
+      const dispatchInput = { agentLoop: options.agentLoop, harness: options.agentLoop ? undefined : harnessAdapter.id, defaultMcpClient: harnessAdapter.mcpDelivery === "harness" ? "harness" as const : "mcpjam" as const };
+      // Routing between accounts would move this client onto MCPJam's MCP
+      // client, and an eval of a client must exercise the client's own.
+      if (evalIterationId && hasAccountRouting(accountGroups) && resolveAgentLoop(dispatchInput).mcpClient === "harness") {
+        throw new Error("This client runs evals on one account per server. Choose one account for each server in the suite's settings.");
+      }
+      const dispatch = resolveAgentLoop({ ...dispatchInput, hasAccountRouting: hasAccountRouting(accountGroups) });
       let nativeMcpDelivery = dispatch.mcpClient === "harness";
       // Fail closed: with MCP servers selected but no plane strategy, a NATIVE
       // adapter would silently get zero MCP tools (the exact failure we hit).
