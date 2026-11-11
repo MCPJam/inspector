@@ -1,58 +1,9 @@
 const KEY = "mcpjam_promo_intent";
 const TTL = 30 * 60 * 1000;
-type Intent = { code: string; storedAt: number };
+// A code belongs to the campaign whose link carried it, so opening another
+// campaign in the same tab never offers the previous campaign's code.
+type Intent = { code: string; storedAt: number; campaign: string };
 let memory: Intent | null | undefined;
-
-export function clearPromoIntent() {
-  memory = null;
-  try {
-    sessionStorage.removeItem(KEY);
-    return true;
-  } catch {
-    // Memory is cleared; callers must retain recovery state if storage stays stale.
-    console.debug("Promo intent storage unavailable");
-    return false;
-  }
-}
-
-export function savePromoIntent(code: string, now = Date.now()) {
-  memory = { code, storedAt: now };
-  try {
-    sessionStorage.setItem(KEY, JSON.stringify(memory));
-    return true;
-  } catch {
-    // The form can use memory, but a sign-in redirect will require manual entry.
-    console.debug("Promo intent storage unavailable");
-    return false;
-  }
-}
-
-export function readPromoIntent(now = Date.now()): string {
-  try {
-    if (memory === undefined) {
-      const raw: unknown = JSON.parse(sessionStorage.getItem(KEY) ?? "null");
-      if (
-        raw &&
-        typeof raw === "object" &&
-        "code" in raw &&
-        "storedAt" in raw &&
-        typeof raw.code === "string" &&
-        raw.code.length <= 64 &&
-        typeof raw.storedAt === "number"
-      ) {
-        memory = { code: raw.code, storedAt: raw.storedAt };
-      }
-    }
-  } catch {
-    // A blocked or malformed store falls back to the current page's memory.
-    console.debug("Promo intent storage unavailable");
-  }
-  if (!memory || now < memory.storedAt || now - memory.storedAt >= TTL) {
-    clearPromoIntent();
-    return "";
-  }
-  return memory.code;
-}
 
 const CAMPAIGN_KEY = /^[a-z0-9-]{1,80}$/;
 /** Printed AGNTCon cards link to `/redeem` with no campaign. */
@@ -70,6 +21,70 @@ export function readPromoCampaign(search = window.location.search) {
   );
 }
 
+export function clearPromoIntent() {
+  memory = null;
+  try {
+    sessionStorage.removeItem(KEY);
+    return true;
+  } catch {
+    // Memory is cleared; callers must retain recovery state if storage stays stale.
+    console.debug("Promo intent storage unavailable");
+    return false;
+  }
+}
+
+export function savePromoIntent(
+  code: string,
+  now = Date.now(),
+  campaign = readPromoCampaign(),
+) {
+  memory = { code, storedAt: now, campaign };
+  try {
+    sessionStorage.setItem(KEY, JSON.stringify(memory));
+    return true;
+  } catch {
+    // The form can use memory, but a sign-in redirect will require manual entry.
+    console.debug("Promo intent storage unavailable");
+    return false;
+  }
+}
+
+export function readPromoIntent(
+  now = Date.now(),
+  campaign = readPromoCampaign(),
+): string {
+  try {
+    if (memory === undefined) {
+      const raw: unknown = JSON.parse(sessionStorage.getItem(KEY) ?? "null");
+      if (
+        raw &&
+        typeof raw === "object" &&
+        "code" in raw &&
+        "storedAt" in raw &&
+        typeof raw.code === "string" &&
+        raw.code.length <= 64 &&
+        typeof raw.storedAt === "number"
+      ) {
+        memory = {
+          code: raw.code,
+          storedAt: raw.storedAt,
+          campaign:
+            ("campaign" in raw && campaignOrNull(raw.campaign)) ||
+            DEFAULT_PROMO_CAMPAIGN,
+        };
+      }
+    }
+  } catch {
+    // A blocked or malformed store falls back to the current page's memory.
+    console.debug("Promo intent storage unavailable");
+  }
+  if (!memory || now < memory.storedAt || now - memory.storedAt >= TTL) {
+    clearPromoIntent();
+    return "";
+  }
+  return memory.campaign === campaign ? memory.code : "";
+}
+
 function redeemPath(campaign: string | null, manual = false) {
   const params = new URLSearchParams();
   if (manual) params.set("manual", "1");
@@ -84,7 +99,7 @@ function redeemPath(campaign: string | null, manual = false) {
  * and the public campaign key, so a lost intent still lands on its campaign.
  */
 export function promoSignInState(campaign: string) {
-  const code = readPromoIntent();
+  const code = readPromoIntent(Date.now(), campaign);
   let stored = false;
   try {
     stored = sessionStorage.getItem(KEY) === JSON.stringify(memory);
@@ -126,7 +141,8 @@ export function capturePromoIntent() {
     url.searchParams.get("code") ??
     new URLSearchParams(url.hash.slice(1)).get("code");
   if (code !== null) {
-    if (code.length <= 64) savePromoIntent(code);
+    if (code.length <= 64)
+      savePromoIntent(code, Date.now(), campaign ?? DEFAULT_PROMO_CAMPAIGN);
     else clearPromoIntent();
     window.history.replaceState(window.history.state, "", redeemPath(campaign));
   }

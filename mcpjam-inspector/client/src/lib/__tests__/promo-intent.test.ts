@@ -124,3 +124,18 @@ describe("campaign key", () => {
     ).toBe("/redeem");
   });
 });
+
+it("offers a stored code only on the campaign whose link carried it", () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/redeem?campaign=talk-one-0a1b2c3d4e&code=SYNTH-ETIC1",
+  );
+  capturePromoIntent();
+  expect(readPromoIntent()).toBe("SYNTH-ETIC1");
+  window.history.replaceState(null, "", "/redeem?campaign=talk-two-5f6a7b8c9d");
+  expect(readPromoIntent()).toBe("");
+  expect(promoSignInState("talk-two-5f6a7b8c9d").promoManualEntry).toBe(true);
+  window.history.replaceState(null, "", "/redeem?campaign=talk-one-0a1b2c3d4e");
+  expect(readPromoIntent()).toBe("SYNTH-ETIC1");
+});
