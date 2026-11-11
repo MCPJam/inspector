@@ -16,6 +16,7 @@ import {
 } from "@/lib/promo-intent";
 import { writeAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import {
+  collectsLead,
   contextQuery,
   redeemMutation,
   refusalCopy,
@@ -69,11 +70,11 @@ function ClaimForm({
     (item) => item.organizationId === orgId,
   );
   const usesCode = context.mode !== "shared";
+  const leads = collectsLead(context);
   const canSubmit =
     !!org &&
     !!context.account.email &&
-    (!context.collectLead ||
-      (!!name.trim() && !!(company ?? org.name).trim())) &&
+    (!leads || (!!name.trim() && !!(company ?? org.name).trim())) &&
     (!usesCode || !!code.trim()) &&
     !pending;
   if (receipt) return <ReceiptView receipt={receipt} />;
@@ -86,8 +87,8 @@ function ClaimForm({
       const result = await redeem({
         campaignId,
         ...(usesCode ? { code } : {}),
-        name: context.collectLead ? name : "",
-        company: context.collectLead ? (company ?? org.name) : "",
+        name: leads ? name : "",
+        company: leads ? (company ?? org.name) : "",
         organizationId: org.organizationId,
       });
       if (!active.current) return;

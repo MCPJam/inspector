@@ -9,7 +9,7 @@ import {
 } from "@mcpjam/design-system/select";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import type { Ready } from "./promo-api";
+import { collectsLead, type Ready } from "./promo-api";
 
 type Props = {
   context: Ready;
@@ -48,7 +48,7 @@ export function PromoFields(props: Props) {
       <p className="text-sm ph-mask" data-sentry-mask>
         Signed in as {context.account.email}
       </p>
-      {context.collectLead &&
+      {collectsLead(context) &&
         fields.map((field) => (
           <div key={field.id} className="space-y-2">
             <Label htmlFor={`promo-${field.id}`}>{field.label}</Label>

@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     credits: 1000,
     label: "AGNTCon",
     mode: "single_use" as "single_use" | "shared",
-    collectLead: true,
+    collectLead: true as boolean | undefined,
     cutoff: 2000000000000,
     account: { userId: "user-1", name: "Alex", email: "alex@example.test" },
     organizations: [{ organizationId: "org-1", name: "My organization" }],
@@ -170,6 +170,21 @@ it("lets an attendee correct a scanned code before submitting", async () => {
   await waitFor(() =>
     expect(mocks.redeem).toHaveBeenCalledWith(
       expect.objectContaining({ code: "OTHER-CODE1" }),
+    ),
+  );
+});
+
+it("asks for name and company when an older backend omits collectLead", async () => {
+  mocks.context.collectLead = undefined;
+  mocks.redeem.mockResolvedValue({ status: "refused", code: "rate_limited" });
+  render(<PromoRedemptionPage />);
+  expect(screen.getAllByRole("textbox")).toHaveLength(2);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Claim for My organization" }),
+  );
+  await waitFor(() =>
+    expect(mocks.redeem).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Alex", company: "My organization" }),
     ),
   );
 });
