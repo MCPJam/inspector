@@ -1,6 +1,7 @@
 import { SettingsPageDescription } from "@/components/settings/SettingsPageDescription";
 import { ArrowUpRight, FileText, Globe, Lock, ShieldCheck } from "lucide-react";
 import { GitHubStarButton } from "../ui/github-star-button";
+import { AnalyticsConsentSetting } from "../legal/AnalyticsConsent";
 import { PRIVACY_POLICY_URL, TERMS_OF_USE_URL } from "@/lib/legal-links";
 
 const links = [
@@ -57,10 +58,13 @@ export function AboutSettings() {
         <GitHubStarButton />
       </header>
 
-      <dl className="flex items-center justify-between gap-4 border-y border-border py-4 text-sm">
-        <dt className="font-medium text-accent-foreground">Version</dt>
-        <dd className="text-foreground">v{__APP_VERSION__}</dd>
-      </dl>
+      <div className="divide-y divide-border border-y border-border">
+        <dl className="flex items-center justify-between gap-4 py-4 text-sm">
+          <dt className="font-medium text-accent-foreground">Version</dt>
+          <dd className="text-foreground">v{__APP_VERSION__}</dd>
+        </dl>
+        <AnalyticsConsentSetting />
+      </div>
 
       <nav
         aria-label="MCPJam resources"
