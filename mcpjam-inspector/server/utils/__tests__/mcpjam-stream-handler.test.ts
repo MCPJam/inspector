@@ -447,6 +447,9 @@ describe("mcpjam-stream-handler", () => {
             type: "tool-input-error",
             toolCallId: "call-1",
             toolName: "show_squad",
+            // The AI SDK marks a refused unknown-tool call dynamic, though its
+            // start chunk was static.
+            dynamic: true,
             input,
             errorText: JSON.stringify({
               code: "unknown_error",
@@ -498,18 +501,21 @@ describe("mcpjam-stream-handler", () => {
         discoveryState: discoveryState as any,
       });
       await lastExecution;
-      const callChunks = writtenChunks
-        .filter((chunk) => chunk?.toolCallId === "call-1")
-        .map((chunk) => chunk.type);
-      return { callChunks, discoveryState };
+      const forwarded = writtenChunks.filter(
+        (chunk) => chunk?.toolCallId === "call-1",
+      );
+      const callChunks = forwarded.map((chunk) => chunk.type);
+      return { callChunks, forwarded, discoveryState };
     };
 
     it("runs the call after the load instead of failing it", async () => {
-      const { callChunks, discoveryState } = await runLoadAndCall({
+      const { callChunks, forwarded, discoveryState } = await runLoadAndCall({
         team: "Barcelona",
       });
 
       expect(callChunks).toEqual(["tool-input-start", "tool-input-available"]);
+      // Same part type as the start chunk, so the client keeps one part.
+      expect(forwarded[1].dynamic).toBeUndefined();
       // Loaded now, so the call passes the loaded-tools gate when it runs.
       expect([
         ...discoveryState.newlyLoadedToolIds,

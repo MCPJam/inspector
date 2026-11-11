@@ -2579,6 +2579,9 @@ async function processStream(
   const toolInputErrors: string[] = [];
   const rejectedToolCalls: RejectedToolCall[] = [];
   const unfinishedTools = new Map<string, string>();
+  // Each call's `dynamic` flag as its `tool-input-start` set it. The client
+  // keys a tool part by that flag, so an admitted call must keep it.
+  const startedDynamic = new Map<string, boolean | undefined>();
   let pendingText = "";
   let pendingTextMetadata: TextPart["providerOptions"] | undefined;
   let pendingReasoning = "";
@@ -2623,6 +2626,17 @@ async function processStream(
     }
     pendingReasoningId = null;
     pendingReasoningMetadata = undefined;
+  };
+
+  // The `dynamic` flag for an admitted call: the one its start chunk used, so
+  // the client updates that part instead of opening a second one. A refused
+  // unknown tool can arrive as dynamic after starting as static.
+  const admittedDynamic = (chunk: { toolCallId: string; dynamic?: boolean }) => {
+    const id = String(chunk.toolCallId);
+    const dynamic = startedDynamic.has(id)
+      ? startedDynamic.get(id)
+      : chunk.dynamic;
+    return dynamic !== undefined ? { dynamic } : {};
   };
 
   // A tool call the step will run: recorded, forwarded, traced, and offered
@@ -2895,6 +2909,7 @@ async function processStream(
           // mid-input; remember its name until one of the two arrives.
           if (chunk.type === "tool-input-start") {
             unfinishedTools.set(String(chunk.toolCallId), chunk.toolName);
+            startedDynamic.set(String(chunk.toolCallId), chunk.dynamic);
           } else if (chunk.type === "tool-input-error") {
             unfinishedTools.delete(String(chunk.toolCallId));
           }
@@ -2917,7 +2932,7 @@ async function processStream(
               ...(chunk.providerMetadata
                 ? { providerMetadata: chunk.providerMetadata }
                 : {}),
-              ...(chunk.dynamic !== undefined ? { dynamic: chunk.dynamic } : {}),
+              ...admittedDynamic(chunk),
             });
             break;
           }
