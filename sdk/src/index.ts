@@ -4,6 +4,10 @@
  * @packageDocumentation
  */
 
+// The Node resolver for every MCPJam request this entry can make, the IT
+// settings file and its lock included.
+import "./deployment/node-entry.js";
+
 // MCPClientManager from new modular implementation
 export { MCPClientManager } from "./mcp-client-manager/index.js";
 
@@ -46,6 +50,8 @@ export type {
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
 export {
   buildMcpParamHeaders,
+  findMcpHeaderIssues,
+  deriveMirroredBodyValues,
   classifyMcpHeader,
   decodeMcpHeaderValue,
   encodeMcpHeaderValue,
@@ -125,6 +131,44 @@ export {
   withSkillsExtensionCapability,
 } from "./mcp-client-manager/index.js";
 
+// MCP Events (triggers), draft@28ec35e. The full surface — coordinator,
+// identities, profiles, Standard Webhooks, the in-memory inbox — is the
+// `@mcpjam/sdk/events` subpath; the root re-exports what a manager caller
+// needs to branch on.
+export {
+  MCPEventsWireError,
+  isMCPEventsWireError,
+  InvalidEventsPayloadError,
+  isInvalidEventsPayloadError,
+  classifyEventsRpcError,
+  EVENTS_ERROR_CODES,
+} from "./mcp-client-manager/events-ext-guards.js";
+export type {
+  EventsSupport,
+  CapturedEventsCapability,
+} from "./mcp-client-manager/events-capability-capture.js";
+export type {
+  EventDescriptorWire,
+  EventOccurrenceWire,
+  EventsListResultWire,
+  EventsPollResultWire,
+  EventsSubscribeResultWire,
+} from "./mcp-client-manager/events-ext-schemas.js";
+
+// MCP Events conformance (profile-aware; Node-only receiver).
+export {
+  runEventsConformance,
+  startEventsConformanceReceiver,
+  EVENTS_CHECK_IDS,
+} from "./events-conformance/index.js";
+export type {
+  EventsConformanceConfig,
+  EventsConformanceReceiver,
+  EventsConformanceResult,
+  EventsCheckResult,
+  EventsCheckId,
+} from "./events-conformance/index.js";
+
 // io.modelcontextprotocol/skills (SEP-2640).
 export {
   MCP_SKILLS_EXTENSION_ID,
@@ -146,6 +190,7 @@ export {
   MCPSkillsWireError,
   isMCPSkillsWireError,
   assertSkillEntry,
+  assertSkillsGetEnvelope,
   assertSkillsGetResult,
   assertSkillsListResult,
   assertDirectoryReadResult,
@@ -177,6 +222,7 @@ export {
 export type {
   SkillEntry,
   SkillResourceRef,
+  SkillsExtGetResult,
   SkillsExtListResult,
   SkillsDirectoryEntry,
   SkillsDirectoryReadResult,
@@ -205,6 +251,7 @@ export {
   normalizeCatalogText,
   probeServerSkillMissing,
   readVerifiedServerSkillFile,
+  forgetVerifiedServerSkillReads,
   serverSkillsActive,
 } from "./server-skills.js";
 export type {
@@ -250,12 +297,47 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
+  extractAuthChallenge,
+  attachAuthChallenge,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { InsufficientScopeChallenge } from "./mcp-client-manager/index.js";
+// Mid-session sign-in ("lazy authentication") challenges.
+export {
+  AUTH_CHALLENGE_ACTIONS,
+  AUTH_CHALLENGE_LIMITS,
+  AUTH_CHALLENGE_POLICY_DEFAULTS,
+  TOOL_RESULT_AUTH_CHALLENGE_META_KEY,
+  TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
+  UNAUTHORIZED_CHALLENGE_TRIGGERS,
+  authChallengeNotifyText,
+  authChallengePolicyFrom,
+  decideAuthChallengeAction,
+  describeAuthChallengeDecision,
+  hasOAuth2Scheme,
+  parseAuthChallengeSignal,
+  parseChallengeHeader,
+  parseToolResultAuthChallenge,
+  resolveToolSecuritySchemes,
+} from "./mcp-client-manager/auth-challenge.js";
+export type {
+  AuthChallengeAction,
+  AuthChallengeDecision,
+  AuthChallengeDecisionReason,
+  AuthChallengeEffectiveAuth,
+  AuthChallengeFacets,
+  AuthChallengePolicy,
+  AuthChallengeSignal,
+  AuthChallengeSource,
+  ToolResultAuthChallengeTrigger,
+  ToolSecurityScheme,
+  ToolSecuritySchemeResolution,
+  ToolSecuritySchemeSource,
+  UnauthorizedChallengeTrigger,
+} from "./mcp-client-manager/auth-challenge.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,
@@ -289,6 +371,8 @@ export type {
   ServerDoctorChecks,
   ServerDoctorConnection,
   ServerDoctorResult,
+  ServerDoctorSkillsCheck,
+  ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
   RunServerDoctorInput,
   ServerDoctorDependencies,
@@ -434,6 +518,7 @@ export type {
   LocalEvalRunReport,
   McpjamInferenceConnection,
   RunSuiteFileOptions,
+  SuiteFileAuthRequired,
   SuiteFileCaseRun,
   SuiteFileImportApproval,
   SuiteFileInferenceMode,
@@ -658,6 +743,7 @@ export {
   dialInitialize,
   dialMcpServer,
   dialResourceListing,
+  dialToolCall,
   dialToolListing,
 } from "./directory-readiness/mcp-dial.js";
 export type {
@@ -668,8 +754,31 @@ export type {
   DirectoryInitializeEvidence,
   DirectoryListingEvidence,
   DirectoryResourceEvidence,
+  DirectoryToolCallEvidence,
   DirectoryToolEvidence,
 } from "./directory-readiness/mcp-dial.js";
+// Lazy authentication: the gate, the claims and the evidence shape are pure;
+// the probe dials, so it is Node-only like the dial above.
+export {
+  DIRECTORY_FEATURE_CLAIMS,
+  LAZY_AUTH_PROBE_LIMITS,
+  isDirectoryFeatureClaim,
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  resolveLazyAuthProbeMode,
+  selectLazyAuthProbeTools,
+} from "./directory-readiness/lazy-auth.js";
+export type {
+  DirectoryFeatureClaim,
+  DirectoryLazyAuthCallOutcome,
+  DirectoryLazyAuthProbeConfig,
+  DirectoryLazyAuthProbeEvidence,
+  DirectoryLazyAuthProbeMode,
+  DirectoryLazyAuthRediscovery,
+  DirectoryLazyAuthToolCall,
+} from "./directory-readiness/lazy-auth.js";
+export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
+export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -680,6 +789,7 @@ export * from "./claude-readiness/index.js";
 // that importing the result model can never pull a transport in with it.
 export {
   discoverClaudeAuthEvidence,
+  discoverClaudeAuthMetadata,
   traceConnectorRedirects,
 } from "./claude-readiness/discovery.js";
 export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
@@ -693,6 +803,11 @@ export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/ga
 export {
   probeDynamicRegistration,
   probeRefreshRotation,
+  probeStepUpChallenge,
+} from "./claude-readiness/intrusive-probes.js";
+export type {
+  ClaudeIntrusiveProbeOptions,
+  ClaudeStepUpProbeOptions,
 } from "./claude-readiness/intrusive-probes.js";
 
 // OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
@@ -727,6 +842,7 @@ export type { GatherMuseReadinessEvidenceOptions } from "./muse-readiness/gather
 // that importing the result model can never pull a transport in with it.
 export {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
@@ -744,6 +860,13 @@ export {
   isInapplicableCheck,
   isUnrunCheck,
 } from "./conformance-outcome.js";
+export { isAuthorizationRequiredCheck } from "./conformance-authorization.js";
+export { isTimedOutCheck } from "./conformance-timeout.js";
+export {
+  isMissingInputCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "./conformance-input.js";
 export type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
@@ -753,6 +876,7 @@ export {
   computeConformanceScore,
   describeConformanceScore,
   pooledConformanceScore,
+  scorableOAuthIds,
   scoreFromAppsResult,
   scoreFromOAuthResult,
   scoreFromProtocolResult,
@@ -794,9 +918,11 @@ export type {
   ConformanceSuiteKind,
 } from "./conformance-run-types.js";
 export { runConformance } from "./conformance-run.js";
+export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,
+  RunConformanceOAuthConfig,
 } from "./conformance-run.js";
 export {
   detectCiMetadata,
@@ -1090,6 +1216,9 @@ export type {
 // native one). Also on `@mcpjam/sdk/model-factory`.
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
 } from "./model-native-ids.js";
 export type { NativeModelIdMapping } from "./model-native-ids.js";
@@ -1099,6 +1228,47 @@ export type { NativeModelIdMapping } from "./model-native-ids.js";
 // pulling the Node graph in; exported here so a Node consumer building its own
 // request doesn't re-derive the version thresholds locally.
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+// MCP tool names a provider rejects (`cart.add`), aliased on the wire only.
+export {
+  createToolNameAliases,
+  renameToolNamePart,
+  renameToolNamesInMessages,
+  withProviderSafeToolNames,
+} from "./provider-tool-names.js";
+export type { ToolNameAliases } from "./provider-tool-names.js";
+
+// Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
+// meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
+// gating. `HostRunner` and the Inspector's hosted turns run the same code.
+export {
+  DEFAULT_TOOL_DISCOVERY_POLICY,
+  META_TOOL_LOAD,
+  META_TOOL_NAMES,
+  META_TOOL_SEARCH,
+  buildToolCatalog,
+  commitNewlyLoaded,
+  createDiscoveryState,
+  decideProgressivePlan,
+  gateToolsToActiveSubset,
+  hydrateDiscoveryStateFromHistory,
+  lookupToolIdByModelName,
+  parseProgressiveToolsEnv,
+  resolveActiveToolNames,
+  shouldForceInitialToolSearch,
+} from "./progressive-discovery/discovery.js";
+export type {
+  ProgressiveDiscoveryOptions,
+  ProgressiveToolPlan,
+  ToolCatalogEntry,
+  ToolDiscoveryState,
+} from "./progressive-discovery/discovery.js";
+export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
+export type {
+  LoadMcpToolsResult,
+  ProgressiveMetaToolsConfig,
+  SearchMcpToolsResult,
+} from "./progressive-discovery/meta-tools.js";
 
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
@@ -1145,6 +1315,14 @@ export {
   fetchOAuthMetadata,
 } from "./oauth-proxy.js";
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
+export {
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
+  TLS_TRUST_FAILURE,
+  tlsTrustFailure,
+  UNREACHABLE_TARGET_FAILURE,
+  unreachableTargetFailure,
+} from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
@@ -1205,6 +1383,8 @@ export {
 export type {
   ConformanceResult as OAuthConformanceResult,
   ConformanceStepId as OAuthConformanceStepId,
+  MCPOAuthReadinessId,
+  MCPOAuthReadinessWarning,
   OAuthConformanceCheckId,
   OAuthConformanceProfile,
   RemoteBrowserAuthorizationCode,
@@ -1231,6 +1411,7 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPLogLevel,
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
@@ -1240,9 +1421,12 @@ export {
   CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_LOG_LEVELS,
   MCP_PROTOCOL_VERSION_ERA_IDS,
   MCP_READINESS_IDS,
   PROTOCOL_VERSION_ERAS,
+  READINESS_ERAS,
+  RETIRED_MCP_CHECK_IDS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
@@ -1286,11 +1470,14 @@ export type {
   MCPAppsConformanceSuiteDefaults,
   MCPAppsConformanceSuiteResult,
   MCPAppsConformanceSuiteRun,
+  MCPAppsReadinessId,
+  MCPAppsReadinessWarning,
   MCPAppsResourceReadOutcome,
 } from "./apps-conformance/index.js";
 export {
   MCP_APPS_CHECK_CATEGORIES,
   MCP_APPS_CHECK_IDS,
+  MCP_APPS_READINESS_IDS,
 } from "./apps-conformance/index.js";
 
 // MCP Tasks conformance
@@ -1302,13 +1489,18 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksReadinessId,
+  MCPTasksReadinessWarning,
   MCPTasksRunOutcome,
   MCPTasksSkipReason,
+  MCPTasksUncheckedAdvice,
 } from "./tasks-conformance/index.js";
 export {
   decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
+  RENAMED_MCP_TASKS_CHECK_IDS,
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
@@ -1374,7 +1566,10 @@ export type {
   StepResult,
   VerificationResult,
 } from "./oauth-conformance/index.js";
-export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
+export {
+  CONFORMANCE_CHECK_METADATA,
+  MCP_OAUTH_READINESS_IDS,
+} from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {
@@ -1663,6 +1858,7 @@ export type {
   EvalOutOfOrderToolCall,
   EvalToolCall,
   EvalToolCallMatchResult,
+  EvalToolCallRetry,
 } from "./matchers.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
@@ -1809,6 +2005,32 @@ export type {
   TaskSurface,
 } from "./host-config/index.js";
 
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the delivery modes a subscription may use.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./host-config/index.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
+} from "./host-config/index.js";
+
 // Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.
 // New public exports only (API stability): the serializable stepper, the
 // convenience loop, guards, error classes, and the re-exported upstream
@@ -1841,6 +2063,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrLegMiddleware,
   MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
@@ -1898,6 +2121,7 @@ export {
   canDeclareTasksExtension,
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
+  validateEmbeddedClientRequest,
   DEFAULT_TASK_INPUT_LIMITS,
   createStrictElicitationContentValidator,
   retryAfterMsFromError,
@@ -2005,3 +2229,23 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 
 export { EvalRunStartError } from "./eval-run-start.js";
 export type { EvalIdentityOptions } from "./eval-run-start.js";
+export { projectMcpToolResultForModel } from "./mcp-client-manager/tool-converters.js";
+export {
+  DEFAULT_MODEL_VISIBLE_MCP_TOOL_RESULTS,
+  resolveModelVisibleMcpToolResults,
+} from "./host-config/host-policy.js";
+export {
+  MCP_TASKS_TOOL_CHECK_IDS,
+  isTasksToolCheck,
+  planTasksConformance,
+  validateTaskOverrides,
+  mergeTasksConformanceResults,
+  taskGroupFailure,
+} from "./tasks-conformance/index.js";
+export type {
+  MCPTasksToolCheckId,
+  MCPTasksToolSetup,
+  MCPTasksCheckOverrides,
+  MCPTasksRunOptions,
+  MCPTasksRunGroup,
+} from "./tasks-conformance/index.js";

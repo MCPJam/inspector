@@ -1,7 +1,9 @@
+import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
 import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { PromptTraceSummary } from "@/shared/eval-trace";
@@ -12,14 +14,17 @@ import type {
 } from "@/shared/eval-trace";
 import { isModelFree, type PromptTurn, type TestStep } from "@/shared/steps";
 import type { UsageTotals } from "./types";
+import type { EvalTraceModelSource } from "./persist-eval-trace.js";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
+import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
+import { platformFeeRefusalError } from "./platform-fee-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
@@ -137,8 +142,12 @@ export type SuiteRunRecorder = {
     messages: ModelMessage[];
     /** Effective model used by the iteration; persisted on the eval session. */
     modelId?: string;
+    /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+    modelSource?: EvalTraceModelSource;
     spans?: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+    /** Each harness turn's MCP route, by promptIndex. Pass-through. */
+    harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**
@@ -335,28 +344,16 @@ export const createSuiteRunRecorder = ({
           "testSuites:getTestSuiteRunDetails" as any,
           { runId },
         );
+        // A deleted run answers null (PLB-52) rather than throwing.
+        if (response === null) {
+          runDeleted = true;
+          return undefined;
+        }
 
-        const iterations = response?.iterations || [];
-
-        // Find the iteration that matches this test case and iteration number
-        // Match by testCaseSnapshot if available, otherwise by testCaseId
-        const matchingIteration = iterations.find((iter: any) => {
-          if (testCaseSnapshot && iter.testCaseSnapshot) {
-            // Match by model and provider from snapshot
-            return (
-              iter.testCaseSnapshot.title === testCaseSnapshot.title &&
-              iter.testCaseSnapshot.query === testCaseSnapshot.query &&
-              iter.testCaseSnapshot.model === testCaseSnapshot.model &&
-              iter.testCaseSnapshot.provider === testCaseSnapshot.provider &&
-              iter.iterationNumber === iterationNumber
-            );
-          }
-          // Fallback to matching by testCaseId and iteration number
-          return (
-            iter.testCaseId === testCaseId &&
-            iter.iterationNumber === iterationNumber
-          );
-        });
+        const matchingIteration = findPrecreatedIterationByCase(
+          response?.iterations || [],
+          { testCaseId, testCaseSnapshot, iterationNumber },
+        );
 
         if (!matchingIteration) {
           logger.error(
@@ -616,6 +613,7 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  accountsAtRun,
   launcher,
   ciMetadata,
 }: EvalRunProvenance & {
@@ -775,6 +773,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
   /**
+   * The accounts each server was authorized with, by id only. The backend
+   * keeps the ids that belong to the person starting the run and names them
+   * itself, so nothing sent here can put an email on the run.
+   */
+  accountsAtRun?: Array<{ serverId: string; connectionIds: string[] }>;
+  /**
    * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
    * boundary. A LABEL, not an authorization input: `source` is still stamped
    * by the route and the verified attribution is still what the audit reads.
@@ -833,6 +837,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
       ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      ...(accountsAtRun?.length ? { accountsAtRun } : {}),
       // Forwarded only when present. An older backend's `startTestSuiteRun`
       // validator does not know these args and rejects the whole call for an
       // unknown field, so sending `launcher: undefined` would break every
@@ -845,16 +850,24 @@ export const startSuiteRunWithRecorder = async ({
         ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
       ],
     };
-    response = await retrySuiteStartOnConflict(() =>
-      convexClient.mutation(
-        "testSuites:startTestSuiteRun" as any,
-        mutationArgs,
-      ),
-    );
+    const start = (args: Record<string, unknown>) =>
+      retrySuiteStartOnConflict(() =>
+        convexClient.mutation("testSuites:startTestSuiteRun" as any, args),
+      );
+    response = await start(mutationArgs).catch((error: unknown) => {
+      // A backend that predates run accounts rejects the argument outright.
+      // Every run carries it, so start without it there rather than fail
+      // every launch; that backend has nowhere to keep it anyway.
+      if (!/extra field `?accountsAtRun/.test(String(error))) throw error;
+      const { accountsAtRun: _unsupported, ...older } = mutationArgs;
+      return start(older);
+    });
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
     // with the billing ConvexError and NO pending run group is stranded.
+    const capacity = asCapacityRouteError(error);
+    if (capacity) throw capacity;
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
@@ -867,6 +880,12 @@ export const startSuiteRunWithRecorder = async ({
     const aiRefusal = asAiRefusalRouteError(error);
     if (aiRefusal) {
       throw aiRefusal;
+    }
+    // An organization already over its spend budget is refused by the
+    // allowance pre-check, before any run row exists.
+    const feeRefusal = platformFeeRefusalError(error);
+    if (feeRefusal) {
+      throw feeRefusal;
     }
     // The environment resolves to no model — no override on it, none pinned on
     // its client — so the backend refused before creating anything. Remediable
@@ -934,15 +953,40 @@ export const startSuiteRunWithRecorder = async ({
     // together used to roll the loser back whole. The action retries that
     // conflict server-side; the mutation it wraps still exists and is what
     // older inspector builds call.
-    await convexClient.action("testSuites:startSuiteRunIterations" as any, {
-      runId,
-    });
+    if (response?.deduped !== true) {
+      await convexClient.action("testSuites:startSuiteRunIterations" as any, {
+        runId,
+      });
+    }
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
-    logger.error("[evals] Failed to pre-create suite run iterations", error, {
-      suiteId,
-      runId,
-    });
+    // Defense in depth: the run-start pre-check normally rejects out-of-quota
+    // launches before the run row exists, but a launch that races another to
+    // exhaust the cap can still trip the reserve here. Preserve the billing
+    // payload so the client renders the proper upgrade message. The eval_step
+    // fee is charged here and not at run start, so an organization out of
+    // credits is first refused at this step.
+    const refusal =
+      asBillingRouteError(error) ??
+      asAiRefusalRouteError(error) ??
+      platformFeeRefusalError(error);
+    if (refusal) {
+      // The organization's limits working as designed, so no Sentry page.
+      logger.warn("[evals] Suite run iterations refused", {
+        suiteId,
+        runId,
+        code: refusal.code,
+        status: refusal.status,
+        // `code` is FORBIDDEN for every 403 refusal; the backend code tells
+        // them apart.
+        reason: refusal.details?.reason ?? refusal.details?.code,
+      });
+    } else {
+      logger.error("[evals] Failed to pre-create suite run iterations", error, {
+        suiteId,
+        runId,
+      });
+    }
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
@@ -962,18 +1006,10 @@ export const startSuiteRunWithRecorder = async ({
       status: "failed",
       notes: "Failed to prepare eval test attempts.",
     });
-    // Defense in depth: the run-start pre-check normally rejects out-of-quota
-    // launches before the run row exists, but a launch that races another to
-    // exhaust the cap can still trip the reserve here. Preserve the billing
-    // payload so the client renders the proper upgrade message; the run was
-    // already finalized failed above, so no pending group is left behind.
-    const billing = asBillingRouteError(error);
-    if (billing) {
-      throw billing;
-    }
-    const aiRefusal = asAiRefusalRouteError(error);
-    if (aiRefusal) {
-      throw aiRefusal;
+    // The run was already finalized failed above, so no pending group is left
+    // behind.
+    if (refusal) {
+      throw refusal;
     }
     // `cause` is logged above and recorded on the run; the response carries
     // only the run id (MJ-020, MJ-021).

@@ -21,7 +21,19 @@ import { MCPConformanceTest } from "./mcp-conformance/runner.js";
 import type { MCPConformanceConfig } from "./mcp-conformance/types.js";
 import { OAuthConformanceTest } from "./oauth-conformance/runner.js";
 import type { OAuthConformanceConfig } from "./oauth-conformance/types.js";
+import { resolveOAuthLoginAuthorizationPlan } from "./oauth-login.js";
 import { MCPTasksConformanceTest } from "./tasks-conformance/runner.js";
+import {
+  captureConformanceRun,
+  type SdkConformanceRunSource,
+} from "./telemetry.js";
+import {
+  resolveRunProtocolVersion,
+  requestedRunProtocolVersion,
+  serverConfigFetch,
+  unresolvedVersionReport,
+} from "./conformance-run-version.js";
+import { credentialsFromServerConfig } from "./conformance-login.js";
 import type { MCPTasksConformanceConfig } from "./tasks-conformance/types.js";
 import {
   buildConformanceRunReport,
@@ -49,13 +61,25 @@ export type ConformanceRunProgress = {
   error?: string;
 };
 
+/**
+ * The OAuth suite's config in a run. `registrationStrategy: "auto"` chooses as
+ * `oauth login` does, once the run has its protocol version: CIMD exists only
+ * from 2025-11-25, so the choice cannot be made before the run pins one.
+ */
+export type RunConformanceOAuthConfig = Omit<
+  OAuthConformanceConfig,
+  "registrationStrategy"
+> & {
+  registrationStrategy: OAuthConformanceConfig["registrationStrategy"] | "auto";
+};
+
 export type RunConformanceConfig = {
   /**
    * The target, and the transport every suite dials it through.
    *
    * `baseFetch` is the HTTP config's own seam (see `HttpServerConfig`), and
    * `fetchFn` may ride alongside it. Whichever is set reaches EVERY suite: the
-   * apps and tasks suites connect with this config as-is, and the protocol
+   * apps and tasks suites keep this transport with the resolved run pin, and the protocol
    * suite adopts it as its own `fetchFn` — the one fetch its raw probes and
    * its MCP client both dial through — unless `protocol.fetchFn` names one
    * explicitly. A caller that guards the server config has guarded the run;
@@ -63,13 +87,30 @@ export type RunConformanceConfig = {
    */
   server: MCPServerConfig & { fetchFn?: typeof fetch };
   suites?: ConformanceSuiteKind[];
+  /** One HTTP revision for every suite; absent resolves the shared server pin or Auto once. */
   protocolVersion?: MCPConformanceConfig["protocolVersion"];
   protocol?: Partial<Omit<MCPConformanceConfig, "url" | "command" | "args">>;
   apps?: Partial<Omit<MCPAppsConformanceConfig, "url" | "command" | "args">>;
   tasks?: Partial<Omit<MCPTasksConformanceConfig, "url" | "command" | "args">>;
-  oauth?: OAuthConformanceConfig;
+  oauth?: RunConformanceOAuthConfig;
+  /**
+   * Stops the run. Every suite receives it beside its own signal, so aborting
+   * it ends the suites still running.
+   */
+  signal?: AbortSignal;
   engineVersion?: string;
   onProgress?: (event: ConformanceRunProgress) => void | Promise<void>;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector's suite routes). Wins over `__telemetryRunSource`. See
+   * `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
+  /**
+   * @internal the Inspector's label for a run it hosts. Absent means a
+   * direct SDK run, labeled `sdk`.
+   */
+  __telemetryRunSource?: Exclude<SdkConformanceRunSource, "sdk">;
 };
 
 function isHeaderRecord(value: unknown): value is Record<string, string> {
@@ -79,26 +120,6 @@ function isHeaderRecord(value: unknown): value is Record<string, string> {
     !Array.isArray(value) &&
     Object.values(value).every((entry) => typeof entry === "string")
   );
-}
-
-/**
- * The fetch the caller attached to the server config, if any: `fetchFn` first,
- * then the HTTP transport's `baseFetch`.
- *
- * Read structurally because `server` is a union, and a stdio config simply has
- * neither — its suites never reach a fetch.
- */
-function serverConfigFetch(
-  server: RunConformanceConfig["server"]
-): typeof fetch | undefined {
-  const candidate = server as { fetchFn?: unknown; baseFetch?: unknown };
-  if (typeof candidate.fetchFn === "function") {
-    return candidate.fetchFn as typeof fetch;
-  }
-  if (typeof candidate.baseFetch === "function") {
-    return candidate.baseFetch as typeof fetch;
-  }
-  return undefined;
 }
 
 async function runSuite(
@@ -140,6 +161,8 @@ async function runSuite(
         ...(config.protocolVersion
           ? { protocolVersion: config.protocolVersion }
           : {}),
+        // runConformance counted this run. Last, so no spread undoes it.
+        __suppressTelemetry: true,
       } as MCPConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromProtocolResult(result) };
@@ -148,6 +171,13 @@ async function runSuite(
       const result = await new MCPAppsConformanceTest({
         ...server,
         ...config.apps,
+        ...(config.protocolVersion && "url" in server
+          ? {
+              mcpProtocolVersion: config.protocolVersion,
+              supportedProtocolVersions: [config.protocolVersion],
+            }
+          : {}),
+        __suppressTelemetry: true,
       } as MCPAppsConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromAppsResult(result) };
@@ -156,6 +186,13 @@ async function runSuite(
       const result = await new MCPTasksConformanceTest({
         ...server,
         ...config.tasks,
+        ...(config.protocolVersion && "url" in server
+          ? {
+              mcpProtocolVersion: config.protocolVersion,
+              supportedProtocolVersions: [config.protocolVersion],
+            }
+          : {}),
+        __suppressTelemetry: true,
       } as MCPTasksConformanceConfig).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromTasksResult(result) };
@@ -166,11 +203,70 @@ async function runSuite(
           "OAuth is opt-in: pass an oauth config with an explicit auth strategy",
         );
       }
-      const result = await new OAuthConformanceTest(config.oauth).run();
+      const oauth = await resolveOAuthRegistration({
+        ...config.oauth,
+        ...(config.protocolVersion
+          ? { protocolVersion: config.protocolVersion }
+          : {}),
+      });
+      const result = await new OAuthConformanceTest({
+        ...oauth,
+        __suppressTelemetry: true,
+      }).run();
       const report = toConformanceReport(result);
       return { ...report, score: scoreFromOAuthResult(result) };
     }
   }
+}
+
+/** Each suite's config with the run's signal joined to the suite's own. */
+function withRunSignal(config: RunConformanceConfig): RunConformanceConfig {
+  const run = config.signal;
+  if (!run) return config;
+  const join = (own: AbortSignal | undefined) =>
+    own ? AbortSignal.any([run, own]) : run;
+  return {
+    ...config,
+    protocol: { ...config.protocol, signal: join(config.protocol?.signal) },
+    apps: { ...config.apps, signal: join(config.apps?.signal) },
+    tasks: { ...config.tasks, signal: join(config.tasks?.signal) },
+    ...(config.oauth
+      ? { oauth: { ...config.oauth, signal: join(config.oauth.signal) } }
+      : {}),
+  };
+}
+
+/**
+ * Settle `"auto"` with `oauth login`'s plan at the version the suite will run:
+ * pre-registered credentials when the caller gave them, else what the
+ * authorization server advertises (CIMD, then DCR). A blocked plan throws, and
+ * the run reports the suite as one that could not run.
+ */
+async function resolveOAuthRegistration(
+  oauth: RunConformanceOAuthConfig
+): Promise<OAuthConformanceConfig> {
+  const { registrationStrategy } = oauth;
+  if (registrationStrategy !== "auto") {
+    return { ...oauth, registrationStrategy };
+  }
+  const plan = await resolveOAuthLoginAuthorizationPlan({
+    ...oauth,
+    registrationStrategy: undefined,
+    registrationMode: "auto",
+  });
+  if (plan.status !== "ready" || !plan.registrationStrategy) {
+    throw new Error(plan.blockers[0] ?? plan.summary);
+  }
+  return {
+    ...oauth,
+    registrationStrategy: plan.registrationStrategy,
+    client: {
+      ...oauth.client,
+      ...(plan.clientIdMetadataUrl
+        ? { clientIdMetadataUrl: plan.clientIdMetadataUrl }
+        : {}),
+    },
+  };
 }
 
 /**
@@ -180,15 +276,49 @@ async function runSuite(
 export async function runConformance(
   config: RunConformanceConfig,
 ): Promise<ConformanceRunReportV1> {
+  config = withRunSignal(config);
   const requestedSuites = normalizeConformanceSuites(config.suites);
   if (requestedSuites.includes("oauth") && !config.oauth) {
     throw new Error(
-      "OAuth is opt-in and requires an explicit supported auth strategy",
+      "OAuth is opt-in and requires an explicit supported auth strategy"
     );
+  }
+  // One event for the whole run; every inner suite is told to stay quiet.
+  if (!config.__suppressTelemetry) {
+    void captureConformanceRun(config.__telemetryRunSource ?? "sdk");
   }
   const startedAt = Date.now();
   const reports: Partial<Record<ConformanceSuiteKind, ConformanceReport>> = {};
-  const independent = requestedSuites.filter((kind) => kind !== "oauth");
+  let independent = requestedSuites.filter((kind) => kind !== "oauth");
+  const requestedVersion = requestedRunProtocolVersion(config);
+  try {
+    // OAuth-only runs acquire their own credentials before contacting MCP.
+    if (independent.length > 0 || requestedVersion !== undefined) {
+      config = {
+        ...config,
+        protocolVersion: await resolveRunProtocolVersion(config),
+      };
+    }
+  } catch (error) {
+    const canRunOAuth =
+      requestedVersion === undefined && !config.protocol?.signal?.aborted;
+    for (const kind of requestedSuites.filter(
+      (kind) => kind !== "oauth" || !canRunOAuth
+    )) {
+      const report = unresolvedVersionReport(
+        kind,
+        error,
+        credentialsFromServerConfig(config.server)
+      );
+      reports[kind] = report;
+      await config.onProgress?.({
+        suiteKind: kind,
+        status: "completed",
+        report,
+      });
+    }
+    independent = [];
+  }
 
   await Promise.all(
     independent.map(async (kind) => {
@@ -209,10 +339,10 @@ export async function runConformance(
           error: message,
         });
       }
-    }),
+    })
   );
 
-  if (requestedSuites.includes("oauth")) {
+  if (requestedSuites.includes("oauth") && !reports.oauth) {
     await config.onProgress?.({ suiteKind: "oauth", status: "running" });
     try {
       const report = await runSuite("oauth", config);

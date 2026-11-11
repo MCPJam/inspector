@@ -127,6 +127,9 @@ describe("isOperationAvailable", () => {
         "unified-share-evals": true,
       })
     ).toBe(true);
+    expect(
+      isOperationAvailable("rotate_share_link", { conformance: true })
+    ).toBe(true);
   });
 
   it("never hides a way to stop what outlives a feature being turned off", () => {

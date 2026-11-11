@@ -1,0 +1,198 @@
+/**
+ * The state a conformance run reports per suite, and what a run covers.
+ * Split from `use-conformance-run` so the hook file holds only the run;
+ * the hook re-exports everything here, so importers keep one path.
+ */
+
+// Types only, so nothing from the top-level entry reaches the bundle; the
+// browser entry does not export the result types.
+import type {
+  MCPConformanceResult,
+  MCPAppsConformanceResult,
+  MCPTasksConformanceResult,
+} from "@mcpjam/sdk";
+// Browser-safe SDK entry: the top-level `@mcpjam/sdk` pulls Node-only
+// transitive deps that break the Vite browser bundle.
+import { canRunConformance } from "@mcpjam/sdk/browser";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
+
+// Shared with the hosted executor, so a saved server's settings select the
+// same checks from either place.
+export {
+  isSelected,
+  runnableSelection,
+  type ConformanceSelection,
+  type ProtocolVersionPin,
+} from "@/shared/conformance-settings";
+
+export type SuiteStatus =
+  | "idle"
+  | "running"
+  /**
+   * The OAuth suite reached the authorization step and is holding: it has a
+   * session and a URL, and is waiting for an explicit go-ahead. Only reachable
+   * under `deferOAuthAuthorization`.
+   */
+  | "needs-authorization"
+  | "done"
+  | "error"
+  | "unavailable";
+
+
+export interface SuiteState {
+  status: SuiteStatus;
+  error?: string;
+  unavailableReason?: string;
+  /** Left out of this run before Run: never run, so never scored. */
+  notSelected?: boolean;
+  /**
+   * The verdict of a finished run. "Done" only says the run ended — a suite
+   * that finished with failures must not read as green.
+   */
+  verdict?: "passed" | "failed" | "incomplete";
+}
+
+export interface ProtocolSuiteState extends SuiteState {
+  result?: MCPConformanceResult;
+}
+
+export interface AppsSuiteState extends SuiteState {
+  result?: MCPAppsConformanceResult;
+}
+
+export interface TasksSuiteState extends SuiteState {
+  result?: MCPTasksConformanceResult;
+}
+
+export interface OAuthSuiteState extends SuiteState {
+  result?: OAuthConformanceStartResult["result"];
+  sessionId?: string;
+  waitingForAuth?: boolean;
+  /**
+   * The authorization URL while the suite needs or waits for the browser:
+   * the explicit authorize step opens it, and a waiting suite offers it again
+   * in case the popup never appeared.
+   */
+  authorizationUrl?: string;
+  /**
+   * The browser refused to open the authorization popup. Opening it runs
+   * after several awaits, outside the click that started the run, which is
+   * exactly what popup blockers refuse; without this the suite waited on a
+   * window that never existed until the session expired.
+   */
+  popupBlocked?: boolean;
+  /**
+   * OAuth was skipped or its deferred authorization expired. The suite is
+   * unavailable and unscored because authorization-dependent checks never ran.
+   */
+  skipped?: boolean;
+}
+
+export function isHttpServer(server: ServerWithName): boolean {
+  // `server.config` is typed required but can be undefined during hosted
+  // hydration — guard before using the `in` operator to avoid a TypeError.
+  return !!server.config && "url" in server.config;
+}
+
+function suiteState(
+  suite: "protocol" | "oauth" | "apps" | "tasks",
+  server: ServerWithName,
+): SuiteState {
+  // The SDK's `canRunConformance` is the source of truth for which suites
+  // support which transports. It handles null/undefined configs gracefully.
+  const support = canRunConformance(
+    suite,
+    server.config as Parameters<typeof canRunConformance>[1],
+  );
+  return support.supported
+    ? { status: "idle" }
+    : { status: "unavailable", unavailableReason: support.reason };
+}
+
+export function createProtocolState(
+  server: ServerWithName,
+): ProtocolSuiteState {
+  return suiteState("protocol", server);
+}
+
+export function createAppsState(server: ServerWithName): AppsSuiteState {
+  return suiteState("apps", server);
+}
+
+export function createTasksState(server: ServerWithName): TasksSuiteState {
+  return suiteState("tasks", server);
+}
+
+export function createOAuthState(server: ServerWithName): OAuthSuiteState {
+  return suiteState("oauth", server);
+}
+
+/** Every suite reports the same three-value outcome; render it, don't flatten it. */
+export function verdictOf(result: {
+  outcome?: string;
+  passed?: boolean;
+}): "passed" | "failed" | "incomplete" {
+  if (result.outcome === "incomplete") return "incomplete";
+  return result.passed ? "passed" : "failed";
+}
+
+/**
+ * A server that requires no authorization has no OAuth obligations to test —
+ * authorization is OPTIONAL in every MCP revision — so the suite reports
+ * `not-applicable`. That is not a result to render as red: it reuses the same
+ * "unavailable" treatment as a transport that cannot run the suite.
+ */
+export function oauthStateFromResult(
+  result: NonNullable<OAuthConformanceStartResult["result"]>,
+): OAuthSuiteState {
+  if (result.outcome === "not-applicable") {
+    return {
+      status: "unavailable",
+      unavailableReason: result.summary,
+      // Kept so the score pool can see the run: a not-applicable OAuth run
+      // contributes its "nothing to score here" tally instead of vanishing.
+      result,
+    };
+  }
+  return {
+    status: "done",
+    result,
+    // OAuth reports the same three-value verdict as the other suites (plus its
+    // own not-applicable, handled above), so an incomplete flow is badged
+    // amber rather than flattened to failed.
+    verdict: verdictOf(result),
+  };
+}
+
+export const NOT_SELECTED = {
+  status: "unavailable",
+  unavailableReason: "Not selected for this run, so it is not scored.",
+  notSelected: true,
+} as const;
+
+/**
+ * A suite's request error, in words. A proxy that cut the request off (a 524,
+ * or a 504 with no message of ours) names the time limit instead of a status
+ * code; anything else keeps its own message.
+ */
+export function suiteErrorMessage(err: unknown): string {
+  const status = (err as { status?: unknown } | null)?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  const cutOff =
+    status === 524 || (status === 504 && /^Request failed/.test(message));
+  return cutOff
+    ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
+    : message;
+}
+
+
+/** An authorization the visitor never started is not a conformance verdict. */
+export function expiredDeferredOAuth(state: OAuthSuiteState): OAuthSuiteState | undefined {
+  if (state.status !== "needs-authorization") return undefined;
+  return {
+    status: "unavailable",
+    skipped: true,
+    unavailableReason: "OAuth was not authorized before the run ended, so it is not scored. Run again to authorize.",
+  };
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
@@ -109,6 +109,61 @@ describe("TrialScorecard", () => {
   it("shows a skeleton before a live iteration exists", () => {
     renderCard({ iteration: null, isRunning: true });
     expect(screen.getByTestId("trial-scorecard-loading")).toBeInTheDocument();
+  });
+  it("shows a skeleton, not the no-chain fallback, while the chain loads", () => {
+    renderCard({ chain: null, chainDisplay: "loading" });
+    expect(screen.getByTestId("trial-scorecard-loading")).toHaveTextContent(
+      "Loading this iteration's report…",
+    );
+    expect(screen.queryByText("No observation recorded.")).toBeNull();
+  });
+  it.each([
+    ["error", "Couldn't load this iteration's stage results. Select Retry to try again."],
+    [
+      "notLoaded",
+      "Stage results weren't loaded for this iteration. Each check below still shows its result.",
+    ],
+    ["waiting", "Stage results appear when the run finishes."],
+  ] as const)(
+    "puts a %s note above the rows instead of hiding the trial's scores",
+    (chainDisplay, copy) => {
+      renderCard({ chain: null, chainDisplay });
+      expect(
+        screen.getByTestId("trial-scorecard-chain-unavailable"),
+      ).toHaveTextContent(copy);
+      // The rows still come from the iteration, so they stay.
+      expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+        0,
+      );
+    },
+  );
+  it("offers Retry only for a failed read", () => {
+    const retry = vi.fn();
+    const { rerender } = renderCard({
+      chain: null,
+      chainDisplay: "error",
+      onRetryChain: retry,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+    rerender(
+      <TrialScorecard
+        authored={authored}
+        iteration={iteration()}
+        steps={steps}
+        chain={null}
+        chainDisplay="notLoaded"
+        onRetryChain={retry}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+  it("still shows the no-chain fallback once loading is over", () => {
+    renderCard({ chain: null });
+    expect(screen.queryByTestId("trial-scorecard-loading")).toBeNull();
+    expect(screen.getAllByTestId("trial-scorecard-row").length).toBeGreaterThan(
+      0,
+    );
   });
   it("opens on the break, and keeps the other stages one click away", () => {
     const chain = {

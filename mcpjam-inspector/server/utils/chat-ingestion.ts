@@ -1,3 +1,6 @@
+import { completedTurnPersistence, type CompletedTurnOwner } from "../services/completed-turn-persistence.js";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
+import type { SetupAtTurn } from "../services/chat-turn/setup-manifest.js";
 import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
@@ -22,6 +25,7 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
+import type { ChatOrigin } from "./chat-origin.js";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 /**
@@ -71,6 +75,8 @@ export type PersistChatOutcome =
       outcome: "failed";
       failureKind: PersistChatFailureKind;
       status?: number;
+      retryHandle?: string;
+      retryProjectId?: string;
     }
   | {
       outcome: "not-attempted";
@@ -116,6 +122,7 @@ export interface ResumeConfig {
    */
   reasoningEffort?: ModelReasoningEffort;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -170,6 +177,7 @@ export interface DirectHostConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   /**
    * Optional SEP-1865 visibility filter switch. Undefined means "use the
    * spec default" — the backend's hostConfigV2 canonicalizer drops
@@ -201,6 +209,7 @@ export function buildDirectHostConfig(input: {
   requestedTemperature?: number;
   resolvedTemperature?: number;
   requireToolApproval?: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -213,6 +222,7 @@ export function buildDirectHostConfig(input: {
     requestedTemperature,
     resolvedTemperature,
     requireToolApproval,
+    requireNativeToolDiscovery,
     respectToolVisibility,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
@@ -229,6 +239,7 @@ export function buildDirectHostConfig(input: {
         ? requestedTemperature
         : 0.7,
     requireToolApproval: requireToolApproval === true,
+    ...(requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery } : {}),
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
@@ -249,6 +260,7 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  setupAtTurn?: SetupAtTurn;
   connectionsAtTurn?: Array<{
     serverId: string;
     connectionId: string;
@@ -306,22 +318,17 @@ export interface PersistedTurnTrace {
    * saying so.
    */
   pageToolsAtTurn?: MintedPageToolRecord[];
+  /**
+   * Which MCP route a harness turn ran on, and why. Inside the turn trace like
+   * `skillsAtTurn`, so it reaches the wire with no change to the body builder;
+   * the backend drops a receipt it cannot parse and keeps the trace.
+   */
+  harnessMcpAtTurn?: HarnessMcpAtTurn;
 }
 
-// Mirrors mcpjam-backend `chatOriginValidator`. Required at every writer
-// boundary so a new surface can't be added without explicitly choosing one.
-// Backend still accepts undefined for historical-row compatibility; the
-// inspector pins to the closed set. `swarm` is the journey-execution surface
-// (single-host synthetic sessions launched by a project member).
-export type ChatOrigin =
-  | "playground"
-  | "mcpjam_agent"
-  | "scenario"
-  | "eval"
-  | "swarm"
-  // Agent Playground turn route. Validator ships with backend PR 4; this
-  // mirror must exist before anything emits `"api"`.
-  | "api";
+// Its own import-free module so `log-events.ts`, which the client typecheck
+// reaches, can name it without pulling in this file's server imports.
+export type { ChatOrigin };
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
@@ -344,8 +351,10 @@ interface PersistChatSessionOptions {
    */
   modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
+  authorizationFailure?: { status?: number };
+  retryOwner?: CompletedTurnOwner;
   projectId?: string;
-  sourceType?: "scenario" | "direct" | "eval" | "swarm";
+  sourceType?: "scenario" | "direct" | "eval" | "swarm" | "event";
   origin: ChatOrigin;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
@@ -729,11 +738,12 @@ function classifySuccessBody(body: unknown): PersistChatOutcome {
   return { outcome: "saved", version: parsed.version, ...sessionDocId };
 }
 
-async function attemptChatIngest(
+export async function attemptChatIngest(
   url: string,
   headers: Record<string, string>,
   body: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<IngestAttemptResult> {
   // A fresh controller per attempt. Reusing one across retries would poison
   // every later attempt: once aborted, an AbortSignal stays aborted, so retry 1
@@ -745,7 +755,7 @@ async function attemptChatIngest(
     const response = await fetch(url, {
       method: "POST",
       headers,
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       body,
     });
 
@@ -858,19 +868,27 @@ export async function persistChatSessionToConvex(
   if (!options.chatSessionId) {
     return { outcome: "not-attempted", reason: "no-session-id" };
   }
-  if (!options.authHeader) {
-    return { outcome: "not-attempted", reason: "no-auth" };
-  }
 
   const perAttemptTimeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
   const deadline =
     Date.now() + Math.max(perAttemptTimeoutMs, INGEST_TOTAL_BUDGET_MS);
   const ingestHeaders: Record<string, string> = {
     "content-type": "application/json",
-    authorization: options.authHeader,
+    ...(options.authHeader ? { authorization: options.authHeader } : {}),
     ...options.forwardHeaders,
   };
   const body = buildIngestBody(options);
+  const retain = (outcome: PersistChatOutcome): PersistChatOutcome => {
+    if (outcome.outcome !== "failed" || !options.retryOwner || !options.turnTrace?.turnId) return outcome;
+    const status = outcome.status;
+    if (status !== undefined && status >= 400 && status < 500 &&
+        ![401, 408, 425, 429].includes(status)) return outcome;
+    const retryHandle = completedTurnPersistence.register(options.retryOwner, body, options.chatSessionId, options.turnTrace.turnId);
+    return retryHandle ? { ...outcome, retryHandle, retryProjectId: options.retryOwner.projectId } : outcome;
+  };
+
+  if (options.authorizationFailure) return retain({ outcome: "failed", failureKind: "http_error", status: options.authorizationFailure.status });
+  if (!options.authHeader) return { outcome: "not-attempted", reason: "no-auth" };
 
   const logFailure = (detail: {
     failureKind: PersistChatFailureKind | "version_conflict";
@@ -974,7 +992,7 @@ export async function persistChatSessionToConvex(
           );
         }
       }
-      return outcome;
+      return retain(outcome);
     }
 
     // Keep the first attempt's diagnostics when a later one has none — a
@@ -998,11 +1016,11 @@ export async function persistChatSessionToConvex(
   }
 
   logFailure(lastFailure);
-  return {
+  return retain({
     outcome: "failed",
     failureKind: lastFailure.failureKind,
     ...(lastFailure.status !== undefined ? { status: lastFailure.status } : {}),
-  };
+  });
 }
 
 /**
@@ -1053,6 +1071,7 @@ export function buildPersistReceiptData(
         outcome: "failed",
         ...base,
         failureKind: outcome.failureKind,
+        ...(outcome.retryHandle ? { retryHandle: outcome.retryHandle, retryProjectId: outcome.retryProjectId } : {}),
       };
   }
 }

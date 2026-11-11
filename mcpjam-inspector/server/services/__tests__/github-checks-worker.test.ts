@@ -29,6 +29,7 @@ import {
   type ClaimedGithubCheck,
 } from "../github-checks-worker";
 import { CheckStepError, type CheckSandbox } from "../github-checks/sandbox";
+import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import {
   CheckStoppedByPlan,
   PlanProtocolError,
@@ -1104,6 +1105,14 @@ describe("describeCheckFailure", () => {
         new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}'),
       ),
     ).toMatchObject({ failureReason: "spend_budget_reached" });
+    // The recorder's 403 names the code in `details.reason`, not its message.
+    expect(
+      describeCheckFailure(
+        platformFeeRefusalError({
+          data: { code: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+        }),
+      ),
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
     // A build error that merely mentions a budget keeps its own message.
     expect(
       describeCheckFailure(new Error("build failed: budget.ts not found")),
@@ -1176,6 +1185,13 @@ describe("a run held for its gating judge", () => {
       expect(run).toMatchObject({ status: "completed", result: "passed" });
       expect(c.query).toHaveBeenCalledTimes(3);
       expect(time.sleeps).toEqual([1_000, 1_000]);
+    });
+
+    it("waits for an adopted run through execution and grading", async () => {
+      const c = client([{ status: "pending" }, { status: "running" }, { status: "grading" }, { status: "completed", result: "passed" }]);
+      const time = clock();
+      await expect(awaitJudgeVerdict(c, "run-1", { waitMs: 60_000, pollMs: 1000, now: time.now, sleep: time.sleep })).resolves.toMatchObject({ status: "completed", result: "passed" });
+      expect(time.sleeps).toHaveLength(3);
     });
 
     it("returns the held row when the wait runs out — it decides nothing", async () => {

@@ -28,8 +28,10 @@ import type { ConvexHttpClient } from "convex/browser";
 import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
+import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
+import { ORG_KEY_MISSING_MESSAGE } from "../../../shared/org-key-surfaces.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */
@@ -109,6 +111,8 @@ export interface ResolvedEnvironmentRuntime {
   /** Additive-compatibility DIAGNOSTIC only — never a substitute for the
    *  invariant checks in {@link resolveEnvironmentForRuntime}. */
   specVersion?: number;
+  serverConfigHashes?: Record<string, string>;
+  selectedSecretIds?: string[];
   environmentRef: {
     environmentId: string;
     name: string;
@@ -204,6 +208,25 @@ export function translateEnvironmentRuntimeError(
   const structuredMessage =
     typeof data?.message === "string" ? data.message : undefined;
 
+  if (code === "HOST_UNRESOLVED") {
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      structuredMessage ??
+        "Client not found. Select another client and try again.",
+      {
+        reason: "HOST_UNRESOLVED",
+        ...(data?.details?.hostId ? { hostId: data.details.hostId } : {}),
+      },
+    );
+  }
+  if (code === "cursor_key_missing") {
+    // Turn preparation refuses a harness whose org key isn't ready before the
+    // turn's own key check runs: the member reads the same refusal either way.
+    return new WebRouteError(409, ErrorCode.CONFLICT, ORG_KEY_MISSING_MESSAGE, {
+      reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+    });
+  }
   if (code && code.startsWith("ENV_")) {
     if (RUNTIME_NOT_FOUND_CODES.has(code)) {
       return new WebRouteError(
@@ -292,12 +315,14 @@ export function resolveRuntimeVenue(): RuntimeVenue | undefined {
  * connectable names, server provenance) are deliberately NOT checked — those are
  * the deploy-skew surface.
  */
-function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
+export function assertRuntimeInvariants(
+  raw: unknown,
+): ResolvedEnvironmentRuntime {
   const fail = (detail: string): never => {
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,
-      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`
+      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`,
     );
   };
   if (!isRecord(raw)) return fail("empty response");
@@ -366,6 +391,7 @@ export async function resolveEnvironmentForRuntime(
     projectId: string;
     environmentId: string;
     overrides?: EnvironmentOverrides;
+    serverSelectionSource?: "client-default";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
@@ -377,6 +403,9 @@ export async function resolveEnvironmentForRuntime(
       {
         projectId: args.projectId,
         environmentId: args.environmentId,
+        ...(args.serverSelectionSource
+          ? { serverSelectionSource: args.serverSelectionSource }
+          : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
       } as any
@@ -631,6 +660,12 @@ export function toEnvironmentPreview(
 ): EnvironmentPreview {
   const runtimeConfig = spec.host.runtimeConfig;
   const harness = readString(runtimeConfig, "harness");
+  // Delivery follows the loop the turn runs: `agentLoop ?? harness`, as in
+  // `resolveAgentLoop`. Reading `harness` alone mislabels an agent-loop client.
+  const loop = effectiveHarnessId({
+    agentLoop: readString(runtimeConfig, "agentLoop"),
+    harness,
+  });
   const builtInToolIds = Array.isArray(runtimeConfig.builtInToolIds)
     ? runtimeConfig.builtInToolIds.filter(
         (id): id is string => typeof id === "string"
@@ -638,9 +673,9 @@ export function toEnvironmentPreview(
     : [];
   const skills = spec.skills ?? [];
   const capturedServerSkills = spec.serverSkills ?? [];
-  const skillDelivery: EnvironmentSkillDelivery = !harness
+  const skillDelivery: EnvironmentSkillDelivery = !loop
     ? "emulated"
-    : options.harnessSupportsSkills(harness)
+    : options.harnessSupportsSkills(loop)
     ? "harness"
     : "unsupported";
 

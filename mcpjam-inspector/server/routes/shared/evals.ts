@@ -3,7 +3,7 @@ import { localHarnessCapabilities } from "../../services/evals/runner-capabiliti
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
-import { listBaseServers } from "../../utils/mcp-connections.js";
+import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
@@ -15,6 +15,7 @@ import {
 } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
+import { browserMcpProfileSchema } from "../../utils/browser-host-capabilities.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -32,7 +33,6 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isRunPastExecution } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -936,7 +936,10 @@ export const RunTestCaseRequestSchema = z.object({
       clientCapabilities: z.record(z.string(), z.unknown()).optional(),
       hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
       chatUiOverride: z.record(z.string(), z.unknown()).optional(),
-      mcpProfile: z.record(z.string(), z.unknown()).optional(),
+      // Same shape the browser capability resolver parses, so a malformed
+      // per-case profile is a 400 here. The suite's saved config is checked
+      // only when the run resolves capabilities.
+      mcpProfile: browserMcpProfileSchema.optional(),
       connectionDefaults: z
         .object({
           headers: z.record(z.string(), z.string()).optional(),
@@ -1441,9 +1444,8 @@ export type PreparedEvalRun = {
    * idempotency-key hit, or the keyless fingerprint window. Undefined against a
    * backend that predates the signal.
    *
-   * Read it through {@link shouldSkipExecution}; a bare truthiness check here
-   * is the wrong question, because a replay of a run still in flight is not the
-   * same as a replay of one that finished.
+   * Read it through {@link shouldSkipExecution}; the original executor owns
+   * the run, including while it is pending or running.
    */
   deduped?: boolean;
   /** The run's status as the platform holds it. `running` for a fresh start;
@@ -1457,61 +1459,31 @@ export type PreparedEvalRun = {
   serverUnreachable?: boolean;
   /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
-   * terminal run status (completed/failed/cancelled); callers that detach
-   * this (the async /api/v1 route) should still catch and defensively
-   * finalize via `recorder` for errors thrown outside the runner's own
-   * try.
+   * terminal run status (completed/failed/cancelled/timed_out); callers
+   * that detach this (the async /api/v1 route) should still catch and
+   * defensively finalize via `recorder` for errors thrown outside the
+   * runner's own try.
    *
    * DO NOT call this unconditionally on a prepared run — see
-   * {@link shouldSkipExecution}. A replay of a finished run must not execute:
-   * the suite would run a second time and bill a second time, against a run
-   * whose results are already recorded.
+   * {@link shouldSkipExecution}. An idempotent replay must not launch a
+   * second executor for the same run.
    */
   execute: () => Promise<void>;
 };
 
 /**
- * Whether a prepared run has already been run and must NOT be executed again.
- *
- * TRUE when the platform replayed an existing run AND that run is terminal.
- * Executing then would re-run every case and bill for it, writing over results
- * that are already final — which is the double-spend an idempotency key is
- * sent to prevent.
- *
- * FALSE for a replay of a NON-terminal run whose server answered the
- * preflight, deliberately. Two situations are
- * indistinguishable from here — a run genuinely in flight, and one abandoned
- * when its process died mid-execution — and they want opposite treatments. The
- * conservative answer preserves the behaviour that predates this check, so a
- * crashed run can still be driven to completion by a retry the way it always
- * has been. Deciding that case needs a liveness signal (a lease or heartbeat on
- * the run), not a guess made here.
- *
- * FALSE against a backend with no `deduped` field, for the same reason: unknown
- * is not a licence to change behaviour.
- *
- * TRUE for a replay of a run held in `grading`, which is why this reads
- * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
- * every trial and is waiting only for its judge; a redelivered claim that
- * executed it would run the whole suite a second time and bill for it, against
- * a run whose trials are already recorded — the exact double-spend above, in a
- * status that is deliberately not terminal.
- *
- * TRUE for a replay whose server failed the preflight, whatever its status.
- * Resuming a crashed run is only worth it against a server that answers; this
- * one could not list its tools, so executing would fail every iteration,
- * finalize the run as failed, and race the worker that may still be driving
- * it.
+ * A deduped launch belongs to its original executor, even while still running.
+ * Replaying it must not create another worker or bill the same trials twice.
+ * The existing watchdog fails abandoned runs; retrying work requires a fresh
+ * launch key rather than taking over a worker without an ownership claim.
+ * Older backends that omit deduped retain their existing behavior.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
   serverUnreachable?: boolean;
 }): boolean {
-  return (
-    prepared.deduped === true &&
-    (prepared.serverUnreachable === true || isRunPastExecution(prepared.status))
-  );
+  return prepared.deduped === true;
 }
 
 /**
@@ -2819,6 +2791,7 @@ export async function prepareEvalRun(
     // and an approval that never arrives is reported to the caller as the
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
+    accountsAtRun: managerAccountsAtRun(clientManager),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
@@ -2827,17 +2800,14 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
-  // The preflight was waived only because the key already had a run to hand
-  // back. A run handed back belongs to an earlier attempt and is never
-  // executed from here (`shouldSkipExecution`). Every gate below finalizes the
-  // run as failed when it refuses, which would fail a run that attempt may
-  // still be driving, so none of them runs.
+  // An adopted run belongs to its original executor. Later setup gates may
+  // finalize a run when they refuse, so replay must return before those gates.
   //
   // When the start created a run instead (the lookup and the mutation
   // disagreed, e.g. the earlier run was deleted in between), nothing was
   // handed back: close the new run before it executes against the server
   // that failed, and keep the refusal.
-  if (preflightRefusal !== undefined) {
+  if (preflightRefusal !== undefined || runWasDeduped === true) {
     if (runWasDeduped !== true) {
       await failRunBeforeExecution(convexClient, recorder, runId, {
         reason:
@@ -2857,10 +2827,10 @@ export async function prepareEvalRun(
       recorder,
       deduped: true,
       status: existingRunStatus,
-      serverUnreachable: true,
+      ...(preflightRefusal !== undefined ? { serverUnreachable: true } : {}),
       execute: async () => {
         throw new Error(
-          `eval run ${runId} was handed back without execution: its server failed the preflight`,
+          `Eval run ${runId} already has an executor. Read its existing result.`,
         );
       },
     };

@@ -92,6 +92,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { cancelEvalRunForAgent } from "./evals/agent-cancel-eval-run";
 import type {
   CancelEvalRunInspectorCommand,
   DeleteEvalSuiteInspectorCommand,
@@ -104,6 +105,7 @@ import {
   CI_OWNED_REASON_COPY,
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
+import { agentRunIterations } from "./evaluate/suite-run-iterations";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -206,6 +208,7 @@ function EvaluateTabContent({
     availableModels,
     requireOrgKeys,
     onManageOrgProviders,
+    onAddProvider,
   } = useEvalTabContext({
     isAuthenticated,
     projectId: projectId ?? null,
@@ -597,6 +600,23 @@ function EvaluateTabContent({
   );
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
+  // A case and a run both start from a suite. With none there is nothing to
+  // pick, so Add case and Setup Run go straight to creating one instead of
+  // opening the picker on an empty list. A tap while suites load waits.
+  const hasNoSuites =
+    !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  useEffect(() => {
+    // The picker lives on the list. Leaving it (Back while suites load)
+    // drops the pending action, or Create suite would open over another
+    // page once the overview answers.
+    if (route.type !== "list") {
+      setSuiteAction(null);
+      return;
+    }
+    if (suiteAction === null || !hasNoSuites) return;
+    setSuiteAction(null);
+    handleOpenCreateSuite();
+  }, [route.type, suiteAction, hasNoSuites, handleOpenCreateSuite]);
   const [runReviewSuiteId, setRunReviewSuiteId] = useState<string | null>(null);
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
@@ -987,6 +1007,13 @@ function EvaluateTabContent({
         requireAgentOperable();
         const { payload } = command as RunEvalSuiteInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite, "lifecycle");
+        const iterations = agentRunIterations(entry.suite, payload.iterations);
+        if (iterations === null) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'iterations' must be a whole number from 1 to 10.",
+          );
+        }
         // Same quota the Run button consults (use-eval-iteration-quota via
         // guardEvalIterationQuota) — surfaced as a command error naming the
         // quota instead of a toast, and NEVER bypassed.
@@ -1006,35 +1033,27 @@ function EvaluateTabContent({
             "Another suite run is already starting. Wait for it to launch.",
           );
         }
-        // The SAME quota-gated wrapper the Run button uses. Launch failures
-        // inside it surface as toasts, so this reports "requested".
-        await handleRerunWithQuota(entry.suite);
+        // Use the Run button's quota gate, but return launch refusals to the
+        // agent so it cannot report an iteration count for a refused run.
+        await handleRerunWithQuota(entry.suite, {
+          iterationOverride: iterations,
+          throwOnFailure: true,
+        });
         return {
           status: "run_requested",
           suiteId: entry.suite._id,
           suiteName: suiteDisplayName(entry.suite),
+          iterations,
           note: "Observe progress with ui_snapshot_app.",
         };
       },
       cancelEvalRun: async (command) => {
         requireAgentOperable();
         const { payload } = command as CancelEvalRunInspectorCommand;
-        const run = resolveRun(payload.runId);
-        if (run.status !== "pending" && run.status !== "running") {
-          return {
-            status: "already_finished",
-            runId: run._id,
-            runStatus: run.status,
-          };
-        }
-        if (latestHandlersRef.current.cancellingRunId) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "Another run cancellation is already in progress.",
-          );
-        }
-        await latestHandlersRef.current.handleCancelRun(run._id);
-        return { status: "cancel_requested", runId: run._id };
+        return cancelEvalRunForAgent(
+          resolveRun(payload.runId),
+          latestHandlersRef.current,
+        );
       },
       generateEvalTests: async (command) => {
         requireAgentOperable();
@@ -1581,6 +1600,7 @@ function EvaluateTabContent({
           availableModels={availableModels}
           requireOrgKeys={requireOrgKeys}
           onManageOrgProviders={onManageOrgProviders}
+          onAddProvider={onAddProvider}
           route={route}
           userMap={userMap}
           projectId={projectId}
@@ -1745,7 +1765,7 @@ function EvaluateTabContent({
         )}
 
         <Sheet
-          open={route.type === "list" && suiteAction !== null}
+          open={route.type === "list" && suiteAction !== null && !hasNoSuites}
           onOpenChange={(open) => {
             if (!open) setSuiteAction(null);
           }}
@@ -1791,19 +1811,10 @@ function EvaluateTabContent({
                 </Button>
               ))}
               {visibleSuites.length === 0 && (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Create a suite to get started.
-                  </p>
-                  <Button
-                    onClick={() => {
-                      setSuiteAction(null);
-                      handleOpenCreateSuite();
-                    }}
-                  >
-                    Create suite
-                  </Button>
-                </>
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Loading suites…
+                </p>
               )}
             </div>
           </SheetContent>

@@ -150,6 +150,72 @@ vi.mock(
     };
   },
 );
+// Pass-through spies on which box each consumer of a paired run was handed.
+const boxSpies = vi.hoisted(() => ({
+  resolveHostTools: vi.fn(),
+  buildEvalBashTool: vi.fn(),
+  peekPageTools: vi.fn(async () => undefined),
+  buildHostedStepHandlers: vi.fn(),
+}));
+vi.mock("../step-handlers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../step-handlers")>();
+  return {
+    ...actual,
+    buildHostedStepHandlers: (
+      ...args: Parameters<typeof actual.buildHostedStepHandlers>
+    ) => {
+      boxSpies.buildHostedStepHandlers(...args);
+      return actual.buildHostedStepHandlers(...args);
+    },
+  };
+});
+vi.mock("../../../utils/built-in-tools/registry.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../../../utils/built-in-tools/registry.js")
+    >();
+  return {
+    ...actual,
+    resolveHostTools: (
+      ...args: Parameters<typeof actual.resolveHostTools>
+    ) => {
+      boxSpies.resolveHostTools(...args);
+      return actual.resolveHostTools(...args);
+    },
+  };
+});
+vi.mock(
+  "../../../utils/built-in-tools/sandbox-bash.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../utils/built-in-tools/sandbox-bash.js")
+      >();
+    return {
+      ...actual,
+      buildEvalBashTool: (
+        ...args: Parameters<typeof actual.buildEvalBashTool>
+      ) => {
+        boxSpies.buildEvalBashTool(...args);
+        return actual.buildEvalBashTool(...args);
+      },
+    };
+  },
+);
+vi.mock("../../browserd/page-tools-peek.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../browserd/page-tools-peek.js")>()),
+  peekPageToolsForChatTurn: (...args: unknown[]) =>
+    boxSpies.peekPageTools(...(args as [])),
+}));
+vi.mock(
+  "../../../utils/secrets/browser-secrets.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../utils/secrets/browser-secrets.js")
+    >()),
+    resolveBrowserSecrets: async () => [],
+  }),
+);
 import {
   isRunDeletedError,
   runEvalSuiteWithAiSdk,
@@ -427,6 +493,7 @@ describe.each(["local", "hosted"] as const)(
         turnTimeout?: boolean;
         capacity?: boolean;
         capacityAbort?: boolean;
+        modelFree?: boolean;
       } = {},
     ) {
       vi.useFakeTimers();
@@ -446,7 +513,16 @@ describe.each(["local", "hosted"] as const)(
         _id: `iter-${index + 1}`,
         testCaseId: "case-1",
         iterationNumber: index + 1,
-        testCaseSnapshot: snapshot,
+        // The backend files a case with no prompt under a display-only
+        // sentinel model, whatever model the runner's config carries.
+        testCaseSnapshot: options.modelFree
+          ? {
+              title: "Case",
+              query: "",
+              model: "widget-probe",
+              provider: "none",
+            }
+          : snapshot,
         status: "pending",
         result: "pending",
       })) as Array<Record<string, any>>;
@@ -573,7 +649,18 @@ describe.each(["local", "hosted"] as const)(
               testCaseId: "case-1",
               expectedToolCalls: [],
               promptTurns: [
-                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+                options.modelFree
+                  ? {
+                      id: "turn-1",
+                      prompt: "",
+                      expectedToolCalls: [],
+                      pinnedToolCall: {
+                        serverName: "srv-1",
+                        toolName: "show_map",
+                        arguments: {},
+                      },
+                    }
+                  : { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
               ],
             },
           ],
@@ -644,6 +731,16 @@ describe.each(["local", "hosted"] as const)(
           summary: expect.any(Object),
         }),
       );
+    });
+
+    it("times out the row of a case with no prompt, whose snapshot carries the sentinel model", async () => {
+      const { rows } = await startRun({ modelFree: true });
+      expect(rows.map((row) => row.status)).toEqual([
+        "completed",
+        "timed_out",
+        "completed",
+      ]);
+      expect(rows[1].metadata.stopReason).toBe("iteration_timeout");
     });
 
     it("restores abort-the-run behavior under the compatibility switch", async () => {
@@ -800,6 +897,194 @@ describe("hosted iteration box heartbeat", () => {
     expect(release).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(2 * 30 * 60_000);
     expect(touch).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted iteration on a pinned box with a paired desktop", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  /**
+   * One suite iteration that pins an image AND declares a browser. The
+   * control plane answers with the pinned terminal box and the desktop it
+   * paired with it; `answer` lets a test drop the desktop instead.
+   */
+  async function runPaired(
+    answer: "paired" | "terminal-only" = "paired",
+    harness?: string,
+  ) {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    // The runner's own provision call reaches the control plane; only the
+    // wire is stubbed, so the request body is what the runner really sends.
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        const json = (body: unknown) =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        if (!String(url).endsWith("/evals/sandbox/provision")) return json({});
+        bodies.push(JSON.parse(String(init?.body)));
+        return json({
+          sandboxId: "sbx-pinned",
+          sandboxRowId: "row-pinned",
+          runtimeKind: "terminal",
+          workdir: "/workspace",
+          ...(answer === "paired"
+            ? {
+                browser: {
+                  sandboxId: "sbx-desktop",
+                  sandboxRowId: "row-desktop",
+                  runtimeKind: "desktop-browser",
+                },
+              }
+            : {}),
+        });
+      }),
+    );
+    const release = vi.fn(async () => {});
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      release,
+      touch: vi.fn(async () => "touched" as const),
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    executeStepsMock.mockImplementation(async () => ({}));
+    const snapshot = {
+      title: "Case",
+      query: "Hello",
+      model: "gpt-5-mini",
+      provider: "openai",
+    };
+    const row: Record<string, any> = {
+      _id: "iter-1",
+      testCaseId: "case-1",
+      iterationNumber: 1,
+      testCaseSnapshot: snapshot,
+      status: "pending",
+      result: "pending",
+    };
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => row._id),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (args) => Object.assign(row, args)),
+        finalize: vi.fn(async () => {}),
+      },
+      config: {
+        tests: [
+          {
+            ...snapshot,
+            runs: 1,
+            testCaseId: "case-1",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+          },
+        ],
+        environment: { servers: ["srv-1"], computerEnvironmentId: "env-1" },
+      },
+      suiteHostConfig: {
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        ...(harness ? { harness } : {}),
+      },
+      orgModelConfigTarget: { projectId: "project-1" },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [row] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, args) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(row, args);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: defaultEvalExecutionBudgets(),
+    } as any);
+    return { row, release, bodies };
+  }
+
+  it("keeps the shell on the pinned box and Browser on the desktop, and releases both", async () => {
+    const { row, release, bodies } = await runPaired();
+    expect(bodies).toEqual([
+      {
+        runId: "run-1",
+        iterationId: "iter-1",
+        runtimeKind: "desktop-browser",
+        pairBrowser: true,
+      },
+    ]);
+    expect(row.status).toBe("completed");
+    const ctx = boxSpies.resolveHostTools.mock.calls[0]?.[1];
+    expect(ctx).toMatchObject({
+      sandboxBinding: { sandboxId: "sbx-pinned", runtimeKind: "terminal" },
+      browserSandboxBinding: {
+        sandboxRowId: "row-desktop",
+        sandboxId: "sbx-desktop",
+        runtimeKind: "desktop-browser",
+      },
+    });
+    // The out-of-band shell execs on the pinned image.
+    expect(boxSpies.buildEvalBashTool).toHaveBeenCalledWith({
+      sandboxId: "sbx-pinned",
+    });
+    // The page the run's browser shows lives on the desktop.
+    expect(boxSpies.peekPageTools).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row-desktop" }),
+    );
+    const released = release.mock.calls.map(([sandboxRowId]) => sandboxRowId);
+    expect(released.sort()).toEqual(["row-desktop", "row-pinned"]);
+  });
+
+  it("runs a harness on the pinned box, never the desktop", async () => {
+    const { row } = await runPaired("paired", "claude-code");
+    expect(row.error).toBeUndefined();
+    expect(
+      boxSpies.buildHostedStepHandlers.mock.calls[0]?.[0]
+        ?.harnessSandboxBinding,
+    ).toEqual({
+      sandboxRowId: "row-pinned",
+      sandboxId: "sbx-pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+  });
+
+  it("still fails a desktop request that came back as a lone terminal box", async () => {
+    const { row, release } = await runPaired("terminal-only");
+    expect(row.status).toBe("setup_failed");
+    expect(String(row.error)).toContain("does not support per-run desktop");
+    expect(release).toHaveBeenCalledWith("row-pinned");
   });
 });
 

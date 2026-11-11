@@ -2,6 +2,8 @@
  * Framework independent; the Convex mirror is pinned in its mirror manifest.
  * A receipt never supplies current authorization or original instance lifetime.
  */
+import { MODEL_CONTEXT_POLICY_CEILINGS } from "@mcpjam/sdk/host-config/internal";
+
 export const INVOCATION_RECEIPT_PATH = "/internal/v1/plugin-invocations";
 export const INVOCATION_RECEIPT_TTL_MS = 30 * 60 * 1000;
 export const INVOCATION_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -38,8 +40,16 @@ export interface DurableInvocationReceipt {
 export const PLUGIN_INSTANCE_CONTROL_PATH =
   "/internal/v1/plugin-instance-controls";
 export const PLUGIN_INSTANCE_CONTROL_BYTES = 128 * 1024;
-export const PLUGIN_INSTANCE_CONTEXT_BYTES = 384 * 1024;
-export const PLUGIN_INSTANCE_CONTROL_HTTP_BYTES = 1024 * 1024 + 8192;
+/** The stored context envelope (`export()`): the largest update a policy may
+ * admit, with its `_meta`, cursor and removal receipts. The backend keeps it
+ * in chunk rows and refuses one byte more. */
+export const PLUGIN_INSTANCE_CONTEXT_BYTES =
+  MODEL_CONTEXT_POLICY_CEILINGS.updateMaxBytes + 64 * 1024;
+/** A control reply: the envelope, a snapshot and settings, each up to twice
+ * its size once escaped as JSON, and the reply around them. */
+export const PLUGIN_INSTANCE_CONTROL_HTTP_BYTES =
+  2 * (PLUGIN_INSTANCE_CONTEXT_BYTES + 2 * PLUGIN_INSTANCE_CONTROL_BYTES) +
+  8192;
 export interface DurablePluginInstanceControl {
   snapshotJson: string;
   expiresAt: number;

@@ -9,6 +9,8 @@ import {
   type ToolSafetyClassification,
 } from "@mcpjam/sdk/contract";
 import { isWebmcpPageToolName } from "@/shared/declared-tools";
+import { serverToolName } from "./account-routing.js";
+import { VIEW_TOOL_SERVER_ID, viewToolPolicyName } from "./view-tool-policy-name.js";
 import type { BenchmarkArtifactLedger } from "./artifact-ledger.js";
 import {
   BENCHMARK_ARTIFACT_PREFIX,
@@ -366,8 +368,15 @@ export function createToolPolicyGate(args: {
           typeof (tool as { _serverId?: unknown })._serverId === "string"
             ? (tool as unknown as { _serverId: string })._serverId
             : undefined;
+        // Policy and annotations name the server's tool. A multi-account
+        // variant holds it under another key, so a deny or a destructive hint
+        // on `delete_task` has to reach every account's copy of it.
+        const mcpToolName = serverToolName(tool, toolName);
+        const policyName = serverId === VIEW_TOOL_SERVER_ID
+          ? viewToolPolicyName(toolName)
+          : mcpToolName;
         const isExplicitlyDenied =
-          args.policy.deny?.includes(toolName) === true;
+          args.policy.deny?.includes(policyName) === true;
         // A PAGE TOOL IS NEVER READ-ONLY, whatever the page says.
         //
         // It has no `_serverId` (it is not an MCP tool) so it would otherwise
@@ -431,9 +440,9 @@ export function createToolPolicyGate(args: {
         }
         if (!serverId && !isExplicitlyDenied) continue;
         const decision = decideToolPolicy({
-          toolName,
+          toolName: policyName,
           annotations: serverId
-            ? args.annotations.get(toolAnnotationsKey(serverId, toolName))
+            ? args.annotations.get(toolAnnotationsKey(serverId, mcpToolName))
             : undefined,
           policy: args.policy,
         });

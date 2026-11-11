@@ -407,6 +407,24 @@ describe("toEnvironmentPreview", () => {
     expect(emulated.capabilities.skillDelivery).toBe("emulated");
     expect(emulated.capabilities.hasComputer).toBe(false);
   });
+  it("reads the agent loop, as the turn does, when deciding skill delivery", () => {
+    // A ChatGPT client on the Codex loop sets `agentLoop`, not `harness`. The
+    // turn runs Codex (`resolveAgentLoop`), so the preview must not say
+    // "emulated" for it.
+    const supports = vi.fn((id: string) => id === "codex");
+    const agentLoop = toEnvironmentPreview(
+      {
+        ...SPEC,
+        host: {
+          ...SPEC.host,
+          runtimeConfig: { modelId: "openai/gpt-5.5", agentLoop: "codex" },
+        },
+      },
+      { harnessSupportsSkills: supports }
+    );
+    expect(agentLoop.capabilities.skillDelivery).toBe("harness");
+    expect(supports).toHaveBeenCalledWith("codex");
+  });
 });
 
 describe("turnSkillProvenance", () => {

@@ -10,6 +10,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { destroySuspendedBridge, forceDestroySessionBridge } from "../destroy-suspended-bridge";
+
+vi.mock("../destroy-suspended-bridge", () => ({ destroySuspendedBridge: vi.fn(async () => {}), forceDestroySessionBridge: vi.fn(async () => {}) }));
 
 const harnessState = vi.hoisted(() => ({
   // Each entry is a part, or a function run at that point (to fire a Stop).
@@ -23,12 +26,25 @@ const harnessState = vi.hoisted(() => ({
     stop: vi.fn(async () => ({})),
     destroy: vi.fn(async () => {}),
     detach: vi.fn(async () => ({ type: "resume-session" })),
+    suspendTurn: vi.fn(async () => ({ type: "continue-turn" })),
   },
 }));
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
-    createSession = vi.fn(async () => harnessState.session);
+    constructor(private readonly settings: {
+      onSandboxSession: (args: {
+        session: { getPortEndpoint: () => Promise<{ url: string }> };
+        sessionWorkDir: string;
+      }) => Promise<void>;
+    }) {}
+    createSession = vi.fn(async () => {
+      await this.settings.onSandboxSession({
+        session: { getPortEndpoint: async () => ({ url: "ws://bridge.test" }) },
+        sessionWorkDir: "/workspace/session",
+      });
+      return harnessState.session;
+    });
     stream = vi.fn(async () => {
       const text =
         harnessState.finalText instanceof Error
@@ -135,6 +151,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { getHarnessAdapter } from "../registry.js";
+import { commitHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 
 function options(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -213,6 +230,12 @@ describe("runHarnessTurn background drain", () => {
     harnessState.session.stop.mockClear();
     harnessState.session.destroy.mockClear();
     harnessState.session.detach.mockClear();
+    harnessState.session.suspendTurn.mockReset();
+    harnessState.session.suspendTurn.mockResolvedValue({ type: "continue-turn" });
+    vi.mocked(destroySuspendedBridge).mockClear();
+    vi.mocked(commitHarnessSessionState).mockClear();
+    vi.mocked(forceDestroySessionBridge).mockClear();
+    vi.mocked(releaseHarnessSessionState).mockClear();
   });
 
   afterEach(() => {
@@ -365,6 +388,104 @@ describe("runHarnessTurn background drain", () => {
       chunks.some((chunk) => chunk.type === "data-harness-background-task"),
     ).toBe(false);
     expect(assistantTexts(result.messageHistory)).toEqual(["One answer."]);
+  });
+
+  it("destroys an approval turn when Stop ends its iterator without a final part", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+      () => stop.abort(),
+    ];
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(harnessState.session.destroy).toHaveBeenCalledTimes(1);
+    expect(harnessState.session.suspendTurn).not.toHaveBeenCalled();
+    expect(commitHarnessSessionState).not.toHaveBeenCalled();
+    expect(destroySuspendedBridge).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("does not commit an approval if Stop arrives while suspending the runtime", async () => {
+    const stop = new AbortController();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    harnessState.session.suspendTurn.mockImplementationOnce(async () => {
+      stop.abort();
+      return { type: "continue-turn" };
+    });
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(harnessState.session.suspendTurn).toHaveBeenCalledTimes(1);
+    expect(commitHarnessSessionState).not.toHaveBeenCalled();
+    expect(destroySuspendedBridge).toHaveBeenCalledWith({ type: "continue-turn" }, expect.any(Function));
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("cancels the pause commit and skips persistence when Stop reaches that request", async () => {
+    const stop = new AbortController();
+    const persist = vi.fn();
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    vi.mocked(commitHarnessSessionState).mockImplementationOnce(async ({ signal }) => {
+      stop.abort();
+      expect(signal?.aborted).toBe(true);
+      return false;
+    });
+
+    const result = await runHarnessTurn(
+      options({ abortSignal: stop.signal, onConversationComplete: persist }) as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+
+    expect(result.aborted).toBe(true);
+    expect(persist).not.toHaveBeenCalled();
+    expect(destroySuspendedBridge).toHaveBeenCalledWith({ type: "continue-turn" }, expect.any(Function));
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("forces cleanup when the detached bridge cannot confirm destruction", async () => {
+    harnessState.script = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+    vi.mocked(commitHarnessSessionState).mockResolvedValueOnce(false);
+    vi.mocked(destroySuspendedBridge).mockRejectedValueOnce(new Error("Connection dropped"));
+    await runHarnessTurn(options() as Parameters<typeof runHarnessTurn>[0], "none");
+    expect(forceDestroySessionBridge).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
+  it("cleans up the session when suspension throws after detaching", async () => {
+    harnessState.script = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
+    harnessState.session.suspendTurn.mockRejectedValueOnce(new Error("detach failed"));
+    await runHarnessTurn(options() as Parameters<typeof runHarnessTurn>[0], "none");
+    expect(forceDestroySessionBridge).toHaveBeenCalledTimes(1);
+    expect(commitHarnessSessionState).not.toHaveBeenCalled();
+  });
+
+  it.each(["rejected", "thrown"])("stops a suspended runtime after a %s pause commit", async (outcome) => {
+    harnessState.script = [
+      { type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" },
+    ];
+    vi.mocked(commitHarnessSessionState).mockImplementationOnce(async () => {
+      if (outcome === "thrown") throw new Error("Commit unavailable");
+      return false;
+    });
+    await runHarnessTurn(
+      options() as Parameters<typeof runHarnessTurn>[0],
+      "none",
+    );
+    expect(destroySuspendedBridge).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
   });
 
   it("a Stop while the bridge only waits keeps the answer and commits the turn", async () => {

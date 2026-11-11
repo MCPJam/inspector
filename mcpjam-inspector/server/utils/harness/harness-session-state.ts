@@ -95,6 +95,8 @@ export type HarnessClaimResult =
       state: HarnessResumePayload | null;
       stateVersion: number;
       fingerprintChanged: boolean;
+      supportsApprovalFence?: true;
+      laneId?: string;
     }
   | { ok: false; status: number; error: string };
 
@@ -208,7 +210,24 @@ async function postSessionState(
   return { ok: true, payload };
 }
 
+export function sessionClaimConflictMessage(reason: string | undefined): string {
+  switch (reason) {
+    case "harness_turn_cancelled":
+      return "This turn was stopped. Send a new message to continue.";
+    case "harness_approval_expired":
+      return "This approval has ended. Send a new message to request the action again.";
+    case "harness_approval_pending":
+      return "Answer the pending tool approval before sending another message, or start a new chat.";
+    default:
+      return "Another turn is already running for this chat — wait for it to finish.";
+  }
+}
+
 export async function claimHarnessSessionState(args: {
+  approvalIds?: string[];
+  requestId?: string;
+  /** The call each decision names, so a renumbered approval id cannot take the lease. */
+  approvalCalls?: Array<{ approvalId: string; toolCallId: string }>;
   owner: HarnessOwnerRef;
   runtimeFingerprint: string;
   /** Project-skills fingerprint; OMIT on a transient skills-fetch failure so the
@@ -225,11 +244,14 @@ export async function claimHarnessSessionState(args: {
     args.bearer,
     {
       ...args.owner,
+      ...(args.approvalIds !== undefined ? { approvalIds: args.approvalIds } : {}),
+      ...(args.approvalCalls !== undefined ? { approvalCalls: args.approvalCalls } : {}),
       runtimeFingerprint: args.runtimeFingerprint,
       ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
       leaseId: args.leaseId,
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
+      ...(args.requestId ? { requestId: args.requestId } : {}),
     },
     args.signal
   );
@@ -239,6 +261,8 @@ export async function claimHarnessSessionState(args: {
     state: res.payload.state ?? null,
     stateVersion: Number(res.payload.stateVersion ?? 0),
     fingerprintChanged: Boolean(res.payload.fingerprintChanged),
+    ...(res.payload.supportsApprovalFence === true ? { supportsApprovalFence: true } : {}),
+    ...(typeof res.payload.laneId === "string" ? { laneId: res.payload.laneId } : {}),
   };
 }
 
@@ -258,12 +282,13 @@ export async function heartbeatHarnessSessionState(args: {
   leaseId: string;
   leaseTtlMs: number;
   bearer: string;
+  signal?: AbortSignal;
 }): Promise<HarnessHeartbeatResult> {
   const res = await postSessionState("heartbeat", args.bearer, {
     ...args.owner,
     leaseId: args.leaseId,
     leaseTtlMs: args.leaseTtlMs,
-  });
+  }, args.signal);
   if (res.ok) {
     // The request reached the endpoint; `extended` is the definitive answer.
     return res.payload?.extended === true ? "ok" : "lost";
@@ -293,6 +318,66 @@ export async function releaseHarnessSessionState(args: {
   if (!res.ok) {
     logger.warn("[harness-session-state] release failed", { error: res.error });
   }
+}
+
+/** One server a session-handle turn binds, with the policy digest its envelope carries. */
+export type HarnessSessionTurnServer = {
+  serverId: string;
+  connectionId?: string;
+  policyDigest: string;
+};
+
+/**
+ * Bind this turn to the lane's lease and get the lane's session handles
+ * (`/web/harness/session-state/bind-turn`). The backend returns the same handle
+ * for a server on every turn of the lane, so a runtime that fingerprints its
+ * MCP configuration sees no change; the binding itself ends with the lease.
+ */
+export async function bindHarnessSessionTurn(args: {
+  owner: HarnessOwnerRef;
+  leaseId: string;
+  turnId: string;
+  servers: HarnessSessionTurnServer[];
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<
+  | { ok: true; handles: Record<string, string> }
+  | { ok: false; status: number; error: string }
+> {
+  const res = await postSessionState(
+    "bind-turn",
+    args.bearer,
+    {
+      ...args.owner,
+      leaseId: args.leaseId,
+      turnId: args.turnId,
+      servers: args.servers,
+    },
+    args.signal
+  );
+  if (!res.ok) return res;
+  if (res.payload?.bound !== true)
+    return {
+      ok: false,
+      status: 409,
+      error: `The turn could not be bound to its session (${String(res.payload?.reason ?? "unknown")}).`,
+    };
+  const returned: unknown = res.payload.handles;
+  const handles: Record<string, string> = {};
+  for (const { serverId } of args.servers) {
+    const handle =
+      returned && typeof returned === "object"
+        ? Reflect.get(returned, serverId)
+        : undefined;
+    if (typeof handle !== "string" || !handle)
+      return {
+        ok: false,
+        status: 502,
+        error: "The session binding returned no handle for a selected server.",
+      };
+    handles[serverId] = handle;
+  }
+  return { ok: true, handles };
 }
 
 /** Bounded: the caller awaits this on its terminal path. */
@@ -337,6 +422,7 @@ export async function releaseUncommittedHarnessLane(args: {
 }
 
 export async function commitHarnessSessionState(args: {
+  guardedApprovalIds?: string[];
   owner: HarnessOwnerRef;
   leaseId: string;
   expectedStateVersion: number;
@@ -351,22 +437,24 @@ export async function commitHarnessSessionState(args: {
   /** Deadline — same terminal-path reasoning as `releaseHarnessSessionState`. */
   signal?: AbortSignal;
 }): Promise<boolean> {
-  const res = await postSessionState(
-    "commit",
-    args.bearer,
-    {
-      ...args.owner,
-      leaseId: args.leaseId,
-      expectedStateVersion: args.expectedStateVersion,
-      harnessSessionId: args.harnessSessionId,
-      resumeState: args.resumeState,
-      computerId: args.computerId,
-      runtimeFingerprint: args.runtimeFingerprint,
-      ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
-      ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
-    },
-    args.signal
-  );
+  const body = {
+    ...args.owner,
+    leaseId: args.leaseId,
+    expectedStateVersion: args.expectedStateVersion,
+    harnessSessionId: args.harnessSessionId,
+    resumeState: args.resumeState,
+    computerId: args.computerId,
+    runtimeFingerprint: args.runtimeFingerprint,
+    ...(args.skillsHash !== undefined ? { skillsHash: args.skillsHash } : {}),
+    ...(args.awaitingApproval ? { awaitingApproval: true } : {}),
+    ...(args.guardedApprovalIds ? { guardedApprovalIds: args.guardedApprovalIds } : {}),
+  };
+  // Match the backend's full commit-request limit, including the ownership envelope.
+  if (Buffer.byteLength(JSON.stringify(body)) > 768 * 1024)
+    throw new Error(
+      "The agent could not save this approval because its conversation state is too large. Start a new chat.",
+    );
+  const res = await postSessionState("commit", args.bearer, body, args.signal);
   if (!res.ok) {
     logger.warn("[harness-session-state] commit failed", { error: res.error });
     return false;

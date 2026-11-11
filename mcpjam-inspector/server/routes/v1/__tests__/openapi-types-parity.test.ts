@@ -49,6 +49,9 @@ type Schema = {
   required?: string[];
   properties?: Record<string, Schema>;
   items?: Schema;
+  minItems?: number;
+  maxItems?: number;
+  prefixItems?: Schema[];
   enum?: unknown[];
   $ref?: string;
   description?: string;
@@ -69,6 +72,16 @@ const spec = JSON.parse(readFileSync(SPEC_PATH, "utf8")) as {
  * everything.
  */
 const PAIRS: Readonly<Record<string, string>> = {
+  WidgetViewport: "PlatformWidgetViewport",
+  WidgetSessionCreateRequest: "PlatformWidgetSessionCreateBody",
+  WidgetSessionCreated: "PlatformWidgetSessionCreated",
+  WidgetAction: "PlatformWidgetAction",
+  WidgetToolCall: "PlatformWidgetToolCall",
+  WidgetSessionActionResult: "PlatformWidgetSessionActionResult",
+  WidgetSessionSnapshot: "PlatformWidgetSessionSnapshot",
+  WidgetSessionStepRequest: "PlatformWidgetSessionStepBody",
+  WidgetSessionStepResult: "PlatformWidgetSessionStepResult",
+  WidgetSessionClosed: "PlatformWidgetSessionClosed",
   Me: "PlatformMe",
   Organization: "PlatformOrganization",
   Project: "PlatformProject",
@@ -252,6 +265,7 @@ type SdkField = {
   /** `PlatformFoo` when the type (or its array element) is an interface ref. */
   refName: string | null;
   isArray: boolean;
+  tuple?: { length: number; itemTypes: Array<string | undefined> };
 };
 
 type SdkInterface = {
@@ -298,7 +312,10 @@ const unresolvedHeritage: string[] = [];
 function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
-    readFileSync(TYPES_PATH, "utf8"),
+    [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts"),
+      resolve(dirname(TYPES_PATH), "widget-session-types.ts")]
+      .map(path => readFileSync(path, "utf8"))
+      .join("\n"),
     ts.ScriptTarget.Latest,
     true
   );
@@ -356,11 +373,25 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
 
     let isArray = false;
     let refName: string | null = null;
+    let tuple: SdkField["tuple"];
     for (const member of members) {
       let target = unwrapTypeNode(member);
       if (ts.isArrayTypeNode(target)) {
         isArray = true;
         target = unwrapTypeNode(target.elementType);
+      }
+      if (ts.isTupleTypeNode(target)) {
+        isArray = true;
+        if (target.elements.every(element => !ts.isOptionalTypeNode(element)
+          && !ts.isRestTypeNode(element)
+          && (!ts.isNamedTupleMember(element) || (!element.questionToken && !element.dotDotDotToken)))) {
+          tuple = { length: target.elements.length, itemTypes: target.elements.map(element => {
+            const item = unwrapTypeNode(ts.isNamedTupleMember(element) ? element.type : element);
+            return item.kind === ts.SyntaxKind.NumberKeyword ? "number"
+              : item.kind === ts.SyntaxKind.StringKeyword ? "string"
+                : item.kind === ts.SyntaxKind.BooleanKeyword ? "boolean" : undefined;
+          }) };
+        }
       }
       if (ts.isTypeReferenceNode(target)) {
         const name = target.typeName.getText();
@@ -377,7 +408,7 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
       }
     }
 
-    return { nullable, enumValues, refName, isArray };
+    return { nullable, enumValues, refName, isArray, tuple };
   };
 
   const visit = (node: ts.Node): void => {
@@ -751,6 +782,16 @@ describe("openapi.json ↔ sdk/src/platform/types.ts parity", () => {
               schemaIsArray(prop) ? "is" : "is not"
             } an array, SDK ${sdkField.isArray ? "is" : "is not"}`
           );
+        }
+        if (sdkField.tuple) {
+          const { length, itemTypes } = sdkField.tuple;
+          if (prop.minItems !== length || prop.maxItems !== length)
+            problems.push(`${schemaName}.${field}: tuple length must be ${length}`);
+          itemTypes.forEach((type, index) => {
+            const item = prop.prefixItems?.[index] ?? prop.items;
+            if (type && item?.type !== type)
+              problems.push(`${schemaName}.${field}[${index}]: tuple item must be ${type}`);
+          });
         }
 
         const specRef = schemaRefName(prop);

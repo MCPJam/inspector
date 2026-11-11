@@ -19,10 +19,13 @@
  * write surface have their own `SCHEDULED_EVALS_ENABLED` gate).
  */
 
+import { loadSuiteConnectionIdSets } from "./evals/suite-account-choices.js";
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
+import { abortableSleep } from "../utils/run-supervisor/backoff.js";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
+import { WebRouteError } from "../routes/web/errors.js";
 import {
   prepareEvalRun,
   type PreparedEvalRun,
@@ -30,6 +33,10 @@ import {
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { loadSuiteHostConfig } from "./evals/compat-runtime.js";
+import { isPlatformFeeRefusal } from "./evals/platform-fee-refusal.js";
+import { xaaPolicyFromMcpProfile } from "../utils/effective-auth.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
 import {
   environmentServerIds,
   environmentServerNames,
@@ -39,6 +46,7 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -166,7 +174,12 @@ export function classifyFailure(error: unknown): string {
   // every window — so it shares `quota_exhausted`. Both canonical markers
   // are matched: the `/stream` wire code and the launch mutation's
   // ConvexError code, since either can be what stringifies into `message`.
-  if (/spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message)) {
+  // The recorder's 403 translation carries the code in `details.reason`.
+  if (
+    /spend_budget_reached|ORGANIZATION_SPEND_BUDGET_REACHED/i.test(message) ||
+    (error instanceof WebRouteError &&
+      error.details?.reason === "ORGANIZATION_SPEND_BUDGET_REACHED")
+  ) {
     return "quota_exhausted";
   }
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
@@ -201,6 +214,7 @@ export async function executeClaimedRun(
       claimed.createdByExternalId,
       claimed.organizationId,
     );
+    const convex = createConvexClient(bearer);
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
     // predates (or ignores) the pinned environment. The SAME resolution is
@@ -215,7 +229,7 @@ export async function executeClaimedRun(
     } = claimed.environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
-            createConvexClient(bearer),
+            convex,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
               projectId: claimed.projectId!,
@@ -235,15 +249,29 @@ export async function executeClaimedRun(
           "authorized",
         );
 
+    // The host the run executes under, resolved as `prepareEvalRun` resolves
+    // it: the pinned environment's host, else the suite's own config. Its
+    // enterprise-managed authorization policy governs this connection as it
+    // does an API launch of the same suite, so a monitor takes the auth path
+    // a real run takes, and an unconfigured `auto` server is refused rather
+    // than connected through the discover path, on the schedule creator's own
+    // OAuth grant when one is stored. A failed read stops this window's run:
+    // the default host it would fall back to carries no policy.
+    const hostConfig = await loadSuiteHostConfig(
+      convex,
+      claimed.suiteId,
+      selection.resolvedEnvironment?.hostId,
+      { failClosed: true },
+    );
+
+    // The schedule runs as its owner, so it uses the owner's saved accounts.
+    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+      suiteId: claimed.suiteId,
+    });
     // Empty caller context = plain-JWT caller (locked by caller-context
-    // contract test); the delegated JWT is the principal.
-    //
-    // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
-    // derive the issuer from, and the scheduled-suite selection carries no
-    // host-persona input, so there is no enterprise policy to enforce. A
-    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
-    // the manager builder ("Missing XAA issuer") — the pre-existing behavior
-    // on this surface. Lifting it needs an env-derived public issuer URL.
+    // contract test); the delegated JWT is the principal. There is no request
+    // to read the XAA issuer from, so it comes from the deployment's public
+    // origin; without one, a `useXaa` server fails closed in the builder.
     const authorized = await createAuthorizedManager(
       {},
       bearer,
@@ -252,7 +280,13 @@ export async function executeClaimedRun(
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames: selection.serverNames },
+      {
+        serverNames: selection.serverNames,
+        pluginComputerRuntime: false,
+        ...(connectionIdSets ? { connectionIdSets } : {}),
+        xaaIssuer: resolveConfiguredXaaIssuer(),
+        xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
+      },
     );
     manager = authorized.manager;
 
@@ -279,7 +313,16 @@ export async function executeClaimedRun(
         idempotencyKey: claimed.triggerId,
       });
     } catch (error) {
-      logger.error("[scheduled-evals] run setup failed", error, logContext);
+      // Out of credits or over budget: the organization's limits working as
+      // designed, so no Sentry page on every window.
+      if (isPlatformFeeRefusal(error)) {
+        logger.warn("[scheduled-evals] run setup refused", {
+          ...logContext,
+          reason: error.details?.reason,
+        });
+      } else {
+        logger.error("[scheduled-evals] run setup failed", error, logContext);
+      }
       await reportComplete({
         triggerId: claimed.triggerId,
         ok: false,
@@ -288,16 +331,15 @@ export async function executeClaimedRun(
       return;
     }
 
-    // The trigger id IS this run's idempotency key, so a redelivered trigger
-    // replays the run it already started. If that run has finished, there is
-    // nothing left to do — executing would re-run the suite and bill the
-    // organization a second time for a scheduled run it only asked for once.
+    // A redelivered trigger adopts the original worker's run. Acknowledge the
+    // launch receipt; the run lifecycle owns completion and failure reporting.
     if (shouldSkipExecution(prepared)) {
       logger.info("[scheduled-evals] trigger already ran — not re-executing", {
         ...logContext,
         runId: prepared.runId,
         status: prepared.status,
       });
+      await reportComplete({ triggerId: claimed.triggerId, ok: true, runId: prepared.runId });
       return;
     }
 
@@ -336,21 +378,6 @@ export async function executeClaimedRun(
       await manager.disconnectAllServers().catch(() => {});
     }
   }
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      done();
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 export interface ScheduledEvalsWorkerHandle {
@@ -396,7 +423,7 @@ export function startScheduledEvalsWorker(options?: {
           // doesn't need an Inspector restart.
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed);
+          await serverDrain.track("claimed_job", execute(claimed));
           // Drain mode: if a trigger was waiting, check again immediately —
           // another suite's window may be queued behind it.
           waitMs = 1_000;
@@ -407,7 +434,8 @@ export function startScheduledEvalsWorker(options?: {
         });
         waitMs = ERROR_BACKOFF_MS;
       }
-      await sleep(waitMs, abort.signal);
+      // Resolves at once when `stop()` aborted while a run was executing.
+      await abortableSleep(waitMs, abort.signal);
     }
     logger.info("[scheduled-evals] worker stopped");
   })();

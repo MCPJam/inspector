@@ -1,20 +1,3 @@
-/**
- * Phase 3 (extended in Phase 4) contract test: when the card receives an
- * explicit `hostSnapshot` prop, its inner subtree's `useContext()` reads
- * must return the snapshot field (not the tab-root context value). The
- * contract covers all three shadowed providers — `hostCapabilitiesOverride`,
- * `chatUiOverride`, `mcpProfile` — and the `hostCapsResolver` scope (which
- * is gated by a separate prop because the resolver is not part of the
- * persisted host config shape).
- *
- * This is the contract the Phase 4 multi-host render path depends on —
- * without provider shadowing inside the card, two host columns would read
- * the same global host-snapshot from the tab root.
- *
- * Uses REAL context modules (no vi.mock on the providers) so the contract
- * is exercised end-to-end. We stub `useChatSession` and a few heavy
- * children that the card pulls in only because they share the file.
- */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
@@ -33,6 +16,35 @@ import {
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => false,
+}));
+
+vi.mock("@/hooks/use-playground-hidden-environment", () => ({
+  usePlaygroundHiddenEnvironment: () => ({
+    wanted: false,
+    failed: false,
+    pluginServerIds: [],
+  }),
+}));
+/**
+ * Phase 3 (extended in Phase 4) contract test: when the card receives an
+ * explicit `hostSnapshot` prop, its inner subtree's `useContext()` reads
+ * must return the snapshot field (not the tab-root context value). The
+ * contract covers all three shadowed providers — `hostCapabilitiesOverride`,
+ * `chatUiOverride`, `mcpProfile` — and the `hostCapsResolver` scope (which
+ * is gated by a separate prop because the resolver is not part of the
+ * persisted host config shape).
+ *
+ * This is the contract the Phase 4 multi-host render path depends on —
+ * without provider shadowing inside the card, two host columns would read
+ * the same global host-snapshot from the tab root.
+ *
+ * Uses REAL context modules (no vi.mock on the providers) so the contract
+ * is exercised end-to-end. We stub `useChatSession` and a few heavy
+ * children that the card pulls in only because they share the file.
+ */
 
 // Stub use-stick-to-bottom so we don't need DOM measurement.
 vi.mock("use-stick-to-bottom", () => {

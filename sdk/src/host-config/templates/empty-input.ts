@@ -43,6 +43,7 @@ export type SeededHostConfigInput = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean;
   progressiveToolDiscovery?: boolean;
   serverIds: string[];
@@ -59,9 +60,9 @@ export type SeededHostConfigInput = {
   computer?: { kind: "personal"; workdir?: string };
   // Optional saved browser profile selected for hosted browser sessions.
   browserProfileId?: string;
-  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"`
-  // run a real CLI runtime (requires an attached computer); absent ⇒ MCPJam's
-  // emulated engine.
+  // Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` /
+  // `"opencode"` run a real CLI runtime (requires an attached computer);
+  // absent ⇒ MCPJam's emulated engine.
   //
   // The canonical union, not a copy. This was a local literal justified as
   // keeping the module cross-import-free, which it never was — `../types.js`
@@ -120,6 +121,7 @@ export function emptyHostConfigInputV2(
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
+    ...(partial.requireNativeToolDiscovery !== undefined ? { requireNativeToolDiscovery: partial.requireNativeToolDiscovery } : {}),
     // Default ON: every new config respects SEP-1865 visibility filtering
     // unless the template (e.g. Cursor) explicitly opts out. Matches the
     // spec-default behavior.

@@ -37,6 +37,12 @@ const api = vi.hoisted(() => ({
   sessionReads: 0,
   /** The options each of those reads carried — `{ensure:true}` wakes the box. */
   sessionReadOptions: [] as unknown[],
+  /** Holds every `/session` answer until it resolves, when set. */
+  sessionGate: null as Promise<void> | null,
+  /** How many VNC input pings went out. */
+  pings: 0,
+  /** How many times a paused pane asked whether the desktop woke. */
+  awakeChecks: 0,
   streamArgs: [] as unknown[],
   /** What the shell's state poll answers. Null is "cannot say". */
   state: null as unknown,
@@ -110,10 +116,20 @@ vi.mock("@/lib/hosted-browser/client", async () => {
     fetchHostedBrowserSession: async (_tokens: unknown, options?: unknown) => {
       api.sessionReads += 1;
       api.sessionReadOptions.push(options);
+      if (api.sessionGate) await api.sessionGate;
       if (api.sessionError) {
         throw new actual.HostedBrowserError("nope", api.sessionError.status);
       }
       return api.session;
+    },
+    pingHostedBrowserInput: async () => {
+      api.pings += 1;
+      return true;
+    },
+    // A read without `ensure` (see its own tests): what `/session` says now.
+    hostedBrowserAwake: async () => {
+      api.awakeChecks += 1;
+      return (api.session as { asleep?: boolean } | null)?.asleep === false;
     },
     actOnHostedBrowserLease: async (
       _tokens: unknown,
@@ -149,6 +165,7 @@ vi.mock("@/components/computer/BrowserPanel", () => ({
 }));
 
 import { HostedBrowserBody } from "../HostedBrowserBody";
+import { PAUSED_CHECK_MS } from "../usePausedPane";
 import {
   encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
@@ -166,6 +183,9 @@ beforeEach(() => {
   api.session = RUNNING;
   api.sessionReads = 0;
   api.sessionReadOptions = [];
+  api.sessionGate = null;
+  api.pings = 0;
+  api.awakeChecks = 0;
   api.sessionError = null;
   api.lease = { took: true, lease: { state: "held" }, yours: true };
   api.inputs = [];
@@ -358,52 +378,102 @@ describe("the hosted pane — the socket", () => {
     vi.useRealTimers();
   });
 
-  it("wakes the box and brings the picture back when it has been reclaimed", async () => {
-    // 4410 says the machine is asleep. This socket cannot wake it — only
-    // `ensure=1` on the session route does — and a bare re-read would not
-    // either: it reads a row nobody has resumed. Then the stream has to be
-    // asked for again, because a resumed box comes back on the SAME boot and
-    // the session object is deliberately kept by identity, so nothing else
-    // would reopen the socket and the pane would sit blank.
+  it("shows a reclaimed box paused and never wakes it on its own", async () => {
+    // 4410 says the desktop paused. Watching is not use, so the pane keeps the
+    // last picture under the paused state and asks nothing of the control
+    // plane until a person clicks or types.
     vi.useFakeTimers();
     renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
 
     act(() => socket().onclose?.({ code: 4410 }));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(60_000);
     });
 
-    // Asked the control plane to resume it, not merely re-read the row.
-    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
-    // And got the picture back.
-    expect(api.sockets.length).toBe(2);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(1);
     vi.useRealTimers();
   });
 
-  it("does not reopen the socket when the wake did not land", async () => {
-    // A box that refuses to come back would otherwise be refused, re-asked,
-    // and refused again forever. The visibility-gated poll owns the retry.
+  it("drops the paused state when the pane shows another browser", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+
+    view.rerender(
+      <HostedBrowserBody projectId="proj-2" mintToken={mintToken} active />,
+    );
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("wakes the box on input and brings the picture back", async () => {
+    // Resume (or any click on the paused picture) asks the control plane to
+    // resume it. The stream is then asked for again: a resumed box comes back
+    // on the SAME boot, so nothing else would reopen the socket.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(2);
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("wakes the box on a key press in the pane, and the key goes nowhere else", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    const inputsBefore = api.inputs.length;
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resume" }), {
+      key: "a",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(api.inputs.length).toBe(inputsBefore);
+    view.unmount();
+    vi.useRealTimers();
+  });
+
+  it("stays paused when the wake did not land", async () => {
+    // A box that refuses to come back would otherwise be refused and re-asked
+    // forever. The next input asks again.
     vi.useFakeTimers();
     renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     api.sessionError = { status: 503 };
-
     act(() => socket().onclose?.({ code: 4410 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
 
     expect(api.sessionReadOptions).toContainEqual({ ensure: true });
     expect(api.sockets.length).toBe(1);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
     vi.useRealTimers();
   });
 
   it("leaves a reclaimed box asleep when nobody is looking at the pane", async () => {
-    // A hidden pane is WHY the box was reclaimed. Waking it from here would
-    // undo that on behalf of nobody — and every hidden pane in every open tab
-    // would do it at once. The visibility-gated poll re-ensures when the pane
-    // is shown again, which is when somebody is actually there.
+    // A hidden pane is never a person's input: it wakes nothing, now or when
+    // it is shown again, until somebody clicks or types in it.
     vi.useFakeTimers();
     const view = renderBody({ active: true });
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
@@ -414,16 +484,145 @@ describe("the hosted pane — the socket", () => {
         active={false}
       />,
     );
-    const before = api.sessionReads;
-
     act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+
+    // Shown again, the reopened stream finds the box asleep: it says so, and
+    // showing the pane is still not input.
+    view.rerender(
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={true}
+      />,
+    );
+    await vi.waitFor(() => expect(api.sockets.length).toBe(2));
+    act(() => socket().onclose?.({ code: 4410 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("keeps the last picture under the paused state, and while it resumes", async () => {
+    // A pause usually shows up as a drop, a reconnect, and then 4410. The
+    // drop blanks the picture, so it has to survive the reconnect.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({
+          type: "frame",
+          frame: {
+            data: "Zm9v",
+            deviceWidth: 1024,
+            deviceHeight: 768,
+            scale: 1,
+            ts: 1,
+            seq: 1,
+          },
+        }),
+      });
+    });
+    act(() => socket().onclose?.({ code: 4503 }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
+    expect(api.sockets.length).toBe(2);
+    act(() => socket().onclose?.({ code: 4410 }));
 
-    expect(api.sessionReads).toBe(before);
-    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    const lastPicture = () =>
+      screen
+        .getByTestId("paused-pane-picture")
+        .querySelector("img")
+        ?.getAttribute("src");
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(lastPicture()).toBe("data:image/jpeg;base64,Zm9v");
+    expect(screen.queryByText("Waiting for the first frame…")).toBeNull();
+
+    let release: () => void = () => {};
+    api.sessionGate = new Promise<void>((resolve) => (release = resolve));
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByText("Resuming…")).toBeTruthy();
+    expect(lastPicture()).toBe("data:image/jpeg;base64,Zm9v");
+
+    api.sessionGate = null;
+    release();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.queryByTestId("paused-pane-picture")).toBeNull();
+    expect(api.sockets.length).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it("reopens the picture once something else wakes the desktop, without waking it", async () => {
+    // The agent's next browser command wakes a paused desktop. The pane's
+    // socket closed at the pause, so it reads the session (never `ensure`)
+    // while paused and on screen, and reopens once the desktop serves.
+    vi.useFakeTimers();
+    renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+
+    api.session = { ...RUNNING, asleep: true };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(api.awakeChecks).toBe(1);
+    expect(screen.getByText("Browser paused")).toBeTruthy();
     expect(api.sockets.length).toBe(1);
+
+    api.session = { ...RUNNING, asleep: false };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS);
+    });
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    expect(api.sockets.length).toBe(2);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+    vi.useRealTimers();
+  });
+
+  it("asks nothing while the paused pane is hidden", async () => {
+    vi.useFakeTimers();
+    const view = renderBody({ active: true });
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4410 }));
+    api.session = { ...RUNNING, asleep: false };
+
+    // Behind another rail tab.
+    view.rerender(
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={false}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 6);
+    });
+    expect(api.awakeChecks).toBe(0);
+
+    // On screen in the rail, but in a background browser tab.
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    view.rerender(
+      <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PAUSED_CHECK_MS * 6);
+    });
+    expect(api.awakeChecks).toBe(0);
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
     vi.useRealTimers();
   });
 
@@ -1066,6 +1265,36 @@ describe("the hosted pane — quality tiers", () => {
     fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
     expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("shows the desktop view paused too, and wakes it only on input", async () => {
+    renderBody();
+    await deliverFrame();
+    await openMenu();
+    const before = api.sockets.length;
+    fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
+    const panel = await screen.findByTestId("vnc-panel");
+    // Typing into the desktop view reports input, throttled.
+    fireEvent.keyDown(panel, { key: "a" });
+    expect(api.pings).toBe(1);
+
+    // The pane's frame socket stays open on this tier, and says the desktop
+    // paused.
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
+    act(() => socket().onclose?.({ code: 4410 }));
+    expect(screen.getByText("Browser paused")).toBeTruthy();
+    expect(screen.queryByTestId("vnc-panel")).toBeNull();
+    expect(api.sessionReadOptions).not.toContainEqual({ ensure: true });
+
+    // A key press wakes it instead of reaching the desktop, and the desktop
+    // view comes back.
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resume" }), {
+      key: "a",
+    });
+    expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
+    expect(api.sessionReadOptions).toContainEqual({ ensure: true });
+    expect(screen.queryByText("Browser paused")).toBeNull();
+    expect(api.pings).toBe(1);
   });
 });
 

@@ -64,7 +64,12 @@ export interface FetchMcpAppsWidgetContentRequest {
 }
 
 export interface FetchMcpAppsWidgetContentResponse {
+  sourceReceipt?: string;
   resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** `_meta.ui` display hints: `preferredDisplayMode` when it is a mode. */
+  uiDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** A `_meta.ui.preferredDisplayMode` that isn't a mode, as JSON; ignored. */
+  ignoredPreferredDisplayMode?: string;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;

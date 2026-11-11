@@ -5,7 +5,6 @@ import type {
 } from "@/hooks/useOrgAiConfig";
 import {
   EVALS_JUDGE_GUIDANCE,
-  HARNESS_NOT_SUPPORTED_GUIDANCE,
   HARNESS_ORG_KEYS_GUIDANCE,
   NOT_SUPPORTED_YET_GUIDANCE,
   blockedBySentence,
@@ -20,6 +19,7 @@ import {
   orgModelIds,
   orgProviderLabel,
   selectionModelLabel,
+  orgAiModelRowText,
 } from "../org-ai-config-presentation";
 import { modelSelectionFromDefinition } from "@/components/chat-v2/shared/model-selection";
 
@@ -42,7 +42,7 @@ describe("featureGuidance", () => {
     for (const eligibleConnectionIds of [[], undefined]) {
       expect(
         featureGuidance(chat, { eligibleConnectionIds, canManage: true }),
-      ).toBe("Add a direct cloud provider below.");
+      ).toBe("Add a direct cloud provider in Providers.");
     }
     expect(
       featureGuidance(chat, { eligibleConnectionIds: [], canManage: false }),
@@ -73,7 +73,7 @@ describe("featureGuidance", () => {
         { eligibleConnectionIds: [], canManage: true },
       ),
     ).toBe(
-      "Add a direct cloud provider below. Then choose a judge model from it for each suite.",
+      "Add a direct cloud provider in Providers. Then choose a judge model from it for each suite.",
     );
     expect(
       featureGuidance(
@@ -108,34 +108,37 @@ describe("featureGuidance", () => {
     }
   });
 
-  it("names the vendor each harness runtime runs on, and what doesn't count", () => {
+  it("names the providers and gateways each harness runtime runs on", () => {
     expect(
       featureGuidance(feature({ id: "harness", status: "ready" }), {
         eligibleConnectionIds: ["conn_1"],
         canManage: true,
       }),
     ).toBe(
-      "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.",
+      "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.",
     );
     expect(HARNESS_ORG_KEYS_GUIDANCE).not.toMatch(/MCPJam/);
-    for (const status of ["unconfigured", "unsupported"] as const) {
-      expect(
-        featureGuidance(feature({ id: "harness", status }), {
-          eligibleConnectionIds: ["conn_1"],
-          canManage: true,
-        }),
-      ).toBe(
-        "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex below. Custom base URLs, local runtimes and models the MCPJam SDK calls directly aren't supported.",
-      );
-      expect(
-        featureGuidance(feature({ id: "harness", status }), {
-          eligibleConnectionIds: [],
-          canManage: false,
-        }),
-      ).toBe(
-        `Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex. ${HARNESS_NOT_SUPPORTED_GUIDANCE}`,
-      );
-    }
+    const guidance = (
+      status: "unconfigured" | "unsupported",
+      canManage: boolean,
+    ) =>
+      featureGuidance(feature({ id: "harness", status }), {
+        eligibleConnectionIds: canManage ? ["conn_1"] : [],
+        canManage,
+      });
+    expect(guidance("unconfigured", true)).toBe(
+      "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers.",
+    );
+    expect(guidance("unconfigured", false)).toBe(
+      "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.",
+    );
+    // A connection exists that no harness runs on: turn its API on first.
+    expect(guidance("unsupported", true)).toBe(
+      "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider.",
+    );
+    expect(guidance("unsupported", false)).toBe(
+      "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.",
+    );
     // A rejected key is the general fix.
     expect(
       featureGuidance(
@@ -143,7 +146,7 @@ describe("featureGuidance", () => {
         { canManage: true },
       ),
     ).toBe(
-      "The provider rejected its stored credentials. Update the key below.",
+      "The provider rejected its stored credentials. Update the key in Providers.",
     );
   });
 
@@ -153,7 +156,7 @@ describe("featureGuidance", () => {
       status: "invalid_credentials",
     });
     expect(featureGuidance(transcription, { canManage: true })).toBe(
-      "The provider rejected its stored credentials. Update the key below.",
+      "The provider rejected its stored credentials. Update the key in Providers.",
     );
     expect(featureGuidance(transcription, { canManage: false })).toBe(
       "The provider rejected its stored credentials. Ask an organization admin to update the key.",
@@ -204,7 +207,7 @@ describe("featureGuidance", () => {
           operations: [withoutKind],
           canManage: true,
         }),
-      ).toBe("Add a direct cloud provider below.");
+      ).toBe("Add a direct cloud provider in Providers.");
     });
 
     it("asks for a provider first, then the model", () => {
@@ -215,7 +218,7 @@ describe("featureGuidance", () => {
           canManage: true,
         }),
       ).toBe(
-        "Add a direct cloud provider below. Then choose the organization's default AI model.",
+        "Add a direct cloud provider in Providers. Then choose the organization's default AI model.",
       );
     });
 
@@ -524,6 +527,10 @@ describe("the default model editor's helpers", () => {
     expect(listedModelFitsKind("gpt-4o-mini-transcribe", "transcription")).toBe(
       true,
     );
+    // OpenAI answers decisions on gpt-6-luna only.
+    expect(listedModelFitsKind("gpt-6-luna", "decision")).toBe(true);
+    expect(listedModelFitsKind("gpt-5.6-luna", "decision")).toBe(false);
+    expect(listedModelFitsKind("gpt-5", "decision")).toBe(false);
   });
 
   it("reads a test's result", () => {
@@ -558,7 +565,8 @@ describe("the default model editor's helpers", () => {
   it.each([
     ["http_400", "Refused", "destructive"],
     ["http_401", "Credentials rejected", "destructive"],
-    ["http_403", "Credentials rejected", "destructive"],
+    // The key works but lacks access: refused, not rejected.
+    ["http_403", "Refused", "destructive"],
     ["http_404", "Refused", "destructive"],
     ["http_408", "Provider unavailable", "warning"],
     ["http_429", "Provider unavailable", "warning"],
@@ -635,5 +643,32 @@ describe("orderedFeatures", () => {
       },
     ]).map((f) => f.id);
     expect(ids).toEqual(["chat", "insights", "future"]);
+  });
+});
+
+describe("orgAiModelRowText", () => {
+  it("keeps typed decisions on the default row until the backend offers a decision model", () => {
+    expect(
+      orgAiModelRowText("default", { kinds: ["default"], defaultSet: false })
+        .runs,
+    ).toBe(
+      "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
+    );
+    expect(
+      orgAiModelRowText("default", {
+        kinds: ["default", "decision"],
+        defaultSet: false,
+      }).runs,
+    ).toBe("Ask MCPJam, insights and findings, generation and simulated users");
+  });
+
+  it("says the decision row uses the default model only when one is set", () => {
+    const kinds = ["default", "decision"] as const;
+    expect(
+      orgAiModelRowText("decision", { kinds, defaultSet: true }).whenUnset,
+    ).toBe("Uses the default AI model");
+    expect(
+      orgAiModelRowText("decision", { kinds, defaultSet: false }).whenUnset,
+    ).toBeUndefined();
   });
 });

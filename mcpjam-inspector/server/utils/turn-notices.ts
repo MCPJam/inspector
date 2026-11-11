@@ -4,6 +4,7 @@ import {
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
 import { HISTORY_NOTICE_DATA_PART_TYPE } from "@/shared/history-notice";
+import { REASONING_EFFORT_NOTICE_DATA_PART_TYPE } from "@/shared/reasoning-effort-notice";
 import type { ElicitationChunkWriter } from "../routes/web/hosted-elicitation.js";
 import { logger } from "./logger.js";
 
@@ -56,7 +57,7 @@ export function emitSandboxNotices(
         type: SANDBOX_NOTICE_DATA_PART_TYPE,
         data: { reason },
         transient: true,
-      } as unknown as UIMessageChunk);
+      } satisfies UIMessageChunk);
       // Re-checked AFTER the write: this is the call that may have discovered
       // the stream was gone, and the chunk that discovered it did not land.
       if (closed()) break;
@@ -90,8 +91,32 @@ export function emitHistoryNotice(
         ...(chatSessionId ? { chatSessionId } : {}),
       },
       transient: true,
-    } as unknown as UIMessageChunk);
+    } satisfies UIMessageChunk);
   } catch (error) {
     logger.warn("[chat] history notice stream write failed", { error });
+  }
+}
+
+/**
+ * Tell the browser this turn ran without the reasoning effort it carried,
+ * because its model is on a custom provider connection
+ * (`withoutCustomProviderEffort`). Best-effort: a failed write costs the
+ * notice, never the turn.
+ */
+export function emitReasoningEffortNotice(
+  writer: SandboxNoticeWriter | null | undefined,
+  due: boolean,
+): void {
+  if (!writer || !due) return;
+  try {
+    writer.write({
+      type: REASONING_EFFORT_NOTICE_DATA_PART_TYPE,
+      data: { reason: "custom_provider" },
+      transient: true,
+    } satisfies UIMessageChunk);
+  } catch (error) {
+    logger.warn("[chat] reasoning effort notice stream write failed", {
+      error,
+    });
   }
 }

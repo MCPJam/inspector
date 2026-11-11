@@ -1,4 +1,3 @@
-import { DEFAULTS } from "../evals/constants";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
@@ -10,6 +9,7 @@ import { Loader2, Play, Settings2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { RunIterationControl } from "./run-iteration-control";
+import { rememberIterations, suiteRunIterations } from "./suite-run-iterations";
 import {
   Sheet,
   SheetContent,
@@ -33,6 +33,8 @@ import {
 } from "./case-workspace/case-launch-preview";
 import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import { RunsAsLine } from "./suite-runs-as";
+import { scopeAccountPreflight } from "./suite-run-account-preflight";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
@@ -152,30 +154,6 @@ export function selectReviewTargets(
   return filtered;
 }
 
-const REMEMBERED_ITERATIONS_PREFIX = "mcpjam:suite-run-iterations";
-
-function readRememberedIterations(suiteId: string): number | null {
-  try {
-    const value = Number(
-      localStorage.getItem(`${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`),
-    );
-    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberIterations(suiteId: string, count: number) {
-  try {
-    localStorage.setItem(
-      `${REMEMBERED_ITERATIONS_PREFIX}:${suiteId}`,
-      String(count),
-    );
-  } catch {
-    // Storage can be blocked; the sheet then falls back to the suite default.
-  }
-}
-
 export function SuiteRunReview(props: SuiteRunReviewProps) {
   const projectId = props.projectId ?? props.suite.projectId;
   return projectId ? (
@@ -217,16 +195,10 @@ export function SuiteRunReviewContent({
   // Case overrides keep their count; suite setup starts at its own minimum.
   const [iterations, setIterations] = useState(() =>
     String(
-      Math.min(
-        10,
-        Math.max(
-          initialIterations ??
-            readRememberedIterations(suite._id) ??
-            suite.verdictPolicyDefaults?.repetitions ??
-            DEFAULTS.RUNS_PER_TEST,
-          isCaseRun ? 1 : (suite.minIterations ?? 1),
-        ),
-      ),
+      suiteRunIterations(suite, {
+        preferred: initialIterations,
+        floor: isCaseRun ? 1 : undefined,
+      }),
     ),
   );
   const [starting, setStarting] = useState(false);
@@ -254,11 +226,15 @@ export function SuiteRunReviewContent({
   const scopedPreflight =
     !preflight || matrix
       ? preflight
-      : suite.environmentIds?.length
-        ? scopePreflightToEnvironments(preflight, selectedIds)
-        : suite.hostAttachments?.length
-          ? scopePreflightToHosts(preflight, suite, selectedIds)
-          : preflight;
+      : scopeAccountPreflight(
+          suite.environmentIds?.length
+            ? scopePreflightToEnvironments(preflight, selectedIds)
+            : suite.hostAttachments?.length
+              ? scopePreflightToHosts(preflight, suite, selectedIds)
+              : preflight,
+          suite,
+          selectedIds,
+        );
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??
@@ -437,6 +413,7 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
+          <RunsAsLine entries={scopedPreflight?.runsAs} />
           {scopedPreflight && (
             <RunPreflightNotices
               preflight={scopedPreflight}

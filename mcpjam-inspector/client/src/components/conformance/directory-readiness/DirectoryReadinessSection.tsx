@@ -333,9 +333,8 @@ export function DirectoryReadinessSection({
                   correctly — which is a green mark for them, not a red one.
                   Connecting is all it takes: a hosted run reads the saved
                   server's token automatically, so there is nothing readiness-
-                  specific to configure. Parity note: the suites above answer
-                  the same situation with a raw 401 in a red box, so this is
-                  the page's first section to say the next step out loud.
+                  specific to configure. The suites above answer the same
+                  situation the same way: INCOMPLETE, with a reconnect notice.
                 */}
                 {(() => {
                   const wall = state.report

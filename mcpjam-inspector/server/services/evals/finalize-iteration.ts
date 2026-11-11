@@ -35,6 +35,7 @@ import { buildIterationMetadata } from "./iteration-metadata.js";
 import { buildIterationErrorMetadata } from "./iteration-error-metadata.js";
 import {
   buildHostIterationMetadata,
+  type HarnessMcpAtTurn,
   type HostExecutionPolicy,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
@@ -71,8 +72,9 @@ import { buildShadowMismatch, emitShadowMismatch } from "./shadow-mismatch.js";
 import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
+  type EvalTraceModelSource,
 } from "./persist-eval-trace.js";
-import { isTerminalIterationStatus } from "./run-status.js";
+import { isEvalIterationTerminalStatus } from "@mcpjam/sdk/contract";
 import {
   buildSelectionToolCatalog,
   type SelectionCatalogToolLike,
@@ -635,9 +637,13 @@ export function buildIterationFinishParams(args: {
   messages: ModelMessage[];
   /** The model selected for this iteration, used for session attribution. */
   modelId?: string;
+  /** Whose spend that model was; absent reads as MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   systemPrompt?: string;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /** Each harness turn's MCP route, by promptIndex. */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -791,6 +797,7 @@ export function buildIterationFinishParams(args: {
     systemPrompt,
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -961,9 +968,11 @@ export function buildIterationFinishParams(args: {
     usage,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(args.modelSource ? { modelSource: args.modelSource } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(requestPayloads?.length ? { requestPayloads } : {}),
+    ...(harnessMcpByPromptIndex?.size ? { harnessMcpByPromptIndex } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -1046,8 +1055,15 @@ export type FinalizeEvalIterationParams = {
   messages: ModelMessage[];
   /** Effective model used by the iteration; persisted on the eval session. */
   modelId?: string;
+  /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+  modelSource?: EvalTraceModelSource;
   spans?: EvalTraceSpan[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /**
+   * Each harness turn's MCP route, by promptIndex. Only the per-turn fanout
+   * sends it; the W1 fallback has no field for it.
+   */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1180,8 +1196,10 @@ export async function finalizeEvalIteration(
     usage,
     messages,
     modelId,
+    modelSource,
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1213,7 +1231,7 @@ export async function finalizeEvalIteration(
       "testSuites:getTestIteration" as any,
       { iterationId },
     );
-    if (isTerminalIterationStatus(iteration?.status)) {
+    if (isEvalIterationTerminalStatus(iteration?.status)) {
       logger.debug(
         "[evals] Skipping update for terminal iteration:",
         iterationId,
@@ -1314,8 +1332,10 @@ export async function finalizeEvalIteration(
     iterationStartedAt: startedAt,
     messages,
     ...(modelId ? { modelId } : {}),
+    ...(modelSource ? { modelSource } : {}),
     spans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1366,6 +1386,8 @@ export async function finalizeEvalIteration(
       ...(usagePayload ? { usage: usagePayload } : {}),
       ...(useW1Fallback
         ? {
+            // No routing records: `updateTestIteration` has no field for
+            // them, so an iteration saved this way loses its turns' routes.
             messages: sanitizeForConvexTransport(messages),
             ...(requestPayloads?.length
               ? {

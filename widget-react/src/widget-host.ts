@@ -9,7 +9,11 @@
 // systems stay in the inspector by design, so the package can't import them).
 import type {
   BrowserStoragePolicy,
+  DisplayBehavior,
   ToolResultPolicy,
+  PrepareSandboxViewRequest,
+  PreparedSandboxView,
+  ReleaseSandboxViewRequest,
 } from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
@@ -240,14 +244,16 @@ export interface WidgetSurfaceInfo {
    */
   fixedDisplayMode?: DisplayMode;
   /**
-   * Apply OpenAI's display-mode rules (ChatGPT and Codex with the Display
-   * modes extension on): omitted resource modes mean every host mode, a
-   * preference picks the starting mode without narrowing, a resource that
-   * declares both inline and fullscreen starts fullscreen, and a fixed mode
-   * the initialized App says it cannot show refuses the App. Absent: modes are
-   * negotiated as before.
+   * How the client picks display modes while its Display modes extension is
+   * on. `hints` names the resource metadata the hints come from. `start:
+   * "hint-first"` is OpenAI's rules: omitted resource modes mean every host
+   * mode, a preference picks the starting mode without narrowing, a resource
+   * that declares both inline and fullscreen starts fullscreen, and a fixed
+   * mode the initialized App says it cannot show refuses the App.
+   * `"inline-then-move"` is Claude's: the App starts inline and moves once to
+   * the side panel. Absent: modes are negotiated as before.
    */
-  openAIDisplayModes?: boolean;
+  displayBehavior?: DisplayBehavior;
 }
 
 // --- Instrumentation ---------------------------------------------------------
@@ -710,7 +716,12 @@ export interface FetchWidgetContentRequest {
 }
 
 export interface FetchWidgetContentResponse {
+  sourceReceipt?: string;
   resourceDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** `_meta.ui` display hints, read under `displayBehavior.hints: "ui"`. */
+  uiDisplayHints?: import("@mcpjam/sdk/widget-runtime").ResourceDisplayHints;
+  /** A `_meta.ui.preferredDisplayMode` that isn't a mode, as JSON; ignored. */
+  ignoredPreferredDisplayMode?: string;
   html: string;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
@@ -756,6 +767,8 @@ export type ListResourcesResult = {
  * HOSTED_MODE / web-managed guard before calling the raw api.
  */
 export interface WidgetHostServices {
+  prepareSandboxView?: (request: PrepareSandboxViewRequest, signal?: AbortSignal) => Promise<PreparedSandboxView>;
+  releaseSandboxView?: (request: ReleaseSandboxViewRequest) => Promise<void>;
   /** Host-admitted plugin navigation, never arbitrary external navigation. */
   openAppLink?: (url: string) => Promise<void>;
   sendMessage?: (params: unknown) => Promise<Record<string, unknown>>;

@@ -26,6 +26,7 @@ const harnessState = vi.hoisted(() => ({
   /** What the backend recorded as the proxy's refusal on the lease. */
   recordedRefusal: undefined as { reason: string; at: number } | undefined,
   readRefusal: vi.fn(),
+  supportsModel: vi.fn((_modelId: string, _options?: unknown) => true),
   createHarness: vi.fn((_args?: unknown) => ({ harnessId: "claude-code" })),
   toNativeModel: vi.fn((modelId: string, _upstream?: unknown) => modelId),
   createSession: vi.fn(async (_opts?: unknown) => ({
@@ -74,7 +75,8 @@ vi.mock("../registry.js", () => ({
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
     mcpDelivery: "mcpjam",
-    supportsModel: vi.fn(() => true),
+    supportsModel: harnessState.supportsModel,
+    modelSupport: vi.fn(() => ({ reason: "no evidence row admits it" })),
     createHarness: harnessState.createHarness,
     toNativeModel: harnessState.toNativeModel,
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
@@ -222,6 +224,42 @@ describe("runHarnessTurn on the organization's own key", () => {
     harnessState.streamError = undefined;
     harnessState.recordedRefusal = undefined;
     harnessState.readRefusal.mockClear();
+    harnessState.supportsModel.mockReset();
+    harnessState.supportsModel.mockReturnValue(true);
+  });
+
+  describe("the turn-time model check", () => {
+    const GATEWAY_SELECTION: ModelSelection = {
+      source: "org",
+      modelId: "custom:litellm/claude-sonnet-4.5",
+      nativeModelId: "claude-sonnet-4.5",
+      connectionRef: { kind: "orgProvider", id: "conn_gw" },
+      fallback: { provider: "none", model: "none" },
+    };
+
+    it("leaves a gateway model to lease start, which judges the model it maps to", async () => {
+      harnessState.supportsModel.mockReturnValue(false);
+      const result = await runHarnessTurn(
+        options({ modelSelection: GATEWAY_SELECTION }),
+        "ui",
+      );
+      await result.response!.text();
+      expect(harnessState.supportsModel).not.toHaveBeenCalled();
+      expect(vi.mocked(startHarnessModelBroker).mock.lastCall?.[0]).toMatchObject({
+        modelSelection: { modelId: "custom:litellm/claude-sonnet-4.5" },
+      });
+    });
+
+    it("still refuses a vendor model the evidence rules out", async () => {
+      harnessState.supportsModel.mockReturnValue(false);
+      const result = await runHarnessTurn(options(), "ui");
+      await result.response?.text();
+      expect(harnessState.supportsModel).toHaveBeenCalledWith(
+        "anthropic/claude-sonnet-4.5",
+        expect.anything(),
+      );
+      expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    });
   });
 
   describe("a turn the model proxy refused", () => {
@@ -393,19 +431,15 @@ describe("runHarnessTurn on the organization's own key", () => {
     };
   }
 
-  it("reserves and starts with the selection under its CANONICAL id", async () => {
+  it("starts with the canonical selection and the current lease revision", async () => {
     const result = await runHarnessTurn(options(), "ui");
     await result.response!.text();
-    expect(vi.mocked(reserveHarnessBox).mock.lastCall?.[0]).toMatchObject({
-      modelId: "anthropic/claude-sonnet-4.5",
-      modelSelection: ORG_SELECTION,
-    });
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(vi.mocked(startHarnessModelBroker).mock.lastCall?.[0]).toMatchObject(
       {
         modelId: "anthropic/claude-sonnet-4.5",
         modelSelection: ORG_SELECTION,
-        // The revision the reserve prepared: a key replaced since is refused.
-        expectedCredentialRevision: "rev_a",
+
       },
     );
   });

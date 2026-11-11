@@ -94,4 +94,12 @@ export const CODEX_APPSERVER_BUILTIN_TOOLS = {
       grantRoot: z.string().optional(),
     }),
   }),
+  imageView: nativeTool({
+    nativeName: CODEX_APPSERVER_NATIVE_TOOL_NAMES.imageView,
+    toolUseKind: "readonly",
+    description: "Look at an image on disk.",
+    inputSchema: z.object({
+      path: z.string(),
+    }),
+  }),
 } as const satisfies Record<string, HarnessV1BuiltinTool<any, any>>;

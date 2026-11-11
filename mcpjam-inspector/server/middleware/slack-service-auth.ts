@@ -299,8 +299,7 @@ export async function handleSlackServiceAuth(
     // their account — they would follow the instruction, re-link, and still
     // fail. This distinction is the whole reason the resolver throws instead
     // of returning null.
-    logger.error("Slack account-link lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
+    logger.error("Slack account-link lookup failed", error, {
       is_backend_unavailable: error instanceof SlackBackendUnavailable,
     });
     return c.json(

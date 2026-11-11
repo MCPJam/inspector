@@ -1,7 +1,15 @@
 import type { RpcLogEvent } from "./types.js";
 import type { TranscriptToolInventoryEntry } from "../predicates/types.js";
 
-type Declaration = TranscriptToolInventoryEntry & { outputSchema?: unknown };
+type Declaration = TranscriptToolInventoryEntry & {
+  outputSchema?: unknown;
+  /**
+   * OpenAI's per-tool auth declaration, top-level or under `_meta`. Kept from
+   * the RAW frame because the upstream tool schema strips the top-level field.
+   */
+  securitySchemes?: unknown;
+  _meta?: { securitySchemes?: unknown };
+};
 type Snapshot = {
   tools: Declaration[];
   capture: "complete" | "partial";
@@ -106,6 +114,19 @@ export class ToolDeclarationCapture {
         typeof value.annotations === "object" &&
         !Array.isArray(value.annotations)
           ? { annotations: value.annotations }
+          : {}),
+        ...(Array.isArray(value.securitySchemes)
+          ? { securitySchemes: value.securitySchemes }
+          : {}),
+        ...(value._meta &&
+        typeof value._meta === "object" &&
+        Array.isArray((value._meta as { securitySchemes?: unknown }).securitySchemes)
+          ? {
+              _meta: {
+                securitySchemes: (value._meta as { securitySchemes: unknown })
+                  .securitySchemes,
+              },
+            }
           : {}),
       };
       snapshot.bytes += new TextEncoder().encode(

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
+import { PluginInvocationError } from "../invocation.js";
 import { ModelAppRegistry } from "../model-apps.js";
+import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
-import type { PluginFormOwner } from "../instances.js";
+import { pluginInstances, type PluginFormOwner } from "../instances.js";
+import { RequestOwnedToolInvoker } from "../request-invoker.js";
+import { z } from "zod";
 const owner = {
   owner: {
     actorId: "a",
@@ -34,7 +38,138 @@ function publish(registry: ModelAppRegistry) {
     meta,
   ) as any;
 }
+function publication(registry: ModelAppRegistry) {
+  const invoker = new RequestOwnedToolInvoker(owner.owner, () => {});
+  const resultSchema = z.object({
+    content: z.array(z.unknown()),
+    _meta: z.object({ [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }) }),
+  });
+  const invoke = async () => resultSchema.parse(await invoker.invoke({
+    authorize: async () => ({
+      owner: owner.owner, revision: "tool-rev", enabled: true,
+      tool: { name: "pickFile" }, allowedOrigins: ["model"], requiresApproval: false,
+    }),
+    approve: async () => false,
+    admit: async () => {},
+    execute: async () => publish(registry),
+    classifyFailure: () => "unknown",
+  }, "model", "original-call", { name: "pickFile" }));
+  return { invoke, close: () => invoker.close() };
+}
 describe("trusted completed model App ownership", () => {
+  it("counts an open model App's context against this process's memory", () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const open = (toolName: string) =>
+      (
+        registry.publish(
+          { content: [] },
+          owner,
+          toolName,
+          "tool-rev",
+          meta,
+        ) as any
+      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
+    const update = (token: string, sequence: number, text: string) =>
+      registry.updateContext(token, actor, {
+        operationId: `op-${sequence}`,
+        sequence,
+        params: { content: [{ type: "text", text }] },
+        // After its context is removed, the person uses the App again.
+        ...(sequence > 1 ? { attach: "user" as const } : {}),
+      });
+    const first = open("first");
+    const second = open("second");
+    update(first, 1, "x".repeat(40_000));
+    expect(() => update(second, 1, "y".repeat(30_000))).toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    // Removing the first App's context frees its bytes, and so does closing.
+    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
+    update(second, 1, "y".repeat(30_000));
+    expect(() => update(first, 2, "x".repeat(40_000))).toThrow(
+      "PLUGIN_CONTEXT_MEMORY_LIMIT",
+    );
+    registry.close(second, actor);
+    update(first, 2, "x".repeat(40_000));
+  });
+  it("acknowledges a retried update after removal without checking or charging memory", () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const open = (toolName: string) =>
+      (
+        registry.publish(
+          { content: [] },
+          owner,
+          toolName,
+          "tool-rev",
+          meta,
+        ) as any
+      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
+    const first = open("first");
+    const second = open("second");
+    const request = {
+      operationId: "op-1",
+      sequence: 1,
+      params: { content: [{ type: "text" as const, text: "x".repeat(40_000) }] },
+    };
+    const applied = registry.updateContext(first, actor, request);
+    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
+    // The retry gets the original update back, and the context stays removed.
+    expect(registry.updateContext(first, actor, request)).toEqual(applied);
+    const { context, owner: source } = registry.get(first, actor);
+    expect(context.snapshot(source.owner.instanceId, 1).state).toBeNull();
+    // It charged nothing, so the second App still has the whole budget...
+    registry.updateContext(second, actor, {
+      operationId: "second-1",
+      sequence: 1,
+      params: { content: [{ type: "text", text: "y".repeat(60_000) }] },
+    });
+    // ...and with that budget spent, the retry is still not refused.
+    expect(registry.updateContext(first, actor, request)).toEqual(applied);
+  });
+
+  it("answers a retry under the client's policy, not the default limits", () => {
+    const registry = new ModelAppRegistry(60_000);
+    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    // 300 KiB: over the 256 KiB default, within this client's policy.
+    const limits = { updateMaxBytes: 1024 * 1024, maxBlocks: 64 };
+    const request = {
+      operationId: "large",
+      sequence: 1,
+      params: {
+        content: [{ type: "text" as const, text: "x".repeat(300 * 1024) }],
+      },
+    };
+    const applied = registry.updateContext(token, actor, request, limits);
+    registry.removeContext(token, actor, { operationId: "remove", basis: 0 });
+    expect(registry.updateContext(token, actor, request, limits)).toEqual(
+      applied,
+    );
+  });
+
+  it("renews the same form owner with the App and withdraws it on close", () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry();
+    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    const source = registry.get(token, actor).owner.owner;
+    try {
+      vi.advanceTimersByTime(20 * 60_000);
+      registry.renew(token, actor);
+      vi.advanceTimersByTime(20 * 60_000);
+      expect(pluginInstances.getFormOwner(source, actor).owner).toEqual(source);
+      expect(() => pluginInstances.getFormOwner(source, { ...actor, subject: "other" })).toThrow();
+      registry.close(token, actor);
+      expect(() => pluginInstances.getFormOwner(source, actor)).toThrow();
+    } finally {
+      registry.close(token, actor);
+      vi.useRealTimers();
+    }
+  });
   it("renews a retained model App past its original lifetime", () => {
     vi.useFakeTimers();
     try {
@@ -55,10 +190,10 @@ describe("trusted completed model App ownership", () => {
       vi.useRealTimers();
     }
   });
-  it("preserves result and deduplicates original completion without executing a tool", () => {
+  it("preserves result and deduplicates original completion through its receipt", async () => {
     const registry = new ModelAppRegistry();
-    const first = publish(registry),
-      second = publish(registry);
+    const operation = publication(registry);
+    const first = await operation.invoke(), second = await operation.invoke();
     expect(first).toEqual(second);
     expect(first.content).toEqual([]);
     const handle = first._meta[PLUGIN_MODEL_APP_META];
@@ -66,6 +201,7 @@ describe("trusted completed model App ownership", () => {
     expect(entry.owner.owner.serverId).toBe("saved-id");
     expect(entry.owner.owner.instanceId).not.toBe("original");
     registry.close(handle.instanceToken, actor);
+    operation.close();
   });
   it.each(["actorId", "projectId", "workspaceId", "subject"] as const)(
     "rejects changed %s",
@@ -80,13 +216,41 @@ describe("trusted completed model App ownership", () => {
       registry.close(token, actor);
     },
   );
-  it("keeps a closed completion tombstone so transcript retries never revive it", () => {
+  it("replays a closed completion's receipt without reviving the App", async () => {
     const registry = new ModelAppRegistry();
-    const first = publish(registry);
+    const operation = publication(registry);
+    const first = await operation.invoke();
     const token = first._meta[PLUGIN_MODEL_APP_META].instanceToken;
     registry.close(token, actor);
-    expect(publish(registry)).toEqual(first);
+    expect(await operation.invoke()).toEqual(first);
     expect(() => registry.get(token, actor)).toThrow();
+    operation.close();
+  });
+  it("admits fresh Apps after more than 512 sequential closed publications", () => {
+    const registry = new ModelAppRegistry();
+    const tokens = new Set<string>();
+    for (let index = 0; index < 514; index++) {
+      const result = registry.publish({ content: [] }, owner, `tool-${index}`, "tool-rev", meta);
+      const token = z.object({ _meta: z.object({
+        [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
+      }) }).parse(result)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+      expect(typeof token).toBe("string");
+      expect(tokens.has(token)).toBe(false);
+      tokens.add(token);
+      registry.close(token, actor);
+      expect(() => registry.get(token, actor)).toThrow();
+    }
+  });
+  it("retains a completed tool result when form-owner capacity refuses the App", () => {
+    const retain = vi.spyOn(pluginInstances, "retainModelOwner")
+      .mockImplementationOnce(() => { throw new PluginInvocationError("INSTANCE_LIMIT"); });
+    try {
+      const result = { content: [{ type: "text", text: "The operation completed" }], structuredContent: { saved: true } };
+      const registry = new ModelAppRegistry();
+      expect(registry.publish(result, owner, "tool", "rev", meta)).toEqual({
+        ...result, _meta: { [PLUGIN_MODEL_APP_META]: { unavailable: true } },
+      });
+    } finally { retain.mockRestore(); }
   });
   it("does not publish errors or non-App output", () => {
     const registry = new ModelAppRegistry();

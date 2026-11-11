@@ -6,6 +6,7 @@ import {
 
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 import { MODEL_ID_PREFIX_ALIASES } from "./model-id-prefix-aliases";
+import type { GatewayApi } from "./gateway-connection";
 
 import type {
   AuthMethod,
@@ -398,6 +399,18 @@ export interface ModelDefinition {
    * selection references the connection by that id, never by name.
    */
   orgProvider?: { providerKey: string; id?: string };
+  /**
+   * Set on rows from an organization gateway (`custom:*`): the APIs it
+   * serves, where its calls come from, and the catalog model this row's
+   * gateway model maps to (absent when unmapped). Harness pickers judge the
+   * row on these (`gatewayHarnessModel`).
+   */
+  gateway?: {
+    providerKey: string;
+    apis: readonly GatewayApi[];
+    runtimeLocation?: "cloud" | "local";
+    modelId?: string;
+  };
   /**
    * The id the provider API is called with, when it is chosen explicitly
    * rather than being the row id: the deployment name of an org Azure OpenAI

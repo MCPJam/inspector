@@ -134,6 +134,7 @@ export interface ScenarioBootstrapPayload {
   viewerIsProjectMember: boolean;
   systemPrompt: string;
   modelId: string;
+  modelReadiness?: { ready: boolean; code?: string };
   temperature: number;
   requireToolApproval: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
@@ -474,6 +475,7 @@ export function normalizeScenarioSession(
       viewerIsProjectMember: payload.viewerIsProjectMember,
       systemPrompt: payload.systemPrompt,
       modelId: payload.modelId,
+      modelReadiness: payload.modelReadiness,
       temperature: payload.temperature,
       requireToolApproval: payload.requireToolApproval,
       modelVisibleMcpToolResults: normalizeModelVisibleMcpToolResults(

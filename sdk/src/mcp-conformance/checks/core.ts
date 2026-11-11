@@ -1,9 +1,8 @@
-import type { MCPClientCheckContext, MCPClientCheckDefinition } from "../types.js";
-import {
-  errorMessage,
-  failedResult,
-  passedResult,
-} from "./helpers.js";
+import type {
+  MCPClientCheckContext,
+  MCPClientCheckDefinition,
+} from "../types.js";
+import { caughtErrorResult, failedResult, passedResult } from "./helpers.js";
 
 function selectCompletionReference(ctx: Parameters<
   MCPClientCheckDefinition["run"]
@@ -76,17 +75,18 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     title: "Server Initialize",
     description: "Server responds to initialize and reports capabilities.",
     async run(ctx) {
-      const startedAt = Date.now();
+      // The handshake already happened on connect; report how long it took.
+      const durationMs = ctx.connectDurationMs ?? 0;
       const info = ctx.initializationInfo;
       if (!info) {
         return failedResult(
           this,
-          Date.now() - startedAt,
+          durationMs,
           "Initialization info is unavailable after connecting to the server",
         );
       }
 
-      return passedResult(this, Date.now() - startedAt, {
+      return passedResult(this, durationMs, {
         protocolVersion: info.protocolVersion,
         transport: info.transport,
         serverCapabilities: info.serverCapabilities as Record<string, unknown>,
@@ -102,17 +102,18 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.pingServer(ctx.serverId);
+        const result = await ctx.manager.pingServer(ctx.serverId, {
+          signal: ctx.config.signal,
+        });
         return passedResult(this, Date.now() - startedAt, {
           result: result as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -141,18 +142,17 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         // returns an `EmptyResult` the manager discards). A clean resolve —
         // no thrown JSON-RPC error — is the pass condition; there is no
         // result body to inspect.
-        await ctx.client.setLoggingLevel("info");
+        await ctx.client.setLoggingLevel("info", { signal: ctx.config.signal });
 
         return passedResult(this, Date.now() - startedAt, {
           level: "info",
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },
@@ -179,22 +179,31 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
 
       const completionReference = selectCompletionReference(ctx);
       if (!completionReference) {
+        // Only a listing that was really read shows "nothing to complete". A
+        // failed listing could be hiding the very prompt or template, so that
+        // case stays untested rather than excused.
+        const unread = (ctx.unlisted ?? []).some(
+          (listing) => listing === "prompts" || listing === "resourceTemplates",
+        );
         return {
           ...this,
           status: "skipped" as const,
-          // Completions IS advertised, so the requirement applies here — we
-          // simply found no subject to exercise it against.
-          skipReason: "could-not-run" as const,
+          skipReason: unread
+            ? ("could-not-run" as const)
+            : ("not-applicable" as const),
           durationMs: 0,
           error: {
-            message:
-              "Server does not expose a prompt or resource template suitable for completion testing",
+            message: unread
+              ? "Could not list the server's prompts or resource templates, so there was nothing to complete"
+              : "The server has no prompts or resource templates, so there is nothing to complete.",
           },
         };
       }
 
       try {
-        const result = await ctx.client.complete(completionReference);
+        const result = await ctx.client.complete(completionReference, {
+          signal: ctx.config.signal,
+        });
         if (!Array.isArray(result.completion.values)) {
           return failedResult(
             this,
@@ -210,12 +219,11 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           completion: result.completion as Record<string, unknown>,
         });
       } catch (error) {
-        return failedResult(
+        return caughtErrorResult(
           this,
-          Date.now() - startedAt,
-          errorMessage(error),
-          undefined,
+          startedAt,
           error,
+          ctx.config.checkTimeout
         );
       }
     },

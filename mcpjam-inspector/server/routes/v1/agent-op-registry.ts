@@ -66,6 +66,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   generateEvalCasesOperation,
   importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
@@ -115,6 +116,9 @@ import {
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
   readServerResourceOperation,
   listServerSkillsOperation,
   getServerSkillOperation,
@@ -1569,7 +1573,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
       },
-      normalizeProposalArgs: freezeConformanceServer,
+      // `settings: "none"` until the approval can show the tools a run with
+      // saved settings would call; until then it names only the server. The
+      // pin must hold even when the server lookup fails, which otherwise
+      // leaves the arguments as the model wrote them.
+      normalizeProposalArgs: async (input, context) => ({
+        ...(await freezeConformanceServer(input, context).catch(
+          // Best-effort by contract: an unresolved name stays a name.
+          () => input,
+        )),
+        settings: "none",
+      }),
     },
     promptNotes: [
       "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
@@ -1579,7 +1593,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   },
   { operation: getConformanceRunOperation, tier: "direct" },
   { operation: listConformanceRunsOperation, tier: "direct" },
-  { operation: getConformanceReportOperation, tier: "direct" },
+  // A check's `error`, `details` and `output` are text the graded server wrote.
+  {
+    operation: getConformanceReportOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: getConformanceCheckOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
   {
     operation: cancelReadinessRunOperation,
     tier: "direct",
@@ -1588,6 +1612,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: listServerToolsOperation, tier: "direct" },
+  { operation: listServerRevisionsOperation, tier: "direct" },
+  { operation: getServerRevisionOperation, tier: "direct" },
+  { operation: diffServerRevisionsOperation, tier: "direct" },
   { operation: listServerPromptsOperation, tier: "direct" },
   { operation: listServerResourcesOperation, tier: "direct" },
   {

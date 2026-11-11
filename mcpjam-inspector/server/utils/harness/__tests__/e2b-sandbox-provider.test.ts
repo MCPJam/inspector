@@ -25,23 +25,32 @@ const mocks = vi.hoisted(() => {
     read: vi.fn(),
     write: vi.fn(),
     connect: vi.fn(),
+    brokerConnect: vi.fn(),
   };
 });
 const { FakeCommandExitError } = mocks;
 const sandboxState = mocks;
 
-vi.mock("e2b", () => ({
-  Sandbox: {
-    connect: async (id: string, opts?: Record<string, unknown>) => {
-      await mocks.connect(id, opts);
-      return {
+vi.mock("../../computers/attach-sandbox.js", () => {
+  const connection = (id: string) => ({
         sandboxId: id,
         commands: { run: mocks.run },
         files: { read: mocks.read, write: mocks.write },
         getHost: (p: number) => `host-${p}.e2b.dev`,
-      };
+      });
+  return {
+    attachRunningSandbox: async (id: string, opts?: Record<string, unknown>) => {
+      await mocks.connect(id, opts);
+      return connection(id);
     },
-  },
+    attachBrokerPreparedSandbox: async (id: string, opts?: Record<string, unknown>) => {
+      await mocks.brokerConnect(id, opts);
+      return connection(id);
+    },
+  };
+});
+
+vi.mock("e2b", () => ({
   CommandExitError: mocks.FakeCommandExitError,
   FileNotFoundError: mocks.FakeFileNotFoundError,
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
@@ -66,6 +75,7 @@ beforeEach(() => {
   sandboxState.run.mockReset();
   sandboxState.run.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
   sandboxState.connect.mockReset();
+  sandboxState.brokerConnect.mockReset();
 });
 
 afterEach(() => {
@@ -74,7 +84,78 @@ afterEach(() => {
 
 const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 
+describe("broker-prepared connection", () => {
+  it("selects the shortcut only after the caller records broker success", async () => {
+    let ready = false;
+    const p = createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", connectionPreparedByBroker: () => ready });
+    await p.createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.brokerConnect).not.toHaveBeenCalled();
+    ready = true;
+    await p.resumeSession!({ sessionId: "session" });
+    expect(sandboxState.brokerConnect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back to a wake when an acknowledged box disappears", async () => {
+    sandboxState.brokerConnect.mockRejectedValueOnce(new mocks.FakeSandboxNotFoundError("gone"));
+    const p = createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", connectionPreparedByBroker: () => true });
+    await expect(p.createSession()).rejects.toBeInstanceOf(HarnessInfraSetupError);
+    expect(sandboxState.connect).not.toHaveBeenCalled();
+    expect(sandboxState.run).not.toHaveBeenCalled();
+  });
+});
+
 describe("the pnpm guard", () => {
+  it("overlaps resume checks but exposes no session until both finish", async () => {
+    let finishGuard!: () => void;
+    let finishSockets!: () => void;
+    const guard = new Promise<void>((resolve) => { finishGuard = resolve; });
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      await (command.includes("pnpm") ? guard : sockets);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let ready = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).then(() => { ready = true; });
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    finishGuard();
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    finishSockets();
+    await pending;
+    expect(ready).toBe(true);
+    expect(sandboxState.run).toHaveBeenCalledWith(
+      expect.stringContaining("ss -K"),
+      expect.objectContaining({ user: "root" }),
+    );
+  });
+
+  it("still refuses resume when the package guard fails", async () => {
+    let finishSockets!: () => void;
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("pnpm")) throw new FakeCommandExitError(1, "", "offline");
+      await sockets;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let settled = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).finally(() => { settled = true; });
+    const refusal = expect(pending).rejects.toThrow(/pnpm is missing/);
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    finishSockets();
+    await refusal;
+  });
+
   it("explains itself when pnpm is missing and installing it fails", async () => {
     // This is the failure that cost a full debugging session: E2B's raw
     // `CommandExitError` carries only "exit status 1", so a turn that died
@@ -169,6 +250,27 @@ describe("abort plumbing", () => {
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
       expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("trusts the E2B proxy CA while preserving explicit certificate configuration", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    await session.run({ command: "node client.mjs" });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node client.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      }) }),
+    );
+    await session.run({ command: "node custom.mjs", env: {
+      NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+    } });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node custom.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+      }) }),
     );
   });
 

@@ -66,6 +66,7 @@ import {
   type ToolPolicySnapshot,
 } from "@mcpjam/sdk/contract";
 import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
+import { serverToolName } from "../../services/evals/account-routing.js";
 import { logger } from "../logger.js";
 import { harnessServerKeyToName } from "./mcp-config.js";
 import {
@@ -93,6 +94,19 @@ export function harnessMcpToolName(serverKey: string, toolName: string): string 
   return `mcp__${serverKey}__${toolName}`;
 }
 
+/** Display-only labels from the resolved runtime; routing keeps canonical server IDs. */
+function withServerSource(tool: unknown, sourceName: string | undefined): unknown {
+  const label = sourceName?.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!label || !tool || typeof tool !== "object" || Array.isArray(tool)) return tool;
+  const description = "description" in tool && typeof tool.description === "string"
+    ? tool.description
+    : "";
+  return {
+    ...tool,
+    description: `MCP server: ${JSON.stringify(label)}.${description ? `\n${description}` : ""}`,
+  };
+}
+
 export interface HostExecutedMcpProjection {
   /** Name-keyed AI SDK tools to merge into the agent's host-executed `tools`. */
   tools: Record<string, unknown>;
@@ -114,6 +128,9 @@ export interface HostExecutedMcpProjection {
 export async function projectSelectedMcpServersAsHostTools(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  /** Backend-resolved display names. Omitted labels preserve the original catalog. */
+  serverDisplayNames?: Readonly<Record<string, string>>;
+  unavailableServerIds?: readonly string[];
   connectionsByServerId?: ConnectionsByServerId;
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
    *  live connection fails the turn instead of being silently skipped. */
@@ -183,6 +200,7 @@ export async function projectSelectedMcpServersAsHostTools(args: {
 }): Promise<HostExecutedMcpProjection> {
   const configured = selectDeliverableServerIds({
     selectedServerIds: args.selectedServerIds,
+    unavailableServerIds: args.unavailableServerIds,
     hasLiveConfig: (id) => Boolean(args.manager.getServerConfig(id)),
     ...(args.pluginOrigins ? { pluginOrigins: args.pluginOrigins } : {}),
     onSkipped: (id) =>
@@ -289,9 +307,20 @@ export async function projectSelectedMcpServersAsHostTools(args: {
         });
       }
       if (snapshot) {
-        projected = withToolPolicyGate({ tool: projected, toolName, snapshot });
+        projected = withToolPolicyGate({
+          tool: projected,
+          toolName,
+          // The snapshot is keyed by the server's tool names, and a
+          // multi-account variant holds one under another key.
+          policyName: serverToolName(tool, toolName),
+          snapshot,
+        });
       }
-      tools[harnessMcpToolName(key, toolName)] = projected;
+      tools[harnessMcpToolName(key, toolName)] = withServerSource(
+        projected,
+        args.serverDisplayNames && Object.hasOwn(args.serverDisplayNames, serverId)
+          ? args.serverDisplayNames[serverId] : undefined,
+      );
     }
   }
   return { tools, keyToServerId };
@@ -475,7 +504,10 @@ function withScopeStepUpObserver(args: {
  */
 function withToolPolicyGate(args: {
   tool: unknown;
+  /** The name the call was made under, reported on the block. */
   toolName: string;
+  /** The server's name for the tool, which the snapshot decides. */
+  policyName: string;
   snapshot: ToolPolicySnapshot;
 }): unknown {
   const tool = args.tool as {
@@ -488,7 +520,7 @@ function withToolPolicyGate(args: {
     execute: async (input: unknown, options: unknown) => {
       const decision = decideToolPolicyFromSnapshot({
         snapshot: args.snapshot,
-        toolName: args.toolName,
+        toolName: args.policyName,
       });
       if (decision.allowed) return originalExecute(input, options);
       const marker: HarnessPolicyBlockMarker = {

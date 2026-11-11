@@ -47,6 +47,12 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Conformance runs (one name everywhere; no server twin) ---
+  // The CLI and the SDK send this same name from their own clients, with
+  // `run_source` saying where the run came from. Hosted server runs go
+  // through the SDK, so the app has no `_server` twin.
+  conformance_run_triggered: { source: "client" },
+
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**
@@ -291,6 +297,7 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
@@ -364,6 +371,19 @@ export const ANALYTICS_EVENTS = {
    * be shared is the thing worth knowing.
    */
   share_server_to_org_registry_clicked: { source: "client" },
+  /**
+   * Mid-session sign-in: a server refused one call and asked the user to sign
+   * in. `shown` fires when the Connect card is presented, `connect_clicked` on
+   * the trusted click that alone may start the redirect, `completed` /
+   * `failed` when the sign-in settles, and `dismissed` on "Not now". Props are
+   * closed vocabularies (surface, source, action); never scopes, URLs or the
+   * server's own text.
+   */
+  auth_challenge_card_shown: { source: "client" },
+  auth_challenge_connect_clicked: { source: "client" },
+  auth_challenge_completed: { source: "client" },
+  auth_challenge_failed: { source: "client" },
+  auth_challenge_dismissed: { source: "client" },
   /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
@@ -494,6 +514,7 @@ export const ANALYTICS_EVENTS = {
   trace_raw_copied: { source: "client" },
   trace_span_clicked: { source: "client" },
   trace_view_mode_changed: { source: "client" },
+  triggers_tab_viewed: { source: "client" },
   tunnel_closed: { source: "client" },
   tunnel_created: { source: "client" },
   tunnel_rotated: { source: "client" },

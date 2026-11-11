@@ -56,6 +56,7 @@ import {
   closeWorkspaceSurface,
 } from "@mcpjam/widget-react";
 import type { WidgetHost, MCPAppsRendererProps } from "@mcpjam/widget-react";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import { useWidgetHost } from "@/components/chat-v2/thread/mcp-apps/use-widget-host";
 import {
   createThreadAppApi,
@@ -213,6 +214,7 @@ interface ViewerChoiceWait {
 }
 
 export interface ThreadAppWorkspaceOptions {
+  canInvoke?: () => boolean;
   runOnboarding?: RunPluginOnboarding;
   sendMessage?: AppMessageSender;
   /** Shared discovery; when absent the workspace reads its own. */
@@ -223,6 +225,8 @@ export interface ThreadAppWorkspaceOptions {
    */
   currentThreadId?: () => string;
   capabilities?: ExtensionCapabilities;
+  /** How Apps choose a display mode; undefined while Display modes is off. */
+  displayBehavior?: DisplayBehavior;
   /** Settings discovery is owned once per scope; chat owners skip it. */
   settings?: boolean;
   /** Called when an App is launched or reselected, for presentation. */
@@ -234,6 +238,7 @@ export interface ThreadAppWorkspaceOptions {
   routeLaunch?: (
     server: WorkspaceServer,
     declaration: ThreadAppDeclaration,
+    waitForAdmission?: boolean,
   ) => Promise<void> | undefined;
   /**
    * A deep link opens its plugin's GLOBAL App. Chat-owned Apps (thread, file
@@ -261,6 +266,7 @@ export function useThreadAppWorkspace(
   const settings = useWorkspaceSettings(
     options.settings === false || !capabilities.settings ? null : scope,
     servers,
+    options.launchProfile,
   );
   const onboardingOn = !!options.runOnboarding && capabilities.onboarding;
   const onboarding = usePluginOnboarding(
@@ -274,8 +280,10 @@ export function useThreadAppWorkspace(
   const serverKey = JSON.stringify(
     servers.map(({ serverId, name }) => [serverId, name]),
   );
+  const invokeGate = useRef(options.canInvoke);
+  invokeGate.current = options.canInvoke;
   const api = useMemo(
-    () => (scope ? createThreadAppApi(scope) : null),
+    () => (scope ? createThreadAppApi(scope, "", () => invokeGate.current?.() ?? true) : null),
     [scope],
   );
   const lifetime = useMemo(
@@ -885,14 +893,14 @@ export function useThreadAppWorkspace(
           error instanceof ThreadAppError &&
           error.code === "APPROVAL_DENIED"
         )
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).exclude();
         else
-          (row.launch ?? lifetime.health.begin(
-            `open:${key}`,
+          (row.launch ??= lifetime.health.begin(
+            `open:${crypto.randomUUID()}`,
             declaration.kind,
             profileRef.current,
           )).fail(
@@ -1144,8 +1152,9 @@ export function useThreadAppWorkspace(
           sendMessage: capabilities.messages ? options.sendMessage : undefined,
           currentThreadId: options.currentThreadId,
           capabilities,
+          displayBehavior: options.displayBehavior,
           navigate: options.routeNavigate ?? navigateDeepLink,
-          openFile: (server, entry) => launch(server, entry, undefined, true),
+          openFile: (server, entry) => options.routeLaunch?.(server, entry, true) ?? launch(server, entry, undefined, true),
           chooseViewer,
           renderOutcome,
           approve: (...args) => current.current.approve(...args),
@@ -1173,16 +1182,18 @@ export function useThreadAppWorkspace(
     fileActions:
       api && scope
         ? {
+            workspaceId: scope.pluginWorkspace.workspaceId,
             api,
             serverIds: servers.map((server) => server.serverId),
             enabled: capabilities.fileViewers,
+            chooseViewer,
             open: async (serverId: string, entry: ThreadAppDeclaration) => {
               const server = servers.find(
                 (value) => value.serverId === serverId,
               );
               if (!server || entry.kind !== "file")
                 throw new Error("File viewer unavailable");
-              await launch(server, entry);
+              await launch(server, entry, undefined, true);
             },
           }
         : null,
@@ -1243,6 +1254,7 @@ export function useThreadAppWorkspace(
       appPorts && scope ? (
         <>
           <WidgetWorkspaceProvider
+            inheritAppTools
             key={scope.pluginWorkspace.workspaceId}
             workspaceId={scope.pluginWorkspace.workspaceId}
           >
@@ -1275,6 +1287,7 @@ export interface RetainedAppPorts {
   sendMessage?: AppMessageSender;
   currentThreadId?: () => string;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   navigate: (server: WorkspaceServer, url: string) => Promise<void>;
   openFile: (
     server: WorkspaceServer,
@@ -1304,6 +1317,7 @@ export function AppRegistration({
   openFile,
   currentThreadId,
   capabilities = ALL_EXTENSION_CAPABILITIES,
+  displayBehavior,
   chooseViewer,
   containerDimensions,
   renderOutcome,
@@ -1325,6 +1339,7 @@ export function AppRegistration({
   /** Read per request; defaults to the owner's own chat. */
   currentThreadId?: () => string;
   capabilities?: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   row: AppRow;
   navigate: (server: WorkspaceServer, url: string) => Promise<void>;
   host: WidgetHost;
@@ -1345,6 +1360,7 @@ export function AppRegistration({
   // switched later is refused per request, here and on the server; it never
   // rebuilds the bridge under the running guest.
   const [negotiatedCapabilities] = useState(capabilities);
+  const [negotiatedDisplayBehavior] = useState(displayBehavior);
   const capabilitiesRef = useRef(capabilities);
   capabilitiesRef.current = capabilities;
   // Turning model context off removes the App's chips, tells the App its
@@ -1446,11 +1462,11 @@ export function AppRegistration({
       presentationCallbacks.current.onDisplayModeChange(mode),
     [],
   );
-  const openAIDisplayModes = negotiatedCapabilities.displayModes;
+  const openAIRules = negotiatedDisplayBehavior?.start === "hint-first";
   const setSupportedModes = useCallback(
     (modes: ("inline" | "fullscreen" | "pip")[] | undefined) => {
       // Entrypoints open fullscreen; an App that declares it can't is refused.
-      if (openAIDisplayModes && modes && !modes.includes("fullscreen"))
+      if (openAIRules && modes && !modes.includes("fullscreen"))
         logExtensionEvent({
           serverId: row.server.serverId,
           serverName: row.server.name,
@@ -1464,15 +1480,22 @@ export function AppRegistration({
         });
       presentationCallbacks.current.onAppSupportedDisplayModesChange(modes);
     },
-    [openAIDisplayModes, row.server, row.declaration],
+    [openAIRules, row.server, row.declaration],
   );
   const params = useMemo<MCPAppsRendererProps>(
     () => ({
       chatSessionId: workspace.workspaceId,
+      getModelChatSessionId: () =>
+        row.declaration.kind === "global"
+          ? (presentationCallbacks.current.currentThreadId?.() ?? scope.threadId)
+          : scope.threadId,
       serverId: row.server.serverId,
       serverName: row.server.name,
       toolCallId: handle.operationId,
       toolName: row.declaration.toolName,
+      appToolSourceLabel: handle.file
+        ? `File viewer: ${handle.file.name.split(/[/\\]/).pop()}`
+        : `${row.declaration.kind === "global" ? "Global App" : "App"}: ${row.declaration.toolName}`,
       resourceUri: handle.resourceUri,
       toolMetadata: handle.toolMetadata,
       toolsMetadata: handle.toolsMetadata,
@@ -1491,17 +1514,18 @@ export function AppRegistration({
       onAppSupportedDisplayModesChange: setSupportedModes,
       onInitialRenderOutcome: (outcome: "ready" | "error") =>
         presentationCallbacks.current.renderOutcome?.(row.key, outcome),
-      onCallTool: (name, args) =>
+      onCallTool: (name, args, context) =>
         api
           .invoke(
             handle,
-            liveSignal,
+            context ? AbortSignal.any([liveSignal, context.signal]) : liveSignal,
             (value, signal) =>
               presentationCallbacks.current.approve(
                 { ...value, serverName: row.server.name },
                 signal,
               ),
             { name, arguments: args },
+            context?.onInputPending,
           )
           .catch((error: unknown) => {
             if (
@@ -1514,6 +1538,7 @@ export function AppRegistration({
     }),
     [
       workspace.workspaceId,
+      scope.threadId,
       row,
       row.result,
       handle,
@@ -1532,7 +1557,10 @@ export function AppRegistration({
           handle,
           row.server.serverId,
           row.declaration.kind === "global" ? "global" : "thread",
-          { openAIDisplayModes },
+          {
+            displayBehavior: negotiatedDisplayBehavior,
+            projectId: scope.projectId,
+          },
         ),
         host,
         handle,
@@ -1590,9 +1618,11 @@ export function AppRegistration({
     localFileApi,
     liveSignal,
     context.update,
+    scope.projectId,
     scope.threadId,
     messagesAllowed,
     negotiatedCapabilities,
+    negotiatedDisplayBehavior,
     refuse,
   ]);
   // What the bridge is built from is negotiated with the first composition
@@ -1726,6 +1756,7 @@ function RetainedAppsBody({
           sendMessage={ports.sendMessage}
           currentThreadId={ports.currentThreadId}
           capabilities={ports.capabilities}
+          displayBehavior={ports.displayBehavior}
           chooseViewer={ports.chooseViewer}
           renderOutcome={ports.renderOutcome}
           revalidate={ports.revalidate}
@@ -1807,6 +1838,7 @@ export function RetainedAppsView({
   return (
     <>
       <WidgetWorkspaceProvider
+        inheritAppTools
         key={workspace.scope.pluginWorkspace.workspaceId}
         workspaceId={workspace.scope.pluginWorkspace.workspaceId}
       >

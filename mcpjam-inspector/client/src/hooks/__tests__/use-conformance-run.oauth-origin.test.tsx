@@ -7,9 +7,17 @@ const api = vi.hoisted(() => ({
   startOAuthConformance: vi.fn(),
   submitOAuthConformanceCode: vi.fn(),
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: vi.fn(),
   runAppsConformance: vi.fn(),
   runTasksConformance: vi.fn(),
+}));
+
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async (_name: string, version: string) => ({
+    status: "ready",
+    protocolVersion: version === "auto" ? "2026-07-28" : version,
+  })),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => api);
@@ -95,6 +103,9 @@ describe("useConformanceRun OAuth callback listener", () => {
     await waitFor(() =>
       expect(api.submitOAuthConformanceCode).toHaveBeenCalledWith(
         expect.objectContaining({ code: "injected-code" }),
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+        }),
       ),
     );
   });

@@ -1,3 +1,4 @@
+import { taskOwnerScope } from "../../../shared/task-owner.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizeBatchLocal,
@@ -8,10 +9,17 @@ import {
   toMCPServerConfig,
 } from "../local-server-resolver.js";
 
+// This device has approved every stdio command: the per-device approval gate
+// has its own suite, local-server-resolver.stdio-approval.test.ts.
+vi.mock("../stdio-command-approvals.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../stdio-command-approvals.js")>()),
+  checkStdioLaunchApproval: async () => ({ approval: "approved" as const }),
+}));
+
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
 describe("authorizeBatchLocal actor metadata parsing", () => {
-  const context = { set: vi.fn(), get: vi.fn(() => undefined) } as any;
+  const context = { var: {}, set: vi.fn(), get: vi.fn(() => undefined) } as any;
 
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
@@ -24,6 +32,36 @@ describe("authorizeBatchLocal actor metadata parsing", () => {
       process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
     vi.unstubAllGlobals();
+  });
+
+  it("preserves a private Task owner binding while stripping the log envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          results: {
+            server: {
+              ok: true,
+              role: "owner",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server.test/mcp",
+              },
+              internalLogContext: { userId: "owner" },
+            },
+          },
+        }),
+      ),
+    );
+    const result = await authorizeBatchLocal(context, "bearer", "project", [
+      "server",
+    ]);
+    expect(result.results.server).toMatchObject({
+      authorizedTaskOwnerScope: taskOwnerScope("project", "owner"),
+    });
+    expect(result.results.server).not.toHaveProperty("internalLogContext");
   });
 
   it.each([
@@ -1308,12 +1346,12 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
         },
         { xaaPolicy: POLICY }
       );
-      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+      expect(config.capabilities.extensions[EMA]).toEqual({});
     });
 
     it("advertises EMA on stdio servers under the policy (declare-support is host-wide)", () => {
       const config: any = toMCPServerConfig(stdioAuth, { xaaPolicy: POLICY });
-      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+      expect(config.capabilities.extensions[EMA]).toEqual({});
     });
 
     it("does not advertise EMA on non-XAA servers without the policy", () => {
@@ -1413,7 +1451,7 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
       );
       // Host-wide declare-support rides along even on the override.
       expect(
-        config.clientCapabilities.extensions[
+        config.capabilities.extensions[
           "io.modelcontextprotocol/enterprise-managed-authorization"
         ]
       ).toEqual({});
@@ -1745,4 +1783,13 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       }
     }
   });
+});
+
+
+it("keeps synthesized local defaults additive rather than pinning an exact set", () => {
+  const defaults = toMCPServerConfig(httpHeaderOnlyAuth);
+  expect(defaults.clientCapabilities).toBeUndefined();
+  expect(defaults.capabilities?.extensions).toHaveProperty("io.modelcontextprotocol/skills");
+  const exact = { elicitation: { form: {} } };
+  expect(toMCPServerConfig(httpHeaderOnlyAuth, { clientCapabilities: exact }).clientCapabilities).toMatchObject(exact);
 });

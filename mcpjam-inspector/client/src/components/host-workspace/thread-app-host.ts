@@ -1,5 +1,8 @@
-import type { WidgetHost } from "@mcpjam/widget-react";
+import type { WidgetHost, WidgetHostServices } from "@mcpjam/widget-react";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import type { ThreadAppHandle } from "./thread-app-api";
+import { logExtensionEvent } from "./extension-log";
+import { createSandboxViewServices } from "../chat-v2/thread/mcp-apps/sandbox-view-services";
 
 /**
  * How an owned App is presented.
@@ -26,21 +29,102 @@ function chatDisplayModes(modes: unknown): ChatDisplayMode[] {
     : [...CHAT_DISPLAY_MODES];
 }
 
+type DocumentServices = Pick<
+  WidgetHostServices,
+  "prepareSandboxView" | "releaseSandboxView"
+>;
+const documentHosts = new WeakMap<
+  ThreadAppHandle,
+  { key: string; html: string | undefined; services: DocumentServices }
+>();
+
+/** Presentation changes keep the admission ports that own the live document. */
+function ownedDocumentServices(
+  host: WidgetHost,
+  handle: ThreadAppHandle,
+  serverId: string,
+  projectId?: string,
+): DocumentServices {
+  const source = {
+    serverId,
+    resourceUri: handle.resourceUri,
+    toolCallId: handle.operationId,
+  };
+  const html = handle.widgetContent?.html;
+  const key = JSON.stringify([projectId, source]);
+  const cached = projectId ? documentHosts.get(handle) : undefined;
+  if (cached?.key === key && cached.html === html) return cached.services;
+  const documentHost = projectId
+    ? createSandboxViewServices(() => true, () => ({ projectId, serverId }))
+    : host.services;
+  const prepareView = documentHost?.prepareSandboxView;
+  const releaseView = documentHost?.releaseSandboxView;
+  const admittedViews = new Set<string>();
+  const services: DocumentServices = prepareView && releaseView
+    ? {
+        prepareSandboxView: async (request, signal) => {
+          if (
+            request.source.serverId !== serverId ||
+            request.source.resourceUri !== source.resourceUri ||
+            request.html !== html
+          ) throw new Error("App resource changed");
+          const view = await prepareView({ ...request, source }, signal);
+          admittedViews.add(view.admissionId);
+          return view;
+        },
+        releaseSandboxView: async ({ admissionId }) => {
+          if (admittedViews.delete(admissionId)) await releaseView({ admissionId });
+        },
+      }
+    : {};
+  if (projectId) documentHosts.set(handle, { key, html, services });
+  return services;
+}
+
+/** Apps whose ignored preference is already in Logs: one row per App. */
+const warnedPreferences = new WeakSet<ThreadAppHandle>();
+
+/** A `_meta.ui.preferredDisplayMode` that isn't a mode is ignored; say so once. */
+function warnIgnoredPreferredDisplayMode(
+  handle: ThreadAppHandle,
+  serverId: string,
+) {
+  const ignored = handle.widgetContent?.ignoredPreferredDisplayMode;
+  if (ignored === undefined || warnedPreferences.has(handle)) return;
+  warnedPreferences.add(handle);
+  logExtensionEvent({
+    serverId,
+    label: "display-mode",
+    level: "warning",
+    message: `${handle.toolTitle}'s resource sets _meta.ui.preferredDisplayMode to ${ignored}, which MCPJam ignores. Set it to "fullscreen" or "inline".`,
+    detail: { resourceUri: handle.resourceUri, preferredDisplayMode: ignored },
+  });
+}
+
 /** Compose only the actual qualified ports. A normal chat host is not authority.
- * `openAIDisplayModes` is the client's Display modes extension toggle: on, the
- * App starts in the mode OpenAI's rules pick (see `openAIDisplayModes` in
- * `@mcpjam/sdk/widget-runtime`) instead of always inline. */
+ * `displayBehavior` is the client's display behavior while its Display modes
+ * extension is on: under `hint-first` the App starts in the mode OpenAI's
+ * rules pick (see `openAIDisplayModes` in `@mcpjam/sdk/widget-runtime`);
+ * otherwise it starts inline. */
 export function createThreadAppHost(
   host: WidgetHost,
   handle: ThreadAppHandle,
   serverId: string,
   presentation: ThreadAppPresentation = "thread",
-  { openAIDisplayModes = false }: { openAIDisplayModes?: boolean } = {},
+  {
+    displayBehavior,
+    projectId,
+  }: {
+    displayBehavior?: DisplayBehavior;
+    /** Captured owner project; contributed servers need no ambient name lookup. */
+    projectId?: string;
+  } = {},
 ): WidgetHost {
   const model = presentation === "model";
   const unavailable = async () => {
     throw new Error("This App capability is unavailable");
   };
+  const documentServices = ownedDocumentServices(host, handle, serverId, projectId);
   const {
     "openai/deepLink": _link,
     "openai/modelContext": _context,
@@ -54,7 +138,9 @@ export function createThreadAppHost(
       draftHostContext: model
         ? {
             ...draftHostContext,
-            ...(openAIDisplayModes ? {} : { displayMode: "inline" }),
+            ...(displayBehavior?.start === "hint-first"
+              ? {}
+              : { displayMode: "inline" }),
             availableDisplayModes: chatDisplayModes(
               draftHostContext.availableDisplayModes,
             ),
@@ -71,7 +157,7 @@ export function createThreadAppHost(
       // An entrypoint is fullscreen by the host's choice, so an App that
       // declares only `inline` still opens rather than being refused.
       ...(model ? {} : { fixedDisplayMode: "fullscreen" as const }),
-      ...(openAIDisplayModes ? { openAIDisplayModes: true } : {}),
+      ...(displayBehavior ? { displayBehavior } : {}),
     },
     resolvers: {
       // window.openai follows the client's own "Inject window.openai" setting,
@@ -117,12 +203,15 @@ export function createThreadAppHost(
       }),
     },
     services: {
+      ...documentServices,
       fetchWidgetContent: async (request) => {
         if (
           request.resourceUri !== handle.resourceUri ||
           request.serverId !== serverId
         )
           throw new Error("App resource changed");
+        if (displayBehavior?.hints === "ui")
+          warnIgnoredPreferredDisplayMode(handle, serverId);
         return handle.widgetContent;
       },
       readResource: unavailable,

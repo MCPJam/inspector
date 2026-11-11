@@ -12,6 +12,7 @@ import type {
 import { HOSTED_MODE } from "../config.js";
 import { isOriginCaptureHandled } from "./error-capture-stamp.js";
 import { sentryIdentityMetadata } from "./sentry-request-identity.js";
+import { withConsoleIds } from "./console-log-ids.js";
 
 function withIdentityCapture(capture: () => void): void {
   if (isTrackingDisabled()) return;
@@ -35,6 +36,16 @@ function withIdentityCapture(capture: () => void): void {
 const isVerbose = () => process.env.VERBOSE_LOGS === "true";
 const isDev = () => process.env.NODE_ENV !== "production";
 const shouldLog = () => isVerbose() || isDev();
+
+/**
+ * Print a misconfiguration the operator has to fix on stderr when the logger
+ * would not print it: in production it prints only with `VERBOSE_LOGS=true`,
+ * and under DO_NOT_TRACK a self-hosted install has no Sentry or Axiom either.
+ * Call it next to the logger call it backs up.
+ */
+export function printForOperator(message: string): void {
+  if (!shouldLog()) process.stderr.write(`${message}\n`);
+}
 
 /**
  * The same opt-out `server/sentry.ts` and `server/utils/analytics.ts` honor.
@@ -157,6 +168,8 @@ export function captureOriginErrorToSentry(
 /**
  * Centralized logger that sends errors to Sentry and only logs to console
  * in dev mode or when verbose mode is enabled (--verbose flag or VERBOSE_LOGS=true).
+ * A console line shows the message plus the context's run/session/iteration/
+ * turn/request IDs (`console-log-ids.ts`), never any other context field.
  * Sends logs with AXIOM_TOKEN to AXIOM_CLEAN_DATASET, then AXIOM_DATASET, or inspector-logs.
  */
 export const logger = {
@@ -180,9 +193,13 @@ export const logger = {
     // without this check every declined user-fault error would be re-captured
     // here — rebuilding the noise the origin policy exists to remove.
     if (!isOriginCaptureHandled(error)) {
+      // Built before `withIdentityCapture`: inside `Sentry.withScope` its six
+      // frames fill V8's 10-frame stack limit, the caller's frame is lost, and
+      // every unapproved message collapses into one Sentry group.
+      const captured = error ?? new Error(message);
       // The final Sentry transport reconstructs approved diagnostics.
       withIdentityCapture(() =>
-        Sentry.captureException(error ?? new Error(message), {
+        Sentry.captureException(captured, {
           extra: { message, ...context },
           ...sentryIdentityMetadata(),
         }),
@@ -192,7 +209,7 @@ export const logger = {
     ingestToAxiom("error", message, context, error);
 
     if (shouldLog()) {
-      console.error(message, error);
+      console.error(withConsoleIds(message, context), error);
     }
   },
 
@@ -215,7 +232,7 @@ export const logger = {
     ingestToAxiom("warn", message, context);
 
     if (shouldLog()) {
-      console.warn(message);
+      console.warn(withConsoleIds(message, context));
     }
   },
 
@@ -230,7 +247,7 @@ export const logger = {
     ingestToAxiom("info", message, context);
 
     if (shouldLog()) {
-      console.log(message);
+      console.log(withConsoleIds(message, context));
     }
   },
 

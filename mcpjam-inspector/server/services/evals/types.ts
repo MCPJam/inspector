@@ -1,9 +1,13 @@
 import {
   evaluateToolCalls,
+  findToolCallRetries,
   isSkillToolName,
+  markFailedToolCalls,
   resolveExtrasCap,
   type EvalMatchOptions,
+  type EvalToolCallRetry,
   type ToolCall,
+  type ToolErrorRecord,
   type ArgumentMismatch,
 } from "@/shared/eval-matching";
 import { isPinnedTurn, type PromptTurn } from "@/shared/steps";
@@ -17,6 +21,12 @@ export type { ToolCall };
  */
 export type EvalMatchContext = {
   skillToolsActive?: boolean;
+  /**
+   * Tool failures recorded over the iteration. A call one of them names by
+   * `toolCallId` is graded as failed, so an identical call after it is a retry
+   * of that call rather than an extra. Absent ⇒ no call is known to have failed.
+   */
+  toolErrors?: ReadonlyArray<Pick<ToolErrorRecord, "toolCallId">>;
 };
 
 /**
@@ -89,6 +99,12 @@ export type EvaluationResult = {
   missing: ToolCall[];
   unexpected: ToolCall[];
   argumentMismatches: ArgumentMismatch[];
+  /**
+   * Failed calls graded as part of a later identical call; indexes are into
+   * `toolsCalled`. Absent ⇒ none, which keeps a run without retries
+   * byte-identical to before.
+   */
+  retries?: EvalToolCallRetry[];
   passed: boolean;
 };
 
@@ -101,6 +117,8 @@ export type PromptTurnEvaluation = {
   missing: ToolCall[];
   unexpected: ToolCall[];
   argumentMismatches: ArgumentMismatch[];
+  /** As on {@link EvaluationResult}; indexes are into `actualToolCalls`. */
+  retries?: EvalToolCallRetry[];
   passed: boolean;
 };
 
@@ -111,18 +129,36 @@ export type MultiTurnEvaluationResult = EvaluationResult & {
   firstFailedTurnIndex?: number;
 };
 
+/**
+ * The calls as the matcher grades them: each one `toolErrors` names is marked
+ * failed. Returns a way back to the caller's own call objects, because the
+ * marked copies must never reach a persisted call list.
+ */
+function markForGrading(
+  calls: ToolCall[],
+  toolErrors: EvalMatchContext["toolErrors"],
+): { graded: ToolCall[]; original: (call: ToolCall) => ToolCall } {
+  const graded = toolErrors?.length
+    ? markFailedToolCalls(calls, toolErrors)
+    : calls;
+  const originals = new Map(graded.map((call, index) => [call, calls[index]!]));
+  return { graded, original: (call) => originals.get(call) ?? call };
+}
+
 export const evaluateResults = (
   expectedToolCalls: ToolCall[],
   toolsCalled: ToolCall[],
   isNegativeTest?: boolean,
   matchOptions?: EvalMatchOptions,
+  toolErrors?: EvalMatchContext["toolErrors"],
 ): EvaluationResult => {
   const normalizedExpected = Array.isArray(expectedToolCalls)
     ? expectedToolCalls
     : [];
   const normalizedCalled = Array.isArray(toolsCalled) ? toolsCalled : [];
+  const { graded, original } = markForGrading(normalizedCalled, toolErrors);
 
-  const result = evaluateToolCalls(normalizedExpected, normalizedCalled, {
+  const result = evaluateToolCalls(normalizedExpected, graded, {
     ...matchOptions,
     isNegativeTest,
   });
@@ -131,11 +167,30 @@ export const evaluateResults = (
     expectedToolCalls: normalizedExpected,
     toolsCalled: normalizedCalled,
     missing: result.missing,
-    unexpected: result.extra,
+    unexpected: result.extra.map(original),
     argumentMismatches: result.argumentMismatches,
+    ...(result.retries.length ? { retries: result.retries } : {}),
     passed: result.passed,
   };
 };
+
+/** Re-index a turn's retries from the calls the matcher saw to every call the turn made. */
+function retriesInTurn(
+  retries: EvalToolCallRetry[] | undefined,
+  matchable: ToolCall[],
+  actual: ToolCall[],
+): { retries?: EvalToolCallRetry[] } {
+  if (!retries?.length) return {};
+  if (matchable === actual) return { retries };
+  const actualIndexOf = (index: number) => actual.indexOf(matchable[index]!);
+  return {
+    retries: retries.map((retry) => ({
+      ...retry,
+      actualIndex: actualIndexOf(retry.actualIndex),
+      retriedByIndex: actualIndexOf(retry.retriedByIndex),
+    })),
+  };
+}
 
 export const evaluateMultiTurnResults = (
   promptTurns: PromptTurn[],
@@ -206,11 +261,22 @@ export const evaluateMultiTurnResults = (
         // calls on this turn — those calls are unexpected extras and must
         // fail. We can't route through `evaluateResults` for the empty-actual
         // case because the SDK matcher fails positive both-empty by design.
+        // A failed call retried by an identical one is part of that retry, so
+        // it is not an extra here either — the same rule the matcher applies.
+        const { graded, original } = markForGrading(
+          matchableToolCalls,
+          evalContext?.toolErrors,
+        );
+        const retries = findToolCallRetries(graded);
+        const retried = new Set(retries.map((retry) => retry.actualIndex));
+        const counted = graded.filter((_, index) => !retried.has(index));
+        const turnRetries = retriesInTurn(
+          retries,
+          matchableToolCalls,
+          actualToolCalls,
+        );
         const extrasCap = resolveExtrasCap(matchOptions);
-        if (
-          extrasCap !== null &&
-          matchableToolCalls.length > extrasCap
-        ) {
+        if (extrasCap !== null && counted.length > extrasCap) {
           return {
             promptIndex,
             prompt: turn.prompt,
@@ -218,8 +284,9 @@ export const evaluateMultiTurnResults = (
             actualToolCalls,
             expectedOutput: turn.expectedOutput,
             missing: [],
-            unexpected: matchableToolCalls,
+            unexpected: counted.map(original),
             argumentMismatches: [],
+            ...turnRetries,
             passed: false,
           };
         }
@@ -232,6 +299,7 @@ export const evaluateMultiTurnResults = (
           missing: [],
           unexpected: [],
           argumentMismatches: [],
+          ...turnRetries,
           passed: true,
         };
       }
@@ -241,6 +309,7 @@ export const evaluateMultiTurnResults = (
         matchableToolCalls,
         undefined,
         matchOptions,
+        evalContext?.toolErrors,
       );
       return {
         promptIndex,
@@ -251,6 +320,11 @@ export const evaluateMultiTurnResults = (
         missing: evaluation.missing,
         unexpected: evaluation.unexpected,
         argumentMismatches: evaluation.argumentMismatches,
+        ...retriesInTurn(
+          evaluation.retries,
+          matchableToolCalls,
+          actualToolCalls,
+        ),
         passed: evaluation.passed,
       };
     },
@@ -272,11 +346,25 @@ export const evaluateMultiTurnResults = (
     (summary) => !summary.passed,
   );
 
+  // `toolsCalled` concatenates every turn's calls, so each turn's retry
+  // indexes move by the calls the turns before it made.
+  let callsBefore = 0;
+  const retries = promptSummaries.flatMap((summary) => {
+    const offset = callsBefore;
+    callsBefore += summary.actualToolCalls.length;
+    return (summary.retries ?? []).map((retry) => ({
+      ...retry,
+      actualIndex: retry.actualIndex + offset,
+      retriedByIndex: retry.retriedByIndex + offset,
+    }));
+  });
+
   return {
     expectedToolCalls: isNegativeTest
       ? []
       : assertedSummaries.flatMap((summary) => summary.expectedToolCalls),
     toolsCalled: promptSummaries.flatMap((summary) => summary.actualToolCalls),
+    ...(retries.length ? { retries } : {}),
     missing: assertedSummaries.flatMap((summary) => summary.missing),
     unexpected: isNegativeTest
       ? promptSummaries.flatMap((summary) => summary.unexpected)

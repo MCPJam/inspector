@@ -99,15 +99,13 @@ describe("subscription checks against a conforming listen stream", () => {
       "notifications/tools/list_changed"
     );
 
-    // Nothing closed this subscription, so the graceful-close MUST was never
-    // exercised: a skip, never a failure.
+    // Nothing closed this subscription, and only the server can: a client
+    // probe has no way to make it, so there is nothing here to test. A skip,
+    // never a failure, and no point lost.
     const graceful = byId(result.checks, "modern-subscription-graceful-close");
     expect([graceful.id, graceful.status]).toEqual([graceful.id, "skipped"]);
-    expect(graceful.error?.message).toMatch(/still open/);
-    // A skip, never a failure — but also never a pass: the MUST went
-    // unexercised, so the run is `incomplete`.
-    expect(graceful.skipReason).toBe("could-not-run");
-    expect(result.outcome).toBe("incomplete");
+    expect(graceful.error?.message).toMatch(/stayed open/);
+    expect(graceful.skipReason).toBe("not-applicable");
   });
 
   it("proves the graceful close returns the completion result", async () => {

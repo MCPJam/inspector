@@ -13,6 +13,10 @@ const A = "k5700000000000000000000000a";
 const NOW = 1_700_000_000_000;
 
 describe("generic app sign-in return path", () => {
+  it("restores the standalone card confirmation without a bearer in the return path", () => {
+    writeAppSignInReturnPath("/redeem", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe("/redeem");
+  });
   beforeEach(() => {
     clearAppSignInReturnPath();
   });

@@ -65,17 +65,17 @@ export function needsEphemeralEvalSandbox(args: {
   /** The host config's declared unattended browser policy, unparsed. */
   browserToolPolicy?: unknown;
   /**
-   * Can THIS replica advertise a hosted browser at all — the env flag and the
-   * backend's own gate, exactly as `resolveHostTools` reads them?
+   * Can THIS replica advertise a hosted browser at all — the backend's
+   * exposure verdict, exactly as `resolveHostTools` reads it?
    *
    * Passed in rather than read here so the rule stays pure and testable, and
    * DEFAULTS TO TRUE so a caller that does not know the answer keeps the old
    * behaviour. It matters because the two decisions are made in different
    * places: a desktop box is provisioned before the tool resolver runs, so a
-   * replica with `HOSTED_BROWSER_TOOLS_ENABLED` off would boot and pay for a
-   * desktop and then suppress every tool that box exists for. The backend
-   * refuses its own half of this (`desktop_not_advertised`,
-   * `desktop_unavailable`), but it cannot see an inspector-side env flag.
+   * replica whose verdict says the browser is not exposable would boot and pay
+   * for a desktop and then suppress every tool that box exists for. The
+   * backend refuses its own half of this (`desktop_not_advertised`,
+   * `desktop_unavailable`), but not a reservation on `exposable: false`.
    */
   hostedBrowserAvailable?: boolean;
   runId: unknown;
@@ -85,10 +85,10 @@ export function needsEphemeralEvalSandbox(args: {
   }
   if (declaresUnattendedBrowser(args)) {
     // A browser needs the DESKTOP image whatever else is true. A pinned
-    // environment alongside it is refused by the control plane
-    // (`desktop_pin_conflict`) with a sentence the run surfaces — deliberately
-    // there rather than here, so one place decides it and the message that
-    // reaches the user is the same on both surfaces.
+    // environment alongside it is the control plane's to settle: it pairs the
+    // pinned box with a desktop (`pairBrowser`), or an older one refuses with
+    // a sentence the run surfaces (`desktop_pin_conflict`). Deliberately there
+    // rather than here, so one place decides it for both surfaces.
     return { needed: true, runtimeKind: "desktop-browser" };
   }
   return {

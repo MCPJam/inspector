@@ -32,9 +32,12 @@ import {
 import {
   EMPTY_PLUGIN_ICON_DIRECTORY,
   PluginIconDirectoryProvider,
+  serverDisplayName,
+  usePluginIconDirectory,
   type PluginIconDirectory,
 } from "./plugin-icon-directory";
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   ALL_EXTENSION_CAPABILITIES,
   GLOBAL_OWNER_THREAD_ID,
@@ -57,7 +60,11 @@ export interface ExtensionRegistration {
   identity: ExtensionOwnerIdentity | null;
   chatId: string;
   servers: WorkspaceServer[];
+  /** Exact plugin contribution already resolved for this chat. Display only. */
+  includedPluginTools?: { environmentId: string; serverIds: string[]; includeAppOnly?: boolean };
   capabilities?: ExtensionCapabilities;
+  /** How Apps choose a display mode; undefined while Display modes is off. */
+  displayBehavior?: DisplayBehavior;
   /** Which client profile App launches are counted under (H9). */
   profile?: "chatgpt" | "codex";
   /**
@@ -86,12 +93,21 @@ export interface ExtensionPorts {
 
 export type ExtensionOwnerKind = "global" | "chat";
 
+export interface IncludedPluginToolScope {
+  projectId: string;
+  ownerKey: string;
+  environmentId: string;
+  serverIds: string[];
+  includeAppOnly?: boolean;
+}
+
 interface ExtensionStoreState {
   /** Extensions are on for the registered client. */
   enabled: boolean;
   global: ThreadAppWorkspace | null;
   chats: Record<string, ThreadAppWorkspace>;
   currentChatId: string | null;
+  includedPluginTools: IncludedPluginToolScope | null;
   /**
    * Where thread, file and quick-action Apps (and settings) are drawn: the
    * right rail's App area, mounted once and never moved.
@@ -120,6 +136,7 @@ function createExtensionStore() {
     global: null,
     chats: {},
     currentChatId: null,
+    includedPluginTools: null,
     railSlot: null,
     takeoverSlot: null,
     railRevealSeq: 0,
@@ -145,6 +162,7 @@ interface ExtensionWorkspaceContextValue {
   setPorts: (ports: ExtensionPorts) => void;
   /** The project's plugin icons by plugin id, from the center's subscription. */
   setPluginIcons: (icons: ReadonlyMap<string, PluginIcons>) => void;
+  setPluginNames: (names: ReadonlyMap<string, string>) => void;
   /** A deleted (archived) chat closes its owner once it is no longer shown. */
   releaseChat: (chatId: string) => void;
 }
@@ -164,8 +182,10 @@ function registrationKey(registration: ExtensionRegistration): string {
       server.connection ?? null,
     ]),
     capabilitiesKey(registration.capabilities ?? ALL_EXTENSION_CAPABILITIES),
+    registration.displayBehavior ?? null,
     registration.profile ?? "chatgpt",
     registration.hostRevision ?? null,
+    registration.includedPluginTools ?? null,
     registration.hold === true && registration.identity === null,
   ]);
 }
@@ -192,6 +212,9 @@ export function ExtensionWorkspaceProvider({
   const [pluginIcons, setPluginIcons] = useState<
     ReadonlyMap<string, PluginIcons>
   >(EMPTY_PLUGIN_ICON_DIRECTORY.plugins);
+  const [pluginNames, setPluginNames] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const portsRef = useRef<ExtensionPorts>({
@@ -233,6 +256,7 @@ export function ExtensionWorkspaceProvider({
         portsRef.current = ports;
       },
       setPluginIcons,
+      setPluginNames,
       releaseChat: (chatId) =>
         setReleased((old) =>
           old.has(chatId) ? old : new Set([...old, chatId]),
@@ -277,6 +301,7 @@ export function ExtensionWorkspaceProvider({
   );
   const chatId = identity ? (registration?.chatId ?? null) : null;
   const profile = registration?.profile ?? "chatgpt";
+  const displayBehavior = identity ? registration?.displayBehavior : undefined;
   const hostRevision = identity ? registration?.hostRevision : undefined;
 
   // Retained chats for the current identity, most recent last.
@@ -315,8 +340,14 @@ export function ExtensionWorkspaceProvider({
     });
   }, [identityKey, chatId, store, released]);
   useLayoutEffect(() => {
-    store.setState({ currentChatId: chatId, enabled: identity !== null });
-  }, [store, chatId, identity]);
+    store.setState({
+      currentChatId: chatId,
+      enabled: identity !== null,
+      includedPluginTools: identity && registration?.includedPluginTools
+        ? { ...registration.includedPluginTools, projectId: identity.projectId, ownerKey: identityKey! }
+        : null,
+    });
+  }, [store, chatId, identity, identityKey, registration?.includedPluginTools]);
   // Choosing another chat (Sessions, New chat) returns from a global App's
   // takeover to that chat; the App stays retained.
   const shownChat = useRef(chatId);
@@ -338,8 +369,8 @@ export function ExtensionWorkspaceProvider({
   // Entrypoints and composer chips of a plugin-owned server show that
   // plugin's icons: discovery names the owner, the plugin list its icons.
   const iconDirectory = useMemo<PluginIconDirectory>(
-    () => ({ plugins: pluginIcons, servers: discovery.servers }),
-    [pluginIcons, discovery.servers],
+    () => ({ plugins: pluginIcons, pluginNames, servers: discovery.servers }),
+    [pluginIcons, pluginNames, discovery.servers],
   );
   const currentThreadId = useCallback(
     () => store.getState().currentChatId ?? GLOBAL_OWNER_THREAD_ID,
@@ -365,6 +396,7 @@ export function ExtensionWorkspaceProvider({
             servers={servers}
             discovery={discovery}
             capabilities={capabilities}
+            displayBehavior={displayBehavior}
             profile={profile}
             hostRevision={hostRevision}
             currentThreadId={currentThreadId}
@@ -382,6 +414,7 @@ export function ExtensionWorkspaceProvider({
                 servers={servers}
                 discovery={discovery}
                 capabilities={capabilities}
+                displayBehavior={displayBehavior}
                 profile={profile}
                 hostRevision={hostRevision}
                 sendMessage={sendMessage}
@@ -439,6 +472,7 @@ function SlotPortal({
  * keeps the App retained.
  */
 function GlobalTakeover({ workspace }: { workspace: ThreadAppWorkspace }) {
+  const directory = usePluginIconDirectory();
   const current = workspace.apps.find((row) => row.key === workspace.active);
   return (
     <div
@@ -451,7 +485,9 @@ function GlobalTakeover({ workspace }: { workspace: ThreadAppWorkspace }) {
       <div className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-border/40 bg-background/95 px-4 backdrop-blur">
         <div />
         <div className="min-w-0 max-w-[40vw] truncate text-sm font-medium text-muted-foreground">
-          {current?.server.name ?? ""}
+          {current
+            ? serverDisplayName(current.server.serverId, directory, [current.server])
+            : ""}
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2">
           <button
@@ -477,6 +513,7 @@ const GlobalOwner = memo(function GlobalOwner({
   servers,
   discovery,
   capabilities,
+  displayBehavior,
   profile,
   hostRevision,
   currentThreadId,
@@ -488,6 +525,7 @@ const GlobalOwner = memo(function GlobalOwner({
   servers: WorkspaceServer[];
   discovery: ExtensionDiscovery;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   profile: "chatgpt" | "codex";
   hostRevision?: string;
   currentThreadId: () => string;
@@ -499,16 +537,27 @@ const GlobalOwner = memo(function GlobalOwner({
   const workspace = useThreadAppWorkspace(scope, servers, {
     discovery,
     capabilities,
+    displayBehavior,
     launchProfile: profile,
     hostRevision,
     currentThreadId,
     sendMessage,
     runOnboarding,
-    routeLaunch: (server, declaration) => {
+    routeLaunch: (server, declaration, waitForAdmission) => {
       if (declaration.kind === "global") return undefined;
       const { chats, currentChatId } = store.getState();
       const chat = currentChatId ? chats[currentChatId] : undefined;
-      if (chat) return chat.launch(server, declaration);
+      if (chat) {
+        const source = store.getState().global;
+        const opened = chat.launch(server, declaration, undefined, waitForAdmission);
+        if (waitForAdmission) return opened.then(() => {
+          const current = store.getState().global;
+          if (current?.scope === source?.scope && current?.active === source?.active)
+            current?.select(null);
+        });
+        source?.select(null);
+        return opened;
+      }
       logExtensionEvent({
         serverId: server.serverId,
         serverName: server.name,
@@ -516,6 +565,8 @@ const GlobalOwner = memo(function GlobalOwner({
         level: "warning",
         message: `${declaration.title}: this App opens in the current chat, and no chat is ready yet. Open or start a chat, then open it again.`,
       });
+      if (declaration.kind === "file" && waitForAdmission)
+        return Promise.reject(new Error("Open a chat before opening this file."));
       return Promise.resolve();
     },
   });
@@ -550,6 +601,7 @@ const ChatOwner = memo(function ChatOwner({
   servers,
   discovery,
   capabilities,
+  displayBehavior,
   profile,
   hostRevision,
   sendMessage,
@@ -560,6 +612,7 @@ const ChatOwner = memo(function ChatOwner({
   servers: WorkspaceServer[];
   discovery: ExtensionDiscovery;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   profile: "chatgpt" | "codex";
   hostRevision?: string;
   sendMessage: AppMessageSender;
@@ -572,6 +625,7 @@ const ChatOwner = memo(function ChatOwner({
   const workspace = useThreadAppWorkspace(scope, servers, {
     discovery,
     capabilities,
+    displayBehavior,
     launchProfile: profile,
     hostRevision,
     sendMessage,
@@ -675,11 +729,13 @@ export function useExtensionRegistration(
  */
 export function usePublishPluginIcons(
   icons: ReadonlyMap<string, PluginIcons>,
+  names?: ReadonlyMap<string, string>,
 ) {
   const context = useContext(ExtensionWorkspaceContext);
   useLayoutEffect(() => {
     context?.setPluginIcons(icons);
-  }, [context, icons]);
+    if (names) context?.setPluginNames(names);
+  }, [context, icons, names]);
 }
 
 /**

@@ -1091,7 +1091,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["claude-code", "codex", "cursor"]
+              "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode"]
             },
             "description": "The harness id."
           }
@@ -2462,7 +2462,7 @@
         },
         "responses": {
           "200": {
-            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures.",
+            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures. When the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]`, an additive `authChallenge` holds the parsed challenge. An HTTP 401 from the MCP server is answered with `403 AUTH_REQUIRED` instead, with the challenge in `details.authChallenge`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8134,6 +8134,204 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/revisions": {
+      "get": {
+        "operationId": "listServerRevisions",
+        "tags": ["Servers"],
+        "summary": "List a server's revisions",
+        "description": "A saved server's stored revisions, newest first. A revision is a capture of the server's tools and server info, recorded whenever they change on a connect, an eval run or a chat session. Reads stored data and never connects to the server, so it works for stdio servers too. A server the caller cannot see reads as `404`, the same as a missing one.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum revisions to return, 1-200. Defaults to 50; larger values are clamped.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`nextCursor` from the previous page, for older revisions.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's revisions, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevisionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}": {
+      "get": {
+        "operationId": "getServerRevision",
+        "tags": ["Servers"],
+        "summary": "Get one server revision",
+        "description": "One stored revision: every tool's definition and the server info the server reported. `droppedFields` lists paths storage dropped for size; their values are unknown, not absent.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "revisionNumber",
+            "in": "path",
+            "required": true,
+            "description": "The revision, as numbered by the revision list.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff": {
+      "get": {
+        "operationId": "diffServerRevisions",
+        "tags": ["Servers"],
+        "summary": "Diff two server revisions",
+        "description": "Compares `from` (default: the revision before) with `revisionNumber`: tools added and removed with their definitions, tools changed with the fields that moved and both definitions, and each changed server info field with both values. Revision 1 has nothing before it, so diffing it needs `from`. A field in `droppedFields` was not stored on that side, so a change to it is not established.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "revisionNumber",
+            "in": "path",
+            "required": true,
+            "description": "The revision, as numbered by the revision list.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "The revision to compare against. Defaults to `revisionNumber - 1`.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The differences between the two revisions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevisionDiff"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}": {
       "get": {
         "operationId": "getProjectServer",
@@ -11529,6 +11727,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -11604,6 +11836,40 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  },
+                  "lazyAuthProbe": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["enabled"],
+                    "description": "Opt in to the lazy-authentication probe: it calls one public tool, then one protected tool, both without credentials. It makes at most two calls and calls only tools annotated `readOnlyHint: true`. Omit the field to leave the probe off. When no tool is named, the probe picks them from their `securitySchemes`.",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "enum": [true],
+                        "description": "Must be `true`. To leave the probe off, omit `lazyAuthProbe`."
+                      },
+                      "toolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The protected tool to call."
+                      },
+                      "publicToolName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "The public tool to call first. Must name a different tool than `toolName`."
+                      }
+                    }
+                  },
+                  "claimedFeatures": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "enum": ["lazy-authentication", "enterprise-managed-auth"]
+                    },
+                    "description": "Features the server claims to offer, so the report shows them as claimed."
                   }
                 }
               }
@@ -11936,13 +12202,26 @@
         "operationId": "startConformanceRun",
         "tags": ["Conformance runs"],
         "summary": "Start a persisted conformance run",
-        "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.",
+        "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.\n\nBy default the run uses the server's saved conformance settings: the checks they select, their tool inputs and their run time budget. The receipt's `settingsSource` says what applied: `saved`, or `defaults` when the server has nothing saved. `settings: \"none\"` runs every check with no tool inputs. With saved settings, the start first checks which MCP protocol version the server speaks and leaves out any suite with no saved checks for that version, as the app does. A retry with the same idempotency key returns the run that key started, with its original suites and settings. A run still going at its budget ends with its unfinished suites incomplete.\n\nOn hosted MCPJam, a user's starts past 30 in 10 minutes can be refused with `429` and `Retry-After`. A server that is restarting also answers `429` with `Retry-After`, with `details.reason` `SERVER_DRAINING`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "The body's `idempotencyKey` sent as a header. It wins over the body field.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
           }
         ],
         "requestBody": {
@@ -11968,10 +12247,17 @@
                     "description": "Deduplicates a retried POST for the same saved server. Mapped to a namespaced externalRunId (`api:<projectId>:<serverId>:<key>`); a keyless start always inserts and spends quota."
                   },
                   "protocolVersion": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"],
+                    "description": "Pin one MCP protocol version. Without it the run uses the version the server negotiates."
                   },
                   "engineVersion": {
                     "type": "string"
+                  },
+                  "settings": {
+                    "type": "string",
+                    "enum": ["saved", "none"],
+                    "description": "`saved` (the default) runs the server's saved conformance settings. `none` runs every check with no tool inputs."
                   }
                 }
               }
@@ -12014,6 +12300,11 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "settingsSource": {
+                      "type": "string",
+                      "enum": ["saved", "defaults", "none"],
+                      "description": "The settings the run used. `defaults` means the server has no saved settings, so every check runs."
                     }
                   }
                 }
@@ -12021,7 +12312,7 @@
             }
           },
           "400": {
-            "description": "The body carried an unknown key, named OAuth, or the server uses a transport conformance cannot grade."
+            "description": "The body carried an unknown key or an unknown `protocolVersion`, named OAuth, asked only for suites the saved settings leave out, or the server uses a transport conformance cannot grade."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -12031,6 +12322,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The server's saved tool inputs could not be read. Save them again on the Conformance page, or start with `settings: \"none\"`."
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -12125,7 +12419,7 @@
         "operationId": "getConformanceRun",
         "tags": ["Conformance runs"],
         "summary": "Get a persisted conformance run",
-        "description": "Status, outcome, and score are three different answers. A run whose `projectId` is not the path's is `404`. Per-suite `profileId` / `pending` are present when the backend has stored them.",
+        "description": "Status, outcome, and score are three different answers. A run whose `projectId` is not the path's is `404`. Per-suite `profileId` / `pending` are present when the backend has stored them. `launcher` is the label the launching client declared in `x-mcpjam-launcher`; `attribution` is how the platform recorded the start (`surface`, and `apiKeyId` for a key). Each is `null` when the run has none.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -12169,13 +12463,22 @@
         "operationId": "getConformanceReport",
         "tags": ["Conformance runs"],
         "summary": "Fetch a bounded conformance report projection",
-        "description": "Failing checks only, failed before could-not-run, capped at 50. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.",
+        "description": "Failing checks only, failed before could-not-run, 50 per page. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.\n\nOnce the run has finished, a page that leaves failing checks out carries `nextCursor`; pass it back as `cursor` for the next page. A running run serves its first page only: a cursor sent while it runs is `409`, and a cursor issued for another run, or not issued at all, is `400`. Read one check in full with `GET /projects/{projectId}/conformance-runs/{runId}/checks/{checkId}`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
             "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12189,6 +12492,107 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "400": {
+            "description": "The cursor was not issued for this run."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "A cursor was sent while the run is still running."
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The stored report could not be read from storage."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/conformance-runs/{runId}/checks/{checkId}": {
+      "get": {
+        "operationId": "getConformanceCheck",
+        "tags": ["Conformance runs"],
+        "summary": "Read one check of a conformance run in full",
+        "description": "One check from the run's stored suite reports, with its status, error and evidence. `details` and `output` are cut at 16 KiB each, and `truncated` says which were. `pending` means this profile reported the check but did not score it. Check ids come from the report endpoint. `suite` is needed only when the same id is in two suites of the run. `404` when the run has no stored report or no such check.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          },
+          {
+            "name": "checkId",
+            "in": "path",
+            "required": true,
+            "description": "Check id, as the report lists it.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "suite",
+            "in": "query",
+            "required": false,
+            "description": "The check's suite.",
+            "schema": {
+              "type": "string",
+              "enum": ["protocol", "apps", "tasks", "oauth"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The check.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["runId", "suiteKind", "id", "status", "truncated"],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "suiteKind": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "type": "object",
+                      "properties": {
+                        "details": {
+                          "type": "boolean"
+                        },
+                        "output": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`suite` is not a suite, or the id is in more than one suite of the run and `suite` was not sent."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -13274,7 +13678,7 @@
         "operationId": "renderServerWidget",
         "tags": ["Execution"],
         "summary": "Render an MCP App widget headlessly",
-        "description": "Call an MCP App tool and mount its `ui://` widget in real headless Chromium running the production host bridge, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements.\n\n**Executes the tool**, so it has whatever side effects that tool has — the render is what happens afterwards.\n\nStateless: connect, call, render, read, dispose, all inside one request. Interactive widget sessions are a local-Inspector capability (`/api/mcp/widget-session`) because they hold a live browser in process, which a no-affinity hosted plane cannot serve.\n\nEach render launches a browser, so the endpoint carries a per-replica concurrency cap and answers 429 when it is full.",
+        "description": "Call an MCP App tool and mount its `ui://` widget in real headless Chromium running the production host bridge, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements.\n\n**Executes the tool**, so it has whatever side effects that tool has — the render is what happens afterwards.\n\nStateless: connect, call, render, read, dispose, all inside one request. Interactive widget sessions use the local Inspector’s `/api/v1/projects/{projectId}/servers/{serverId}/widget-sessions` endpoints. They hold a live browser in process and return 404 on hosted deployments without session affinity.\n\nEach render launches a browser, so the endpoint carries a per-replica concurrency cap and answers 429 when it is full.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -13341,6 +13745,319 @@
         }
       }
     },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions": {
+        "post": {
+          "operationId": "createServerWidgetSession",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Create a retained widget session",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Executes the tool and retains its App in one local Chromium context. A render failure returns its verdict without a session ID.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionCreated"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimited"
+            },
+            "503": {
+              "description": "The local session registry is unavailable.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionCreateRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/snapshot": {
+        "get": {
+          "operationId": "getServerWidgetSessionSnapshot",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Read a retained widget snapshot",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Returns an accessibility tree and addressable elements without replaying the tool.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionSnapshot"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/action": {
+        "post": {
+          "operationId": "executeServerWidgetSessionAction",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Act on a retained widget",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Runs one coordinate action with fresh project/server authorization.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionActionResult"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionActionRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}/scripted-step": {
+        "post": {
+          "operationId": "executeServerWidgetSessionStep",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Run a retained widget step",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Runs one semantic action or assertion, using the same locator vocabulary as the snapshot.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionStepResult"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            },
+            "400": {
+              "$ref": "#/components/responses/ValidationError"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "409": {
+              "description": "Another operation is already running on this session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetSessionStepRequest"
+                }
+              }
+            }
+          }
+        }
+      },
+      "/projects/{projectId}/servers/{serverId}/widget-sessions/{id}": {
+        "delete": {
+          "operationId": "closeServerWidgetSession",
+          "tags": [
+            "Execution"
+          ],
+          "summary": "Close a retained widget session",
+          "description": "Available only on the local Inspector that created the session; hosted deployments return 404. Requires a verified user or API key. A session is bound to the original subject, project and server and expires after its idle timeout. Disposes the original owner's browser. Returns closed=false if no matching live session exists. Closing remains available after project/server access is revoked.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/projectId"
+            },
+            {
+              "$ref": "#/components/parameters/serverId"
+            },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Session ID returned by this local Inspector."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "The session operation result.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WidgetSessionClosed"
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "404": {
+              "$ref": "#/components/responses/NotFound"
+            }
+          }
+        }
+      },
     "/projects/{projectId}/eval-runs/{runId}/gate-waivers": {
       "post": {
         "operationId": "createGateWaiver",
@@ -14945,6 +15662,7 @@
               "SERVER_UNREACHABLE",
               "TIMEOUT",
               "OAUTH_REQUIRED",
+              "AUTH_REQUIRED",
               "INTERNAL_ERROR"
             ]
           },
@@ -16224,7 +16942,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "assertions": {
             "type": "object",
@@ -16380,7 +17098,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -16589,7 +17307,7 @@
           },
           "matchOptions": {
             "type": ["object", "null"],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "assertions": {
             "type": ["object", "null"],
@@ -17000,7 +17718,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "defaultAssertions": {
                 "type": ["array", "null"],
@@ -17272,7 +17991,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Absent when the case sets none — omitted from the response rather than sent as `null`."
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). Absent when the case sets none — omitted from the response rather than sent as `null`."
           },
           "checks": {
             "type": "object",
@@ -17597,7 +18316,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18218,7 +18937,7 @@
               "object",
               "null"
             ],
-            "description": "`null` clears the case override and inherits the suite's."
+            "description": "Tool-call match options in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. On update, fields you omit keep their current values. `null` clears the case override and inherits the suite's."
           },
           "checks": {
             "type": [
@@ -18719,6 +19438,43 @@
             "type": "integer",
             "minimum": 0,
             "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec. A server that already returns its own top-level `durationMs` keeps it — MCPJam never overwrites the field — so this value is MCPJam's measurement only when the server did not report one."
+          },
+          "authChallenge": {
+            "type": "object",
+            "description": "Additive MCPJam field, present only when the result is an `isError` sign-in challenge carrying `_meta[\"mcp/www_authenticate\"]` (the ChatGPT convention). The parsed challenge; the result itself is returned unchanged. An HTTP 401 from the MCP server never reaches this field: it is answered with `403 AUTH_REQUIRED` instead.",
+            "required": [
+              "source",
+              "facets"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "tool_result_meta"
+                ]
+              },
+              "error": {
+                "type": "string",
+                "description": "RFC 6750 `error`, e.g. `invalid_token`."
+              },
+              "errorDescription": {
+                "type": "string"
+              },
+              "requiredScope": {
+                "type": "string",
+                "description": "The challenge's `scope`, space-separated as sent."
+              },
+              "resourceMetadataUrl": {
+                "type": "string",
+                "description": "RFC 9728 `resource_metadata` pointer."
+              },
+              "facets": {
+                "type": "object",
+                "description": "What the server actually sent.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": true
           }
         },
         "additionalProperties": true
@@ -18883,7 +19639,7 @@
           },
           "matchOptions": {
             "type": "object",
-            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
             "additionalProperties": true
           },
           "predicates": {
@@ -19142,7 +19898,7 @@
                 },
                 "matchOptions": {
                   "type": "object",
-                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "description": "Per-case tool-call matching override, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object.",
                   "additionalProperties": true
                 },
                 "predicates": {
@@ -19613,7 +20369,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "checks": {
             "type": "array",
@@ -19780,7 +20537,8 @@
             "description": "Suite-level floor on per-case iterations, 1–10: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor — the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
           },
           "matchOptions": {
-            "type": ["object", "null"]
+            "type": ["object", "null"],
+            "description": "In the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`). `null` when the suite sets none."
           },
           "defaultAssertions": {
             "type": "array",
@@ -23732,6 +24490,239 @@
           }
         }
       },
+      "ServerRevisionSummary": {
+        "type": "object",
+        "required": [
+          "revisionNumber",
+          "capturedAt",
+          "source",
+          "sourceId",
+          "counts"
+        ],
+        "properties": {
+          "revisionNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capturedAt": {
+            "type": "number",
+            "description": "When it was captured, in epoch milliseconds."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["connect", "evalRun", "traceRepair", "chatSession"],
+            "description": "What captured it."
+          },
+          "sourceId": {
+            "type": ["string", "null"],
+            "description": "The eval run, repair job or chat session that captured it; null for a connect."
+          },
+          "counts": {
+            "type": "object",
+            "required": ["tools"],
+            "properties": {
+              "tools": {
+                "type": "integer"
+              },
+              "prompts": {
+                "type": "integer"
+              },
+              "resources": {
+                "type": "integer"
+              },
+              "resourceTemplates": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ServerRevisionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerRevisionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "ServerRevisionTool": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "description": "The tool's JSON Schema for its arguments, as stored."
+          },
+          "outputSchema": {
+            "description": "The tool's JSON Schema for structured output, as stored."
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The tool's `_meta`, stored without keys starting with `$` or `_`."
+          },
+          "icons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "annotations": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "execution": {
+            "type": "object",
+            "properties": {
+              "taskSupport": {
+                "type": "string",
+                "enum": ["forbidden", "optional", "required"]
+              }
+            }
+          }
+        }
+      },
+      "ServerRevision": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          {
+            "type": "object",
+            "required": ["tools", "discovery", "captureError", "droppedFields"],
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "discovery": {
+                "type": ["object", "null"],
+                "additionalProperties": true,
+                "description": "The server's initialize result: serverInfo, capabilities, instructions and protocol version."
+              },
+              "captureError": {
+                "type": ["string", "null"]
+              },
+              "droppedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Paths storage dropped for size, such as `discovery.instructions`."
+              }
+            }
+          }
+        ]
+      },
+      "ServerRevisionDiff": {
+        "type": "object",
+        "required": ["from", "to", "tools", "discovery", "droppedFields"],
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          "to": {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          "tools": {
+            "type": "object",
+            "required": ["added", "removed", "changed"],
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "changed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "changedFields", "before", "after"],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "changedFields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Which fields moved, e.g. `description` or `inputSchema`."
+                    },
+                    "before": {
+                      "$ref": "#/components/schemas/ServerRevisionTool"
+                    },
+                    "after": {
+                      "$ref": "#/components/schemas/ServerRevisionTool"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "discovery": {
+            "type": "array",
+            "description": "One entry per changed server info field.",
+            "items": {
+              "type": "object",
+              "required": ["field", "before", "after"],
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "description": "e.g. `serverInfo.version` or `instructions`."
+                },
+                "before": {},
+                "after": {}
+              }
+            }
+          },
+          "droppedFields": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "to": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
       "ProjectServer": {
         "type": "object",
         "description": "A saved MCP server, projected toward the hosted (HTTP) shape. STDIO command/args/env and raw headers are never exposed.",
@@ -24288,7 +25279,8 @@
                 "description": "Suite-level floor on per-case iterations: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` clears it."
               },
               "matchOptions": {
-                "type": ["object", "null"]
+                "type": ["object", "null"],
+                "description": "Suite default tool-call match options, in either vocabulary: public (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or internal (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`), never both in one object. Fields you omit keep their current values; `null` clears them."
               },
               "checks": {
                 "type": ["array", "null"],
@@ -25430,7 +26422,7 @@
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", "cursor", null],
+            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires the matching feature flag; clearing never does."
           },
           "computer": {
@@ -31601,7 +32593,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required on a first turn. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
+            "description": "Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Optional on a first turn: defaults to the environment model, then the client model, and pins the resolved model for continuations. A BARE id is rejected with `details.reason: \"MODEL_AMBIGUOUS\"` rather than guessed — an unprefixed id is indistinguishable from a local Ollama model, and guessing would spend on the wrong rail."
           },
           "hostId": {
             "type": "string",
@@ -31617,7 +32609,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Target these project servers. Mutually exclusive with `environmentId`. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
+            "description": "Target these project servers; [] explicitly selects no MCP servers and remains empty on continuation. Mutually exclusive with `environmentId`, including when empty. First turn only. Server CONFIGS are never accepted — only ids the project already holds."
           },
           "systemPrompt": {
             "type": "string",
@@ -31806,6 +32798,40 @@
             "type": "string",
             "description": "The saved host this turn executed as — the pointer the caller sent, or the host the targeted environment pins. Absent when the turn named no host."
           },
+          "skippedServers": {
+            "type": "array",
+            "description": "Servers omitted from this turn because they could not connect. The reply still runs when every selected server is skipped.",
+            "items": {
+              "type": "object",
+              "required": [
+                "serverId",
+                "serverName",
+                "reason",
+                "message"
+              ],
+              "properties": {
+                "serverId": {
+                  "type": "string"
+                },
+                "serverName": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "hosted_requires_https",
+                    "hosted_stdio_unsupported",
+                    "needs_sign_in",
+                    "unreachable",
+                    "other"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "advertisedToolCount": {
             "type": "integer",
             "description": "Tools the model could see this turn."
@@ -31916,6 +32942,15 @@
               },
               "reason": {
                 "type": "string"
+              },
+              "refusal": {
+                "type": "string",
+                "enum": [
+                  "cloud_browser_unavailable",
+                  "cloud_browser_not_configured",
+                  "cloud_browser_unavailable_installation"
+                ],
+                "description": "Why a requested browser did not attach, when it can be named. `cloud_browser_unavailable`: Cloud Browser cannot start right now; retry in a few minutes. `cloud_browser_not_configured`: Cloud Browser is not available on this deployment yet. `cloud_browser_unavailable_installation`: this self-hosted installation has no working Cloud Browser setup. `reason` carries the human-readable detail."
               },
               "screenshots": {
                 "type": "array",
@@ -32100,6 +33135,9 @@
           "spanCount"
         ],
         "properties": {
+          "setupHashAtTurn": { "type": "string", "description": "Hash of a complete effective setup manifest. Absent when provenance is incomplete." },
+          "setupStatus": { "type": "string", "enum": ["complete", "incomplete"] },
+          "setupIncompleteReasons": { "type": "array", "items": { "type": "string" } },
           "turnId": {
             "type": "string"
           },
@@ -32321,6 +33359,642 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "WidgetViewport": {
+        "type": "object",
+        "required": [
+          "width",
+          "height"
+        ],
+        "properties": {
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          }
+        }
+      },
+      "WidgetSessionCreateRequest": {
+        "type": "object",
+        "required": [
+          "toolName"
+        ],
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "injectOpenAiCompat": {
+            "type": "boolean"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/WidgetViewport"
+          },
+          "clientCapabilities": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionCreated": {
+        "type": "object",
+        "required": [
+          "status",
+          "elapsedMs"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "mountedWidgetId": {
+            "type": "string"
+          },
+          "viewport": {
+            "$ref": "#/components/schemas/WidgetViewport"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "idleTimeoutMs": {
+            "type": "number"
+          },
+          "resourceUri": {
+            "type": "string"
+          },
+          "bridgeInitialized": {
+            "type": "boolean"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "consoleErrors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blockedRequests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hint": {
+            "type": "string"
+          }
+        },
+        "description": "A render verdict. Only a rendered widget has a session ID and lifetime metadata; an unsuccessful render does not create a session."
+      },
+      "WidgetAction": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "screenshot",
+              "left_click",
+              "double_click",
+              "right_click",
+              "mouse_move",
+              "type",
+              "key",
+              "scroll",
+              "wait"
+            ]
+          },
+          "coordinate": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "text": {
+            "type": "string"
+          },
+          "scrollDirection": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "scrollAmount": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "WidgetToolCall": {
+        "type": "object",
+        "required": [
+          "name",
+          "args",
+          "ok",
+          "elapsedMs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "args": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          },
+          "result": {},
+          "visibility": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "model",
+                "app"
+              ]
+            }
+          }
+        }
+      },
+      "WidgetSessionActionRequest": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/WidgetAction"
+          }
+        }
+      },
+      "WidgetSessionActionResult": {
+        "type": "object",
+        "required": [
+          "action",
+          "widgetToolCalls",
+          "elapsedMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/WidgetAction"
+          },
+          "widgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            }
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "pluginWorkspace": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionSnapshot": {
+        "type": "object",
+        "required": [
+          "snapshot",
+          "expiresAt"
+        ],
+        "properties": {
+          "snapshot": {
+            "$ref": "#/components/schemas/WidgetSnapshot"
+          },
+          "expiresAt": {
+            "type": "number"
+          }
+        }
+      },
+      "WidgetSessionLocator": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "object",
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "exact": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "css": {
+            "type": "string",
+            "minLength": 1
+          },
+          "testId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "nth": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "role"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "css"
+            ]
+          },
+          {
+            "required": [
+              "testId"
+            ]
+          }
+        ]
+      },
+      "WidgetSessionAssertion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "text"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "textVisible"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "elementVisible"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "elementHidden"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "target",
+              "equals"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "inputValue"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "equals": {
+                "type": "string",
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "toolName"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "widgetToolCalled"
+                ]
+              },
+              "toolName": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "WidgetSessionStep": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "target"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "click"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "clickType": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "double",
+                  "right"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "target",
+              "text"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "type"
+                ]
+              },
+              "target": {
+                "$ref": "#/components/schemas/WidgetSessionLocator"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "key"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "key"
+                ]
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "direction"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "scroll"
+                ]
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              },
+              "amount": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "ms"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "wait"
+                ]
+              },
+              "ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "assertion"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "assert"
+                ]
+              },
+              "assertion": {
+                "$ref": "#/components/schemas/WidgetSessionAssertion"
+              }
+            }
+          }
+        ]
+      },
+      "WidgetSessionStepRequest": {
+        "type": "object",
+        "required": [
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "$ref": "#/components/schemas/WidgetSessionStep"
+          },
+          "priorWidgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            },
+            "maxItems": 1000
+          }
+        }
+      },
+      "WidgetSessionStepResult": {
+        "type": "object",
+        "required": [
+          "step",
+          "ok",
+          "widgetToolCalls",
+          "followUps",
+          "elapsedMs",
+          "expiresAt"
+        ],
+        "properties": {
+          "step": {
+            "$ref": "#/components/schemas/WidgetSessionStep"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "widgetToolCalls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetToolCall"
+            }
+          },
+          "followUps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "elapsedMs": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "screenshotBase64": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "pluginWorkspace": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "WidgetSessionClosed": {
+        "type": "object",
+        "required": [
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "boolean"
           }
         }
       },

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { track } from "@/lib/analytics";
 import type { ServerFormData } from "@/shared/types";
 import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
+import { useComparePaneStore } from "@/stores/compare-pane-store";
 
 /**
  * Zero-server Tools rail: connecting a server must happen in place. The empty
@@ -12,6 +13,9 @@ import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
 
 const playgroundState = vi.hoisted(() => ({
   onConnect: undefined as ((formData: ServerFormData) => void) | undefined,
+  activeServerNames: [] as string[],
+  paneServers: vi.fn(),
+  builtinHostId: vi.fn(),
 }));
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -25,7 +29,14 @@ vi.mock("../panes/EnvironmentToolsPane", () => ({
 }));
 
 vi.mock("../panes/MultiServerToolsPane", () => ({
-  MultiServerToolsPaneInner: () => <div data-testid="multi-server-pane" />,
+  MultiServerToolsPaneInner: ({
+    activeServerNames,
+  }: {
+    activeServerNames: string[];
+  }) => {
+    playgroundState.paneServers(activeServerNames);
+    return <div data-testid="multi-server-pane" />;
+  },
 }));
 
 vi.mock("../playground-chat-history-bridge", () => ({
@@ -33,7 +44,10 @@ vi.mock("../playground-chat-history-bridge", () => ({
 }));
 
 vi.mock("@/hooks/useHarnessBuiltinTools", () => ({
-  useHarnessBuiltinTools: () => ({ tools: [] }),
+  useHarnessBuiltinTools: (hostId: string | null) => {
+    playgroundState.builtinHostId(hostId);
+    return { tools: [] };
+  },
 }));
 
 // The agent browser's tools. Stubbed to "no browser attached" here — the
@@ -70,7 +84,7 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
     updateFormFieldIsSet: vi.fn(),
     isExecuting: false,
     executeTool: vi.fn(),
-    activeServerNames: [],
+    activeServerNames: playgroundState.activeServerNames,
     savedRequestsHook: {
       openSaveDialog: vi.fn(),
       savedRequests: [],
@@ -159,5 +173,38 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
       screen.getByRole("button", { name: /connect a server/i }),
     ).toBeDisabled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("PlaygroundLeftRail — Compare panes", () => {
+  beforeEach(() => {
+    playgroundState.activeServerNames = ["GitHub", "Docs"];
+    playgroundState.paneServers.mockClear();
+    playgroundState.builtinHostId.mockClear();
+    useComparePaneStore.setState({ panes: [], selectedPaneId: null });
+  });
+
+  it("shows single chat's tools when no Compare panes are published", () => {
+    render(<PlaygroundLeftRail previewedHostId="lead" />);
+    expect(screen.queryByLabelText("Pane")).toBeNull();
+    expect(playgroundState.builtinHostId).toHaveBeenLastCalledWith("lead");
+    expect(playgroundState.paneServers).toHaveBeenLastCalledWith([
+      "GitHub",
+      "Docs",
+    ]);
+  });
+
+  it("shows the selected pane's client and only the servers it uses", () => {
+    useComparePaneStore.getState().publishPanes([
+      { paneId: "a", label: "Claude", hostId: "claude", serverNames: null },
+      { paneId: "b", label: "Codex", hostId: "codex", serverNames: ["Docs"] },
+    ]);
+    useComparePaneStore.getState().selectPane("b");
+
+    render(<PlaygroundLeftRail previewedHostId="claude" />);
+
+    expect(screen.getByLabelText("Pane")).toHaveTextContent("Codex");
+    expect(playgroundState.builtinHostId).toHaveBeenLastCalledWith("codex");
+    expect(playgroundState.paneServers).toHaveBeenLastCalledWith(["Docs"]);
   });
 });

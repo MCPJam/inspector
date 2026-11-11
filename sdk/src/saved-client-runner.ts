@@ -1,3 +1,5 @@
+import { backendFetch } from "./deployment/address.js";
+import { resolveDeployment } from "./deployment/resolve.js";
 import { PlatformApiClient } from "./platform/client.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import { HostRunner } from "./HostRunner.js";
@@ -98,11 +100,15 @@ export async function createSavedClientRunner(
   input: EvalSuiteSingleClientOptions,
   signal: AbortSignal
 ): Promise<{ executor: HostRunner; selectedClient: SelectedEvalClient }> {
+  // One server for the client read and the model lease, by the shared order.
+  const deployment = resolveDeployment({
+    baseUrl: input.baseUrl,
+    credential: "api-key",
+  });
   const api = new PlatformApiClient({
     getAuth: () => input.apiKey,
-    ...(input.baseUrl
-      ? { baseUrl: `${input.baseUrl.replace(/\/$/, "")}/api/v1` }
-      : {}),
+    baseUrl: deployment.apiUrl,
+    fetch: backendFetch(),
   });
   const client = await abortableSetup(
     api.getClient(
@@ -130,11 +136,10 @@ export async function createSavedClientRunner(
     (Array.isArray(config.builtInToolIds) && config.builtInToolIds.length) ||
     (config.skillSelection as { skillIds?: unknown[] } | undefined)?.skillIds
       ?.length ||
-    config.progressiveToolDiscovery ||
     config.requireToolApproval
   ) {
     throw new Error(
-      "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, progressive discovery, or interactive approval). Use a client configured for code-connected MCP servers."
+      "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, or interactive approval). Use a client configured for code-connected MCP servers."
     );
   }
   // The saved selection says whose credentials serve the model. It gets the
@@ -247,10 +252,13 @@ export async function createSavedClientRunner(
         ? { reasoningEffort: savedSettings.reasoningEffort }
         : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
+      // A saved client left on Auto stores no value, and hosted runs of it
+      // apply the Auto thresholds; read it the same way here.
+      progressiveToolDiscoveryWhenUnset: "auto",
       apiKey: input.apiKey,
       mcpClientManager: input.manager,
       mcpjamProject: input.projectId,
-      baseUrls: input.baseUrl ? { mcpjam: input.baseUrl } : undefined,
+      baseUrls: { mcpjam: deployment.baseUrl },
     }),
     selectedClient: {
       id: client.id,

@@ -147,6 +147,9 @@ const PLAIN_TOOLS = [
   "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
+  "list_server_revisions",
+  "get_server_revision",
+  "diff_server_revisions",
   "call_server_tool",
   // The render verdict is structured evidence (tree, console errors, blocked
   // requests). A widget PANEL here would be a second, drifting copy of the
@@ -177,6 +180,7 @@ const PLAIN_TOOLS = [
   "get_conformance_run",
   "list_conformance_runs",
   "get_conformance_report",
+  "get_conformance_check",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -448,6 +452,9 @@ describe("platform tool registration", () => {
       "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
+      "list_server_revisions",
+      "get_server_revision",
+      "diff_server_revisions",
       "call_server_tool",
       "render_server_widget",
       "list_server_prompts",
@@ -458,6 +465,11 @@ describe("platform tool registration", () => {
       "get_server_skill",
       "read_server_skill_file",
       "check_host_compatibility",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -628,8 +640,6 @@ describe("platform tool registration", () => {
       "create_eval_cases",
       "generate_eval_cases",
       "import_eval_cases",
-      "run_eval_case",
-      "run_eval_suite",
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "ensure_adhoc_environment",
@@ -637,7 +647,6 @@ describe("platform tool registration", () => {
       "generate_personas",
       "create_goal",
       "generate_goals",
-      "launch_goal_run",
       "create_swarm",
       "publish_study",
       "create_client",
@@ -664,9 +673,6 @@ describe("platform tool registration", () => {
       "update_project",
       "archive_goal",
     ]);
-    // Writes whose effect leaves the caller's organization.
-    const EXTERNAL_COMMUNICATION = new Set(["send_feedback"]);
-
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
       expect(names, `${name} is not a registered tool`).toContain(name);
@@ -678,6 +684,9 @@ describe("platform tool registration", () => {
         .annotations;
     for (const name of [
       "call_server_tool",
+      "run_eval_suite",
+      "run_eval_case",
+      "launch_goal_run",
       "send_chat_message",
       "update_project",
       "update_project_server",
@@ -709,6 +718,33 @@ describe("platform tool registration", () => {
       expect(annotationsOf(name)?.idempotentHint, name).toBe(false);
     }
 
+    for (const name of ["get_me", "list_projects", "get_eval_run", "update_eval_case"]) {
+      expect(annotationsOf(name)?.openWorldHint, name).toBe(false);
+    }
+    for (const name of ["list_server_tools", "call_server_tool", "run_eval_case", "publish_study", "send_feedback"]) {
+      expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
+    }
+
+    // A conformance start costs no MCPJam credits, but the server's saved
+    // settings can name a tool that writes, so it is not an additive write.
+    expect(annotationsOf("start_conformance_run")).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    for (const name of [
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
+    ]) {
+      expect(annotationsOf(name), name).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
+    }
+
     for (const registration of registrations) {
       const { title, ...hints } = registration.config.annotations ?? {};
       // Claude's directory reads `annotations.title` and ignores the top-level
@@ -720,16 +756,18 @@ describe("platform tool registration", () => {
       );
 
       if (hints.readOnlyHint === true) {
-        expect(hints, registration.name).toEqual({ readOnlyHint: true });
+        expect(hints, registration.name).toEqual({
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: expect.any(Boolean),
+        });
         continue;
       }
       expect(hints, registration.name).toEqual({
         readOnlyHint: false,
         destructiveHint: !ADDITIVE_WRITES.has(registration.name),
         idempotentHint: IDEMPOTENT_WRITES.has(registration.name),
-        ...(EXTERNAL_COMMUNICATION.has(registration.name)
-          ? { openWorldHint: true }
-          : {}),
+        openWorldHint: expect.any(Boolean),
       });
     }
   });
@@ -954,6 +992,69 @@ describe("runPlatformOperation", () => {
     expect(result.structuredContent?.error).toEqual({
       code: "FORBIDDEN",
       message: "Denied",
+    });
+  });
+
+  it("keeps a refusal's code and gated feature, and nothing else of its details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "Conformance is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              feature: "conformance",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Conformance is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "conformance" },
+    });
+  });
+
+  it("keeps a feature-gate code even when the refusal names no feature", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "This feature is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "This feature is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE" },
     });
   });
 

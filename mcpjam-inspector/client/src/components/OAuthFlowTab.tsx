@@ -10,11 +10,7 @@ import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machin
 import { redeemAuthorizationCode } from "@/lib/oauth/code-redemption";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "./ui/resizable";
+import { OAuthFlowLayout, type OAuthView } from "./oauth/OAuthFlowLayout";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -243,6 +239,7 @@ export const OAuthFlowTab = ({
     EMPTY_OAUTH_FLOW_STATE,
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
+  const [oauthView, setOAuthView] = useState<OAuthView>("guide");
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   // Remount key for the auth modal, bumped per regenerated authorization request.
   const [authModalAttempt, setAuthModalAttempt] = useState(0);
@@ -406,6 +403,12 @@ export const OAuthFlowTab = ({
 
   const processedCodeRef = useRef<string | null>(null);
   const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Unmount only: the callback effect re-runs whenever the machine is rebuilt,
+  // and a scheduled redemption has to survive that.
+  useEffect(
+    () => () => clearTimeout(exchangeTimeoutRef.current ?? undefined),
+    [],
+  );
 
   // Reset OAuth flow state when switching servers
   const prevServerNameRef = useRef(selectedServerName);
@@ -862,9 +865,7 @@ export const OAuthFlowTab = ({
 
       processedCodeRef.current = code;
 
-      if (exchangeTimeoutRef.current) {
-        clearTimeout(exchangeTimeoutRef.current);
-      }
+      clearTimeout(exchangeTimeoutRef.current ?? undefined);
 
       updateOAuthFlowState({
         authorizationCode: code,
@@ -1005,8 +1006,10 @@ export const OAuthFlowTab = ({
     <div className="h-full flex flex-col bg-background">
       <div className="flex-1 overflow-hidden">
         {hasProfile ? (
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={50} minSize={30}>
+          <OAuthFlowLayout
+            view={oauthView}
+            onViewChange={setOAuthView}
+            diagram={
               <OAuthSequenceDiagram
                 flowState={oauthFlowState}
                 registrationStrategy={registrationStrategy}
@@ -1015,17 +1018,17 @@ export const OAuthFlowTab = ({
                 hasProfile={hasProfile}
                 onConfigure={() => openProfileModal("edit")}
               />
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
+            }
+            logger={
               <OAuthFlowLogger
                 oauthFlowState={oauthFlowState}
                 onClearLogs={clearInfoLogs}
                 onClearHttpHistory={clearHttpHistory}
                 activeStep={focusedStep ?? oauthFlowState.currentStep}
-                onFocusStep={setFocusedStep}
+                onFocusStep={(step) => {
+                  setFocusedStep(step);
+                  setOAuthView("diagram");
+                }}
                 hasProfile={hasProfile}
                 summary={{
                   label: hasProfile
@@ -1077,8 +1080,8 @@ export const OAuthFlowTab = ({
                   isApplyingTokens,
                 }}
               />
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            }
+          />
         ) : (
           // Empty / unconfigured: keep progressive disclosure tight — just the
           // diagram with its centered "Configure OAuth Target" overlay. The

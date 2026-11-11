@@ -6,6 +6,8 @@ vi.mock("@/lib/config", () => ({
 }));
 
 import {
+  getApiContextRevision,
+  getServerRequestKey,
   setApiContext,
   injectHostedServerMapping,
   normalizeHostedServerNames,
@@ -42,6 +44,16 @@ describe("injectHostedServerMapping", () => {
 
     // Now it resolves
     expect(resolveHostedServerId("new-server")).toBe("id-new");
+  });
+
+  // PLB-118: every connect re-injects the mapping it already has, and the
+  // revision bump made the Playground ask for the tool list a second time.
+  it("does not announce a mapping it already had", () => {
+    const before = getApiContextRevision();
+    injectHostedServerMapping("existing-server", "id-existing");
+    expect(getApiContextRevision()).toBe(before);
+    injectHostedServerMapping("existing-server", "id-moved");
+    expect(getApiContextRevision()).toBe(before + 1);
   });
 
   it("preserves existing server mappings", () => {
@@ -121,5 +133,38 @@ describe("injectHostedServerMapping", () => {
     expect(tryGetHostedServerDisplayName("my-server")).toBe("my-server");
     expect(tryGetHostedServerDisplayName("doc-id-1")).toBe("my-server");
     expect(tryGetHostedServerDisplayName("orphan-id")).toBeUndefined();
+  });
+});
+
+describe("getServerRequestKey", () => {
+  const context = {
+    projectId: "project-1",
+    isAuthenticated: true,
+    serverIdsByName: { "my-server": "id-1" },
+  };
+
+  beforeEach(() => {
+    setApiContext(context);
+  });
+
+  it("stays the same across a change the request does not carry", () => {
+    const key = getServerRequestKey("my-server");
+    expect(key).not.toBeNull();
+    setApiContext({ ...context, getAccessToken: async () => "token" });
+    expect(getServerRequestKey("my-server")).toBe(key);
+  });
+
+  it("changes with what the request carries", () => {
+    const key = getServerRequestKey("my-server");
+    setApiContext({ ...context, serverIdsByName: { "my-server": "id-2" } });
+    expect(getServerRequestKey("my-server")).not.toBe(key);
+    setApiContext({ ...context, isAuthenticated: false });
+    expect(getServerRequestKey("my-server")).not.toBe(key);
+  });
+
+  it("is null while the context cannot build the request", () => {
+    expect(getServerRequestKey("unknown-server")).toBeNull();
+    setApiContext({ projectId: null, serverIdsByName: {} });
+    expect(getServerRequestKey("my-server")).toBeNull();
   });
 });

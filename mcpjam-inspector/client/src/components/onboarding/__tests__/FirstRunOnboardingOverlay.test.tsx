@@ -51,12 +51,13 @@ import {
   type FirstRunConnectionState,
   type FirstRunServerDraft,
 } from "../FirstRunOnboardingOverlay";
+import type { GuestSessionRefusalReason } from "@/lib/guest-session";
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
   skipWelcome = false,
   recoveryServerDraft?: FirstRunServerDraft,
-  guestSessionRefused = false,
+  guestSessionRefusal: GuestSessionRefusalReason | null = null,
 ) {
   const onConnectOwnServer = vi.fn();
   const onConnectDemo = vi.fn();
@@ -81,7 +82,7 @@ function renderOverlay(
       onOpenPlayground={onOpenPlayground}
       onWelcomeShown={onWelcomeShown}
       onSkip={onSkip}
-      guestSessionRefused={guestSessionRefused}
+      guestSessionRefusal={guestSessionRefusal}
       onSignIn={onSignIn}
     />,
   );
@@ -113,7 +114,7 @@ function renderOverlay(
           onOpenPlayground={onOpenPlayground}
           onWelcomeShown={onWelcomeShown}
           onSkip={onSkip}
-          guestSessionRefused={guestSessionRefused}
+          guestSessionRefusal={guestSessionRefusal}
           onSignIn={onSignIn}
         />,
       ),
@@ -137,7 +138,7 @@ describe("FirstRunOnboardingOverlay", () => {
       { status: "idle" },
       true,
       undefined,
-      true,
+      "rate_limited",
     );
 
     expect(screen.getByText("Guest session limit reached")).toBeInTheDocument();
@@ -150,6 +151,22 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onSignIn).toHaveBeenCalledOnce();
     expect(onConnectDemo).not.toHaveBeenCalled();
     expect(onConnectOwnServer).not.toHaveBeenCalled();
+  });
+
+  it("tells the visitor guest access is off when the deployment issues no guests", async () => {
+    const { onSignIn } = renderOverlay(
+      { status: "idle" },
+      true,
+      undefined,
+      "guest_access_disabled",
+    );
+
+    expect(screen.getByText("Guest access is off")).toBeInTheDocument();
+    expect(screen.queryByText("Guest session limit reached")).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(onSignIn).toHaveBeenCalledOnce();
   });
 
   it("records the welcome when it is shown and can resume at server choice", () => {
@@ -291,6 +308,21 @@ describe("FirstRunOnboardingOverlay", () => {
     ).toBeInTheDocument();
     expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
       "backdrop-blur-sm",
+    );
+  });
+
+  it("keeps a side gutter on a phone, on the welcome and the server choice", () => {
+    renderOverlay();
+    // The base dialog leaves 1rem each side; a step's own width must not
+    // drop it, or a 390px phone runs the content into the screen edge.
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-w-[min(420px,calc(100%-2rem))]",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-w-[min(408px,calc(100%-2rem))]",
     );
   });
 

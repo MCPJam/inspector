@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Hammer, History } from "lucide-react";
+import { Hammer, History, PanelLeftClose } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { AddServerModal } from "@/components/connection/AddServerModal";
@@ -18,6 +18,12 @@ import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
 import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { PlaygroundAppsSection } from "./PlaygroundAppsSection";
+import { IncludedPluginToolsSection } from "./IncludedPluginToolsSection";
+import { ComparePaneSelect } from "./ComparePaneSelect";
+import {
+  useSelectedComparePane,
+  type ComparePaneOption,
+} from "@/stores/compare-pane-store";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -31,14 +37,19 @@ type LeftRailTab = "sessions" | "tools";
 export function PlaygroundLeftRail({
   previewedHostId,
   projectId,
+  onClose,
 }: {
   /** Resolved previewed host (from PlaygroundTab) — used to surface a harness
    *  host's native built-in tools in the Tools list. */
   previewedHostId?: string | null;
   /** Project scope, for the environment-mode Tools body (see `ToolsBody`). */
   projectId?: string | null;
+  /** Shows a Collapse panel control, as the right rail has (phone layout). */
+  onClose?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
+  // While Compare runs clients, the tools are the selected pane's.
+  const comparePane = useSelectedComparePane();
 
   const handleTabClick = useCallback(
     (next: LeftRailTab) => {
@@ -70,15 +81,37 @@ export function PlaygroundLeftRail({
           isActive={activeTab === "sessions"}
           onClick={() => handleTabClick("sessions")}
         />
+        {onClose ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Collapse panel"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="flex-1 min-h-0">
         {activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
-          <ToolsBody
-            previewedHostId={previewedHostId ?? null}
-            projectId={projectId ?? null}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            {comparePane ? <ComparePaneSelect selected={comparePane} /> : null}
+            <div className="min-h-0 flex-1">
+              <ToolsBody
+                previewedHostId={
+                  comparePane ? comparePane.hostId : (previewedHostId ?? null)
+                }
+                serverNames={comparePane?.serverNames ?? null}
+                comparePane={comparePane}
+                projectId={projectId ?? null}
+              />
+            </div>
+            <IncludedPluginToolsSection />
+          </div>
         )}
       </div>
     </div>
@@ -147,12 +180,21 @@ function SessionsBody() {
 
 function ToolsBody({
   previewedHostId,
+  serverNames,
+  comparePane,
   projectId,
 }: {
   previewedHostId: string | null;
+  /** A Compare pane's own servers, or null for every active server. */
+  serverNames: string[] | null;
+  /** The selected Compare pane, whose environment (or none) the rail shows. */
+  comparePane: ComparePaneOption | null;
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
+  const activeServerNames = serverNames
+    ? state.activeServerNames.filter((name) => serverNames.includes(name))
+    : state.activeServerNames;
   // The agent browser the previewed host attaches, if any: the six `browser_*`
   // tools plus whatever the page it has open offers. Resolved HERE, beside the
   // harness built-ins, and fed into both panes below for the same reason they
@@ -184,12 +226,19 @@ function ToolsBody({
   // tools instead.
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const [storedEnvironmentId] = usePreviewedEnvironmentId(projectId);
-  const environmentId = environmentsEnabled ? storedEnvironmentId : null;
+  // While comparing, the selected pane's environment and its narrowing; the
+  // page's own environment rests until single chat.
+  const environmentId = !environmentsEnabled
+    ? null
+    : comparePane
+      ? comparePane.environmentId
+      : storedEnvironmentId;
   if (environmentId && projectId) {
     return (
       <EnvironmentToolsPane
         projectId={projectId}
         environmentId={environmentId}
+        environmentOverrides={comparePane?.environmentOverrides}
       />
     );
   }
@@ -200,10 +249,11 @@ function ToolsBody({
   // server pane (keyed on the stale `serverName` pointer), so the remaining
   // server's tools vanished. Only the zero-server case falls back to
   // PlaygroundLeft for its empty/onboarding state.
-  if (state.activeServerNames.length >= 1) {
+  if (activeServerNames.length >= 1) {
     return (
       <MultiServerToolsPaneInner
-        activeServerNames={state.activeServerNames}
+        previewedHarnessId={previewedHarnessId}
+        activeServerNames={activeServerNames}
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
         browserTools={browserTools}
@@ -215,6 +265,7 @@ function ToolsBody({
   // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <ZeroServerToolsBody
+      previewedHarnessId={previewedHarnessId}
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
       browserTools={browserTools}
@@ -230,10 +281,12 @@ function ToolsBody({
  * returns would run conditionally.
  */
 function ZeroServerToolsBody({
+  previewedHarnessId,
   builtinTools,
   builtinToolsRunLocally,
   browserTools,
 }: {
+  previewedHarnessId?: string | null;
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
   browserTools: BrowserToolsState;
@@ -245,6 +298,7 @@ function ZeroServerToolsBody({
   return (
     <>
       <PlaygroundLeft
+        previewedHarnessId={previewedHarnessId}
         tools={state.tools}
         selectedToolName={state.selectedTool}
         fetchingTools={state.fetchingTools}

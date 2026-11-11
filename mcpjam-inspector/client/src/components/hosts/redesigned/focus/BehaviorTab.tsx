@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
@@ -30,6 +31,7 @@ import {
   setMcpToolResultImageRenderPlacement,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import { HOST_MODEL_SELECTION_PURPOSE } from "@/lib/host-model-selection";
 import { hostConfigField } from "@/lib/host-config-field-schema";
 import {
   ENFORCED_CONTROL,
@@ -43,8 +45,9 @@ import {
   savedModelRow,
 } from "@/components/chat-v2/shared/available-models";
 import { useAvailableModels } from "@/hooks/use-available-models";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
+import { orgKeysSavableRows } from "@/lib/org-keys-model-target";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
@@ -178,12 +181,6 @@ function ImagePolicyRow({
   );
 }
 
-/**
- * A host's saved model feeds evals and swarms as well as the Playground, so it
- * is saved with the automated purposes' default: no silent provider fallback.
- */
-const HOST_MODEL_SELECTION_PURPOSE = "evalTarget" as const;
-
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
@@ -206,6 +203,7 @@ export function BehaviorTab({
   readOnly = false,
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
+  const selectedHarness = effectiveHarnessId(draft);
 
   // Same model source as the Playground picker (org providers in hosted
   // mode, local keys otherwise) so org-only providers like Bedrock and
@@ -215,20 +213,28 @@ export function BehaviorTab({
     modelSelectionsSupported,
     requireOrgKeys,
     onManageOrgProviders,
-  } = useAvailableModels();
+    onAddProvider,
+  } = useAvailableModels({ harnessTargets: selectedHarness ? [{ harnessId: selectedHarness }] : [] });
   // A harness client lists only what its runtime can run — the same filter as
   // the Playground picker, so a Codex client cannot be saved on a Claude model.
   // Under the organization's key policy that is only organization models on
-  // the harness's own vendor.
+  // connections that serve the harness's API, saved with their selection.
   const availableModels = useMemo(
     () =>
-      harnessPickerModels(
-        catalogModels,
-        draft.harness ? { harnessId: draft.harness } : null,
-        { requireOrgKeys },
+      orgKeysSavableRows(
+        harnessPickerModels(
+          catalogModels,
+          selectedHarness ? { harnessId: selectedHarness } : null,
+          { requireOrgKeys },
+        ),
+        requireOrgKeys,
+        HOST_MODEL_SELECTION_PURPOSE,
       ),
-    [catalogModels, draft.harness, requireOrgKeys],
+    [catalogModels, selectedHarness, requireOrgKeys],
   );
+  // Under the policy a pick must save an organization selection, which a
+  // deployment without stored selections cannot keep.
+  const modelPickBlocked = requireOrgKeys && !modelSelectionsSupported;
   // The row a saved selection names (under the policy, only that exact row).
   const resolvedModelRow = useMemo(
     () =>
@@ -248,7 +254,7 @@ export function BehaviorTab({
     if (
       requireOrgKeys &&
       draft.modelId &&
-      !isRuntimeChosenModelSentinel(draft.modelId)
+      !isRuntimeAccountModel(draft.modelId)
     ) {
       return orgKeysDisallowedRow(savedModelRow(draft.modelId));
     }
@@ -310,9 +316,9 @@ export function BehaviorTab({
   // The MODEL is gated too, for one harness: Cursor authenticates with the
   // customer's own Cursor account and that account picks the model, so a
   // selection would persist onto the host and reach nothing.
-  const modelState = harnessControlState(draft.harness, "modelId");
-  const tempState = harnessControlState(draft.harness, "temperature");
-  const effortState = harnessControlState(draft.harness, "reasoningEffort");
+  const modelState = harnessControlState(draft.agentLoop ?? draft.harness, "modelId");
+  const tempState = harnessControlState(draft.agentLoop ?? draft.harness, "temperature");
+  const effortState = harnessControlState(draft.agentLoop ?? draft.harness, "reasoningEffort");
   // The row shows only when there is something to pick or a saved value to
   // see or clear (a harness that refuses efforts still shows, and lets the
   // user clear, one that was saved before).
@@ -323,7 +329,7 @@ export function BehaviorTab({
       reasoningEffortOptions(
         resolvedModelRow,
         reasoningEffortRouteForRow(resolvedModelRow),
-        draft.harness,
+        draft.agentLoop ?? draft.harness,
       ).length > 0);
   const [effortNotice, setEffortNotice] = useState<string | null>(null);
   /*
@@ -342,10 +348,10 @@ export function BehaviorTab({
    * takes a control away that the static map allowed.
    */
   const { capabilities: harnessCapabilities } = useHarnessCapabilities(
-    draft.harness ?? null,
+    draft.agentLoop ?? draft.harness ?? null,
   );
   const staticApprovalState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "requireToolApproval",
   );
   const approvalState =
@@ -354,11 +360,11 @@ export function BehaviorTab({
       ? ENFORCED_CONTROL
       : staticApprovalState;
   const visibilityState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "respectToolVisibility",
   );
   const progressiveState = harnessControlState(
-    draft.harness,
+    draft.agentLoop ?? draft.harness,
     "progressiveToolDiscovery",
   );
   const progressiveTriValue = progressiveState.enforced
@@ -388,7 +394,9 @@ export function BehaviorTab({
                 availableModels={availableModels}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
+                onAddProvider={onAddProvider}
                 onModelChange={(model) => {
+                  if (modelPickBlocked) return;
                   // Always written with the id: a selection left over from
                   // the previous model would disagree with it. Only where the
                   // deployment stores selections; else the legacy id alone,
@@ -415,7 +423,7 @@ export function BehaviorTab({
                     modelSelection: carried.selection,
                   });
                 }}
-                disabled={readOnly || !modelState.enforced}
+                disabled={readOnly || !modelState.enforced || modelPickBlocked}
                 align="end"
                 analyticsLocation="client_builder"
                 workload="host"
@@ -863,18 +871,18 @@ export function BehaviorTab({
 
       <FocusBlock title={fSystemPrompt.label}>
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">Not editable</p>
           <Textarea
-            rows={2}
-            disabled
-            value={
-              draft.systemPrompt
-                ? draft.systemPromptDefault?.source
-                  ? "Default system prompt applied"
-                  : "Custom system prompt applied"
-                : "No system prompt applied"
+            aria-label={fSystemPrompt.label}
+            rows={10}
+            value={draft.systemPrompt}
+            onChange={(e) =>
+              update({
+                systemPrompt: e.target.value,
+                systemPromptDefault: undefined,
+              })
             }
-            className="resize-none italic text-muted-foreground"
+            placeholder="You are a helpful assistant…"
+            disabled={readOnly}
           />
           <p className="text-xs text-muted-foreground">
             {draft.systemPrompt && draft.systemPromptDefault?.source ? (

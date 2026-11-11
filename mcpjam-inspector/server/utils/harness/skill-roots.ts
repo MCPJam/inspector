@@ -21,9 +21,12 @@ export const CLAUDE_CODE_SKILLS_BASE = "/home/user/.claude/skills";
 export const CODEX_SKILLS_BASE = "/home/user/.agents/skills";
 
 /**
- * The ACP runtimes' skills root (`~/.agents/skills`, the Agent-Skills-spec
- * location — `DEFAULT_ACP_SKILLS_DIRECTORY` in `@ai-sdk/harness-acp`), which is
- * where the Cursor CLI adapter would write.
+ * The Cursor CLI adapter's skills root: `DEFAULT_ACP_SKILLS_DIRECTORY`
+ * (`.agents/skills`, the Agent-Skills-spec location) in `@ai-sdk/harness-acp`,
+ * resolved against the CLI's PRIVATE home. Cursor's CLI is an installed
+ * implementation, so that home is `implementation/home` inside its recipe,
+ * which the framework installs under its state directory
+ * (`$HOME/.ai-sdk-harness/.harness-bootstrap/cursor`).
  *
  * Declared but DORMANT: the cursor adapter ships with `supportsSkills: false`,
  * so nothing writes here and no MCPJam pass targets it. It exists so the
@@ -31,4 +34,14 @@ export const CODEX_SKILLS_BASE = "/home/user/.agents/skills";
  * so turning skills on later is a one-line flip rather than a hunt for the
  * runtime's root.
  */
-export const CURSOR_SKILLS_BASE = "/home/user/.agents/skills";
+export const CURSOR_SKILLS_BASE =
+  "/home/user/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills";
+
+/**
+ * OpenCode's skills root (`~/.agents/skills`, the Agent-Skills-spec location).
+ *
+ * Declared but DORMANT: the OpenCode adapter ships with `supportsSkills: false`,
+ * so nothing writes here and no MCPJam pass targets it. It exists so the
+ * adapter's `skillsBaseDir` states a real path rather than a placeholder.
+ */
+export const OPENCODE_SKILLS_BASE = "/home/user/.agents/skills";

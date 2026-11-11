@@ -1,14 +1,14 @@
 # Use specific Node.js version to match local/CI runtimes and dependency engines.
-# 24.21 runs ahead of CI's 24.14, and the Container Scan workflow's gate
-# verifies the Debian layer on every change. UNPINNED build-time apt/npm
+# Keep it equal to .nvmrc and CI's NODE_VERSION. The Container Scan workflow's
+# gate verifies the Debian layer on every change. UNPINNED build-time apt/npm
 # upgrades are not the way to fix base-image CVEs here — Railway caches that
 # layer while CI rebuilds cold, so the scanned image silently drifts from the
-# deployed one. A pinned version (the perl-base step below) is deterministic
+# deployed one. A pinned version (the ca-certificates step below) is deterministic
 # either way. There are two pins to re-evaluate when the weekly Container Scan
 # fails on a fixable CRITICAL: this one for the Debian/Node base, and the npm
 # pin plus its overlays in the base stage for npm's bundled dependencies (the
 # node-tar fix for CVE-2026-59873 now comes from that npm pin).
-ARG NODE_VERSION=24.21.0
+ARG NODE_VERSION=24.22.1
 
 # Debian (glibc) base, not Alpine (musl): Playwright's Chromium is built
 # against glibc and will not launch on musl. Widget-probe rendering (synthetic
@@ -41,14 +41,10 @@ RUN node -e 'const d="/usr/local/lib/node_modules/npm",v=require(d+"/package.jso
 
 # sentry-cli uses the system trust store, absent from bookworm-slim. Install
 # it for both build-time uploads and runtime HTTPS without disabling TLS checks.
-# The newest node:24 bookworm-slim build ships perl-base 5.36.0-7+deb12u3,
-# which carries CRITICAL CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376.
-# bookworm-security has the fix. Pinned, as the header above explains; the
-# install fails loudly once a later security update replaces this version in
-# the archive. Delete this step once the NODE_VERSION image ships deb12u4.
+# Pinned, as the header above explains; the install fails loudly once a later
+# security update replaces this version in the archive.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u1 \
-    && apt-get install -y --no-install-recommends --only-upgrade perl-base=5.36.0-7+deb12u4 \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419~deb12u2 \
     && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 
@@ -71,6 +67,7 @@ COPY design-system/package.json ./design-system/package.json
 COPY chat-ui/package.json ./chat-ui/package.json
 COPY widget-react/package.json ./widget-react/package.json
 COPY mcpjam-inspector/package.json ./mcpjam-inspector/package.json
+COPY mcpjam-inspector/scripts/patch-harness-approvals.mjs ./mcpjam-inspector/scripts/patch-harness-approvals.mjs
 
 COPY soundcheck/package.json ./soundcheck/package.json
 COPY mcp/package.json ./mcp/package.json
@@ -165,6 +162,7 @@ RUN npm run bundle:chatgpt -w @mcpjam/inspector && \
     npm run bundle:mcp-apps -w @mcpjam/inspector && \
     npm run bundle:sandbox-proxies -w @mcpjam/inspector && \
     npm run bundle:plugin-shim -w @mcpjam/inspector && \
+    npm run bundle:copilot-cli-bridge -w @mcpjam/inspector && \
     npm run bundle:codex-appserver-bridge -w @mcpjam/inspector && \
     npm run bundle:local-harness-layer -w @mcpjam/inspector
 
@@ -267,4 +265,8 @@ COPY --from=build /usr/src/app/sdk/dist /usr/src/app/sdk/dist
 
 EXPOSE 6274
 
-ENTRYPOINT ["npm", "start"]
+# The launcher is the container's main process rather than `npm start`: npm
+# runs scripts under `sh -c`, and that shell dies on the platform's SIGTERM
+# without passing it on, so npm exits and the server is SIGKILLed with it
+# instead of shutting down gracefully. NODE_ENV is set above.
+ENTRYPOINT ["node", "bin/start.js"]

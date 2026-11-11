@@ -9,9 +9,9 @@
  * - no row says it is blocked by itself;
  * - a feature that can't run on organization providers yet says so and
  *   names the one way to run it now: an admin turning the setting off;
- * - harness runtimes run on the organization's own key for their vendor
- *   (Claude Code on Anthropic, Codex on OpenAI), so their row names that
- *   vendor and what doesn't count;
+ * - harness runtimes run on the organization's own key, on a provider or a
+ *   gateway that serves the API each speaks, so their row names both, and a
+ *   gateway that serves neither API is fixed by turning one on;
  * - a feature waiting on the organization's default model says so, and the
  *   fix is choosing that model, not adding a provider.
  */
@@ -29,10 +29,8 @@ import type {
   OrgAiModelKind,
 } from "@/hooks/useOrgAiConfig";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
-import {
-  canonicalPrefix,
-  canonicalSelectionModelId,
-} from "@/components/chat-v2/shared/model-selection";
+import { canonicalSelectionModelId } from "@/components/chat-v2/shared/model-selection";
+import { canonicalPrefix } from "@/shared/canonical-model-id";
 import type { ModelDefinition } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
@@ -121,20 +119,19 @@ export const NOT_SUPPORTED_YET_GUIDANCE =
   "This feature can't run on organization providers yet. An organization admin can turn this setting off to run it on MCPJam-provided models.";
 
 /**
- * Which organization provider each harness runtime runs on while the setting
- * is on: its own vendor's, on the organization's key.
+ * Which organization connections each harness runtime runs on while the
+ * setting is on: a provider for the API it speaks, or a gateway that serves
+ * that API, on the organization's key.
  */
 export const HARNESS_ORG_KEYS_GUIDANCE =
-  "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.";
-
-/** What a harness runtime can't run on while the setting is on. */
-export const HARNESS_NOT_SUPPORTED_GUIDANCE =
-  "Custom base URLs, local runtimes and models the MCPJam SDK calls directly aren't supported.";
+  "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.";
 
 /**
  * The harness row's guidance, or null to fall back to the general one. With
- * no matching provider the fix names the vendor each harness needs, so no one
- * is sent to add a provider the harness would still refuse.
+ * no such connection the fix names the ones a harness runs on, so no one is
+ * sent to add a provider the harness would still refuse; with a connection no
+ * harness can run on (`unsupported`: a gateway serving neither API, say) the
+ * fix is turning an API on first.
  */
 function harnessGuidance(
   status: AiReadinessStatus,
@@ -144,12 +141,13 @@ function harnessGuidance(
     case "ready":
       return HARNESS_ORG_KEYS_GUIDANCE;
     case "unconfigured":
-    case "unsupported": {
-      const fix = canManage
-        ? "Add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex below."
-        : "Ask an organization admin to add a direct Anthropic provider for Claude Code or an OpenAI provider for Codex.";
-      return `${fix} ${HARNESS_NOT_SUPPORTED_GUIDANCE}`;
-    }
+      return canManage
+        ? "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers."
+        : "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.";
+    case "unsupported":
+      return canManage
+        ? "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider."
+        : "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.";
     default:
       return null;
   }
@@ -254,7 +252,7 @@ export function featureGuidance(
       }
       const fix = noEligibleProvider
         ? canManage
-          ? "Add a direct cloud provider below."
+          ? "Add a direct cloud provider in Providers."
           : "Ask an organization admin to add a direct cloud provider."
         : canManage
           ? "None of the organization's providers can serve this feature. Add a direct cloud provider that can."
@@ -268,7 +266,7 @@ export function featureGuidance(
     }
     case "invalid_credentials":
       return canManage
-        ? "The provider rejected its stored credentials. Update the key below."
+        ? "The provider rejected its stored credentials. Update the key in Providers."
         : "The provider rejected its stored credentials. Ask an organization admin to update the key.";
     case "temporarily_unavailable":
       return "The provider is rate-limited or failing. Try again shortly.";
@@ -396,20 +394,30 @@ export function degradationSentence(
 // The organization's AI models for background work
 // ---------------------------------------------------------------------------
 
-/** Each kind's name and the work that runs on it. */
+/**
+ * Each kind's name, the work that runs on it and, where an unset model still
+ * leaves its work running, what runs instead.
+ */
 export const ORG_AI_MODEL_PRESENTATION: Record<
   OrgAiModelKind,
-  { label: string; noun: string; runs: string }
+  { label: string; noun: string; runs: string; whenUnset?: string }
 > = {
   default: {
     label: "Default AI model",
     noun: "default AI model",
-    runs: "Insights and findings, generation, typed decisions and simulated users",
+    runs: "Ask MCPJam, insights and findings, generation and simulated users",
   },
   search: {
     label: "Search model",
     noun: "search model",
-    runs: "Web search",
+    runs: "Web search in chat needs an Anthropic or OpenAI model.",
+    whenUnset: "Not set, so web search is off",
+  },
+  decision: {
+    label: "Decision model",
+    noun: "decision model",
+    runs: "Session themes, session questions and rubric checks",
+    whenUnset: "Uses the default AI model",
   },
   embedding: {
     label: "Embedding model",
@@ -422,6 +430,24 @@ export const ORG_AI_MODEL_PRESENTATION: Record<
     runs: "Voice input",
   },
 };
+
+/**
+ * A row's description and unset text, given the rest of the card. Without a
+ * decision kind the default model still answers typed decisions, so its row
+ * says so; without a default model an unset decision model runs nothing.
+ */
+export function orgAiModelRowText(
+  kind: OrgAiModelKind,
+  card: { kinds: readonly OrgAiModelKind[]; defaultSet: boolean },
+): { runs: string; whenUnset?: string } {
+  const { runs, whenUnset } = ORG_AI_MODEL_PRESENTATION[kind];
+  if (kind === "default" && !card.kinds.includes("decision"))
+    return {
+      runs: "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
+    };
+  if (kind === "decision" && !card.defaultSet) return { runs };
+  return whenUnset ? { runs, whenUnset } : { runs };
+}
 
 /** "default AI model", "search model", "embedding model", … */
 export function orgAiModelNoun(kind: OrgAiModelKind): string {
@@ -458,6 +484,7 @@ export function listedModelFitsKind(
   const speech = /transcri|whisper/.test(id);
   if (kind === "embedding") return embedding;
   if (kind === "transcription") return speech;
+  if (kind === "decision") return id.includes("gpt-6-luna");
   return !embedding && !speech;
 }
 
@@ -468,7 +495,8 @@ export function orgAiModelCheckPresentation(check: OrgAiModelCheck): {
 } {
   if (check.ok) return { label: "Passed", tone: "success" };
   const code = check.code ?? "";
-  if (["provider_auth_failed", "http_401", "http_403"].includes(code)) {
+  // A 403 is a key that works but lacks access: refused, not rejected.
+  if (["provider_auth_failed", "http_401"].includes(code)) {
     return { label: "Credentials rejected", tone: "destructive" };
   }
   if (

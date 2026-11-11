@@ -153,11 +153,72 @@ describe("guest-session module", () => {
       const refusal = guestSession.getGuestSessionRefusal();
       expect(refusal).not.toBeNull();
       expect(refusal!.until).toBeGreaterThan(Date.now() + 500_000);
+      expect(refusal!.reason).toBe("rate_limited");
 
       // Deterministic for the window: no second request.
       const second = await guestSession.getOrCreateGuestSession();
       expect(second).toBeNull();
       expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("records a guest-access-disabled 403 as a refusal and stops asking", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: { get: () => null },
+        json: async () => ({
+          code: "GUEST_ACCESS_DISABLED",
+          message: "Guest access is off on this deployment. Sign in to continue.",
+        }),
+      } as unknown as Response);
+
+      await expect(
+        guestSession.getOrCreateGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(guestSession.getGuestSessionRefusal()?.reason).toBe(
+        "guest_access_disabled",
+      );
+
+      await expect(guestSession.forceRefreshGuestSessionOrThrow()).resolves.toBeNull();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("recognises the refusal from its header without reading the body", async () => {
+      const json = vi.fn(() => new Promise(() => {}));
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_ACCESS_DISABLED" : null,
+        },
+        json,
+      } as unknown as Response);
+
+      await expect(
+        guestSession.getOrCreateGuestSessionOrThrow(),
+      ).resolves.toBeNull();
+      expect(guestSession.getGuestSessionRefusal()?.reason).toBe(
+        "guest_access_disabled",
+      );
+      expect(json).not.toHaveBeenCalled();
+    });
+
+    it("still throws on a revoked-guest 403 so the ladder retries", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: { get: () => null },
+        json: async () => ({ code: "FORBIDDEN", message: "Guest session revoked." }),
+      } as unknown as Response);
+
+      await expect(guestSession.getOrCreateGuestSessionOrThrow()).rejects.toThrow(
+        /403/,
+      );
+      expect(guestSession.getGuestSessionRefusal()).toBeNull();
     });
 
     it("clears the refusal and notifies subscribers when retry-after elapses", async () => {
@@ -264,14 +325,17 @@ describe("guest-session module", () => {
       expect((error as { status?: number }).status).toBe(503);
     });
 
-    it("rejects without a status on a network error", async () => {
-      vi.mocked(global.fetch).mockRejectedValue(new Error("offline"));
+    it("rejects without a status on a network error, keeping what fetch threw as the cause", async () => {
+      const thrown = new TypeError("offline");
+      vi.mocked(global.fetch).mockRejectedValue(thrown);
 
       const error = await guestSession
         .getOrCreateGuestSessionOrThrow()
         .catch((e: unknown) => e);
+      expect((error as Error).name).toBe("GuestSessionRequestError");
       expect((error as Error).message).toBe("offline");
       expect((error as { status?: number }).status).toBeUndefined();
+      expect((error as Error).cause).toBe(thrown);
     });
 
     it("resolves null on a 429 refusal instead of throwing", async () => {

@@ -14,18 +14,30 @@ import {
 } from "../use-playground-client-initialization";
 import { playgroundClientInitNotice } from "../playground-client-init-notice";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
 
+// The lineup as the client chips read it: each pane's client, in order.
+const loadSelectedHostIds = (projectId: string) =>
+  paneHostIds(loadComparePanes(projectId));
+const saveSelectedHostIds = (projectId: string, hostIds: string[]) =>
+  saveComparePanes(projectId, panesForHostIds([], hostIds));
+
 const mocks = vi.hoisted(() => ({
   ensure: vi.fn(),
   report: vi.fn(),
+  quietSwitch: vi.fn(),
   role: { canManage: true, isLoading: false },
+}));
+vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
+  markQuietClientSwitch: mocks.quietSwitch,
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostMutations: () => ({ ensureProjectClient: mocks.ensure }),
@@ -164,6 +176,8 @@ describe("usePlaygroundClientInitialization", () => {
     expect(loadSelectedHostIds("p1")).toEqual(LINEUP);
     expect(live.setPreviewedHostId).toHaveBeenCalledWith("h-claude");
     expect(live.setSelectedHostIds).toHaveBeenCalledWith(LINEUP);
+    // The user didn't switch to Claude, so its reconnect stays quiet.
+    expect(mocks.quietSwitch).toHaveBeenCalledWith("p1", "h-claude");
   });
 
   it("leaves the selection alone when the lineup already existed", async () => {
@@ -176,6 +190,7 @@ describe("usePlaygroundClientInitialization", () => {
     await settle();
     expect(loadSelectedHostIds("p1")).toEqual([]);
     expect(live.setSelectedHostIds).not.toHaveBeenCalled();
+    expect(mocks.quietSwitch).not.toHaveBeenCalled();
   });
 
   it("keeps a lineup the user changed while the request was out", async () => {

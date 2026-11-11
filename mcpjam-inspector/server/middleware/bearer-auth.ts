@@ -5,6 +5,13 @@ import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
 import { lookupWorkosKeyBinding } from "../services/workos-key-bindings.js";
 import {
+  AGENT_REFUSAL_MESSAGES,
+  AGENT_REGISTRATION_FEATURE,
+  resolveAgentRegistrationCaller,
+  type AgentRegistrationCaller,
+  type AgentRegistrationClaims,
+} from "../services/agent-registration-caller.js";
+import {
   classifyAuthKitBearer,
   type AuthKitBearerVerdict,
 } from "../services/authkit-jwt.js";
@@ -43,7 +50,9 @@ export const SESSION_REVOKE_PATH = "/api/web/auth-session/revoke";
  * 6. If not a guest token and it claims a WorkOS AuthKit issuer, VERIFIES it
  *    (signature, issuer, audience, expiry) — `authkit_jwt` on success, 401 on
  *    a token that fails, and 401 `SESSION_REVOKED` for a session known to be
- *    revoked. Anything else passes through for Convex to judge.
+ *    revoked. A verified agent-registration token (auth.md) becomes
+ *    `workos_agent` instead, handled like an org-bound `sk_` key. Anything
+ *    else passes through for Convex to judge.
  *
  * Prefix discrimination is sound: real WorkOS JWTs start with `eyJ`
  * (base64 `{"`), so `sk_`/`slk_` prefixes are unambiguous and those
@@ -262,10 +271,11 @@ export async function bearerAuthMiddleware(
       if (isServiceCredentialUnavailableError(error)) {
         return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
       }
-      logger.error("Failed to resolve MCPJam user from WorkOS externalId", {
-        workosUserId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "Failed to resolve MCPJam user from WorkOS externalId",
+        error,
+        { workosUserId },
+      );
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
         500
@@ -289,9 +299,8 @@ export async function bearerAuthMiddleware(
       try {
         binding = await lookupWorkosKeyBinding(workosKeyId);
       } catch (error) {
-        logger.error("Failed to look up WorkOS API key org binding", {
+        logger.error("Failed to look up WorkOS API key org binding", error, {
           workos_key_id: workosKeyId,
-          error: error instanceof Error ? error.message : String(error),
         });
         return c.json(
           {
@@ -393,6 +402,12 @@ export async function bearerAuthMiddleware(
   // being the one hop that took an AuthKit token at its word. The keys are
   // cached by jose, so on the hot path this is a local signature check.
   const verdict = await classifyAuthKitBearer(token);
+  if (verdict.kind === "verified" && verdict.agent) {
+    return authenticateAgentRegistration(c, next, {
+      ...verdict.agent,
+      ...(verdict.orgId ? { workosOrganizationId: verdict.orgId } : {}),
+    });
+  }
   if (verdict.kind === "verified") {
     // A session this process knows to be revoked is refused here, on every
     // route (MJ-011). Only KNOWN revocations: most routes behind this
@@ -457,6 +472,95 @@ export async function bearerAuthMiddleware(
   // request that got here carries an ASSERTED identity, not a verified one.
   c.set("authMethod", "unverified_passthrough");
   return next();
+}
+
+/**
+ * A verified WorkOS agent-registration token (auth.md). The agent acts as the
+ * user who approved it, inside the organization they chose, the way an
+ * org-bound `sk_…` key acts for its owner: the same per-credential budget,
+ * and Convex receives a delegated token for that user
+ * (`DELEGATED_AUTH_METHODS`), never the agent token. It never falls back to
+ * `authkit_jwt`, whose `workosUserId` would be the registration id.
+ */
+async function authenticateAgentRegistration(
+  c: Context,
+  next: Next,
+  claims: AgentRegistrationClaims,
+): Promise<Response | void> {
+  if (!getRequestLocal(c, "workosRateLimitConsumed")) {
+    const waitMs = consumeWorkOSToken(`agent:${claims.registrationId}`);
+    if (waitMs !== null) {
+      return c.json(
+        {
+          code: ErrorCode.RATE_LIMITED,
+          message: "Agent rate limit exceeded. Slow down and retry.",
+        },
+        429,
+        { "Retry-After": String(Math.ceil(waitMs / 1000)) }
+      );
+    }
+    setRequestLocal(c, "workosRateLimitConsumed", true);
+  }
+
+  let caller = getRequestLocal(c, "workosAgentCaller");
+  if (!caller) {
+    caller = await resolveAgentRegistrationCaller(claims);
+    setRequestLocal(c, "workosAgentCaller", caller);
+  }
+  if (!caller.ok) return refuseAgentRegistration(c, claims, caller);
+
+  setRequestLocal(c, "workosAgentClaims", claims);
+  c.set("authMethod", "workos_agent");
+  c.set("workosAgentRegistrationId", caller.registrationId);
+  c.set("workosUserId", caller.workosUserId);
+  c.set("mcpjamUserId", caller.mcpjamUserId);
+  c.set("mcpjamOrganizationId", caller.mcpjamOrganizationId);
+  setRequestLogContext(c, { orgId: logConvexId(caller.mcpjamOrganizationId) });
+  logger.info("WorkOS agent request", {
+    event: "auth.workos_agent",
+    auth_method: "workos_agent",
+    workos_agent_registration_id: caller.registrationId,
+    mcpjam_user_id: caller.mcpjamUserId,
+    mcpjam_organization_id: caller.mcpjamOrganizationId,
+  });
+  return next();
+}
+
+function refuseAgentRegistration(
+  c: Context,
+  claims: AgentRegistrationClaims,
+  refusal: Extract<AgentRegistrationCaller, { ok: false }>,
+): Response {
+  if (refusal.reason === "SERVICE_CREDENTIAL_UNAVAILABLE") {
+    return hostedOnlyResponse(c, AGENT_REGISTRATION_FEATURE);
+  }
+  if (refusal.reason === "LOOKUP_FAILED") {
+    logger.error("Failed to resolve the caller of a WorkOS agent token", refusal.error, {
+      workos_agent_registration_id: claims.registrationId,
+    });
+    return c.json(
+      {
+        code: ErrorCode.INTERNAL_ERROR,
+        message: AGENT_REFUSAL_MESSAGES.LOOKUP_FAILED,
+      },
+      500
+    );
+  }
+  logger.info("WorkOS agent token refused", {
+    event: "auth.workos_agent_refused",
+    reason: refusal.reason,
+    workos_agent_registration_id: claims.registrationId,
+  });
+  // Same v1 contract as `ORPHANED_KEY`: the canonical 401 code, with the
+  // specific reason in `details`.
+  return c.json(
+    {
+      code: ErrorCode.UNAUTHORIZED,
+      message: AGENT_REFUSAL_MESSAGES[refusal.reason],
+      details: { reason: refusal.reason },
+    },
+    401
+  );
 }
 
 /**

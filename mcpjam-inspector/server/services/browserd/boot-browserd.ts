@@ -57,9 +57,9 @@ export interface BootBrowserdOptions {
   headless?: boolean;
   readyTimeoutMs?: number;
   /**
-   * `ephemeral` boots the daemon with NO persistent profile, so an eval or
-   * swarm iteration cannot inherit the previous one's cookies. Defaults to
-   * the persistent profile a playground login depends on.
+   * `ephemeral` never carries state between runs: the daemon starts blank, or
+   * from a saved-profile archive copied in for this run, and never exports it
+   * back. Defaults to the persistent profile a playground login depends on.
    */
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */
@@ -105,7 +105,15 @@ export interface BrowserdHandle {
   stop: () => Promise<void>;
 }
 
-const DEFAULT_READY_TIMEOUT_MS = 30_000;
+/**
+ * How long a boot waits for the ready line, X display included.
+ *
+ * The daemon prints it only after Chromium has launched, and a fresh box's
+ * first launch measured 12–38s on the desktop template (a second boot on the
+ * same box: about 1s). The old 30s cut off the slow first launches, which
+ * is the "did not report listening" failure people saw when opening a browser.
+ */
+export const BROWSERD_READY_TIMEOUT_MS = 60_000;
 
 /**
  * The X display a desktop box draws on — `:0`, the same one `@e2b/desktop`
@@ -376,7 +384,7 @@ export function bootBrowserd(
 ): Promise<BrowserdHandle> {
   const bearer = randomBytes(32).toString("hex");
   const env = buildEnv(bearer, options);
-  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+  const readyTimeoutMs = options.readyTimeoutMs ?? BROWSERD_READY_TIMEOUT_MS;
 
   return new Promise<BrowserdHandle>((resolve, reject) => {
     let settled = false;

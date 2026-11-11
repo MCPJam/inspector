@@ -105,23 +105,6 @@ describe("describePluginNotice", () => {
     );
   });
 
-  it("says why a message ran without the chat's plugins, without naming environments", () => {
-    for (const reason of [
-      "local_harness",
-      "local_server",
-      "local_model",
-      "local_tools",
-      "compare",
-    ] as const) {
-      const line = describePluginNotice({ kind: "off", reason });
-      expect(line).toMatch(/^Plugins/);
-      expect(line).not.toMatch(/environment/i);
-    }
-    expect(describePluginNotice({ kind: "off", reason: "local_server" })).toBe(
-      "Plugins didn't run for this message: a selected server runs on this computer.",
-    );
-  });
-
   it("stays one line when several plugins were skipped", () => {
     const line = describePluginNotice({
       kind: "skipped",
@@ -221,28 +204,6 @@ describe("showPluginNotice", () => {
     expect(toastInfo).toHaveBeenCalledWith(PLUGINS_UNAVAILABLE_MESSAGE);
     expect(useTrafficLogStore.getState().mcpServerItems[0]?.method).toBe(
       "plugins/unavailable",
-    );
-  });
-
-  it("logs a message that ran without plugins once per chat and reason", () => {
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_model" }),
-    ).toBe(true);
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_model" }),
-    ).toBe(false);
-    expect(
-      showPluginNotice("chat-1", { kind: "off", reason: "local_server" }),
-    ).toBe(true);
-    const logs = useTrafficLogStore.getState().mcpServerItems;
-    expect(logs).toHaveLength(2);
-    expect(logs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          method: "plugins/off",
-          payload: expect.objectContaining({ reason: "local_model" }),
-        }),
-      ]),
     );
   });
 
@@ -346,4 +307,28 @@ describe("a notice's Sign in", () => {
     expect(older).not.toHaveBeenCalled();
     unregisterNewer();
   });
+});
+
+it("offers command review distinctly from sign-in and does not execute on display", () => {
+  resetShownPluginNotices();
+  showPluginNotice("review-chat", { kind: "skipped", plugins: [{
+    ...bitsNeedsAuth.plugins[0], reason: "needs_approval", partial: true,
+    reviewCommand: { projectId: "project", serverId: "server", serverName: "Files" },
+  }] });
+  expect(toastInfo.mock.lastCall?.[0]).toContain("review its command");
+  expect(toastInfo.mock.lastCall?.[1].action.label).toBe("Review command");
+});
+
+it("preserves a separate command review action for each blocked plugin", () => {
+  resetShownPluginNotices();
+  toastInfo.mockClear();
+  const plugins = ["first", "second"].map((name) => ({
+    ...bitsNeedsAuth.plugins[0], pluginId: name, name, displayName: name,
+    reason: "needs_approval" as const, partial: true,
+    reviewCommand: { projectId: "project", serverId: name, serverName: name },
+  }));
+  expect(showPluginNotice("two-reviews", { kind: "skipped", plugins })).toBe(true);
+  expect(toastInfo).toHaveBeenCalledTimes(2);
+  for (const call of toastInfo.mock.calls) expect(call[1]?.action.label).toBe("Review command");
+  expect(showPluginNotice("two-reviews", { kind: "skipped", plugins })).toBe(false);
 });

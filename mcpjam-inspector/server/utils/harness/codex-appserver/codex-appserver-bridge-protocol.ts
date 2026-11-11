@@ -12,12 +12,20 @@ import {
   harnessV1BridgeReadySchema,
   harnessV1BridgeStartBaseSchema,
 } from "@ai-sdk/harness";
+import { harnessPromptContentSchema } from "@ai-sdk/harness/utils";
 import { z } from "zod/v4";
+import { nativeMcpServersSchema } from "./shared/native-mcp.js";
 
 export const outboundMessageSchema = harnessV1BridgeOutboundMessageSchema;
 export type OutboundMessage = z.infer<typeof outboundMessageSchema>;
 
-export const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
+export const startMessageSchema = harnessV1BridgeStartBaseSchema
+  .omit({ prompt: true })
+  .extend({
+  prompt: harnessPromptContentSchema,
+  nativeMcpServers: nativeMcpServersSchema.optional(),
+  /** Current workdir resolved by the hosted pilot's sandbox session. */
+  warmWorkDir: z.string().min(1).optional(),
   /** Extra instructions, sent as `developerInstructions` so Codex keeps its own
    *  system prompt (see `app-server-protocol.ts`). */
   instructions: z.string().optional(),

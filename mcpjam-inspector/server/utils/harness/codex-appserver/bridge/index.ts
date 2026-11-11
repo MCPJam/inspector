@@ -9,16 +9,16 @@
  *
  *   1. the host-tool relay binds first, because
  *   2. the rendered `CODEX_HOME` has to name its port, because
- *   3. Codex reads that config when it starts and never re-reads it.
+ *   3. Codex reads that config at startup. Forwarding credentials can later
+ *      rotate through its explicit MCP reload without resuming a model turn.
  *
- * A tool set that changes between turns therefore restarts the thread rather
- * than trying to update a server Codex has already connected to — there is no
- * `tools/list_changed` handling in this version, and pretending otherwise
- * would silently serve a stale catalog.
+ * Host-executed tool catalog changes still require a new runtime; they are
+ * separate from rotating credentials for the same native MCP server set.
  */
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { runBridge, type BridgeTurn } from "@ai-sdk/harness/bridge";
+import { callHostTool } from "./host-tool-call.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 import {
   runtimeConfigFingerprint,
@@ -40,16 +40,23 @@ import type {
   CodexSandboxPolicy,
   JsonRpcNotification,
   ThreadStartParams,
-  ThreadStartResult,
   TurnStartResult,
 } from "./app-server-protocol.js";
+import {
+  createNativeMcpRefresher,
+  type NativeMcpRuntime,
+} from "./native-mcp-refresh.js";
+import { waitForMcpStartup, waitForNativeMcpServers } from "./native-mcp-ready.js";
+import { needsNativeMcpReload } from "../shared/native-mcp.js";
 import { createApprovalController } from "./approval-controller.js";
 import { foreignMcpServerOverrides } from "./mcp-isolation.js";
 import { setupWindowsSandbox } from "./windows-sandbox-setup.js";
+import { openConfiguredThread } from "./thread-configuration.js";
 import { buildHostToolCatalog } from "./host-tool-catalog.js";
-import { prepareCodexHome, untrustedProjectPathsFor } from "./codex-home.js";
+import { prepareCodexHome, untrustedProjectPathsFor, type CodexHomeInput } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
+import { toCodexTurnStartInput } from "./turn-start-input.js";
 
 type Args = {
   workdir: string;
@@ -135,6 +142,7 @@ export function toCodexPermissions(
   options: {
     sandboxPolicy?: CodexWorkspaceWriteSandboxPolicy | undefined;
     supervisedLocally?: boolean;
+    warmWorkDir?: string;
   } = {},
 ): {
   approvalPolicy: CodexApprovalPolicy;
@@ -144,6 +152,10 @@ export function toCodexPermissions(
   // Checked here, not trusted: the framework only `JSON.parse`s the start
   // message, so a policy of any shape (e.g. `dangerFullAccess`) would
   // otherwise reach `turn/start` as-is.
+  if (options.warmWorkDir !== undefined &&
+      (options.supervisedLocally || !isAbsolute(options.warmWorkDir))) {
+    throw new CodexPermissionRefusedError("A warm Codex turn requires an absolute hosted working directory.");
+  }
   let sandboxPolicy: CodexWorkspaceWriteSandboxPolicy | undefined;
   if (options.sandboxPolicy !== undefined) {
     const parsed = parseWorkspaceWriteSandboxPolicy(options.sandboxPolicy);
@@ -166,7 +178,8 @@ export function toCodexPermissions(
       return {
         approvalPolicy: "untrusted",
         sandbox: "workspace-write",
-        ...(sandboxPolicy ? { sandboxPolicy: { ...sandboxPolicy } } : {}),
+        ...(sandboxPolicy ? { sandboxPolicy } : options.warmWorkDir
+          ? { sandboxPolicy: { type: "workspaceWrite", networkAccess: false } } : {}),
       };
     case "allow-all":
       if (sandboxPolicy) {
@@ -183,7 +196,10 @@ export function toCodexPermissions(
             "workspace-write sandbox policy.",
         );
       }
-      return { approvalPolicy: "never", sandbox: "danger-full-access" };
+      return {
+        approvalPolicy: "never", sandbox: "danger-full-access",
+        ...(options.warmWorkDir ? { sandboxPolicy: { type: "dangerFullAccess" } as const } : {}),
+      };
     default:
       throw new CodexPermissionRefusedError(
         `Unknown permission mode ${JSON.stringify(mode)}; refusing rather ` +
@@ -216,6 +232,11 @@ function threadConfig(start: StartMessage, effectiveConfig?: unknown): Record<st
         : {};
     config.mcp_servers = { ...foreign, ...existing };
   }
+  for (const key of Object.keys(start.nativeMcpServers ?? {})) {
+    if (config.mcp_servers && typeof config.mcp_servers === "object") {
+      delete (config.mcp_servers as Record<string, unknown>)[key];
+    }
+  }
   return config;
 }
 
@@ -229,12 +250,12 @@ function turnConfigurationFingerprint(start: StartMessage): string {
       instructions: start.instructions,
       tools: start.tools ?? [],
     }),
-    permissionMode: start.permissionMode ?? "allow-all",
+    permissionMode: start.warmWorkDir ? undefined : start.permissionMode ?? "allow-all",
     // A changed command sandbox is a changed configuration: a resumed thread
     // would otherwise keep running under the previous one.
-    sandboxPolicy: sandboxPolicyFingerprint(start.sandboxPolicy),
+    sandboxPolicy: start.warmWorkDir ? undefined : sandboxPolicyFingerprint(start.sandboxPolicy),
     webSearch: start.webSearch ?? false,
-    model: start.model ?? "",
+    model: start.warmWorkDir ? undefined : start.model ?? "",
   });
 }
 
@@ -251,7 +272,6 @@ async function main(): Promise<void> {
     | {
         turn: BridgeTurn;
         aliasToCanonical: Map<string, string>;
-        toolCallSeq: number;
       }
     | undefined;
   let catalog = buildHostToolCatalog([]);
@@ -272,6 +292,28 @@ async function main(): Promise<void> {
    *    enough — the thread is not what holds the catalog.
    */
   let runtimeConfig: string | undefined;
+  let nativeHome: CodexHomeInput | undefined;
+  const invalidateRuntime = async (runtime: NativeMcpRuntime) => {
+    nativeHome = undefined;
+    if (client !== runtime) return;
+    client = undefined;
+    threadId = undefined;
+    const oldRelay = relay;
+    relay = undefined;
+    await oldRelay?.close();
+  };
+  const retireRuntime = async (runtime: NativeMcpRuntime) => {
+    try {
+      await runtime.kill();
+    } finally {
+      await invalidateRuntime(runtime);
+    }
+  };
+  const nativeRefresh = createNativeMcpRefresher({
+    current: () => client && nativeHome ? { runtime: client, home: nativeHome, threadId } : undefined,
+    commit: (home) => { nativeHome = home; },
+    invalidate: invalidateRuntime,
+  });
   const runtimeConfigOf = (start: StartMessage): string =>
     runtimeConfigFingerprint(start);
 
@@ -291,41 +333,19 @@ async function main(): Promise<void> {
 
     relay = await startHostToolRelay({
       listTools: () => catalog.descriptors,
-      callTool: async ({ toolName, input }) => {
-        const active = activeTurn;
-        if (!active) throw new Error("no active turn for a host tool call");
-        const canonical = active.aliasToCanonical.get(toolName) ?? toolName;
-        const toolCallId = `mcpjam-host-${++active.toolCallSeq}`;
-        // `providerExecuted: false` is the signal that MCPJam runs this one.
-        // The framework's approval gate (HarnessAgent `toolApproval`) fires on
-        // the host side before `execute`, which is why the bridge must not
-        // prompt for it as well.
-        active.turn.emit({
-          type: "tool-call",
-          toolCallId,
-          toolName: canonical,
-          input: JSON.stringify(input ?? {}),
-          providerExecuted: false,
-        });
-        const result = await active.turn.requestToolResult(toolCallId);
-        active.turn.emit({
-          type: "tool-result",
-          toolCallId,
-          toolName: canonical,
-          result,
-        });
-        return result;
-      },
+      callTool: (request) => callHostTool(activeTurn, request),
     });
 
-    const codexHome = prepareCodexHome({
+    const homeInput: CodexHomeInput = {
       codexHome: join(args.sessionDataDir, "codex-home"),
+      nativeMcpServers: start.nativeMcpServers,
       // Delivered per session as the adapter's credential environment: the
       // hosted proxy's `…/openai/v1`, or the local gateway's bare origin. The
       // real lease is injected outside the process; `CODEX_API_KEY` is the
       // placeholder (or local capability) that satisfies Codex's auth check.
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       apiKeyEnvVar: "CODEX_API_KEY",
+      closeModelConnections: process.env.MCPJAM_CLOSE_MODEL_CONNECTIONS === "1",
       hostToolsEntrypoint: join(args.layerDir, "host-tools-mcp.mjs"),
       relayUrl: relay.url,
       relayCredential: relay.credential,
@@ -333,7 +353,9 @@ async function main(): Promise<void> {
       // Keeps the folder's own `.codex/config.toml` (MCP servers, hooks, exec
       // policies) out: see `untrustedProjectPathsFor`.
       untrustedProjectPaths: untrustedProjectPathsFor(args.workdir),
-    });
+    };
+    nativeHome = homeInput;
+    const codexHome = prepareCodexHome(homeInput);
 
     client = spawnAppServerClient({
       command: process.execPath,
@@ -406,7 +428,10 @@ async function main(): Promise<void> {
     }
   };
 
-  await runBridge<StartMessage>({
+  const bridgeOptions: Parameters<typeof runBridge<StartMessage>>[0] & {
+    onMcpRefresh(candidate: unknown): Promise<void>;
+  } = {
+    onMcpRefresh: (candidate) => nativeRefresh.refresh(candidate),
     // Kept as `codex`: `bridge-meta.json`'s type is matched by the framework's
     // `waitForBridgeReady`, and both Codex transports are the same harness id.
     bridgeType: "codex",
@@ -424,20 +449,41 @@ async function main(): Promise<void> {
         {
           sandboxPolicy: start.sandboxPolicy,
           supervisedLocally: isSupervisedLocally(),
+          warmWorkDir: start.warmWorkDir,
         },
       );
 
       // The catalog has to exist BEFORE Codex starts: it reads the MCP server's
       // tools once, at startup.
       catalog = buildHostToolCatalog(start.tools ?? []);
+      await nativeRefresh.settled();
+      const previousRuntime = client;
+      const previousThreadId = threadId ?? start.resumeThreadId;
       await ensureRuntime(start);
       const runtime = client;
       if (!runtime) throw new Error("codex app-server failed to start");
 
+      const readinessTimeout = start.warmWorkDir && runtime === previousRuntime ? 1500 : undefined;
+      const removed = Object.keys(nativeHome?.nativeMcpServers ?? {}).filter(name => !(name in (start.nativeMcpServers ?? {})));
+      if (start.nativeMcpServers && nativeHome) {
+        const reload = needsNativeMcpReload(nativeHome.nativeMcpServers, start.nativeMcpServers);
+        nativeHome = {
+          ...nativeHome, nativeMcpServers: start.nativeMcpServers,
+          ...(start.warmWorkDir ? { untrustedProjectPaths: untrustedProjectPathsFor(start.warmWorkDir) } : {}),
+        };
+        prepareCodexHome(nativeHome);
+        try {
+          if (reload) await waitForNativeMcpServers({
+            runtime, serverNames: [], reload: true, signal: turn.abortSignal, timeoutMs: readinessTimeout,
+          });
+        } catch (error) {
+          await retireRuntime(runtime);
+          throw error;
+        }
+      }
       activeTurn = {
         turn,
         aliasToCanonical: catalog.aliasToCanonical,
-        toolCallSeq: 0,
       };
 
       const translator = createStreamTranslator({
@@ -461,7 +507,7 @@ async function main(): Promise<void> {
       lastFingerprint = fingerprint;
 
       const threadParams: ThreadStartParams = {
-        cwd: args.workdir,
+        cwd: start.warmWorkDir ?? args.workdir,
         approvalPolicy,
         sandbox,
         // Only meaningful when the policy asks anyone at all; harmless
@@ -477,24 +523,26 @@ async function main(): Promise<void> {
         serviceName: "mcpjam-inspector",
       };
 
-      // `mustRestart` means the turn configuration changed under a live
-      // thread, so the thread must be rebuilt. `threadId` is already cleared
-      // above, but the host's `resumeThreadId` (sent on every rerun start)
-      // would otherwise resume the very thread we just decided to abandon,
-      // carrying the stale tools, instructions and permissions with it.
-      const resumeId = mustRestart
-        ? undefined
-        : (threadId ?? start.resumeThreadId);
-      const thread = resumeId
-        ? await runtime.request<ThreadStartResult>("thread/resume", {
-            ...threadParams,
-            threadId: resumeId,
-          })
-        : await runtime.request<ThreadStartResult>(
-            "thread/start",
-            threadParams,
-          );
-      threadId = thread.thread?.id ?? resumeId;
+      // A fresh thread must read the new catalog, while its fork retains the
+      // previous transcript. Never silently replace a conversation with empty history.
+      const resumeId = previousThreadId;
+      const thread = await openConfiguredThread(runtime, threadParams, resumeId, mustRestart);
+      threadId = thread.thread?.id ?? (mustRestart ? undefined : resumeId);
+      const nativeNames = Object.keys(start.nativeMcpServers ?? {});
+      if (!threadId) throw new Error("MCP startup requires a thread");
+      try {
+        await waitForMcpStartup({
+          runtime,
+          threadId,
+          serverNames: nativeNames,
+          ...(start.warmWorkDir ? {removedServerNames: removed} : {}),
+          timeoutMs: readinessTimeout,
+          signal: turn.abortSignal,
+        });
+      } catch (error) {
+        await retireRuntime(runtime);
+        throw error;
+      }
       if (threadId) turn.emit({ type: "bridge-thread", threadId });
       turn.emit({
         type: "stream-start",
@@ -503,7 +551,8 @@ async function main(): Promise<void> {
 
       const started = await runtime.request<TurnStartResult>("turn/start", {
         threadId,
-        input: [{ type: "text", text: start.prompt }],
+        input: toCodexTurnStartInput(start.prompt),
+        ...(start.warmWorkDir ? { cwd: start.warmWorkDir, approvalPolicy } : {}),
         ...(start.model ? { model: start.model } : {}),
         ...(start.reasoningEffort ? { effort: start.reasoningEffort } : {}),
         // Explicit, every turn it applies to. The schema's own workspace-write
@@ -560,7 +609,8 @@ async function main(): Promise<void> {
       settled = true;
       activeTurn = undefined;
     },
-  });
+  };
+  await runBridge<StartMessage>(bridgeOptions);
 }
 
 /*

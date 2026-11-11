@@ -115,6 +115,7 @@ export const routePaths = {
   resources: "/resources",
   prompts: "/prompts",
   tasks: "/tasks",
+  events: "/events",
   auth: "/auth",
   skills: "/skills",
   learning: "/learning",
@@ -135,6 +136,7 @@ export const routePaths = {
   environments: "/environments",
   sessions: "/sessions",
   playground: "/playground",
+  triggers: "/triggers",
   support: "/settings/support",
   settings: "/settings",
   profile: "/profile",
@@ -642,6 +644,8 @@ export interface AppNavigateOptions {
    * failed to open". Everything else wants the inheritance.
    */
   unscoped?: boolean;
+  /** State for the new history entry; read it with `useCurrentLocationState`. */
+  state?: unknown;
 }
 
 /**
@@ -695,7 +699,10 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(target, { replace: options?.replace });
+    void router.navigate(target, {
+      replace: options?.replace,
+      state: options?.state,
+    });
     return;
   }
   if (
@@ -704,10 +711,11 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     )
   )
     return;
+  const state = options?.state ?? {};
   if (options?.replace) {
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(state, "", target);
   } else {
-    window.history.pushState({}, "", target);
+    window.history.pushState(state, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -732,9 +740,9 @@ export function useAppNavigate() {
         : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(target);
+          navigator.replace(target, options.state);
         } else {
-          navigator.push(target);
+          navigator.push(target, options?.state);
         }
         return;
       }
@@ -831,6 +839,13 @@ export function useCurrentLocationParts(): AppLocationParts {
   };
 }
 
+/** The current history entry's state, router-first. */
+export function useCurrentLocationState(): unknown {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  if (locationContext) return locationContext.location.state;
+  return typeof window === "undefined" ? undefined : window.history.state;
+}
+
 function getWindowFallbackLocationParts(): AppLocationParts {
   if (typeof window === "undefined") {
     return { pathname: "/", search: "", hash: "" };
@@ -906,6 +921,20 @@ export function buildConformanceRunPath(
 ): string {
   const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
   return projectId ? buildProjectPath(projectId, base) : base;
+}
+
+/** The query key the Conformance page reads to start a run on arrival. */
+export const CONFORMANCE_RUN_PARAM = "run";
+
+/**
+ * The Conformance page, told to start a run on `serverName` with its default
+ * checks: a saved run's Run again. The page drops the key once it starts, so
+ * a refresh or Back does not run it twice.
+ */
+export function buildConformanceRunServerPath(serverName: string): string {
+  return `${routePaths.conformance}?${new URLSearchParams({
+    [CONFORMANCE_RUN_PARAM]: serverName,
+  })}`;
 }
 
 export function buildConformanceSharePath(token: string): string {

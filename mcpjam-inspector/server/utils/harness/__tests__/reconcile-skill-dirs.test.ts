@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   appendManagedSkills,
   reconcileSkillDirs,
@@ -42,6 +42,32 @@ function manifest(skills: Record<string, string>, skillsHash = "h") {
 }
 
 describe("reconcileSkillDirs (cleanup-only)", () => {
+  it("keeps an identical manifest without another remote write", async () => {
+    const { session } = makeSession({
+      [MANIFEST]: manifest({ s2: "two", s1: "one" }),
+    });
+    const write = vi.spyOn(session, "writeTextFile");
+    await reconcileSkillDirs({
+      session,
+      skills: [{ skillId: "s1", name: "one" }, { skillId: "s2", name: "two" }],
+      skillsHash: "h",
+    });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("still removes a renamed skill even if the supplied hash is unchanged", async () => {
+    const { session, removed, files } = makeSession({
+      [MANIFEST]: manifest({ s1: "old" }),
+    });
+    await reconcileSkillDirs({
+      session,
+      skills: [{ skillId: "s1", name: "new" }],
+      skillsHash: "h",
+    });
+    expect(removed).toEqual(["/home/user/.claude/skills/old"]);
+    expect(JSON.parse(files.get(MANIFEST)!).skills.s1.name).toBe("new");
+  });
+
   it("removes a managed dir whose skill is gone from Convex (orphan)", async () => {
     const { session, removed } = makeSession({
       [MANIFEST]: manifest({ s1: "pdf", s2: "old" }),

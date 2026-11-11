@@ -90,6 +90,29 @@ describe("latest saved client SDK runs", () => {
     expect(snapshots[2]).toMatchObject({ systemPrompt: "edited prompt" });
   });
 
+  it.each([true, false, undefined])(
+    "runs a client whose Progressive tools setting is %s, keeping it on the host",
+    async (progressiveToolDiscovery) => {
+      const saved = detail();
+      vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue({
+        ...saved,
+        config: {
+          ...saved.config,
+          ...(progressiveToolDiscovery === undefined
+            ? {}
+            : { progressiveToolDiscovery }),
+        },
+      });
+      const { executor } = await createSavedClientRunner(
+        input(),
+        new AbortController().signal
+      );
+      expect(executor.getHostSnapshot()?.progressiveToolDiscovery).toBe(
+        progressiveToolDiscovery
+      );
+    }
+  );
+
   it("keeps selected identity separate from the effective snapshot and sends it in reporting", async () => {
     vi.spyOn(PlatformApiClient.prototype, "getClient").mockResolvedValue(
       detail()
@@ -265,7 +288,6 @@ describe("latest saved client SDK runs", () => {
     { browserProfileId: "browser-profile" },
     { harness: "claude-code" },
     { requireToolApproval: true },
-    { progressiveToolDiscovery: true },
     { builtInToolIds: ["web_search"] },
     { skillSelection: { mode: "explicit", skillIds: ["skill1"] } },
     { modelId: "google/gemini" },

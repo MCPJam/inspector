@@ -198,6 +198,66 @@ describe("vocabulary 2 — the CLI's file-sync bodies land", () => {
     expect("assertions" in stored).toBe(false);
   });
 
+  // PLB-188: the documented hosted spelling reached storage as provider
+  // `mcpjam`, and the hosted run sent every case down the BYOK path.
+  it("stores a case model written mcpjam/<vendor>/<model> as the hosted pick", async () => {
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases/batch?declaredSuiteId=${DECLARED_SUITE_ID}`,
+      {
+        cases: [
+          {
+            ...CLI_CREATE_BODY_V2,
+            models: [{ model: "mcpjam/anthropic/claude-haiku-4.5" }],
+          },
+        ],
+        declaredSuiteId: DECLARED_SUITE_ID,
+      },
+    );
+    expect(res.status, await res.text()).toBe(201);
+    expect(authoredCase().models).toEqual([
+      { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+    ]);
+  });
+
+  it("refuses a mcpjam/ case model that is not a hosted catalog id", async () => {
+    // A dashed alias: stored, it would run as provider `mcpjam` and fail.
+    const res = await request(
+      "POST",
+      `${SUITE_PATH}/cases/batch?declaredSuiteId=${DECLARED_SUITE_ID}`,
+      {
+        cases: [
+          {
+            ...CLI_CREATE_BODY_V2,
+            models: [{ model: "mcpjam/anthropic/claude-haiku-4-5" }],
+          },
+        ],
+        declaredSuiteId: DECLARED_SUITE_ID,
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("mcpjam/anthropic/claude-haiku-4-5");
+    expect(authoredCase()).toBeUndefined();
+  });
+
+  it("patches a case model written mcpjam/<vendor>/<model> to the hosted pick", async () => {
+    const res = await request(
+      "PATCH",
+      `${SUITE_PATH}/cases/${CASE_ID}?declaredSuiteId=${DECLARED_SUITE_ID}`,
+      {
+        ...CLI_UPDATE_BODY_V2,
+        models: [
+          { model: "mcpjam/anthropic/claude-haiku-4.5", provider: "mcpjam" },
+        ],
+        declaredSuiteId: DECLARED_SUITE_ID,
+      },
+    );
+    expect(res.status, await res.text()).toBe(200);
+    expect(patchedCase().models).toEqual([
+      { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+    ]);
+  });
+
   it("patches the canonical body, and `assertions: null` clears the stored rules", async () => {
     const res = await request(
       "PATCH",

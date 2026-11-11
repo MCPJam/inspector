@@ -1,5 +1,10 @@
+import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
+import {
+  harnessStateDirectoryPath,
+  type HarnessV1SandboxProvider,
+} from "@ai-sdk/harness";
+import { HarnessAgent, type HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 import {
   CURSOR_CLI_CHECKSUMS,
@@ -112,6 +117,76 @@ describe("the hosted Cursor adapter", () => {
   it("builds the bootstrap once", async () => {
     const harness = createCursor();
     expect(await harness.getBootstrap!()).toBe(await harness.getBootstrap!());
+  });
+});
+
+// The framework copy Inspector runs installs the recipe, and the adapter's own
+// framework copy decides where to launch the bridge from. When the two
+// disagree, the bridge is missing at turn time, so the probe runs both
+// against one sandbox and compares the directories they actually use.
+describe("the hosted Cursor bridge", () => {
+  const STOP = "stop-at-bridge-spawn";
+  const HOME = "/home/user";
+  // Deliberately not HOME: a copy that resolves the bridge against the
+  // session workdir and one that resolves it against the framework's state
+  // directory under HOME must not agree by accident.
+  const DEFAULT_DIR = `${HOME}/work`;
+
+  async function launchLayout() {
+    const written: string[] = [];
+    const spawned: string[] = [];
+    const session = {
+      id: "bridge-layout-probe",
+      defaultWorkingDirectory: DEFAULT_DIR,
+      description: "bridge layout probe",
+      ports: [39271],
+      readTextFile: async () => null,
+      readBinaryFile: async () => null,
+      readFile: async () => null,
+      writeTextFile: async ({ path }: { path: string }) => {
+        written.push(path);
+      },
+      writeBinaryFile: async () => {},
+      writeFile: async () => {},
+      run: async ({ command }: { command: string }) => ({
+        exitCode: 0,
+        stdout: command.includes("$HOME") ? HOME : "",
+        stderr: "",
+      }),
+      spawn: async ({ command }: { command: string }) => {
+        spawned.push(command);
+        throw new Error(STOP);
+      },
+      getPortEndpoint: async () => ({ url: "ws://127.0.0.1:1" }),
+      getPortUrl: async () => "ws://127.0.0.1:1",
+      stop: async () => {},
+      destroy: async () => {},
+      restricted: () => session,
+    };
+    const provider: HarnessV1SandboxProvider = {
+      specificationVersion: "harness-sandbox-v1",
+      providerId: "bridge-layout-probe",
+      createSession: async () => session as never,
+    };
+    const harness = createCursor();
+    const agent = new HarnessAgent({ harness, sandbox: provider } as never);
+    await expect(agent.createSession()).rejects.toThrow(STOP);
+    return { recipe: await harness.getBootstrap!(), written, spawned };
+  }
+
+  it("launches from the directory the framework installed the recipe into", async () => {
+    const { recipe, written, spawned } = await launchLayout();
+    const installed = written.find((path) => path.endsWith("/bridge.mjs"));
+    const launched = /^node '([^']+)\/bridge\.mjs'/.exec(spawned[0] ?? "")?.[1];
+    expect(installed).toBeDefined();
+    expect(launched).toBeDefined();
+    expect(launched).toBe(posix.dirname(installed!));
+    expect(launched).toBe(
+      posix.join(
+        harnessStateDirectoryPath({ sandboxHomeDir: HOME }),
+        recipe.bootstrapDir,
+      ),
+    );
   });
 });
 

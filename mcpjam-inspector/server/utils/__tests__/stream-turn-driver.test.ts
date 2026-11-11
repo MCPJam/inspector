@@ -190,4 +190,34 @@ describe("StreamTurnDriver", () => {
     spans.push(makeSpan("c"));
     expect(trace.spans).toHaveLength(2);
   });
+
+  it("carries a harness turn's route receipt into the persisted trace", () => {
+    const harnessMcpAtTurn = {
+      version: 1 as const,
+      upstream: "mcpjam" as const,
+      delivery: "host-tools" as const,
+      profile: "client" as const,
+      gaps: [],
+      reasons: ["forwarding flag off"],
+      pinnedRuntimeVersion: "2.1.245",
+      plannerVersion: "harness-mcp-plan-v1",
+    };
+    const d = new StreamTurnDriver({
+      turnId: "turn-1",
+      promptIndex: 0,
+      modelId: "anthropic/claude",
+      engine: "harness",
+      harness: "claude-code",
+      traceBaseMs: 1000,
+      spans: [],
+      harnessMcpAtTurn,
+    });
+    expect(d.buildPersistedTrace().harnessMcpAtTurn).toEqual(harnessMcpAtTurn);
+  });
+
+  it("leaves an emulated turn's trace without a receipt", () => {
+    expect(makeDriver().buildPersistedTrace()).not.toHaveProperty(
+      "harnessMcpAtTurn",
+    );
+  });
 });

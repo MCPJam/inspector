@@ -13,6 +13,7 @@ import { Input } from "./input";
 import { Label } from "./label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { CHIP, fitChips } from "./server-chips";
 import { cn } from "../cn";
 
 /** Which tab the panel is showing. Structurally identical to the app's own. */
@@ -103,25 +104,6 @@ const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
 /** The wrapper a row shares with its trailing actions, which reveal on hover. */
 const ROW_WRAP = "group flex items-center gap-1 rounded pr-1 hover:bg-accent";
 
-/** `muted`, not the Badge's `secondary`: the lighter of two near-whites. */
-const CHIP =
-  "rounded-full border-transparent bg-muted px-2 py-0 text-[11px] font-normal text-muted-foreground";
-
-/**
- * Roughly what a chip occupies, in pixels. Measured in the app at 11px: the
- * flat 22 is padding plus gap, then 5.2px a latin character and 11.5px a wide
- * one. Counting characters alone cut a two-chip row with 42px free; charging
- * them equally let two CJK names in and wrapped it.
- *
- * `[...text]` so a surrogate pair counts once. A formula, not a measurement —
- * swap in a real one only if a font change makes it wrong enough to wrap.
- */
-const WIDE =
-  /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]|[\u{20000}-\u{3FFFD}]/u;
-
-const chipWidth = (text: string) =>
-  22 + [...text].reduce((w, ch) => w + (WIDE.test(ch) ? 11.5 : 5.2), 0);
-
 /**
  * Tabs as the design draws them: no strip, split evenly, active one filled
  * with `accent`. The shared primitive's default is the inverse, and other
@@ -159,6 +141,103 @@ function SelectionDot() {
       aria-hidden="true"
       className="size-1.5 shrink-0 rounded-full bg-primary"
     />
+  );
+}
+
+export type ServerPickerServerListProps = Pick<
+  ServerPickerPanelProps,
+  | "servers"
+  | "selectedServerId"
+  | "onSelectServer"
+  | "catalogKnown"
+  | "busy"
+  | "onAddServer"
+> & {
+  /**
+   * When Add server shows. The panel offers it only to leave an empty
+   * catalog; a surface with nowhere else to add one keeps it under the list.
+   */
+  addServer?: "when-empty" | "always";
+};
+
+/**
+ * The Servers tab on its own: one row per server with its status dot, and a
+ * Connect beside each one that can connect. Exported for surfaces that pick a
+ * single server and have no use for groups.
+ */
+export function ServerPickerServerList({
+  servers,
+  selectedServerId = null,
+  onSelectServer,
+  catalogKnown = true,
+  busy = false,
+  onAddServer,
+  addServer = "when-empty",
+}: ServerPickerServerListProps) {
+  const offerAddServer =
+    servers.length === 0 && catalogKnown && Boolean(onAddServer);
+  const addServerBelow =
+    addServer === "always" && servers.length > 0 && Boolean(onAddServer);
+  return (
+    <>
+      {servers.length === 0 ? (
+        <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
+          {catalogKnown
+            ? "No servers in this project yet."
+            : "Loading servers…"}
+        </p>
+      ) : null}
+      {offerAddServer && onAddServer ? (
+        <AddServerButton onAddServer={onAddServer} busy={busy} />
+      ) : null}
+      {servers.map((server) => {
+        const selected = server.id === selectedServerId;
+        return (
+          <div key={server.id} className={ROW_WRAP}>
+            <button
+              type="button"
+              onClick={() => onSelectServer(server.id)}
+              disabled={busy}
+              aria-current={selected ? "true" : undefined}
+              className={cn(ROW, "min-w-0 flex-1 text-sm disabled:opacity-50")}
+            >
+              <span
+                role="img"
+                aria-label={server.status.label}
+                data-testid={`server-status-dot-${server.id}`}
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  server.status.indicatorClassName,
+                )}
+              />
+              <span className="min-w-0 flex-1 truncate">{server.name}</span>
+            </button>
+            {/* Sibling of the row, never nested inside it: a click here
+              connects and must not also commit a selection. */}
+            {server.onConnect ? (
+              <button
+                type="button"
+                // Named for the row: several rows can offer Connect, and a
+                // screen reader otherwise reads a list of identical buttons.
+                aria-label={`Connect ${server.name}`}
+                onClick={server.onConnect}
+                // `busy` freezes every other control in the panel, and this
+                // was the one that stayed live: a handshake could be started
+                // from a popover that was refusing all of its own actions.
+                disabled={busy}
+                className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline disabled:opacity-50 disabled:no-underline"
+              >
+                Connect
+              </button>
+            ) : null}
+            {selected ? <SelectionDot /> : null}
+          </div>
+        );
+      })}
+      {addServerBelow && onAddServer ? (
+        <AddServerButton onAddServer={onAddServer} busy={busy} />
+      ) : null}
+    </>
   );
 }
 
@@ -268,63 +347,14 @@ export function ServerPickerPanel({
       {notice}
 
       <TabsContent value="servers" className="space-y-0.5">
-        {servers.length === 0 ? (
-          <p className="px-2 py-1.5 text-xs italic text-muted-foreground">
-            {catalogKnown
-              ? "No servers in this project yet."
-              : "Loading servers…"}
-          </p>
-        ) : null}
-        {offerAddServer && onAddServer ? (
-          <AddServerButton onAddServer={onAddServer} busy={busy} />
-        ) : null}
-        {servers.map((server) => {
-          const selected = server.id === selectedServerId;
-          return (
-            <div key={server.id} className={ROW_WRAP}>
-              <button
-                type="button"
-                onClick={() => onSelectServer(server.id)}
-                disabled={busy}
-                aria-current={selected ? "true" : undefined}
-                className={cn(
-                  ROW,
-                  "min-w-0 flex-1 text-sm disabled:opacity-50",
-                )}
-              >
-                <span
-                  role="img"
-                  aria-label={server.status.label}
-                  data-testid={`server-status-dot-${server.id}`}
-                  className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    server.status.indicatorClassName,
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">{server.name}</span>
-              </button>
-              {/* Sibling of the row, never nested inside it: a click here
-                  connects and must not also commit a selection. */}
-              {server.onConnect ? (
-                <button
-                  type="button"
-                  // Named for the row: several rows can offer Connect, and a
-                  // screen reader otherwise reads a list of identical buttons.
-                  aria-label={`Connect ${server.name}`}
-                  onClick={server.onConnect}
-                  // `busy` freezes every other control in the panel, and this
-                  // was the one that stayed live: a handshake could be started
-                  // from a popover that was refusing all of its own actions.
-                  disabled={busy}
-                  className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline disabled:opacity-50 disabled:no-underline"
-                >
-                  Connect
-                </button>
-              ) : null}
-              {selected ? <SelectionDot /> : null}
-            </div>
-          );
-        })}
+        <ServerPickerServerList
+          servers={servers}
+          selectedServerId={selectedServerId}
+          onSelectServer={onSelectServer}
+          catalogKnown={catalogKnown}
+          busy={busy}
+          onAddServer={onAddServer}
+        />
       </TabsContent>
 
       <TabsContent value="groups" className="space-y-0.5">
@@ -426,25 +456,13 @@ export function ServerPickerPanel({
           : groups.map((group) => {
               const selected = group.id === selectedGroupId;
               // As many as FIT, per the design: two `excalidraw` chips and
-              // `+4`, but three short names all show. A fixed count wrapped
-              // the row. No ResizeObserver — the row is one line either way.
-              const shown: string[] = [];
-              let used = 0;
-              for (const [i, name] of group.serverNames.entries()) {
-                // `+N` takes room too, so each candidate has to leave space for
-                // the summary that would follow it.
-                const hidden = group.serverNames.length - i - 1;
-                const next = used + chipWidth(name);
-                if (
-                  shown.length > 0 &&
-                  next + (hidden > 0 ? chipWidth(`+${hidden}`) : 0) > chipRoomPx
-                ) {
-                  break;
-                }
-                shown.push(name);
-                used = next;
-              }
-              const hidden = group.serverNames.length - shown.length;
+              // `+4`, but three short names all show. No ResizeObserver — the
+              // row is one line either way.
+              const { shown, hidden: rest } = fitChips(
+                group.serverNames,
+                chipRoomPx,
+              );
+              const hidden = rest.length;
               return (
                 <div key={group.id} className={ROW_WRAP}>
                   <button

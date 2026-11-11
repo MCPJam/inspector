@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   act,
   fireEvent,
@@ -8,11 +8,20 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WidgetHost } from "@mcpjam/widget-react";
+import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { createThreadAppApi } from "../thread-app-api";
+import { WorkspaceFileActionsProvider } from "../file-actions";
 import {
   OwnedModelApp,
   OwnedModelAppPortsProvider,
   useOwnedModelAppWorkspace,
 } from "../OwnedModelApp";
+import { useCompareLaneModelApps } from "../use-compare-lane-model-apps";
+import { ALL_EXTENSION_CAPABILITIES, compareLaneWorkspace } from "../extension-owners";
+import { HostedMrtrHost } from "../../elicitation/HostedMrtrHost";
+import { registerComposerForm, registerComposerSlot } from "../../elicitation/composer-form-store";
+import { useHostedMrtrStore } from "@/stores/hosted-mrtr-store";
 import {
   ContextAttachmentChip,
   ContextGroupChip,
@@ -26,6 +35,15 @@ const mocks = vi.hoisted(() => ({
   mounted: 0,
   sourceEffects: 0,
   notifications: [] as unknown[],
+  hosts: new Map<string, WidgetHost>(),
+  pendingInputs: new Map<string, boolean>(),
+  upload: vi.fn(),
+}));
+vi.mock("@/lib/apis/web/base", () => ({ webPost: mocks.upload, WebApiError: class extends Error {} }));
+vi.mock("@/lib/apis/web/mrtr-api", async original => ({
+  ...await original<typeof import("@/lib/apis/web/mrtr-api")>(),
+  acknowledgeHostedMrtrContinuation: async () => {},
+  cancelHostedMrtrContinuation: async () => {},
 }));
 vi.mock("@/lib/session-token", () => ({ authFetch: mocks.fetch }));
 const policy = {
@@ -53,22 +71,34 @@ vi.mock("../../chat-v2/thread/mcp-apps/use-widget-host", () => ({
 // Replace only the iframe renderer. The owner, API, context controller, host
 // composition, workspace publication and shared chip are real production code.
 // Real bridge notification delivery is separately covered by Chromium tests.
-vi.mock("@mcpjam/widget-react", () => ({
+vi.mock("@mcpjam/widget-react", async () => {
+  const { createContext, useContext } = await import("react");
+  const Host = createContext<WidgetHost | null>(null);
+  return {
+  ...await vi.importActual<typeof import("@mcpjam/widget-react")>("@mcpjam/widget-react"),
   WidgetHostProvider: ({
     value,
     children,
   }: {
     value: WidgetHost;
-    children: unknown;
+    children: import("react").ReactNode;
   }) => {
     mocks.host = value;
-    return children;
+    return <Host.Provider value={value}>{children}</Host.Provider>;
   },
   MCPAppsRenderer: ({
     onCallTool,
+    toolCallId,
+    hostInputPending,
   }: {
+    hostInputPending?: boolean;
     onCallTool: (name: string, args: object) => Promise<unknown>;
+    toolCallId: string;
   }) => {
+    const host = useContext(Host);
+    mocks.pendingInputs.set(toolCallId, hostInputPending === true);
+    const [answer, setAnswer] = useState("");
+    if (host) mocks.hosts.set(toolCallId, host);
     mocks.renderCount++;
     if (mocks.renderCount > 40) throw new Error("Renderer publication loop");
     useEffect(() => {
@@ -76,13 +106,21 @@ vi.mock("@mcpjam/widget-react", () => ({
       void onCallTool("fixture.load", {}).catch(() => {});
     }, []);
     const context =
-      mocks.host?.environment.draftHostContext?.["openai/modelContext"];
+      host?.environment.draftHostContext?.["openai/modelContext"];
     useEffect(() => {
       mocks.notifications.push(context);
     }, [context]);
-    return <div data-testid="guest-context">{JSON.stringify(context)}</div>;
+    return <>
+      <div data-testid="guest-context">{JSON.stringify(context)}</div>
+      <button onClick={async () => {
+        try { setAnswer(JSON.stringify(await onCallTool("fixture.pick", {}))); }
+        catch (error) { setAnswer(String(error)); }
+      }}>Ask App form</button>
+      <output data-testid="app-form-result">{answer}</output>
+    </>;
   },
-}));
+  };
+});
 
 const token = "b".repeat(43);
 const updateId = "10000000-0000-4000-8000-000000000001";
@@ -165,6 +203,71 @@ function Workspace({
   );
 }
 const reply = (value: unknown) => new Response(JSON.stringify(value));
+function CompareModelLane({ lane, enabled = true }: { lane: string; enabled?: boolean }) {
+  const pluginWorkspace = compareLaneWorkspace(
+    { actorId: "actor", projectId: "project", hostId: "host" },
+    "model", lane, `chat-${lane}`,
+  );
+  const scope = { projectId: "project", hostId: "host", threadId: `chat-${lane}`, pluginWorkspace };
+  const workspace = useCompareLaneModelApps(scope, {
+    ...ALL_EXTENSION_CAPABILITIES,
+    modelContext: enabled,
+  }, "codex", undefined, { hints: "openai/ui", start: "hint-first" });
+  return <OwnedModelAppPortsProvider value={workspace.value}>
+    <output data-testid={`references-${lane}`}>{JSON.stringify(workspace.references)}</output>
+    <OwnedModelApp
+      marker={{ ...marker, instanceToken: lane.repeat(43), workspaceId: pluginWorkspace.workspaceId }}
+      renderProps={{ toolCallId: lane, toolName: "fixture.part", serverId: "saved-server", resourceUri: "ui://part", toolState: "output-available", chatSessionId: scope.threadId }}
+    />
+  </OwnedModelAppPortsProvider>;
+}
+
+it("owns two Compare model App contexts independently and closes only the removed lane", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
+    if (url.endsWith("/model/call")) return reply({ status: "completed", result: { content: [] } });
+    if (url.endsWith("/model/context")) return reply({
+      _meta: { "openai/modelContext": { updateId } },
+      snapshot: { revision: body.sequence, sequence: body.sequence, state: { updateId, ...body.params } },
+    });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const lanes = (first = true, enabled = true) => <>
+    {first && <CompareModelLane key="c" lane="c" />}
+    <CompareModelLane key="d" lane="d" enabled={enabled} />
+  </>;
+  const view = render(lanes());
+  await waitFor(() => expect(mocks.hosts.size).toBe(2));
+  const first = mocks.hosts.get("c")!;
+  const second = mocks.hosts.get("d")!;
+  expect(first.surface.displayBehavior).toEqual({
+    hints: "openai/ui",
+    start: "hint-first",
+  });
+  expect(first.services.sendMessage).toBeUndefined();
+  await act(async () => {
+    await first.services.updateModelContext!(params);
+    await second.services.updateModelContext!({ content: [{ type: "text", text: "Other lane" }] });
+  });
+  expect(screen.getByTestId("references-c")).toHaveTextContent("c".repeat(43));
+  expect(screen.getByTestId("references-c")).not.toHaveTextContent("d".repeat(43));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("d".repeat(43));
+  expect(screen.getByTestId("references-d")).not.toHaveTextContent("c".repeat(43));
+  view.rerender(lanes(false, false));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("[]");
+  await waitFor(() => expect(mocks.fetch.mock.calls.some(([url, init]) =>
+    url.endsWith("/model/close") && JSON.parse(init.body).instanceToken === "c".repeat(43),
+  )).toBe(true));
+  expect(mocks.fetch.mock.calls.some(([url, init]) =>
+    url.endsWith("/model/close") && JSON.parse(init.body).instanceToken === "d".repeat(43),
+  )).toBe(false);
+  view.rerender(lanes(false));
+  expect(screen.getByTestId("references-d")).toHaveTextContent("d".repeat(43));
+  expect(mocks.mounted).toBe(2);
+});
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.host = null;
@@ -172,6 +275,120 @@ beforeEach(() => {
   mocks.mounted = 0;
   mocks.sourceEffects = 0;
   mocks.notifications = [];
+  mocks.hosts.clear();
+  mocks.pendingInputs.clear();
+  useHostedMrtrStore.getState().__reset();
+});
+
+function ModelFormWorkspace() {
+  const slot = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (slot.current) return registerComposerSlot("workspace", slot.current);
+  }, []);
+  return <><Workspace /><div ref={slot} data-testid="owned-form-slot" /><HostedMrtrHost /></>;
+}
+
+it.each([false, true])("opens admitted model App files with late workspace registration=%s without replacing the bridge", async (late) => {
+  const open = vi.fn(async () => {});
+  const chooseViewer = vi.fn(async (entries: import("../thread-app-api").ThreadAppDeclaration[]) => entries[1]);
+  const scope = { projectId: "project", hostId: "host", threadId: "thread", pluginWorkspace: { version: 1 as const, workspaceId: "workspace" } };
+  mocks.fetch.mockImplementation(async (url: string) => {
+    if (url.endsWith("/model/open")) return reply({ ...handle, localFilesAvailable: true });
+    if (url.endsWith("/model/files/open")) return reply({ file: { uri: "cad://part", name: "part.stl" }, entries: [{ toolName: "viewer", title: "Viewer" }, { toolName: "other", title: "Other viewer" }] });
+    if (url.endsWith("/model/call")) return reply({ status: "completed", result: { content: [] } });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const view = (workspaceId: string, serverIds = ["saved-server"]) => <WorkspaceFileActionsProvider value={{
+    workspaceId, api: createThreadAppApi(scope), serverIds, open, chooseViewer,
+  }}><Workspace /></WorkspaceFileActionsProvider>;
+  const rendered = render(view("workspace", late ? [] : ["saved-server"]));
+  await waitFor(() => expect(mocks.host?.services.configureAppBridge).toBeTypeOf("function"));
+  const caps = { experimental: { "openai/files": {} } };
+  const bridge = new AppBridge(null, { name: "test", version: "1" }, caps);
+  const cleanup = mocks.host!.services.configureAppBridge!(bridge, caps);
+  const [hostTransport, guestTransport] = InMemoryTransport.createLinkedPair();
+  await bridge.connect(hostTransport);
+  await guestTransport.start();
+  let id = 0;
+  const send = () => new Promise<unknown>(resolve => {
+    guestTransport.onmessage = resolve;
+    void guestTransport.send({ jsonrpc: "2.0", id: ++id, method: "openai/files/open", params: { path: "/allowed/part.stl" } });
+  });
+  try {
+    if (late) {
+      const configure = mocks.host!.services.configureAppBridge;
+      const reads = mocks.fetch.mock.calls.length;
+      expect(await send()).toHaveProperty("error");
+      expect(mocks.fetch.mock.calls).toHaveLength(reads);
+      rendered.rerender(view("workspace"));
+      expect(mocks.host!.services.configureAppBridge).toBe(configure);
+    }
+    expect(await send()).toMatchObject({ result: {} });
+    expect(chooseViewer).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledExactlyOnceWith("saved-server", { kind: "file", toolName: "other", title: "Other viewer", resourceUri: "cad://part" });
+    const request = mocks.fetch.mock.calls.find(([url]) => url.endsWith("/model/files/open"));
+    expect(JSON.parse(request![1].body)).toEqual({ projectId: "project", pluginWorkspace: scope.pluginWorkspace, instanceToken: token, path: "/allowed/part.stl" });
+    rendered.rerender(view("another-workspace"));
+    // Its handshake stays negotiated; current workspace authority is checked
+    // by the existing handler before any new request reaches the server.
+    const reads = mocks.fetch.mock.calls.length;
+    expect(await send()).toHaveProperty("error");
+    expect(mocks.fetch.mock.calls).toHaveLength(reads);
+    expect(open).toHaveBeenCalledOnce();
+    cleanup?.();
+    expect(await send()).toHaveProperty("error");
+    expect(open).toHaveBeenCalledOnce();
+  } finally {
+    await bridge.close();
+    await guestTransport.close();
+    rendered.unmount();
+  }
+});
+
+it.each(["accept", "cancel"] as const)("delivers a model App's %s through its actual pending form UI", async action => {
+  const calls: Record<string, unknown>[] = [];
+  mocks.upload.mockResolvedValue({ ok: true, storageId: "private-receipt" });
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply(handle);
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    if (url.endsWith("/model/call")) {
+      if (body.params.name === "fixture.load") return reply({ status: "completed", result: { content: [] } });
+      calls.push(body);
+      if (body.resume) return reply({ status: "completed", result: { content: [{ type: "text", text: action }] } });
+      return reply({
+        status: "input_required", continuationId: "model-form", version: 1,
+        serverId: "saved-server", method: "tools/call", round: 1,
+        expiresAt: Date.now() + 60_000, negotiatedEra: "2026-07-28",
+        pluginFormProfile: { fileResources: false, origin: "mcp-app", userResources: false, previews: false },
+        inputRequests: [{ key: "form", mode: "form", message: "Choose model input", requestedSchema: {
+          type: "object", properties: {
+            enabled: { type: "boolean", title: "Enabled", default: false },
+            count: { type: "number", title: "Count", default: 0 },
+          }, required: ["enabled", "count"],
+        } }],
+      });
+    }
+    throw new Error("Unexpected API path");
+  });
+  const view = render(<ModelFormWorkspace />);
+  fireEvent.click(await screen.findByRole("button", { name: "Ask App form" }));
+  await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Choose model input"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  if (action === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
+  else {
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+  }
+  await waitFor(() => expect(screen.getByTestId("app-form-result")).toHaveTextContent(action));
+  expect(mocks.upload.mock.calls[0][1]).toEqual({ form: action === "accept" ? { action, content: { enabled: false, count: 0 } } : { action } });
+  expect(calls).toHaveLength(2);
+  expect(calls[1].invocationId).toBe(calls[0].invocationId);
+  expect(calls[1].resume).toEqual({ continuationId: "model-form", round: 1, responsesBlobId: "private-receipt" });
+  expect(useHostedMrtrStore.getState().rounds).toHaveLength(0);
+  view.unmount();
 });
 
 function GroupedWorkspace() {
@@ -213,6 +430,7 @@ describe("a later send and Remove all", () => {
     let server: { updateId: string; content: unknown[] } | null = null;
     let revision = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -258,7 +476,7 @@ describe("a later send and Remove all", () => {
     });
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(
-      screen.getByRole("button", { name: "Parts context, 2 items" }),
+      screen.getByRole("button", { name: "Parts: Context, 2 items" }),
     ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Remove all Parts context" }),
@@ -280,6 +498,7 @@ describe("a stale Remove all on a model App", () => {
   it("shows the person's newer context but keeps it out of the next turn", async () => {
     let revision = 0;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -324,7 +543,7 @@ describe("a stale Remove all on a model App", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Parts context, 1 item" }),
+        screen.getByRole("button", { name: "Parts: Context, 1 item" }),
       ).toBeInTheDocument(),
     );
     expect(screen.getByTestId("references")).toHaveTextContent("[]");
@@ -335,6 +554,7 @@ describe("inline App and composer composition", () => {
   it("publishes/removes real context with stable ownership and no repeated load effect", async () => {
     let finishRemoval!: (response: Response) => void;
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       expect(body.instanceToken).toBe(token);
       if (url.endsWith("/model/open")) return reply(handle);
@@ -554,6 +774,7 @@ describe("the client's Model context toggle", () => {
 
   it("drops the App's reference and chip in the same render it turns off, keeping the App open", async () => {
     mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
       const body = JSON.parse(init.body as string);
       if (url.endsWith("/model/open")) return reply(handle);
       if (url.endsWith("/model/call"))
@@ -595,4 +816,59 @@ describe("the client's Model context toggle", () => {
     expect(screen.getByTestId("references")).toHaveTextContent(token);
     expect(mocks.mounted).toBe(1);
   });
+});
+
+it("only exposes a direct model-tool form to Apps in its own Compare workspace", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    const body = JSON.parse(init.body as string);
+    if (url.endsWith("/model/open")) return reply({ ...handle, instanceToken: body.instanceToken });
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    throw new Error("Unexpected API path");
+  });
+  const view = render(<><CompareModelLane lane="c" /><CompareModelLane lane="d" /></>);
+  await waitFor(() => expect(mocks.pendingInputs.size).toBe(2));
+  const workspace = compareLaneWorkspace({ actorId: "actor", projectId: "project", hostId: "host" }, "model", "c", "chat-c");
+  const cancel = vi.fn();
+  let unregister = () => {};
+  act(() => { unregister = registerComposerForm({ id: "direct-mrtr-form", workspaceId: workspace.workspaceId, serverName: "CAD", cancel }); });
+  expect(mocks.pendingInputs.get("c")).toBe(true);
+  expect(mocks.pendingInputs.get("d")).toBe(false);
+  act(() => unregister());
+  expect(mocks.pendingInputs.get("c")).toBe(false);
+  expect(cancel).not.toHaveBeenCalled();
+  expect(mocks.mounted).toBe(2);
+  view.unmount();
+});
+
+it("gives a direct MCP tool's actual form priority without replaying the model App", async () => {
+  mocks.fetch.mockImplementation(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/renew")) return reply({});
+    if (url.endsWith("/model/open")) return reply(handle);
+    if (url.endsWith("/model/close")) return reply({ closed: true });
+    if (url.endsWith("/model/call") && JSON.parse(init.body as string).params.name === "fixture.load") return reply({ status: "completed", result: { content: [] } });
+    throw new Error("Unexpected App operation");
+  });
+  const view = render(<ModelFormWorkspace />);
+  await screen.findByRole("button", { name: "Ask App form" });
+  await waitFor(() => expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1));
+  const cancel = vi.fn();
+  const submit = vi.fn();
+  act(() => useHostedMrtrStore.getState().enqueue({
+    key: "direct-model-tool:1", continuationId: "direct-model-tool", round: 1,
+    serverId: "saved-server", method: "tools/call", operationLabel: "cad.reviewForm",
+    pluginFormServiceScope: { projectId: "project", workspaceId: "workspace" },
+    pluginFormProfile: { origin: "server", fileResources: false, userResources: false, previews: false },
+    requests: [{ key: "review", mode: "form", message: "Direct tool form", requestedSchema: {
+      type: "object", properties: { name: { type: "string", title: "Name" } },
+    } }], expiresAt: Date.now() + 60_000, timestamp: new Date().toISOString(),
+  }, { submit, cancel }));
+  await waitFor(() => expect(screen.getByTestId("owned-form-slot")).toHaveTextContent("Direct tool form"));
+  expect(mocks.pendingInputs.get("original-call")).toBe(true);
+  expect(mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/model/call"))).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel form" }));
+  await waitFor(() => expect(mocks.pendingInputs.get("original-call")).toBe(false));
+  expect(submit).toHaveBeenCalledOnce();
+  expect(cancel).not.toHaveBeenCalled();
+  view.unmount();
 });

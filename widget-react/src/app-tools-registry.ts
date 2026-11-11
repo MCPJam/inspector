@@ -28,6 +28,12 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 // dispatch hooks) rather than reached for via `@/stores`, so this registry
 // carries no inspector telemetry into the widget package (Tier-B).
 import type { WidgetDebugSink } from "./widget-host";
+import { updateAppPresentation, type AppToolPresentation } from "./app-tool-presentation";
+import {
+  listAppToolCatalog,
+  MAX_SNAPSHOT_ENTRIES,
+  modelChatSessionId,
+} from "./app-tools-catalog";
 
 /** Injected traffic-log sink — `WidgetDebugSink["addTrafficLog"]`. */
 export type AddTrafficLog = WidgetDebugSink["addTrafficLog"];
@@ -40,9 +46,12 @@ export type AppToolDescriptor = NonNullable<
 >[number];
 
 export interface AppInstance {
+  presentation?: AppToolPresentation;
   bridgeId: BridgeId;
   /** Chat session/lane that owns this rendered iframe. */
   chatSessionId?: string;
+  /** Retained workspace Apps target this conversation without changing ownership. */
+  getModelChatSessionId?: () => string | undefined;
   /** The host tool call whose render mounted this iframe. */
   parentToolCallId: string;
   serverId: string;
@@ -52,6 +61,7 @@ export interface AppInstance {
   bridge: AppBridge;
   tools: AppToolDescriptor[];
   registeredAtMs: number;
+  toolSource?: "mcp-apps" | "webmcp";
   /**
    * Accessor for the iframe DOM node that hosts this app instance. Lets
    * callers (e.g. `onToolCall`) scroll the iframe into view before
@@ -71,6 +81,8 @@ export interface AppToolAlias {
 
 /** What the snapshot ships to the server in the chat POST body. */
 export interface AppToolSnapshotEntry {
+  /** Exact bridge generation; older clients omit it and cannot use native app tools. */
+  bridgeId?: string;
   alias: string;
   appName: string;
   appVersion?: string;
@@ -82,10 +94,6 @@ export interface AppToolSnapshotEntry {
   readOnly: boolean;
 }
 
-// Server-mirrored limits for the chat POST snapshot.
-const MAX_SNAPSHOT_ENTRIES = 64;
-const MAX_DESCRIPTION_CHARS = 512;
-const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
 export interface AppToolAttribution {
@@ -94,6 +102,8 @@ export interface AppToolAttribution {
 }
 
 export interface AppToolsRegistryState {
+  updatePresentation: (bridgeId: string, presentation: AppToolPresentation) => void;
+  enabled: boolean;
   instancesByBridgeId: Map<BridgeId, AppInstance>;
   aliases: Map<string, AppToolAlias>;
   /** Active app-tool provider per chat-scoped host tool call. */
@@ -361,6 +371,7 @@ export function createAppToolsRegistry(
     });
   };
   return create<AppToolsRegistryState>((set, get) => ({
+    enabled: true,
     instancesByBridgeId: new Map(),
     aliases: new Map(),
     activeBridgeByParent: new Map(),
@@ -538,92 +549,39 @@ export function createAppToolsRegistry(
       });
     },
 
+    updatePresentation: (bridgeId, presentation) => set((state) => {
+      const instancesByBridgeId = updateAppPresentation(state.instancesByBridgeId, bridgeId, presentation);
+      return instancesByBridgeId === state.instancesByBridgeId ? state : { instancesByBridgeId };
+    }),
     snapshotForChatBody: (chatSessionId) => {
-      if (disposed || !enabled) return [];
-      const { instancesByBridgeId, aliases, activeBridgeByParent } = get();
-      const out: AppToolSnapshotEntry[] = [];
-      let dropped = 0;
-      for (const [alias, a] of aliases) {
-        if (out.length >= MAX_SNAPSHOT_ENTRIES) {
-          dropped += 1;
-          continue;
-        }
-        if (!ALIAS_REGEX.test(alias)) continue;
-        const inst = instancesByBridgeId.get(a.bridgeId);
-        if (!inst) continue;
-        if (chatSessionId && inst.chatSessionId !== chatSessionId) continue;
-        // Only the active instance per parent contributes. This prevents stale
-        // iframe instances from advertising tools after a modal or replay wins.
-        if (
-          activeBridgeByParent.get(
-            getActiveParentKey(inst.parentToolCallId, inst.chatSessionId)
-          ) !== inst.bridgeId
-        ) {
-          continue;
-        }
-        const tool = inst.tools.find((t) => t.name === a.rawName);
-        if (!tool) continue;
-        let inputSchema = tool.inputSchema;
-        if (inputSchema) {
-          let size = 0;
-          try {
-            size = new TextEncoder().encode(JSON.stringify(inputSchema)).length;
-          } catch {
-            continue; // unserializable
-          }
-          if (size > MAX_INPUT_SCHEMA_BYTES) continue;
-        }
-        const description = tool.description
-          ? tool.description.slice(0, MAX_DESCRIPTION_CHARS)
-          : undefined;
-        out.push({
-          alias,
-          appName: inst.appName,
-          appVersion: inst.appVersion,
-          serverId: inst.serverId,
-          parentToolCallId: inst.parentToolCallId,
-          rawName: a.rawName,
-          description,
-          inputSchema,
-          readOnly: a.readOnly,
-        });
-      }
-      if (dropped > 0) {
+      const catalog = listAppToolCatalog(get(), chatSessionId);
+      const capped = catalog.dropped.filter(
+        (entry) => entry.reason === "entry_cap",
+      );
+      if (capped.length > 0) {
         console.warn(
-          `[app-tools] snapshot capped at ${MAX_SNAPSHOT_ENTRIES} entries; dropped ${dropped}.`
+          `[app-tools] snapshot capped at ${MAX_SNAPSHOT_ENTRIES} entries; dropped ${capped.length}.`,
         );
       }
-      // Multi-instance disambiguation: when the same app is mounted more
-      // than once concurrently (e.g. two tic-tac-toe boards from two
-      // separate `tools/call` results), `tools/list` returns identical
-      // `rawName`s and the model sees N tools with the same description.
-      // Wire-level routing is already correct (aliases differ per
-      // parentToolCallId), but the model can't tell which instance to
-      // pick. Append `(from tool call <id>; instance N of M)` to the
-      // description for any group with size > 1 so the model can
-      // distinguish them via the visible tool-call history in the
-      // transcript. Singletons stay untouched.
-      const groupCounts = new Map<string, number>();
-      for (const entry of out) {
-        const key = `${entry.appName}\0${entry.rawName}`;
-        groupCounts.set(key, (groupCounts.get(key) ?? 0) + 1);
-      }
-      const groupIndex = new Map<string, number>();
-      for (const entry of out) {
-        const key = `${entry.appName}\0${entry.rawName}`;
-        const total = groupCounts.get(key) ?? 1;
-        if (total <= 1) continue;
-        const n = (groupIndex.get(key) ?? 0) + 1;
-        groupIndex.set(key, n);
-        const hint = ` (from tool call ${entry.parentToolCallId}; instance ${n} of ${total})`;
-        const base = entry.description ?? "";
-        entry.description = (base + hint).slice(0, MAX_DESCRIPTION_CHARS);
-      }
-      return out;
+      return catalog.offered.map(
+        ({ alias, instance, rawName, description, inputSchema, readOnly }) => ({
+          alias,
+          appName: instance.appName,
+          bridgeId: instance.bridgeId,
+          appVersion: instance.appVersion,
+          serverId: instance.serverId,
+          parentToolCallId: instance.parentToolCallId,
+          rawName,
+          description,
+          inputSchema,
+          readOnly,
+        })
+      );
     },
 
     setEnabled: (value) => {
       enabled = value;
+      set({ enabled: value });
       if (!value)
         for (const pending of get().pendingControllers.values())
           for (const controller of pending) controller.abort();
@@ -631,6 +589,7 @@ export function createAppToolsRegistry(
     dispose: () => {
       disposed = true;
       enabled = false;
+      set({ enabled: false });
       for (const bridgeId of get().instancesByBridgeId.keys())
         get().unregisterInstance(bridgeId);
     },
@@ -641,7 +600,7 @@ export function createAppToolsRegistry(
       if (!a) return null;
       const inst = get().instancesByBridgeId.get(a.bridgeId);
       if (!inst) return null;
-      if (chatSessionId && inst.chatSessionId !== chatSessionId) return null;
+      if (chatSessionId && modelChatSessionId(inst) !== chatSessionId) return null;
       if (
         get().activeBridgeByParent.get(
           getActiveParentKey(inst.parentToolCallId, inst.chatSessionId)
@@ -681,6 +640,7 @@ export const useAppToolsRegistry = Object.assign(
  * context.
  */
 export interface AppToolInvocationRecord {
+  initiatedBy?: "user";
   alias: string;
   rawName: string;
   appName: string;
@@ -772,6 +732,7 @@ export function recordAppToolInvocation(
         alias: args.alias,
         toolName: args.rawName,
         appName: args.appName,
+        ...(args.initiatedBy ? { initiatedBy: args.initiatedBy } : {}),
         arguments: args.input,
         result: {
           content: args.raw.content,

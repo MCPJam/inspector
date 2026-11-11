@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo, useState } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -26,6 +27,9 @@ import {
   type PreflightOrgConfig,
   type PreflightSelection,
 } from "./suite-run-preflight-org-keys";
+import { useOrgHarnessKeys } from "./use-org-harness-keys";
+import { AccountPreflightNotices, useSuiteAccountPreflight, type AccountPreflight } from "./suite-run-account-preflight";
+import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -33,7 +37,7 @@ import { getMcpServerDisplayName } from "@/lib/mcp-server-display-name";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -62,12 +66,12 @@ export type RunPreflight = {
    * dependency that cannot run on its providers (an MCPJam-provided or
    * personal target model, a hosted judge, a judge nobody chose, a harness
    * client's model that is not an organization model on the harness's own
-   * vendor, a Cursor client). The run cannot start; the backend refuses the
-   * same launch.
+   * vendor, a Cursor client without a ready org key). The run cannot start;
+   * the backend refuses the same launch.
    * Absent when there are none.
    */
   orgKeyProblems?: string[];
-};
+} & AccountPreflight;
 
 export type RunPreflightState = RunPreflight & {
   /** Every model the launch runs is out of MCPJam credits: why it cannot start. */
@@ -147,7 +151,7 @@ export function runPreflight(input: {
     if (
       !provider ||
       provider === "none" ||
-      isRuntimeChosenModelSentinel(model) ||
+      isRuntimeAccountModel(model) ||
       isMCPJamProvidedModel(model, provider) ||
       input.availableModelIds?.includes(model)
     )
@@ -450,8 +454,11 @@ export function useSuiteRunPreflight({
   const { hosts } = useHostList({ isAuthenticated, projectId });
   const { availableModels, outOfCreditsReason } = useAvailableModels({
     projectId,
+    harnessTargets: hosts.map((host) => ({ harnessId: effectiveHarnessId(host) ?? "" })),
   });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
+  const harnessKeys = useOrgHarnessKeys(projectId, orgConfig, hosts);
+  const accounts = useSuiteAccountPreflight({ suite, projectServers, planned });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
     projectId,
@@ -476,7 +483,11 @@ export function useSuiteRunPreflight({
     targets: planned?.targets,
     serverRefs: planned?.serverRefs,
   });
-  const visibleOrgConfig = loadedOrgModelConfig(orgConfig);
+  const loadedOrgConfig = loadedOrgModelConfig(orgConfig);
+  const visibleOrgConfig = loadedOrgConfig && {
+    ...loadedOrgConfig,
+    harnessKeys,
+  };
   const preflight = runPreflight({
     ...targets,
     refused: environment.refusals,
@@ -504,6 +515,7 @@ export function useSuiteRunPreflight({
     }).models;
   return {
     ...preflight,
+    ...accounts,
     outOfCreditsReason: creditsReasonFor(targets.models),
     // Planned cells are already what launches; otherwise the sheet picks
     // environments, and only theirs count.
@@ -619,7 +631,7 @@ export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(
     preflight?.removed.length ||
     preflight?.refused.length ||
-    preflight?.orgKeyProblems?.length,
+    preflight?.orgKeyProblems?.length || preflight?.accountProblems?.length,
   );
 }
 
@@ -646,12 +658,16 @@ export function RunPreflightNotices({
   const { disconnected, removed, refused, disabledProviders, serverName } =
     preflight;
   const orgKeyProblems = preflight.orgKeyProblems ?? [];
+  // A missing Cursor key's sentence already says who adds it, and where.
+  const modelProblem = orgKeyProblems.some(
+    (message) => message !== ORG_KEY_MISSING_MESSAGE,
+  );
   if (
     !disconnected.length &&
     !removed.length &&
     !refused.length &&
     !disabledProviders.length &&
-    !orgKeyProblems.length
+    !orgKeyProblems.length && !preflight.accountProblems?.length
   )
     return null;
   const openServers = (
@@ -685,6 +701,7 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
+      <AccountPreflightNotices {...{ preflight, disabled, onEditSettings }} />
       {orgKeyProblems.length > 0 && (
         <div className="space-y-1" data-testid="preflight-org-key-problems">
           {orgKeyProblems.map((message) => (
@@ -701,11 +718,11 @@ export function RunPreflightNotices({
             >
               {MANAGE_AI_PROVIDERS}
             </Button>
-          ) : (
+          ) : modelProblem ? (
             <p className="text-muted-foreground">
               {ASK_ORG_ADMIN} if no organization model fits.
             </p>
-          )}
+          ) : null}
         </div>
       )}
       {refused.map((message) => (

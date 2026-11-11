@@ -43,73 +43,94 @@ vi.mock("@/components/tools/ResultsPanel", () => ({
 }));
 afterEach(cleanup);
 describe("retained App registration", () => {
-  it("does not register again for fresh presentation callbacks and delivers to the current callback", () => {
-    fixture.upsert.mockClear();
-    const props = {
-      scope: {
-        projectId: "p",
-        hostId: "h",
-        threadId: "t",
-        pluginWorkspace: { version: 1, workspaceId: "w" },
-      },
-      publishContext: vi.fn(),
-      row: {
-        key: "k",
-        status: "live",
-        server: { serverId: "s", name: "Disposable" },
-        declaration: { kind: "file", toolName: "open" },
-        abort: new AbortController(),
-        handle: {
-          instanceId: "i",
-          instanceToken: "token",
-          operationId: "op",
-          appToolsEnabled: false,
+  it.each(["global", "thread", "file", "quick-action"] as const)(
+    "keeps %s tools in their target conversation without re-registering the App",
+    (kind) => {
+      fixture.upsert.mockClear();
+      let currentChat = "chat-a";
+      const props = {
+        currentThreadId: () => currentChat,
+        scope: {
+          projectId: "p",
+          hostId: "h",
+          threadId: "t",
+          pluginWorkspace: { version: 1, workspaceId: "w" },
         },
-        result: { content: [] },
-      },
-      navigate: vi.fn(),
-      openFile: vi.fn(),
-      api: {},
-      approve: vi.fn(),
-      signal: new AbortController().signal,
-      host: { environment: {}, surface: {}, resolvers: {}, services: {} },
-      displayMode: "inline",
-      onDisplayModeChange: vi.fn(),
-      onAppSupportedDisplayModesChange: vi.fn(),
-    } as unknown as Parameters<typeof AppRegistration>[0];
-    const { rerender } = render(<AppRegistration {...props} />);
-    const currentMode = vi.fn();
-    const currentSupported = vi.fn();
-    for (let i = 0; i < 5; i++)
-      rerender(
-        <AppRegistration
-          {...props}
-          navigate={vi.fn()}
-          openFile={vi.fn()}
-          approve={vi.fn()}
-          onDisplayModeChange={currentMode}
-          onAppSupportedDisplayModesChange={currentSupported}
-        />,
+        publishContext: vi.fn(),
+        row: {
+          key: "k",
+          status: "live",
+          server: { serverId: "s", name: "Disposable" },
+          declaration: { kind, toolName: "open" },
+          abort: new AbortController(),
+          handle: {
+            instanceId: "i",
+            instanceToken: "token",
+            operationId: "op",
+            appToolsEnabled: false,
+          },
+          result: { content: [] },
+        },
+        navigate: vi.fn(),
+        openFile: vi.fn(),
+        api: {},
+        approve: vi.fn(),
+        signal: new AbortController().signal,
+        host: { environment: {}, surface: {}, resolvers: {}, services: {} },
+        displayMode: "inline",
+        onDisplayModeChange: vi.fn(),
+        onAppSupportedDisplayModesChange: vi.fn(),
+      } as unknown as Parameters<typeof AppRegistration>[0];
+      const { rerender } = render(<AppRegistration {...props} />);
+      const currentMode = vi.fn();
+      const currentSupported = vi.fn();
+      for (let i = 0; i < 5; i++)
+        rerender(
+          <AppRegistration
+            {...props}
+            navigate={vi.fn()}
+            openFile={vi.fn()}
+            approve={vi.fn()}
+            onDisplayModeChange={currentMode}
+            onAppSupportedDisplayModesChange={currentSupported}
+          />,
+        );
+      expect(fixture.upsert).toHaveBeenCalledTimes(1);
+      const registered = fixture.upsert.mock.calls[0][2];
+      expect(registered.chatSessionId).toBe("disposable");
+      expect(registered.getModelChatSessionId()).toBe(
+        kind === "global" ? "chat-a" : "t",
       );
-    expect(fixture.upsert).toHaveBeenCalledTimes(1);
-    const registered = fixture.upsert.mock.calls[0][2];
-    registered.onDisplayModeChange("fullscreen");
-    registered.onAppSupportedDisplayModesChange(["inline", "fullscreen"]);
-    expect(currentMode).toHaveBeenCalledWith("fullscreen");
-    expect(currentSupported).toHaveBeenCalledWith(["inline", "fullscreen"]);
-    expect(props.onDisplayModeChange).not.toHaveBeenCalled();
-    const initialHost = fixture.upsert.mock.calls[0][3];
-    rerender(<AppRegistration {...props} displayMode="fullscreen" />);
-    expect(fixture.upsert).toHaveBeenCalledTimes(2);
-    const changedHost = fixture.upsert.mock.calls[1][3];
-    expect(changedHost.services).toBe(initialHost.services);
-    expect(changedHost.resolvers).toBe(initialHost.resolvers);
-    expect(changedHost).toBe(initialHost);
-  });
+      currentChat = "chat-b";
+      expect(registered.getModelChatSessionId()).toBe(
+        kind === "global" ? "chat-b" : "t",
+      );
+      expect(fixture.upsert).toHaveBeenCalledTimes(1);
+      registered.onDisplayModeChange("fullscreen");
+      registered.onAppSupportedDisplayModesChange(["inline", "fullscreen"]);
+      expect(currentMode).toHaveBeenCalledWith("fullscreen");
+      expect(currentSupported).toHaveBeenCalledWith(["inline", "fullscreen"]);
+      expect(props.onDisplayModeChange).not.toHaveBeenCalled();
+      rerender(<AppRegistration {...props} currentThreadId={undefined} />);
+      expect(registered.getModelChatSessionId()).toBe("t");
+      expect(fixture.upsert).toHaveBeenCalledTimes(1);
+      const initialHost = fixture.upsert.mock.calls[0][3];
+      rerender(<AppRegistration {...props} displayMode="fullscreen" />);
+      expect(fixture.upsert).toHaveBeenCalledTimes(2);
+      const changedHost = fixture.upsert.mock.calls[1][3];
+      expect(changedHost.services).toBe(initialHost.services);
+      expect(changedHost.resolvers).toBe(initialHost.resolvers);
+      expect(changedHost).toBe(initialHost);
+    },
+  );
 });
 
 describe("an entrypoint App's display modes", () => {
-  const props = (capabilities?: Record<string, boolean>) =>
+  const OPENAI_RULES = { hints: "openai/ui", start: "hint-first" } as const;
+  const props = (
+    capabilities?: Record<string, boolean>,
+    displayBehavior: unknown = OPENAI_RULES,
+  ) =>
     ({
       scope: {
         projectId: "p",
@@ -142,6 +163,7 @@ describe("an entrypoint App's display modes", () => {
       onDisplayModeChange: vi.fn(),
       onAppSupportedDisplayModesChange: vi.fn(),
       ...(capabilities ? { capabilities } : {}),
+      ...(displayBehavior ? { displayBehavior } : {}),
     }) as unknown as Parameters<typeof AppRegistration>[0];
 
   it("follows OpenAI's rules and logs an App that can't show fullscreen", () => {
@@ -149,7 +171,7 @@ describe("an entrypoint App's display modes", () => {
     fixture.log.mockClear();
     render(<AppRegistration {...props()} />);
     const [, , registered, host] = fixture.upsert.mock.calls[0];
-    expect(host.surface.openAIDisplayModes).toBe(true);
+    expect(host.surface.displayBehavior).toEqual(OPENAI_RULES);
     registered.onAppSupportedDisplayModesChange(["inline", "fullscreen"]);
     expect(fixture.log).not.toHaveBeenCalled();
     registered.onAppSupportedDisplayModesChange(["inline"]);
@@ -170,10 +192,23 @@ describe("an entrypoint App's display modes", () => {
       Object.keys(ALL_EXTENSION_CAPABILITIES).map((key) => [key, true]),
     );
     render(
-      <AppRegistration {...props({ ...capabilities, displayModes: false })} />,
+      <AppRegistration
+        {...props({ ...capabilities, displayModes: false }, null)}
+      />,
     );
     const [, , registered, host] = fixture.upsert.mock.calls[0];
-    expect(host.surface.openAIDisplayModes).toBeUndefined();
+    expect(host.surface.displayBehavior).toBeUndefined();
+    registered.onAppSupportedDisplayModesChange(["inline"]);
+    expect(fixture.log).not.toHaveBeenCalled();
+  });
+
+  it("doesn't refuse an App without full screen under Claude's rules", () => {
+    fixture.upsert.mockClear();
+    fixture.log.mockClear();
+    const claude = { hints: "ui", start: "inline-then-move" };
+    render(<AppRegistration {...props(undefined, claude)} />);
+    const [, , registered, host] = fixture.upsert.mock.calls[0];
+    expect(host.surface.displayBehavior).toEqual(claude);
     registered.onAppSupportedDisplayModesChange(["inline"]);
     expect(fixture.log).not.toHaveBeenCalled();
   });

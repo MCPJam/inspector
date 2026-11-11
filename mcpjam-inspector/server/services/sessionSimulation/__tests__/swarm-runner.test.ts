@@ -71,6 +71,7 @@ import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
+import { logger } from "../../../utils/logger.js";
 
 const HOST = {
   hostId: "host-1",
@@ -158,6 +159,48 @@ describe("swarm single-host runner — attempt ordering", () => {
       "run:synth_run-1_host-1_1",
       "succeeded:1:synth_run-1_host-1_1",
     ]);
+  });
+
+  it("applies the pinned host style under sparse MCP Apps overrides", async () => {
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            hostStyle: "chatgpt",
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // ChatGPT's preset plus the override, not only the override's own keys.
+    expect(adapter.runtime.hostCapabilities).toMatchObject({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+    });
+    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
+  });
+
+  it("advertises only the override's own keys while the snapshot has no host style", async () => {
+    // Runs created before the backend pins hostStyle onto swarm targets.
+    await startJourneyRun(
+      baseOpts({
+        sessionsPerTarget: 1,
+        hosts: [
+          {
+            ...HOST,
+            mcpProfile: { apps: { mcpAppsOverrides: { serverResources: true } } },
+          },
+        ],
+      }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(adapter.runtime.hostCapabilities).toEqual({ serverResources: {} });
   });
 
   it("passes the pinned host runtime + swarm persist attribution into the shared core", async () => {
@@ -865,6 +908,101 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     }
   });
 
+  describe("a swarm mixing Cursor and Claude Code", () => {
+    // Cursor runs on the customer's own Cursor account: its spend or credit
+    // wording is Cursor's, never MCPJam's cap.
+    const CURSOR = {
+      ...HOST,
+      harness: "cursor" as const,
+      modelId: "cursor/auto",
+    };
+    const CLAUDE_CODE = { ...HOST_2, harness: "claude-code" as const };
+    const terminals = () =>
+      reportAttemptMock.mock.calls
+        .map((c) => c[2] as any)
+        .filter((a) => a.status !== "running");
+    const stoppedRun = () =>
+      finalizePendingAttemptsMock.mock.calls.some(
+        (c) => c[2].errorCode === "spend_cap_exceeded",
+      ) || terminals().some((t) => t.errorCode === "spend_cap_exceeded");
+    const run = async (failingHost: string, failure: Record<string, unknown>) => {
+      reportAttemptMock.mockClear();
+      finalizePendingAttemptsMock.mockClear();
+      runSyntheticHostSessionMock.mockImplementation(async (adapter: any) =>
+        adapter.persist.hostId === failingHost
+          ? failure
+          : { outcome: "succeeded" },
+      );
+      await startJourneyRun(
+        baseOpts({ hosts: [CURSOR, CLAUDE_CODE], sessionsPerTarget: 2 }),
+      );
+    };
+
+    it("a Cursor target stops it only on MCPJam's own refusal, coded or in MCPJam's words", async () => {
+      for (const [failure, stops] of [
+        // The simulated user runs on MCPJam: its refusal carries MCPJam's code.
+        [
+          {
+            outcome: "failed",
+            errorMessage:
+              'swarm-agent https://example.test/journey-execution/persona-next-turn failed (402): {"code":"billing_limit_reached","error":"Your organization\'s credit limit was reached."}',
+          },
+          true,
+        ],
+        // The same refusal with its code lost: MCPJam's own sentence.
+        [
+          {
+            outcome: "failed",
+            errorMessage:
+              "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          },
+          true,
+        ],
+        [
+          {
+            outcome: "rate_limited",
+            errorMessage:
+              "This organization's spend budget is reached. An owner or admin can raise it in Organization → Budget.",
+          },
+          true,
+        ],
+        // Cursor's own account wording ends that target or session only.
+        [
+          {
+            outcome: "rate_limited",
+            errorMessage: "Spend limit reached for this team.",
+          },
+          false,
+        ],
+        [
+          {
+            outcome: "failed",
+            errorMessage: "Insufficient credits on this account.",
+          },
+          false,
+        ],
+      ] as const) {
+        await run("host-1", failure);
+        expect(stoppedRun(), failure.errorMessage).toBe(stops);
+        if (!stops) {
+          expect(
+            terminals().filter(
+              (t) => t.hostId === "host-2" && t.status === "succeeded",
+            ),
+          ).toHaveLength(2);
+        }
+      }
+    });
+
+    it("the same wording on the Claude Code target still stops it", async () => {
+      await run("host-2", {
+        outcome: "rate_limited",
+        errorMessage: "Spend limit reached for this team.",
+      });
+      expect(stoppedRun()).toBe(true);
+    });
+  });
+
   it("recognizes every user-owned backend denial code as an account limit", () => {
     // `isAccountLimit` keeps its own list rather than importing this one: that
     // one answers who is at fault, this one whether another host could escape
@@ -959,6 +1097,27 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       .map((a) => a.sessionIdx)
       .sort();
     expect(host1Failed).toEqual([0, 1]);
+  });
+
+  it("hands the worker's thrown Error to logger.error, not the context object", async () => {
+    // Sentry captures logger.error's second argument. Passing the context
+    // there captured a plain object as "Error: Error" with no throw-site stack
+    // (INSPECTOR-HONO-29).
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const thrown = new Error("model-less host: cannot resolve modelId");
+    runSyntheticHostSessionMock.mockRejectedValue(thrown);
+
+    try {
+      await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+      expect(errorLog).toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        thrown,
+        expect.objectContaining({ runId: "run-1", hostId: "host-1" }),
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });
 
@@ -1863,6 +2022,20 @@ describe("classifyRateLimit — a halt needs a real spend signal", () => {
     ).toBe("org_spend_cap");
   });
 
+  // A declined card refuses every call until the card or the balance changes,
+  // so it halts the run like any exhaustion. The runner gets the backend's
+  // sentences without the code, so the words alone must say so.
+  it("halts the run on a declined card", () => {
+    const declined =
+      "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits. Update your payment method in billing and turn auto-reload back on, or top up to keep going.";
+    expect(
+      classifyRateLimit(declined, {
+        code: "user_rate_limit",
+        refusalReason: "auto_topup_declined",
+      }),
+    ).toBe("org_spend_cap");
+  });
+
   // What a stored row or a flattened error keeps: the backend's sentence, with
   // no JSON, no structured reason and no hint. Blaming the user's provider for
   // it (or halting the whole run as a spend cap) would both be wrong.
@@ -2054,6 +2227,37 @@ describe("target setup before claims", () => {
       }),
     );
     expect(runSyntheticHostSessionMock).toHaveBeenCalledOnce();
+  });
+  it("stores why a failed setup stopped the target instead of a bare prerequisites code", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    setupTurnMock.mockImplementation(async ({ target }) => {
+      if (target.targetId !== "bad") return record;
+      throw new SwarmSetupError(
+        { ...record, status: "failed", readiness: "unavailable", reason: "timeout" },
+        undefined,
+        new Error("aborted"),
+      );
+    });
+    await startJourneyRun(
+      baseOpts({
+        hosts: [
+          { ...HOST, targetId: "bad" },
+          { ...HOST_2, targetId: "good" },
+        ],
+        setupWrites: true,
+        sessionsPerTarget: 1,
+      }),
+    );
+    const bad = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.targetId === "bad" && a.status !== "running");
+    expect(bad).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "prerequisites_unavailable",
+        errorMessage: expect.stringContaining("Setup ran out of time"),
+      }),
+    ]);
   });
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");

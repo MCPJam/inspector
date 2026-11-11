@@ -1,3 +1,4 @@
+import { runningSandboxConnection } from "../../utils/computers/attach-sandbox.js";
 /**
  * VALIDATE-ON-STAGING — the ONLY live E2B/Convex seam construction for
  * durable browser sessions. Everything decision-bearing lives (unit-tested)
@@ -24,7 +25,6 @@
  * the morning staging probe exists to catch.
  */
 import { createHash } from "node:crypto";
-import type { Sandbox } from "e2b";
 import { logger } from "../../utils/logger.js";
 import {
   ensureComputerReady,
@@ -349,7 +349,7 @@ export function connectSessionSandbox(
     browserd: adaptSandbox(sandbox),
     killBrowserd: () => killBrowserdIn(sandbox),
     ensureStream: () => ensureStreamOn(sandbox),
-    // `Sandbox.connect` holds no resource to release; never kill the durable
+    // The SDK handle holds no resource to release; never kill the durable
     // computer here.
     disconnect: async () => {},
   };
@@ -359,12 +359,8 @@ export function connectSessionSandbox(
 async function connectDesktopSandbox(
   sandboxId: string,
 ): Promise<ConnectedSandboxLike> {
-  const desktop = (await import("@e2b/desktop")) as {
-    Sandbox: { connect(id: string): Promise<Sandbox> };
-  };
-  return (await desktop.Sandbox.connect(
-    sandboxId,
-  )) as unknown as ConnectedSandboxLike;
+  const { Sandbox: DesktopSandbox } = await import("@e2b/desktop");
+  return new DesktopSandbox(await runningSandboxConnection(sandboxId));
 }
 
 /** The production deps for `ensureBrowserSession`. */

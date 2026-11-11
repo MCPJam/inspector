@@ -362,6 +362,9 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Approving a stdio server's command re-reads its row the same way, with
+  // the caller's bearer. Without this entry Allow answers 401.
+  "/api/mcp/servers/approve-command",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",
@@ -448,6 +451,9 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
  * with an extra path component can slip through.
  */
 const HOSTED_AUTH_PATH_PATTERNS = [
+  /^\/api\/mcp\/(chat-persistence|turn-authorization)\/?$/,
+  // Reading command terms re-authorizes the server under the signed-in member.
+  /^\/api\/mcp\/servers\/command-approval\/?$/,
   // The /conformance page starting, polling, cancelling and reading a
   // directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
@@ -525,7 +531,7 @@ function isSignInRenewablePath(input: RequestInfo | URL): boolean {
     : typeof input === "string"
       ? input.split("?")[0]
       : "";
-  return SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
+  return /^\/api\/(web|mcp)\/(chat-persistence|turn-authorization)\/?$/.test(pathname) || SIGN_IN_RENEWABLE_PREFIXES.some((prefix) =>
     pathname.startsWith(prefix),
   );
 }

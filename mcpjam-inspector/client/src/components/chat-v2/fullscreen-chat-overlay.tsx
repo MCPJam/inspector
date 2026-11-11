@@ -1,3 +1,4 @@
+import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import type { CSSProperties } from "react";
@@ -38,6 +39,10 @@ import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
 import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
+import {
+  ContextAttachmentList,
+  type ContextAttachment,
+} from "./chat-input/attachments/context-attachment-chip";
 
 function extractTextFromUnknown(value: unknown): string {
   if (typeof value === "string") return value.trim();
@@ -355,7 +360,10 @@ function ToolMessageEntry({
   );
 }
 
-function ThinkingRow({ modelProvider }: { modelProvider?: string | null }) {
+function ThinkingRow({ modelProvider, startupPhase }: {
+  modelProvider?: string | null;
+  startupPhase?: HarnessStartupPhase | null;
+}) {
   // Branded indicators (Claude / ChatGPT) render bare so the brand art
   // owns the spacing; the generic "Thinking…" text gets the muted bubble.
   const hasBrandIndicator =
@@ -367,10 +375,10 @@ function ThinkingRow({ modelProvider }: { modelProvider?: string | null }) {
       className="flex w-full justify-start"
     >
       {hasBrandIndicator ? (
-        <LoadingIndicatorContent modelProvider={modelProvider} />
+        <LoadingIndicatorContent modelProvider={modelProvider} startupPhase={startupPhase} />
       ) : (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          <LoadingIndicatorContent modelProvider={modelProvider} />
+          <LoadingIndicatorContent modelProvider={modelProvider} startupPhase={startupPhase} />
         </div>
       )}
     </div>
@@ -407,12 +415,14 @@ function ToggleButton({
 }
 
 function MessageList({
+  startupPhase,
   messages,
   isThinking,
   open,
   modelProvider,
   chatSessionId,
 }: {
+  startupPhase?: HarnessStartupPhase | null;
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
@@ -489,7 +499,7 @@ function MessageList({
           );
         })}
         {shouldShowStandaloneThinkingRow ? (
-          <ThinkingRow modelProvider={modelProvider} />
+          <ThinkingRow modelProvider={modelProvider} startupPhase={startupPhase} />
         ) : null}
         <div ref={bottomRef} />
       </div>
@@ -498,6 +508,7 @@ function MessageList({
 }
 
 function Composer({
+  contextAttachments,
   value,
   onChange,
   placeholder,
@@ -511,6 +522,7 @@ function Composer({
   activeSubmitButtonClassName,
   inactiveSubmitButtonClassName,
 }: {
+  contextAttachments: ContextAttachment[];
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
@@ -549,6 +561,11 @@ function Composer({
       className={composerClassName}
       style={composerStyle}
     >
+      {contextAttachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-6 pt-3">
+          <ContextAttachmentList attachments={contextAttachments} />
+        </div>
+      )}
       <div className="flex items-center gap-2 px-6 py-3">
         <TextareaAutosize
           value={value}
@@ -605,6 +622,8 @@ function Composer({
 }
 
 type FullscreenChatOverlayProps = {
+  contextAttachments?: ContextAttachment[];
+  startupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
   messages: UIMessage[];
   open: boolean;
@@ -638,6 +657,8 @@ type FullscreenChatOverlayProps = {
   contained?: boolean;
 };
 export function FullscreenChatOverlay({
+  contextAttachments = [],
+  startupPhase,
   chatSessionId,
   messages,
   open,
@@ -682,6 +703,7 @@ export function FullscreenChatOverlay({
         <div className="relative">
           <ToggleButton open={open} onToggle={() => onOpenChange(!open)} />
           <MessageList
+            startupPhase={startupPhase}
             messages={messages}
             isThinking={isThinking}
             open={open}
@@ -700,6 +722,7 @@ export function FullscreenChatOverlay({
             </div>
           ) : null}
           <Composer
+            contextAttachments={contextAttachments}
             value={input}
             onChange={onInputChange}
             placeholder={placeholder}

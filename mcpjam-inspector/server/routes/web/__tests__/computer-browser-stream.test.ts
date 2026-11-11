@@ -225,6 +225,118 @@ describe("browser stream — the password stays on the server", () => {
   });
 });
 
+/**
+ * A conversation sandbox's row carries its password as `stream.password`, not
+ * `streamPassword`. Reading the wrong field handed `undefined` to the DES key,
+ * which threw inside the upstream socket's message event and took the whole
+ * server down with an uncaught exception.
+ */
+describe("browser stream — a row's password, and never a throw", () => {
+  const { streamUrl: _url, streamPassword: _pw, ...ROW } = SESSION;
+  const SANDBOX_SESSION = {
+    ...ROW,
+    computerId: undefined,
+    target: "sandbox" as const,
+    sandboxRowId: "box-row",
+    watched: true,
+    stream: { url: "https://6080-box.e2b.dev/vnc.html", password: "box-pw" },
+  };
+  const sandboxDeps = (session: unknown): Partial<BrowserStreamDeps> => ({
+    verifyToken: (async () => ({
+      userId: CLAIMS.userId,
+      projectId: CLAIMS.projectId,
+      sandboxRowId: "box-row",
+    })) as never,
+    sandboxInfo: (async () => ({
+      ok: true,
+      value: {
+        sandboxRowId: "box-row",
+        providerComputerId: "sbx_1",
+        provider: "e2b",
+        status: "live",
+        projectId: CLAIMS.projectId,
+        ownerUserId: CLAIMS.userId,
+      },
+    })) as never,
+    lookupSession: (async () => ({ session })) as never,
+  });
+
+  it("answers a conversation sandbox's challenge with the password its row carries", async () => {
+    const lookups: unknown[] = [];
+    const { upstream, client } = await connected({
+      ...sandboxDeps(SANDBOX_SESSION),
+      lookupSession: (async (args: unknown) => {
+        lookups.push(args);
+        return { session: SANDBOX_SESSION };
+      }) as never,
+    });
+    const expected = vncAuthResponse(Buffer.alloc(16, 0xab), "box-pw");
+    expect(upstream.sent.some((chunk) => chunk.equals(expected))).toBe(true);
+    expect(client.closed).toBeNull();
+    expect(lookups[0]).toMatchObject({
+      sandboxRowId: "box-row",
+      watched: true,
+    });
+  });
+
+  it("fails the handshake cleanly when the desktop wants a password the row lacks", async () => {
+    const harness = build(
+      sandboxDeps({ ...SANDBOX_SESSION, stream: undefined }),
+    );
+    const opened = await harness.open();
+    expect(() => {
+      opened.upstream.deliver(Buffer.from(RFB_PROTOCOL_VERSION_3_8, "ascii"));
+      opened.upstream.deliver(Buffer.from([1, RFB_SECURITY.VNC_AUTH]));
+      opened.upstream.deliver(Buffer.alloc(16, 0xab));
+    }).not.toThrow();
+    expect(harness.client.closed).toEqual({
+      code: 4503,
+      reason:
+        "The desktop view is not available for this browser. Switch to another view.",
+    });
+    // Our version, and no security type chosen: nothing answered the challenge.
+    expect(opened.upstream.sent).toHaveLength(1);
+  });
+
+  it("takes no auth, when also offered, rather than failing without a password", async () => {
+    const harness = build(
+      sandboxDeps({ ...SANDBOX_SESSION, stream: undefined }),
+    );
+    const opened = await harness.open();
+    opened.upstream.deliver(Buffer.from(RFB_PROTOCOL_VERSION_3_8, "ascii"));
+    opened.upstream.deliver(
+      Buffer.from([2, RFB_SECURITY.VNC_AUTH, RFB_SECURITY.NONE]),
+    );
+    opened.upstream.deliver(Buffer.from([0, 0, 0, 0]));
+    expect(opened.upstream.sent.at(1)).toEqual(
+      Buffer.from([RFB_SECURITY.NONE]),
+    );
+    expect(harness.client.closed).toBeNull();
+  });
+
+  it("closes the stream rather than throwing when relaying to the viewer fails", async () => {
+    const harness = build();
+    const opened = await harness.open();
+    harness.client.ws.send = () => {
+      throw new Error("socket gone");
+    };
+    expect(() => {
+      for (const chunk of serverHandshake()) opened.upstream.deliver(chunk);
+    }).not.toThrow();
+    expect(harness.client.closed?.code).toBe(4503);
+  });
+
+  it("closes the stream rather than throwing when the desktop cannot be dialled", async () => {
+    const { open, client } = build({
+      connectUpstream: () => {
+        throw new Error("cannot derive the noVNC endpoint");
+      },
+    });
+    await expect(open()).resolves.toBeDefined();
+    expect(client.closed?.code).toBe(4503);
+  });
+});
+
 describe("browser stream — the browser's own handshake", () => {
   /** What every RFB client sends back once we offer it version/None/ok. */
   const CLIENT_HANDSHAKE = [

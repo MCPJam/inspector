@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { BehaviorTab } from "../BehaviorTab";
 
@@ -33,12 +33,22 @@ vi.mock("@/components/chat-v2/chat-input/model-selector", () => ({
     availableModels,
   }: {
     disabled?: boolean;
-    availableModels?: Array<{ id: string; orgProvider?: { id?: string } }>;
+    availableModels?: Array<{
+      id: string;
+      orgProvider?: { id?: string };
+      disabled?: boolean;
+    }>;
   }) => (
+    // Pickable rows, then the rows listed disabled with a reason.
     <div
       data-testid="model-selector"
       data-disabled={disabled ? "true" : undefined}
       data-models={(availableModels ?? [])
+        .filter((m) => !m.disabled)
+        .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
+        .join(",")}
+      data-locked-models={(availableModels ?? [])
+        .filter((m) => m.disabled)
         .map((m) => `${m.orgProvider?.id ?? "hosted"}:${m.id}`)
         .join(",")}
     />
@@ -81,7 +91,7 @@ describe("BehaviorTab harness gray-out", () => {
     expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
     );
-    expect(screen.getByDisplayValue("No system prompt applied")).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "System prompt" })).toBeEnabled();
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
@@ -156,20 +166,18 @@ describe("BehaviorTab harness gray-out", () => {
     ).toBeInTheDocument();
   });
 
-  it("disables the MODEL selector for a cursor harness host, and says who chooses", () => {
+  it("enables account model selection while keeping unsupported controls disabled", () => {
     // The one harness whose model is not MCPJam's to choose: it authenticates
     // with the customer's own Cursor account and that account picks the model.
     // Left enabled, a selection persists onto the host and reaches nothing —
     // the host then displays a model that never ran.
     const { container } = renderBehaviorTab({ harness: "cursor" });
 
-    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+    expect(screen.getByTestId("model-selector")).not.toHaveAttribute(
       "data-disabled",
       "true",
     );
-    expect(
-      screen.getByText(/Cursor account, which chooses the model itself/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Cursor account, which chooses the model itself/i)).not.toBeInTheDocument();
 
     // Temperature goes with it, for the same reason.
     expect(sliderRoot(container)).toHaveAttribute("data-disabled");
@@ -287,6 +295,10 @@ describe("the model list a harness host offers", () => {
       "data-models",
       "",
     );
+    expect(screen.getByTestId("model-selector")).toHaveAttribute(
+      "data-locked-models",
+      "orgprov_o:gpt-5-mini",
+    );
   });
 
   it("an emulated host still offers everything", () => {
@@ -311,29 +323,56 @@ describe("saved system prompt status", () => {
           sourceUrl: "https://platform.claude.com",
         },
       },
-      "Default system prompt applied",
     ],
-    ["Custom text", undefined, "Custom system prompt applied"],
-    ["", {}, "No system prompt applied"],
-    ["", undefined, "No system prompt applied"],
+    ["Custom text", undefined],
+    ["", {}],
+    ["", undefined],
   ] as const)(
-    "conceals text and renders saved state",
-    (text, metadata, status) => {
+    "shows editable text and preserves saved attribution",
+    (text, metadata) => {
       renderBehaviorTab({ systemPrompt: text, systemPromptDefault: metadata });
-      expect(screen.getByDisplayValue(status)).toBeDisabled();
-      expect(screen.getByDisplayValue(status)).toHaveClass(
-        "resize-none",
-        "italic",
-      );
-      expect(screen.getByText("Not editable")).toBeInTheDocument();
+      const editor = screen.getByRole("textbox", { name: "System prompt" });
+      expect(editor).toBeEnabled();
+      expect(editor).toHaveValue(text);
+      expect(screen.queryByText("Not editable")).not.toBeInTheDocument();
       if (metadata && "source" in metadata) {
         expect(
           screen.getByText("Source: OpenAI · 2026-10-01"),
         ).toBeInTheDocument();
         expect(screen.queryByRole("link")).not.toBeInTheDocument();
       }
-      if (text)
-        expect(screen.queryByDisplayValue(text)).not.toBeInTheDocument();
+    },
+  );
+});
+
+describe("system prompt editing", () => {
+  it.each(["A custom prompt", ""])(
+    "updates the draft to %j and clears default attribution",
+    (text) => {
+      const draft = {
+        ...emptyHostConfigInputV2({ systemPrompt: "Original prompt" }),
+        systemPromptDefault: {
+          source: {
+            publisher: "OpenAI",
+            catalogEntryId: "entry",
+            revision: "revision",
+            sourceUrl: "https://example.com/prompt",
+          },
+        },
+      };
+      const onDraftChange = vi.fn();
+      render(
+        <BehaviorTab draft={draft} onDraftChange={onDraftChange} attention={[]} />,
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "System prompt" }), {
+        target: { value: text },
+      });
+      expect(onDraftChange).toHaveBeenCalledTimes(1);
+      expect(onDraftChange.mock.calls[0][0](draft)).toEqual({
+        ...draft,
+        systemPrompt: text,
+        systemPromptDefault: undefined,
+      });
     },
   );
 });

@@ -4,21 +4,24 @@ import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { useProjectClientInitialization } from "@/hooks/use-project-client-initialization";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
 } from "@/lib/previewed-client-storage";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { markQuietClientSwitch } from "@/hooks/useAutoConnectProjectServers";
 
 type Selection = { previewed: string | null; selected: string[] };
 
 function readSelection(projectId: string): Selection {
   return {
     previewed: loadPreviewedHostId(projectId),
-    selected: loadSelectedHostIds(projectId),
+    selected: paneHostIds(loadComparePanes(projectId)),
   };
 }
 
@@ -75,8 +78,14 @@ function applySelection(
   }
   const isActive = live.activeProjectIdRef.current === projectId;
   if (isActive && live.restoringAdhocRef.current) return;
+  // The user didn't switch clients, so the reconnect this lead triggers
+  // shouldn't announce itself.
+  markQuietClientSwitch(projectId, next.lead);
   savePreviewedHostId(projectId, next.lead);
-  saveSelectedHostIds(projectId, next.lineup);
+  saveComparePanes(
+    projectId,
+    panesForHostIds(loadComparePanes(projectId), next.lineup),
+  );
   if (!isActive) return;
   live.setPreviewedHostId(next.lead);
   live.setSelectedHostIds(next.lineup);

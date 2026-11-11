@@ -165,28 +165,24 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: five modern obligations cannot be exercised here — the
-    // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, a declared outputSchema can only be graded against a real
-    // `tools/call` result and so needs a safe-to-execute fixture, a graceful
-    // subscription close is server-initiated and cannot be induced by a
-    // client-side probe, and both logging checks need a `logProbe` naming a
-    // tool that actually logs — without one, silence proves nothing. All five
-    // report `could-not-run`, so the run is honestly `incomplete` rather than
-    // green.
-    expect(result.outcome).toBe("incomplete");
+    // Two modern obligations need setup this fixture does not give: the
+    // -32021 path needs an `inputRequiredProbe`, and the logging check needs a
+    // `logProbe` naming a tool that actually logs. Both are gray "Not run" at
+    // no cost. A graceful subscription close is server-initiated and cannot be
+    // induced by a client-side probe, so it has nothing to test here.
+    expect(result.outcome).toBe("passed");
     expect(
       result.checks
         .filter((c) => c.skipReason === "could-not-run")
         .map((c) => c.id)
         .sort(),
     ).toEqual([
-      "modern-log-level-filtering",
       "modern-logs-require-log-level",
-      "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
+    expect(
+      byId(result.checks, "modern-subscription-graceful-close").skipReason,
+    ).toBe("not-applicable");
 
     // Legacy-only checks appear (not filtered out) and are era-skipped.
     for (const id of LEGACY_ONLY) {
@@ -253,13 +249,13 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
       "modern-subscription-graceful-close"
     );
     expect(gracefulClose.status).toBe("skipped");
-    expect(gracefulClose.error?.message).toMatch(/still open/);
+    expect(gracefulClose.error?.message).toMatch(/stayed open/);
+    expect(gracefulClose.skipReason).toBe("not-applicable");
 
-    // §15.4: readiness advice is reported but never changes the verdict.
-    expect(result.readiness.length).toBeGreaterThan(0);
+    // §15.4: any readiness advice is reported but never changes the verdict.
     for (const item of result.readiness) {
       expect(item.severity).toBe("warning");
-      expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
+      expect(["SHOULD", "MAY"]).toContain(item.specStrength);
       expect(item.message.length).toBeGreaterThan(0);
     }
     // The point of §15.4 is that advice never becomes a violation. `passed` is
@@ -304,28 +300,24 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: five modern obligations cannot be exercised here — the
-    // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, a declared outputSchema can only be graded against a real
-    // `tools/call` result and so needs a safe-to-execute fixture, a graceful
-    // subscription close is server-initiated and cannot be induced by a
-    // client-side probe, and both logging checks need a `logProbe` naming a
-    // tool that actually logs — without one, silence proves nothing. All five
-    // report `could-not-run`, so the run is honestly `incomplete` rather than
-    // green.
-    expect(result.outcome).toBe("incomplete");
+    // Two modern obligations need setup this fixture does not give: the
+    // -32021 path needs an `inputRequiredProbe`, and the logging check needs a
+    // `logProbe` naming a tool that actually logs. Both are gray "Not run" at
+    // no cost. A graceful subscription close is server-initiated and cannot be
+    // induced by a client-side probe, so it has nothing to test here.
+    expect(result.outcome).toBe("passed");
     expect(
       result.checks
         .filter((c) => c.skipReason === "could-not-run")
         .map((c) => c.id)
         .sort(),
     ).toEqual([
-      "modern-log-level-filtering",
       "modern-logs-require-log-level",
-      "modern-subscription-graceful-close",
-      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
+    expect(
+      byId(result.checks, "modern-subscription-graceful-close").skipReason,
+    ).toBe("not-applicable");
     for (const id of LEGACY_ONLY) {
       const check = byId(result.checks, id);
       expect(check.status).toBe("skipped");

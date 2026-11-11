@@ -1,3 +1,4 @@
+import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import {
@@ -316,6 +317,8 @@ interface SessionResult {
 
 /** Pinned host runtime a synthetic session executes against. */
 export interface SyntheticHostRuntime {
+  /** Capabilities resolved from the immutable client snapshot. */
+  hostCapabilities?: Record<string, unknown>;
   modelDefinition: ModelDefinition;
   /**
    * The saved selection behind `modelDefinition`, already checked with
@@ -349,6 +352,7 @@ export interface SyntheticHostRuntime {
   requireToolApproval: boolean;
   respectToolVisibility?: boolean;
   progressiveToolDiscovery?: boolean;
+  requireNativeToolDiscovery?: boolean;
   builtInToolIds?: string[];
   /**
    * What the hosted `browser_*` tools may do in this unattended run. A
@@ -372,6 +376,11 @@ export interface SyntheticHostRuntime {
    * from a run snapshot or a request body can produce one.
    */
   sandboxBinding?: TrustedSandboxBinding;
+  /**
+   * The desktop this session's Browser runs on when {@link sandboxBinding} is
+   * a pinned terminal box. Trusted the same way, and set the same way.
+   */
+  browserSandboxBinding?: TrustedSandboxBinding;
   /**
    * The SPECIFIC reason this session gets no shell, when one is known — e.g.
    * "this environment has no built image yet". Replaces the resolver's generic
@@ -574,6 +583,7 @@ export async function runSyntheticHostSession(
     agentLoop,
     tasks,
     sandboxBinding,
+    browserSandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
     accessVersion,
@@ -621,6 +631,7 @@ export async function runSyntheticHostSession(
 
   let harness: ReturnType<typeof resolveAgentLoop>["harnessId"];
   try {
+    assertNativeDiscovery({ required: runtime.requireNativeToolDiscovery });
     harness = resolveAgentLoop({ agentLoop, harness: configuredHarness }).harnessId;
   } catch (error) {
     return {
@@ -678,6 +689,7 @@ export async function runSyntheticHostSession(
   // with nothing to attach to.
   let anyTurnPersisted = false;
   let sessionRowEnsured = false;
+  let drainedTurnTimedOut = false;
   let selectedServerIds: string[] = [];
   // Derived from the persist signature rather than restated, so hoisting this
   // out of the try can't quietly widen what the persist accepts.
@@ -839,8 +851,9 @@ export async function runSyntheticHostSession(
     // session's transcript is read back like any other, and a card in it wants
     // the same answer: which tool on which page, as it was then.
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    const browserBox = browserSandboxBinding ?? sandboxBinding;
     const pageToolsSnapshot = pageToolsSnapshotFrom(
-      sandboxBinding?.runtimeKind === "desktop-browser" &&
+      browserBox?.runtimeKind === "desktop-browser" &&
         browserApprovalDelivery
         ? await peekPageToolsForChatTurn({
             builtInToolIds,
@@ -854,7 +867,7 @@ export async function runSyntheticHostSession(
             engine: "hosted",
             projectId,
             bearer: authHeader,
-            sandboxRowId: sandboxBinding.sandboxRowId,
+            sandboxRowId: browserBox.sandboxRowId,
           })
         : undefined,
     );
@@ -910,6 +923,7 @@ export async function runSyntheticHostSession(
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(browserSandboxBinding ? { browserSandboxBinding } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         onBrowserPageTools: ({ minted }) => {
           advertisedPageTools = minted;
@@ -1096,8 +1110,10 @@ export async function runSyntheticHostSession(
       // agentic personas drive rendered widgets by screenshots. Evals stay
       // deterministic and never enable it.
       enableComputerUse: true,
+      enableViewTools: true,
       mcpClientManager: manager,
       logScope: "sessionSimulation",
+      hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
       // surface has a stream to put it on and the flag is on — absent, the
       // context does no thumbnail work at all.
@@ -1220,7 +1236,7 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools },
+            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1237,13 +1253,13 @@ export async function runSyntheticHostSession(
                   args,
                 });
               },
-              onToolResult: (event) => {
-                void browser!.handleEngineToolResult(event);
+              onToolResult: async (event) => {
                 emit?.({
                   type: "tool_result",
                   toolCallId: event.toolCallId,
                   result: event.output,
                 });
+                await browser!.handleEngineToolResult(event);
               },
               ...(browser!.prepareAdvertisedTools
                 ? { prepareAdvertisedTools: browser!.prepareAdvertisedTools }
@@ -1350,6 +1366,7 @@ export async function runSyntheticHostSession(
             projectId,
             authHeader,
             abortSignal: turnDeadline!.signal,
+            remainingTurnMs: () => turnDeadline!.remainingMs(),
             // Threaded into the per-step /stream (or /stream/org) body and the
             // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
             // writers can stamp the run id onto llmUsageRecord for per-run spend
@@ -1372,27 +1389,12 @@ export async function runSyntheticHostSession(
         return error.turn;
       });
 
-      if (turnDeadline.firedClock() === "turn") {
-        // Ends the SESSION, not just the turn — and that asymmetry with the
-        // eval runner is deliberate. Eval prompt turns are independently
-        // authored and independently graded, so the next one still means
-        // something. A swarm session is one conversation: turn N+1 is the
-        // persona reacting to turn N's reply, and there is no reply to react
-        // to. Carrying on would feed the persona a hole in the transcript.
-        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
-        emit?.({
-          type: "session_complete",
-          status: "failed",
-          errorMessage,
-        });
-        return {
-          outcome: "failed",
-          errorMessage,
-          errorReason: "turn_timeout",
-        };
+      // Capture the execution deadline before persistence can consume more time.
+      drainedTurnTimedOut = turnDeadline.firedClock() === "turn";
+      if (!drainedTurnTimedOut) {
+        await browser.dismissCarriedWidget();
+        emit?.({ type: "turn_finish", turnIndex: turn });
       }
-
-      emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
       // scenario modelId is pinned by `fetchScenarioRuntimeConfig` at start.
@@ -1404,10 +1406,9 @@ export async function runSyntheticHostSession(
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
 
-      if (!turnTrace) {
+      if (!turnTrace && !drainedTurnTimedOut) {
         if (failedTurn) throw failedTurn;
-        // No-trace turns skip transcript persistence (today only the aborted
-        // local-BYOK path reaches here — failed turns throw above). Their
+        // No-trace turns outside a timeout skip transcript persistence. Their
         // browser artifacts must still leave the context's "new" window now: a
         // later turn's drain would otherwise sweep them up (CodeRabbit,
         // PR 2610). With an outbox they are KEPT — it buckets by each
@@ -1429,7 +1430,9 @@ export async function runSyntheticHostSession(
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
       // synthetic sessions and Playground sessions. Snapshot failures
-      // must never block the persist.
+      // must never block the persist. A timed-out turn skips the snapshot:
+      // the server that stalled the turn can stall `tools/list` for its whole
+      // request timeout before the evidence is saved.
       let toolSnapshot: unknown;
       try {
         const liveManager = built.manager;
@@ -1437,7 +1440,7 @@ export async function runSyntheticHostSession(
           typeof liveManager.hasServer === "function"
             ? selectedServerIds.filter((id) => liveManager.hasServer(id))
             : selectedServerIds;
-        if (knownIds.length > 0) {
+        if (knownIds.length > 0 && !drainedTurnTimedOut) {
           toolSnapshot =
             await exportConnectedServerToolSnapshotForEvalAuthoring(
               liveManager,
@@ -1476,7 +1479,7 @@ export async function runSyntheticHostSession(
         // An EMPTY array is meaningful and is written: "this turn advertised no
         // page tools" is a different fact from "we do not know", and only the
         // second is what an absent field means.
-        turnTrace: pageToolsSnapshot
+        turnTrace: turnTrace && pageToolsSnapshot
           ? {
               ...turnTrace,
               pageToolsAtTurn: toMintedPageToolRecords(
@@ -1507,6 +1510,26 @@ export async function runSyntheticHostSession(
         hostId: persist.hostId,
         bearer: authHeader,
       });
+
+      if (drainedTurnTimedOut) {
+        // Ends the SESSION, not just the turn — and that asymmetry with the
+        // eval runner is deliberate. Eval prompt turns are independently
+        // authored and independently graded, so the next one still means
+        // something. A swarm session is one conversation: turn N+1 is the
+        // persona reacting to turn N's reply, and there is no reply to react
+        // to. Carrying on would feed the persona a hole in the transcript.
+        const errorMessage = turnTimeoutMessage(budgets.turnTimeoutMs, turn);
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage,
+        });
+        return {
+          outcome: "failed",
+          errorMessage,
+          errorReason: "turn_timeout",
+        };
+      }
 
       // MCP App widget snapshots so the Sessions viewer renders the actual
       // widget instead of a collapsed tool pill. Best-effort — a failure here
@@ -1566,7 +1589,15 @@ export async function runSyntheticHostSession(
     // A deadline abort reaches here as an `AbortError` whose message is the
     // runtime's ("This operation was aborted"), which tells a reader nothing.
     // `deadlineClockOf` recovers WHICH bound tripped and says so.
-    const firedClock = deadlineClockOf(error);
+    const errorClock = deadlineClockOf(error);
+    const firedClock = drainedTurnTimedOut ? "turn" : errorClock;
+    if (drainedTurnTimedOut && !errorClock) {
+      logger.warn("[sessionSimulation.runner] timed-out turn evidence could not be saved", {
+        runId,
+        chatSessionId,
+        reason: readErrorReason(error) ?? "persistence_failed",
+      });
+    }
     if (firedClock === "session" || firedClock === "turn") {
       const errorMessage =
         firedClock === "session"
@@ -2239,13 +2270,25 @@ export async function drainAssistantTurn(
       onEngineError: captureEngineError,
     });
 
-    // Aborted mid-turn: drop it (no writeback, no persist). Return the INPUT
-    // history unchanged, matching the old `runLocalOrgChatTurnHeadless` abort
-    // contract (`{ messages, aborted: true }`).
+    // Rebuild history with the SAME deduped append the old local path used
+    // (`buildLocalOrgOnPersist` / `runLocalOrgChatTurnHeadless`:
+    // `capturedHistory = [...messages]; appendDedupedModelMessages(...)`).
+    // `result.messages` is a plain `[...opts.messages, ...newMessages]` spread,
+    // so an engine response message that overlaps the input-history prefix (by
+    // id or JSON identity) would double-write into the transcript. Dedup the
+    // turn's new messages against the input prefix to match legacy semantics.
+    // `result.newMessages` are already mcp-tool-origin stamped, so the origin
+    // metadata is preserved.
+    const history: ModelMessage[] = [...args.messages];
+    appendDedupedModelMessages(history, result.newMessages);
+
+
+    // Preserve timeout evidence without changing cancellation or usage policy.
     if (result.aborted) {
+      const timedOut = deadlineClockOf(args.abortSignal?.reason) === "turn";
       return {
-        history: args.messages,
-        turnTrace: undefined,
+        history: timedOut ? history : args.messages,
+        turnTrace: timedOut ? result.turnTrace : undefined,
         modelSource: rt.modelSource,
       };
     }
@@ -2275,17 +2318,6 @@ export async function drainAssistantTurn(
       );
     }
 
-    // Rebuild history with the SAME deduped append the old local path used
-    // (`buildLocalOrgOnPersist` / `runLocalOrgChatTurnHeadless`:
-    // `capturedHistory = [...messages]; appendDedupedModelMessages(...)`).
-    // `result.messages` is a plain `[...opts.messages, ...newMessages]` spread,
-    // so an engine response message that overlaps the input-history prefix (by
-    // id or JSON identity) would double-write into the transcript. Dedup the
-    // turn's new messages against the input prefix to match legacy semantics.
-    // `result.newMessages` are already mcp-tool-origin stamped, so the origin
-    // metadata is preserved.
-    const history: ModelMessage[] = [...args.messages];
-    appendDedupedModelMessages(history, result.newMessages);
 
     return {
       history,
@@ -2386,6 +2418,7 @@ export async function drainAssistantTurn(
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+    ...(args.remainingTurnMs ? { remainingTurnMs: args.remainingTurnMs } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.onLiveTextDelta

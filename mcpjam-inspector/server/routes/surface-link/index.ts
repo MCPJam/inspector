@@ -264,9 +264,7 @@ surfaceLink.post("/session", async (c) => {
       token
     );
   } catch (error) {
-    logger.error("[surface-link] could not create Discord link session", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[surface-link] could not create Discord link session", error);
     return c.json(
       {
         code: "SERVER_UNREACHABLE",
@@ -496,9 +494,7 @@ surfaceLink.get("/workos/callback", async (c) => {
   try {
     user = await resolveUserByExternalId(workosUserId);
   } catch (error) {
-    logger.error("[surface-link] identity lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[surface-link] identity lookup failed", error);
     return unavailable(c);
   }
   if (!user) {
@@ -529,9 +525,7 @@ surfaceLink.get("/workos/callback", async (c) => {
   try {
     organization = await resolveOrganizationByWorkosId(workosOrgId);
   } catch (error) {
-    logger.error("[surface-link] organization lookup failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error("[surface-link] organization lookup failed", error);
     return unavailable(c);
   }
   if (!organization) {

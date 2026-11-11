@@ -8,7 +8,7 @@
  *
  *   1. `ensureComputerReady` (user-bearer auth) — provision-on-first-use and
  *      wake-on-cold both converge here, polling until `ready`. This is the wake
- *      step the harness needs: `Sandbox.connect` will NOT resume a hibernated
+ *      step the harness needs: attachment cannot use a hibernated
  *      box, so the control plane must wake it first. Each poll also refreshes
  *      `lastActiveAt`, so the idle-hibernate sweep can't reclaim the machine
  *      mid-run.
@@ -36,7 +36,7 @@ export class HarnessSandboxResolutionError extends Error {
 export interface ResolvedHarnessSandbox {
   /** Convex computer row id (control-plane identity). */
   computerId: string;
-  /** E2B sandbox id (vendor identity) to `Sandbox.connect` to. */
+  /** E2B sandbox id (vendor identity) to attach to. */
   sandboxId: string;
 }
 
@@ -56,10 +56,15 @@ export interface ResolvedHarnessSandbox {
 export interface TrustedHarnessSandboxBinding {
   /** `evalSandboxes` row id — what the harness broker leases against. */
   sandboxRowId: string;
-  /** E2B sandbox id (vendor identity) to `Sandbox.connect` to. */
+  /** E2B sandbox id (vendor identity) to attach to. */
   sandboxId: string;
   /** Working directory the session's Shell is rooted at. */
   workdir?: string;
+  /**
+   * A conversation box's idle window, from the backend's reserve reply: the
+   * turn heartbeats within it, and a warm agent exits after it.
+   */
+  idleMs?: number;
 }
 
 export async function resolveHarnessSandbox(args: {

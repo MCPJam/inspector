@@ -1,11 +1,23 @@
+import { ConvexHttpClient } from "convex/browser";
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "ai";
+import { logger } from "../../../utils/logger";
 import {
   createSuiteRunRecorder,
   startSuiteRunWithRecorder,
 } from "../recorder.js";
 
 describe("startSuiteRunWithRecorder", () => {
+  it.each(["pending", "running", "grading", "completed"])("does not prepare iterations again for a replay in %s", async (status) => {
+    const client = new ConvexHttpClient("https://replay.test");
+    const mutation = vi.spyOn(client, "mutation").mockResolvedValue({ runId: "existing-run", testCases: [], deduped: true, status });
+    const action = vi.spyOn(client, "action").mockRejectedValue(new Error("A replay must not reserve usage or finalize the run"));
+    const result = await startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1", idempotencyKey: "same-key" });
+    expect(result).toMatchObject({ runId: "existing-run", deduped: true, status });
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(action).not.toHaveBeenCalled();
+  });
   it("forwards the GitHub server replacement and omits undefined overrides", async () => {
     const action = vi.fn().mockResolvedValue(undefined);
     const mutation = vi
@@ -35,6 +47,29 @@ describe("startSuiteRunWithRecorder", () => {
     expect(mutation.mock.calls[0][1]).not.toHaveProperty(
       "githubCheckServerOverride",
     );
+  });
+
+  it("forwards the run's accounts, and starts without them on a backend that predates them", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const accountsAtRun = [{ serverId: "asana", connectionIds: ["dummy"] }];
+    const mutation = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `accountsAtRun` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation, action } as any,
+      suiteId: "suite-1",
+      accountsAtRun,
+    });
+
+    expect(mutation).toHaveBeenCalledTimes(2);
+    expect(mutation.mock.calls[0][1]).toMatchObject({ accountsAtRun });
+    expect(mutation.mock.calls[1][1]).not.toHaveProperty("accountsAtRun");
   });
 
   it("forwards per-run import approvals, and omits the key when there are none", async () => {
@@ -583,6 +618,115 @@ describe("startSuiteRunWithRecorder", () => {
       },
     );
   });
+
+  it.each([
+    // A budget refusal has no retry time, so it is not a 429: the v1 spec
+    // promises `Retry-After` on every 429.
+    ["PLATFORM_FEE_REQUIRED", 403, "FORBIDDEN", "reason"],
+    ["ORGANIZATION_SPEND_BUDGET_REACHED", 403, "FORBIDDEN", "reason"],
+    ["billing_limit_reached", 402, "BILLING_LIMIT_REACHED", "code"],
+    ["org_keys_required", 403, "FORBIDDEN", "code"],
+  ])(
+    "answers the %s precreate refusal with a %i, without paging",
+    async (backendCode, status, code, detailsKey) => {
+      const { ConvexError } = await import("convex/values");
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      const action = vi.fn().mockRejectedValueOnce(
+        new ConvexError({
+          code: backendCode,
+          message: "The backend says why.",
+        }),
+      );
+      const mutation = vi
+        .fn()
+        .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+        .mockResolvedValue(undefined);
+
+      try {
+        await expect(
+          startSuiteRunWithRecorder({
+            convexClient: { mutation, action } as any,
+            suiteId: "suite-1",
+          }),
+        ).rejects.toMatchObject({
+          status,
+          code,
+          message: "The backend says why.",
+          details: { [detailsKey]: backendCode },
+        });
+
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith(
+          "[evals] Suite run iterations refused",
+          expect.objectContaining({
+            runId: "run-1",
+            status,
+            reason: backendCode,
+          }),
+        );
+        // A refused run still ends failed rather than pending.
+        expect(mutation).toHaveBeenCalledWith(
+          "testSuites:updateTestSuiteRun",
+          expect.objectContaining({ runId: "run-1", status: "failed" }),
+        );
+      } finally {
+        errorSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    },
+  );
+
+  it("answers a run start refused over the spend budget with a 403", async () => {
+    const { ConvexError } = await import("convex/values");
+    const action = vi.fn();
+    const mutation = vi.fn().mockRejectedValueOnce(
+      new ConvexError({
+        code: "ORGANIZATION_SPEND_BUDGET_REACHED",
+        message: "The backend says why.",
+      }),
+    );
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation, action } as any,
+        suiteId: "suite-1",
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      message: "The backend says why.",
+      details: { reason: "ORGANIZATION_SPEND_BUDGET_REACHED" },
+    });
+    // Refused before the run row exists, so nothing is pre-created.
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("keeps PLATFORM_FEE_UNAVAILABLE on the retryable 500 path", async () => {
+    const { ConvexError } = await import("convex/values");
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const action = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ConvexError({ code: "PLATFORM_FEE_UNAVAILABLE" }),
+      );
+    const mutation = vi
+      .fn()
+      .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+      .mockResolvedValue(undefined);
+
+    try {
+      await expect(
+        startSuiteRunWithRecorder({
+          convexClient: { mutation, action } as any,
+          suiteId: "suite-1",
+        }),
+      ).rejects.toMatchObject({ status: 500, details: { runId: "run-1" } });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("createSuiteRunRecorder", () => {
@@ -771,6 +915,226 @@ describe("createSuiteRunRecorder", () => {
     );
   });
 
+  describe("pairing the pre-created row", () => {
+    const backendSnapshot = (model: string) => ({
+      title: "Case",
+      // The backend stores the case's first prompt, wherever it sits.
+      query: "Say OK.",
+      model,
+      provider: "anthropic",
+    });
+    const startWith = async (
+      iterations: unknown[],
+      args: Parameters<
+        ReturnType<typeof createSuiteRunRecorder>["startIteration"]
+      >[0],
+    ) => {
+      const query = vi.fn(async (ref: string) => {
+        if (ref === "testSuites:getTestSuiteRunDetails") return { iterations };
+        throw new Error(`unexpected query ${ref}`);
+      });
+      const mutation = vi.fn(async () => undefined);
+      const recorder = createSuiteRunRecorder({
+        convexClient: { query, mutation } as any,
+        suiteId: "suite-1",
+        runId: "run-1",
+      });
+      return { iterationId: await recorder.startIteration(args), mutation };
+    };
+
+    it("pairs a case that starts with a tool call, whose query the runner synthesizes", async () => {
+      const { iterationId, mutation } = await startWith(
+        [
+          {
+            _id: "iter-sonnet",
+            testCaseId: "tc1",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-sonnet-4.5"),
+          },
+          {
+            _id: "iter-haiku",
+            testCaseId: "tc1",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            query: 'Pinned tool call: read_me on "excalidraw"',
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-haiku");
+      expect(mutation).toHaveBeenCalledWith("testSuites:startTestIteration", {
+        iterationId: "iter-haiku",
+      });
+    });
+
+    it("pairs each of two cases with the same title and prompt with its own row", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "iter-a",
+            testCaseId: "tc-a",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+          {
+            _id: "iter-b",
+            testCaseId: "tc-b",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        {
+          testCaseId: "tc-b",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-b");
+    });
+
+    it("keeps pairing rows without a case id by snapshot, as replays of SDK runs create them", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "iter-first",
+            iterationNumber: 1,
+            testCaseSnapshot: {
+              ...backendSnapshot("claude-haiku-4.5"),
+              title: "First",
+            },
+          },
+          {
+            _id: "iter-second",
+            iterationNumber: 1,
+            testCaseSnapshot: {
+              ...backendSnapshot("claude-haiku-4.5"),
+              title: "Second",
+            },
+          },
+        ],
+        {
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            title: "Second",
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-second");
+    });
+
+    it("pairs the requested iteration of the case", async () => {
+      const row = (id: string, iterationNumber: number) => ({
+        _id: id,
+        testCaseId: "tc1",
+        iterationNumber,
+        testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+      });
+      const { iterationId } = await startWith(
+        [row("iter-1", 1), row("iter-2", 2)],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("claude-haiku-4.5"),
+            expectedToolCalls: [],
+          },
+          iterationNumber: 2,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-2");
+    });
+
+    it("tells apart one model configured under two providers", async () => {
+      const row = (id: string, provider: string) => ({
+        _id: id,
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        testCaseSnapshot: { ...backendSnapshot("gpt-4o"), provider },
+      });
+      const { iterationId } = await startWith(
+        [row("iter-openai", "openai"), row("iter-azure", "azure")],
+        {
+          testCaseId: "tc1",
+          testCaseSnapshot: {
+            ...backendSnapshot("gpt-4o"),
+            provider: "azure",
+            expectedToolCalls: [],
+          },
+          iterationNumber: 1,
+          startedAt: Date.now(),
+        },
+      );
+
+      expect(iterationId).toBe("iter-azure");
+    });
+
+    it("pairs nothing when neither the test nor the row has a case id", async () => {
+      const { iterationId } = await startWith(
+        [
+          {
+            _id: "other-case",
+            iterationNumber: 1,
+            testCaseSnapshot: backendSnapshot("claude-haiku-4.5"),
+          },
+        ],
+        { iterationNumber: 1, startedAt: Date.now() },
+      );
+
+      expect(iterationId).toBeUndefined();
+    });
+  });
+
+  it("treats a run whose details answer null as deleted, without logging a pairing miss", async () => {
+    // A deleted run answers null (PLB-52) rather than throwing "not found".
+    const query = vi.fn(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRunDetails") return null;
+      throw new Error(`unexpected query ${ref}`);
+    });
+    const recorder = createSuiteRunRecorder({
+      convexClient: { query, mutation: vi.fn() } as any,
+      suiteId: "suite-1",
+      runId: "run-1",
+    });
+    const errorSpy = vi.spyOn(logger, "error");
+    const start = () =>
+      recorder.startIteration({
+        testCaseId: "tc1",
+        iterationNumber: 1,
+        startedAt: Date.now(),
+      });
+
+    expect(await start()).toBeUndefined();
+    expect(await start()).toBeUndefined();
+    const pairingMisses = errorSpy.mock.calls.filter(
+      ([message]) =>
+        message === "[evals] Could not find pre-created iteration for",
+    );
+    errorSpy.mockRestore();
+
+    expect(pairingMisses).toHaveLength(0);
+    expect(recorder.isRunDeleted?.()).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it("flips runDeleted when finishIteration's shared finalize sees 'not found', short-circuiting subsequent startIteration", async () => {
     // Pre-check getTestIteration returns running; updateTestIteration throws
     // "not found" → shared finalizeEvalIteration fires `onRunDeleted` →
@@ -826,4 +1190,20 @@ describe("createSuiteRunRecorder", () => {
     expect(query.mock.calls.length).toBe(queryCallsBefore);
     expect(mutation.mock.calls.length).toBe(mutationCallsBefore);
   });
+});
+
+
+it("answers a capacity refusal without retrying admission or starting work", async () => {
+  const client = new ConvexHttpClient("https://capacity.test");
+  const mutation = vi.spyOn(client, "mutation").mockRejectedValue(new ConvexError({
+    kind: "at_capacity", resource: "eval_runs", message: "Eval capacity reached. Try again after another eval finishes.",
+  }));
+  const action = vi.spyOn(client, "action");
+  await expect(startSuiteRunWithRecorder({ convexClient: client, suiteId: "suite-1" })).rejects.toMatchObject({
+    status: 429, code: "RATE_LIMITED",
+    headers: { "Retry-After": "1" },
+    details: { code: "at_capacity", resource: "eval_runs", retryAfterMs: 1000 },
+  });
+  expect(mutation).toHaveBeenCalledTimes(1);
+  expect(action).not.toHaveBeenCalled();
 });
