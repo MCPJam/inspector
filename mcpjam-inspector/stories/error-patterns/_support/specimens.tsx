@@ -29,7 +29,12 @@ import { toast } from "@/lib/toast";
  */
 export function useToastSpecimen(raise: (t: typeof toast) => string | number) {
   const raiseRef = React.useRef(raise);
-  raiseRef.current = raise;
+  // Written in an effect, not during render: React can discard a render, and
+  // a ref set there would keep a closure from a render that never committed.
+  // Declared before the mount effect so the latest raiser is in place first.
+  React.useLayoutEffect(() => {
+    raiseRef.current = raise;
+  });
 
   React.useEffect(() => {
     // Clear anything a previous mount left behind before raising. React's dev
