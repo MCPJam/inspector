@@ -975,15 +975,16 @@ export function useThreadAppWorkspace(
     row.abort.abort();
     if (row.leaseTimer) clearTimeout(row.leaseTimer);
     row.leaseTimer = undefined;
+    // An inline App is never the rail's selection, so closing one leaves it be.
     if (!api || !row.handle) {
       rows.delete(row.key);
       refresh();
-      if (currentLifetime.current === lifetime) setActive(null);
+      if (!row.inline && currentLifetime.current === lifetime) setActive(null);
       return;
     }
     try {
       // Drop current presentation synchronously; failed durable close remains retryable.
-      if (currentLifetime.current === lifetime) setActive(null);
+      if (!row.inline && currentLifetime.current === lifetime) setActive(null);
       await api.close(row.handle, AbortSignal.timeout(15_000));
       rows.delete(row.key);
       refresh();
@@ -1000,7 +1001,8 @@ export function useThreadAppWorkspace(
       row.status = "error";
       row.error = "Couldn’t close this App. Try again.";
       refresh();
-      if (currentLifetime.current === lifetime) setActive(row.key);
+      if (!row.inline && currentLifetime.current === lifetime)
+        setActive(row.key);
     }
   }
   // Removing a server ends its owner; hiding an App does not.

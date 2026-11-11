@@ -896,4 +896,36 @@ describe("an entry App that can't go fullscreen", () => {
     });
     expect(result.current.active).toBeNull();
   });
+
+  it("closes an inline App without changing the rail's selection, a failed close included", async () => {
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => {
+      await result.current.launch(servers[0], declaration);
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    const rail = result.current.active;
+    expect(rail).not.toBeNull();
+    const inline = result.current.apps.find((row) => row.inline)!;
+    f.close.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await result.current.close(inline);
+    });
+    // The failed close stays inline, with its Retry close, and the rail keeps its App.
+    expect(result.current.apps.find((row) => row.inline)).toMatchObject({
+      status: "error",
+      closing: true,
+    });
+    expect(result.current.active).toBe(rail);
+    await act(async () => {
+      await result.current.close(inline);
+    });
+    expect(result.current.apps.some((row) => row.inline)).toBe(false);
+    expect(result.current.active).toBe(rail);
+  });
 });
