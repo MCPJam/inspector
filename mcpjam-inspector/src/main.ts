@@ -5,11 +5,10 @@
 import "./ws-native-fallback.js";
 import { writeInspectorRuntime } from "../server/services/inspector-runtime";
 import { OAuthCallbackDelivery } from "./oauth-callback-delivery.js";
-// Must stay below that guard: `security-policy.js` reaches into `server/`,
-// which pulls in `ws`. Hoisted above it, `ws` evaluates before
-// WS_NO_BUFFER_UTIL is set -- the #4208 path `ws-native-fallback.test.ts` pins.
+// Must stay below that guard: it reaches into `server/`, which can pull in
+// `ws`. Hoisted above it, `ws` evaluates before WS_NO_BUFFER_UTIL is set --
+// the #4208 path `ws-native-fallback.test.ts` pins.
 import { setAgentBrowserRendererOrigin } from "./ipc/agent-browser/agent-browser-listeners.js";
-import { registerBrowserController } from "../server/services/browserd/local/security-policy.js";
 import {
   initDesktopSentry,
   reportDesktopStartupFailure,
@@ -550,6 +549,8 @@ async function startHonoServer(): Promise<number> {
     // Node's cache; subsequent calls just return the cached exports, which
     // is exactly what we want now that we're reusing the same port.
     const { createHonoApp } = await import("../server/app.js");
+    const { registerBrowserController } =
+      await import("../server/services/browserd/local/security-policy.js");
 
     // Seal the local-harness instance key with the OS keychain. Injected
     // rather than imported by the server, which has to stay loadable under

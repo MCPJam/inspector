@@ -108,9 +108,8 @@ vi.mock("./ipc/local-harness/local-harness-listeners.js", () => ({
 vi.mock("./ipc/agent-browser/agent-browser-listeners.js", () => ({
   setAgentBrowserRendererOrigin: vi.fn(),
 }));
-vi.mock("../server/services/browserd/local/security-policy.js", () => ({
-  registerBrowserController: vi.fn(),
-}));
+// `server/services/browserd/local/security-policy.js` stays real: mocking it
+// hid PLB-272, a static import that froze `server/config.ts` on the wrong port.
 vi.mock("../server/services/inspector-runtime", () => ({
   writeInspectorRuntime: () => () => undefined,
 }));
@@ -196,6 +195,30 @@ it("starts one server when macOS emits activate during launch", async () => {
   const { app } = await import("electron");
   expect(app.relaunch).not.toHaveBeenCalled();
   expect(uncaught).not.toHaveBeenCalled();
+});
+
+it("accepts its own page's origin after falling back to the next port", async () => {
+  // Another process holds the start port, as when a second Inspector runs on
+  // 6274; the app binds the next free port and loads its window from there.
+  const taken = Number(process.env.SERVER_PORT);
+  // An allowlisted 127.0.0.1 would accept any port and hide the bug.
+  delete process.env.MCPJAM_ALLOWED_HOSTS;
+  delete process.env.ALLOWED_ORIGINS;
+  const blocker = net.createServer().listen(taken, "127.0.0.1");
+  await once(blocker, "listening");
+  try {
+    await launch();
+    await bootstrapped();
+
+    const bound = Number(process.env.SERVER_PORT);
+    expect(bound).not.toBe(taken);
+    const { isAllowedRequestOrigin } =
+      await import("../server/middleware/origin-validation.js");
+    expect(isAllowedRequestOrigin(`http://127.0.0.1:${bound}`)).toBe(true);
+    expect(isAllowedRequestOrigin(`http://127.0.0.1:${taken}`)).toBe(false);
+  } finally {
+    await new Promise((resolve) => blocker.close(resolve));
+  }
 });
 
 it("does not start a server in an instance that lost the single-instance lock", async () => {
