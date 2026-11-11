@@ -144,6 +144,7 @@ import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidenti
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
+  hostedCredentialDeliveryHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
@@ -883,7 +884,11 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(caller, bearerToken),
+      headers: {
+        ...buildConvexAuthHeaders(caller, bearerToken),
+        // The tokens this answers with stay in this process.
+        ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
+      },
       body: JSON.stringify({
         projectId,
         ...(options?.connectionId
