@@ -324,7 +324,11 @@ function azureDeploymentProblem(
   model: PreflightModel,
 ): string | null {
   if (model.selectionKnown === false) return null;
-  if (orgModelVendor(orgConfig, model) !== AZURE_PROVIDER_KEY) return null;
+  if (
+    orgModelConnection(orgConfig, model)?.providerKey !== AZURE_PROVIDER_KEY
+  ) {
+    return null;
+  }
   if (!hasAzureConnection(orgConfig.providers)) return null;
   const orgSelection =
     model.selection?.source === "org" ? model.selection : undefined;
