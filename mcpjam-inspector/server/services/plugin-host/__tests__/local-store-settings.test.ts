@@ -145,6 +145,46 @@ describe("a Settings App's row in the local store", () => {
     ).rejects.toMatchObject({ code: "INVALID_SETTINGS_CONTROL" });
   });
 
+  it("leaves the slot off an App that owns context when it is opened again", async () => {
+    const port = createPluginInstanceControlPort(
+      {
+        actorId: randomUUID(),
+        projectId: "local-project",
+        workspaceId: "local-workspace",
+        subject: "local-subject",
+      },
+      { env: {}, hosted: false },
+    )!;
+    const issue = (token: string, slot: object) =>
+      port.issueActivation!(
+        token,
+        {
+          anchor: "settings-anchor",
+          bindingHash: h("settings-binding"),
+          renewable: true,
+          snapshotJson: JSON.stringify({
+            instance: { activation: { selector: { kind: "settings" } } },
+          }),
+          ownerHash: h(`owner-${token}`),
+          expiresAt: Date.now() + 60_000,
+          ...slot,
+        },
+        signal(),
+      );
+    const first = "a".repeat(43);
+    await issue(first, { contextToken: first });
+    const reopened = await issue("b".repeat(43), { settings: true });
+    expect(reopened.token).toBe(first);
+    expect(reopened.control.settingsVersion).toBeUndefined();
+    await expect(
+      port.writeSettings!(
+        first,
+        { expectedVersion: 0, settingsJson: "{}" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "INSTANCE_UNAVAILABLE" });
+  });
+
   it("returns the original child to a retry and ends it with its Settings App", async () => {
     const { port, opened, child } = await openSettings();
     await port.writeSettings!(

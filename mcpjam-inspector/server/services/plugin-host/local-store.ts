@@ -465,8 +465,13 @@ export class LocalPluginControlStore {
             original.activationRenewable !== activation.renewable
           )
             fail("ACTIVATION_BINDING_CHANGED");
-          // A Settings App opened before its row kept settings gains the slot.
-          if (c.settings && original.settingsVersion === undefined)
+          // A Settings App opened before its row kept settings gains the
+          // slot, unless the row owns context, as a fresh issue refuses both.
+          if (
+            c.settings &&
+            original.settingsVersion === undefined &&
+            original.contextToken === undefined
+          )
             original.settingsVersion = 0;
           return {
             token: original.activationToken!,
