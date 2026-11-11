@@ -123,7 +123,8 @@ describe("GatewayDialog", () => {
     submitTest();
     await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
     await screen.findByText("Responses didn't answer");
-    expect(screen.getByText("team-extra")).toBeInTheDocument();
+    // Listed once for its mapping and once for its capabilities.
+    expect(screen.getAllByText("team-extra")).not.toHaveLength(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(onSave).toHaveBeenCalledWith(
