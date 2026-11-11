@@ -349,6 +349,24 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
   });
 
+  it("redacts a key the provider's error message echoes before storing it", async () => {
+    const keyTail = "x".repeat(32);
+    streamTextMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error(`Incorrect API key provided: sk-proj-${keyTail}`),
+        { name: "AI_APICallError", statusCode: 401 },
+      );
+    });
+
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+
+    const failed = convexClient.action.mock.calls.find(
+      ([name, args]) => name === "testSuites:updateTestIteration" && args.error,
+    );
+    expect(failed?.[1].error).toContain("Incorrect API key provided");
+    expect(failed?.[1].error).not.toContain(keyTail);
+  });
+
   describe("environment quick runs (committed iterations)", () => {
     it("runs every attempt on its committed row and creates none", async () => {
       const config = buildQuickRunConfig();
