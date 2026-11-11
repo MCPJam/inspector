@@ -35,7 +35,7 @@ export const paneSkillsPreview = z.object({
         z.enum(["project", "environment", "host", "plugin", "mcp-server"]),
       ),
       reason: paneSkillReason.nullable(),
-      // Optional so a client built before these fields reads the same rows.
+      // Optional, so rows from a server that predates them still parse.
       /** Where the skill comes from; `server` names the MCP server it was
        *  captured from. */
       origin: z
@@ -45,7 +45,7 @@ export const paneSkillsPreview = z.object({
         })
         .optional(),
       /** The revision a turn would load. `pinned` is true when the
-       *  environment names that revision and false when it follows Latest;
+       *  environment names that revision, false when it follows Latest, and
        *  absent when unknown, as for a captured MCP-server skill. */
       version: z
         .object({
