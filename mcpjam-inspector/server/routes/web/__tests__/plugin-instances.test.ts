@@ -1212,22 +1212,69 @@ describe("entry points under a client's rules", () => {
   it.each([
     ["ChatGPT's rules", CHATGPT],
     ["no rules", undefined],
-  ])("lists every declared entry point under %s, as before", async (_label, behavior) => {
-    f.catalog.mockResolvedValue({ tools, ...(behavior ? { behavior } : {}) });
+  ])(
+    "lists every declared entry point under %s, as before",
+    async (_label, behavior) => {
+      f.catalog.mockResolvedValue({ tools, ...(behavior ? { behavior } : {}) });
+      const result = await (await post("discover", body)).json();
+      expect(listed(result)).toEqual([
+        { toolName: "open-app", kind: "global" },
+        { toolName: "app-only", kind: "global" },
+        { toolName: "foo__bar", kind: "global" },
+        { toolName: "sketch", kind: "global" },
+        { toolName: "sketch", kind: "quick-action" },
+      ]);
+      expect(result.diagnostics).toBeUndefined();
+    },
+  );
+
+  it.each([
+    [
+      "entrypointVisibility",
+      "require-model",
+      ["open-app", "foo__bar", "sketch", "sketch:quick-action"],
+      [],
+    ],
+    [
+      "entrypointNames",
+      "no-double-separators",
+      ["open-app", "app-only", "foo__bar", "sketch", "sketch:quick-action"],
+      ["foo__bar"],
+    ],
+    [
+      "entrypointQuickActions",
+      "hide",
+      ["open-app", "app-only", "foo__bar", "sketch"],
+      [],
+    ],
+  ])("applies %s: %s on its own", async (field, value, entries, unopenable) => {
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: { ...CHATGPT, [field]: value },
+    });
     const result = await (await post("discover", body)).json();
-    expect(listed(result)).toEqual([
-      { toolName: "open-app", kind: "global" },
-      { toolName: "app-only", kind: "global" },
-      { toolName: "foo__bar", kind: "global" },
-      { toolName: "sketch", kind: "global" },
-      { toolName: "sketch", kind: "quick-action" },
-    ]);
-    expect(result.diagnostics).toBeUndefined();
+    expect(
+      listed(result).map(({ toolName, kind }) =>
+        kind === "global" ? toolName : `${toolName}:${kind}`,
+      ),
+    ).toEqual(entries);
+    expect(
+      listed(result).flatMap((entry) =>
+        entry.unopenable ? [entry.toolName] : [],
+      ),
+    ).toEqual(unopenable);
+    expect(result.diagnostics !== undefined).toBe(
+      field === "entrypointVisibility",
+    );
   });
 
   it("refuses to open a name Claude can't open, with a Logs row naming the characters", async () => {
     const readResource = vi.fn().mockRejectedValue(new Error("read"));
-    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE, manager: { readResource } });
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CLAUDE,
+      manager: { readResource },
+    });
     const refused = await post("activation/open", {
       ...body,
       threadId: "thread",
@@ -1250,7 +1297,11 @@ describe("entry points under a client's rules", () => {
     expect(readResource).not.toHaveBeenCalled();
     expect(f.open).not.toHaveBeenCalled();
     // ChatGPT opens the same tool: it reaches the UI read.
-    f.catalog.mockResolvedValue({ tools, behavior: CHATGPT, manager: { readResource } });
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CHATGPT,
+      manager: { readResource },
+    });
     await post("activation/open", {
       ...body,
       threadId: "thread",
@@ -1270,11 +1321,19 @@ describe("entry points under a client's rules", () => {
         kind: "quick-action",
         requestId: crypto.randomUUID(),
       });
-    f.catalog.mockResolvedValue({ tools, behavior: CLAUDE, manager: { readResource } });
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CLAUDE,
+      manager: { readResource },
+    });
     const refused = await open();
     expect(refused.status).toBe(400);
     expect(readResource).not.toHaveBeenCalled();
-    f.catalog.mockResolvedValue({ tools, behavior: CHATGPT, manager: { readResource } });
+    f.catalog.mockResolvedValue({
+      tools,
+      behavior: CHATGPT,
+      manager: { readResource },
+    });
     await open();
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(f.open).not.toHaveBeenCalled();

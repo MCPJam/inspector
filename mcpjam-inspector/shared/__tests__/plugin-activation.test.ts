@@ -234,7 +234,10 @@ describe("the plan under a client's entry-point rules", () => {
   const source = (name: string, visibility?: string[]) => ({
     name,
     _meta: {
-      ui: { resourceUri: "ui://fixture", ...(visibility ? { visibility } : {}) },
+      ui: {
+        resourceUri: "ui://fixture",
+        ...(visibility ? { visibility } : {}),
+      },
       "openai/ui": { entrypoints: [{ type: "global", quickAction: action }] },
     },
   });
@@ -282,8 +285,11 @@ describe("the plan under a client's entry-point rules", () => {
       } as const,
     ]) {
       expect(
-        pluginEntrypointPlan(source("foo__bar", ["app"]), quickAction(), behavior)
-          .params.name,
+        pluginEntrypointPlan(
+          source("foo__bar", ["app"]),
+          quickAction(),
+          behavior,
+        ).params.name,
       ).toBe("create");
       expect(
         pluginEntrypointPlan(source("foo__bar"), { kind: "global" }, behavior)
