@@ -46,19 +46,13 @@ import {
 
 /**
  * Why an engine is not handed a skill: the Compare preview's reasons, plus
- * `omitted-from-catalog` (MCPJam's agent left it out of the prompt's skill list
- * to stay within the model's budget, so the model never learns it exists) and
  * `over-cap` (a stated cap on a turn's skills left it out; none applies today).
  */
-export type SkillExclusionReason =
-  | PaneSkillReason
-  | "over-cap"
-  | "omitted-from-catalog";
+export type SkillExclusionReason = PaneSkillReason | "over-cap";
 
 /** The engine that runs a turn. */
 export type TurnRuntime =
-  | { kind: "agent" }
-  | { kind: "harness"; harnessId: string };
+  { kind: "agent" } | { kind: "harness"; harnessId: string };
 
 /** One skill a plan names. */
 export interface SkillRef {
@@ -73,6 +67,12 @@ export interface SkillRef {
   /** The backend's metadata row for it, which `skillsAtTurn` stores. Absent
    *  when the source carries none. */
   provenance?: Record<string, unknown>;
+  /**
+   * MCPJam's agent left it out of the skill list in its prompt to stay within
+   * the model's budget. Its tools still load it by name or ref (a skill the
+   * person names or picks with `/`), so it is delivered all the same.
+   */
+  omittedFromCatalog?: true;
 }
 
 export interface SkillExclusion {
@@ -85,10 +85,7 @@ export interface SkillExclusion {
  * plain-file copy a harness gets in a pinned run.
  */
 export type ServerSkillsVia =
-  | "agent-tools"
-  | "harness-tools"
-  | "box-files"
-  | "none";
+  "agent-tools" | "harness-tools" | "box-files" | "none";
 
 /**
  * How MCPJam's agent serves the plan, as its skill tools behave today:
@@ -116,7 +113,8 @@ export interface TurnSkills {
   runtime: TurnRuntime;
   /** The source's skills as one capability set. */
   set: EffectiveCapabilitySet;
-  /** What the engine is handed. */
+  /** What the engine is handed, including what it can load but is not listed
+   *  in its prompt (`omittedFromCatalog`). */
   delivered: SkillRef[];
   /** What it is not handed, and why. */
   excluded: SkillExclusion[];
@@ -170,9 +168,7 @@ export interface TurnSkillsInput {
  *  (`effectiveHarnessId`), else MCPJam's agent. */
 export function turnRuntime(
   config:
-    | { agentLoop?: string | null; harness?: string | null }
-    | null
-    | undefined,
+    { agentLoop?: string | null; harness?: string | null } | null | undefined,
 ): TurnRuntime {
   const harnessId = effectiveHarnessId(config);
   return harnessId ? { kind: "harness", harnessId } : { kind: "agent" };
@@ -315,17 +311,17 @@ function planAgentSet(
   agent: AgentSkillTools,
   modelContextTokens: number | undefined,
 ): TurnSkills {
-  const listedAs = refsBySkillId(set);
+  const inSet = new Set(refsBySkillId(set).keys());
   const omitted = new Set(skillCatalogOmissions(set, modelContextTokens));
   return {
     runtime: { kind: "agent" },
     set,
-    ...partition(refs, (ref) => {
-      const setRef = listedAs.get(ref.skillId);
+    ...partition(
+      refs,
       // Left out of the set: another skill already holds its ref.
-      if (setRef === undefined) return "name-collision";
-      return omitted.has(setRef) ? "omitted-from-catalog" : null;
-    }),
+      (ref) => (inSet.has(ref.skillId) ? null : "name-collision"),
+      (ref) => omitted.has(ref.ref),
+    ),
     serverSkillsVia: "agent-tools",
     agent,
   };
@@ -343,8 +339,10 @@ function planNames(
   return {
     runtime: { kind: "agent" },
     set,
-    ...partition(refs, (ref) =>
-      omitted.has(ref.name) ? "omitted-from-catalog" : null,
+    ...partition(
+      refs,
+      () => null,
+      (ref) => omitted.has(ref.name),
     ),
     serverSkillsVia: "none",
     agent: { kind: "frozen-names", skills },
@@ -368,16 +366,22 @@ function planBox(
   };
 }
 
+/** Splits refs into delivered and excluded; `unlisted` marks a delivered
+ *  skill the prompt's skill list leaves out. */
 function partition(
   refs: SkillRef[],
   reasonFor: (ref: SkillRef, index: number) => SkillExclusionReason | null,
+  unlisted: (ref: SkillRef) => boolean = () => false,
 ): Pick<TurnSkills, "delivered" | "excluded"> {
   const delivered: SkillRef[] = [];
   const excluded: SkillExclusion[] = [];
   refs.forEach((ref, index) => {
     const reason = reasonFor(ref, index);
     if (reason) excluded.push({ ref, reason });
-    else delivered.push(ref);
+    else
+      delivered.push(
+        unlisted(ref) ? { ...ref, omittedFromCatalog: true } : ref,
+      );
   });
   return { delivered, excluded };
 }
