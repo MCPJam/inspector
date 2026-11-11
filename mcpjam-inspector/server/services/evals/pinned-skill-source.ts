@@ -83,9 +83,11 @@ export async function buildPinnedSkillSource(args: {
  * harness iteration can never be handed its run's pins as agent tools as well
  * as on its box.
  *
- * Rows only for a run that froze its skills: an iteration without frozen
- * skills (a quick run without an environment) has nothing to record, and an
- * empty list would claim it ran with none.
+ * A run that froze its skills records them on every turn, as `[]` when it
+ * froze none (a suite without skills, or the without-skills arm of an A/B
+ * run): those turns did run with none. An iteration with no frozen set to go
+ * by (a quick run without an environment) records nothing, since `[]` would
+ * claim it ran with none.
  */
 export function iterationTurnSkills(args: {
   pinnedSkillSource?: PinnedSkillSource;

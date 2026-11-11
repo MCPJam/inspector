@@ -102,8 +102,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function runWithSkills(suiteHostConfig: Record<string, unknown>) {
-  const run = await preparedRunSkills();
+/** Runs one case and returns the turns its trace writes sent. */
+async function runEval(
+  suiteHostConfig: Record<string, unknown>,
+  frozen?: Awaited<ReturnType<typeof preparedRunSkills>>,
+) {
   const { client, turns } = recordingClient();
   await runEvalSuiteWithAiSdk({
     suiteId: "suite-1",
@@ -127,18 +130,27 @@ async function runWithSkills(suiteHostConfig: Record<string, unknown>) {
       environment: { servers: ["srv-1"] },
     },
     modelApiKeys: {},
-    convexClient: client,
+    convexClient: client as never,
     convexHttpUrl: "https://example.convex.site",
     convexAuthToken: "token",
-    mcpClientManager: manager(),
+    mcpClientManager: manager() as never,
     testCaseId: "case-1",
     orgModelConfigTarget: { projectId: "project-1" },
     harnessRuntimeVenue: "local",
     suiteHostConfig,
-    pinnedSkillSource: run.pinnedSkillSource,
-    pinnedHarnessSkills: run.pinnedHarnessSkills,
+    ...(frozen
+      ? {
+          pinnedSkillSource: frozen.pinnedSkillSource,
+          pinnedHarnessSkills: frozen.pinnedHarnessSkills,
+        }
+      : {}),
   } as Parameters<typeof runEvalSuiteWithAiSdk>[0]);
-  return { run, turns };
+  return turns;
+}
+
+async function runWithSkills(suiteHostConfig: Record<string, unknown>) {
+  const run = await preparedRunSkills();
+  return { run, turns: await runEval(suiteHostConfig, run) };
 }
 
 describe("an eval run with frozen skills", () => {
@@ -176,5 +188,24 @@ describe("an eval run with frozen skills", () => {
         (row) => row.name,
       ),
     ).toEqual(["release-notes", "summarize", "search"]);
+  });
+});
+
+describe("an eval turn's skill record", () => {
+  // A suite without skills and the without-skills arm of an A/B run both
+  // freeze an empty set, and an A/B comparison needs to read "ran with none".
+  it("records that a run which froze no skills ran with none, on either engine", async () => {
+    const frozen = await preparedRunSkills([]);
+    for (const suiteHostConfig of [{}, { harness: "claude-code" }]) {
+      const turns = await runEval(suiteHostConfig, frozen);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]!.skillsAtTurn).toEqual([]);
+    }
+  });
+
+  it("records nothing for a run with no frozen skills to go by", async () => {
+    const turns = await runEval({});
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).not.toHaveProperty("skillsAtTurn");
   });
 });

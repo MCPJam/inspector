@@ -137,19 +137,17 @@ export function preparedRunSkills(pins: RunPinnedSkill[] = evalRunPins()) {
 
 const SKILL_TOOLS = ["loadSkill", "listSkillFiles", "readSkillFile"];
 
-/**
- * What MCPJam's agent is handed for a plan, read off the turn `prepareChatV2`
- * builds: the skill refs its prompt lists and the skill tools it gets. With
- * `harness`, MCPJam's side of a harness turn.
- */
-export async function agentReceives(
+interface AgentProbeOptions {
+  modelContextTokens?: number;
+  harness?: string;
+}
+
+/** The turn `prepareChatV2` builds for a plan, with no servers connected. */
+function prepareAgentTurn(
   skills: TurnSkills,
-  {
-    modelContextTokens,
-    harness,
-  }: { modelContextTokens?: number; harness?: string } = {},
-): Promise<{ listed: string[]; tools: string[] }> {
-  const prepared = await prepareChatV2({
+  { modelContextTokens, harness }: AgentProbeOptions,
+) {
+  return prepareChatV2({
     mcpClientManager: {
       getToolsForAiSdk: async () => ({}),
       listTools: async () => ({ tools: [] }),
@@ -172,6 +170,18 @@ export async function agentReceives(
     ...(harness ? { harness: harness as never } : {}),
     skills,
   });
+}
+
+/**
+ * What MCPJam's agent is handed for a plan, read off the turn `prepareChatV2`
+ * builds: the skill refs its prompt lists and the skill tools it gets. With
+ * `harness`, MCPJam's side of a harness turn.
+ */
+export async function agentReceives(
+  skills: TurnSkills,
+  options: AgentProbeOptions = {},
+): Promise<{ listed: string[]; tools: string[] }> {
+  const prepared = await prepareAgentTurn(skills, options);
   const section =
     prepared.enhancedSystemPrompt.split("## Skills")[1]?.split("\n## ")[0] ??
     "";
@@ -183,6 +193,27 @@ export async function agentReceives(
       SKILL_TOOLS.includes(name),
     ),
   };
+}
+
+/**
+ * What MCPJam's agent gets back when its model asks `loadSkill` for `ref` on
+ * the turn `prepareChatV2` builds for a plan: the skill's text, or the tool's
+ * error.
+ */
+export async function agentLoads(
+  skills: TurnSkills,
+  ref: string,
+  options: AgentProbeOptions = {},
+): Promise<string> {
+  const { allTools } = await prepareAgentTurn(skills, options);
+  const output = await allTools.loadSkill?.execute?.(
+    { name: ref },
+    { toolCallId: "probe", messages: [], context: {} },
+  );
+  if (typeof output !== "string") {
+    throw new Error(`The agent's loadSkill returned no text for ${ref}.`);
+  }
+  return output;
 }
 
 /**
