@@ -37,7 +37,7 @@ import {
 } from "../history-provenance.js";
 
 /** Anything with a scheme is treated as a skill URI, not a relative path. */
-function looksLikeUri(value: string): boolean {
+export function looksLikeUri(value: string): boolean {
   return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value);
 }
 

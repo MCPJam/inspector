@@ -17,7 +17,7 @@
  * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
 
-import type { MCPClientManager, SkillEntry } from "@mcpjam/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner.js";
 import { manifestDigestSetHash } from "../../../shared/server-skill-refs.js";
 import {
@@ -39,14 +39,13 @@ export interface CatalogEntry extends ServerSkillSummary {
 }
 
 /**
- * The digest-set hash an approval binds to.
+ * The digest-set hash of a skill's manifest.
  *
  * Covers every manifest URI AND digest, sorted, so adding a file, removing
- * one, or changing one file's bytes all produce a different approval. This is
- * the SEP's "bind approval to the digest set" rule made concrete. The same
- * hash goes into the origin banner, where it is the HELD ENTRY a later file
- * read is checked against; the shared implementation is what lets the
- * playground popover write the same banner.
+ * one, or changing one file's bytes all produce a different hash. It goes into
+ * the origin banner, where it is the HELD ENTRY a later file read is checked
+ * against: the SEP's "bind to the digest set" rule made concrete. The shared
+ * implementation is what lets the playground popover write the same banner.
  */
 export async function manifestApprovalHash(
   resources: ReadonlyArray<{ uri: string; digest: string }>
@@ -189,11 +188,6 @@ export async function loadLiveServerSkillByUri(
     uri: string;
     /** Names the skill in the banner; the server id stands in without it. */
     provider?: { serverSlug: string; serverLabel: string };
-    /**
-     * The entry fetched before the approval, when there was one. Reused, since
-     * a second `skills/get` after that check would reopen a TOCTOU window.
-     */
-    entry?: SkillEntry;
   }
 ): Promise<string> {
   const { provider } = target;
@@ -201,7 +195,6 @@ export async function loadLiveServerSkillByUri(
     const loaded = await getVerifiedServerSkill(manager, {
       serverId: target.serverId,
       uri: target.uri,
-      entry: target.entry,
     });
     const budgeted = withinPromptBudget(
       loaded.content,
@@ -242,27 +235,21 @@ export function listLiveServerSkillFiles(entry: CatalogEntry): string {
 /**
  * One supporting file, resolved against the skill's own root, read from the
  * server that served the skill, verified against its manifest and tagged with
- * its origin. `approved` is the binding made when the read was approved.
+ * its origin.
  */
 export async function readLiveServerSkillFile(
   manager: MCPClientManager,
   entry: CatalogEntry,
   path: string,
-  approved?: { entry: Pick<SkillEntry, "uri" | "resources"> }
 ): Promise<string> {
-  // Prefer the manifest bound at approval time; otherwise this call's.
-  // Either way the read is confined to the skill's OWN manifest —
-  // `readVerifiedServerSkillFile` refuses anything absent from it — so an
-  // unlisted file stays unreadable.
-  const approvedEntry = approved?.entry ?? {
-    uri: entry.skillUri,
-    resources: entry.resources,
-  };
   const resourceUri = resolveSkillRelativeReference(entry.skillUri, path);
   try {
     const file = await readVerifiedServerSkillFile(manager, {
       serverId: entry.serverId,
-      entry: approvedEntry,
+      // The read is confined to the skill's OWN manifest:
+      // `readVerifiedServerSkillFile` refuses anything absent from it, so an
+      // unlisted file stays unreadable.
+      entry: { uri: entry.skillUri, resources: entry.resources },
       resourceUri,
     });
     const budgeted = withinPromptBudget(file.text, `"${file.uri}"`);
