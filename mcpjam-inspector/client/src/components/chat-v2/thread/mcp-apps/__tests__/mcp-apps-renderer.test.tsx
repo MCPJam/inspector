@@ -2092,6 +2092,41 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
   });
 
+  it("keeps frameDomains and strips baseUriDomains on Claude", async () => {
+    // Claude's embedded-sites doc says declared frame origins load once
+    // allowed, while the probe saw Claude block declared base-uri origins.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            frameDomains: ["https://embed.example.com"],
+            baseUriDomains: ["https://base.example.com"],
+          },
+          permissions: {},
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ScenarioHostStyleProvider value="claude">
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
+    });
+    const csp = sandboxedIframePropsRef.current?.csp as
+      | Record<string, unknown>
+      | undefined;
+    expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
+    expect(csp?.baseUriDomains ?? []).toEqual([]);
+  });
+
   it("forwards one resolved subtype policy to inline and modal sandboxes", async () => {
     mcpAppsModalPropsRef.current = null;
     render(
