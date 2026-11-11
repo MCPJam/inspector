@@ -77,7 +77,7 @@ describe("gatewayTestOutcome", () => {
     const outcome = gatewayTestOutcome(
       result({ status: 403, message: "The provider refused the request: \"Budget exceeded\". Check the key's budget and model access on the provider.", apis: {}, models: [] }),
     );
-    expect(outcome).toMatchObject({ tone: "destructive", title: "The provider refused the request" });
+    expect(outcome).toMatchObject({ tone: "destructive", title: "The provider refused the request. Check the key's access on the provider, then test again." });
     expect(outcome.focus).toBeUndefined();
   });
 
