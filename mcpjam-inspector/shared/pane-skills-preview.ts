@@ -13,15 +13,21 @@ export const paneSkillsRequest = z.object({
   ]),
   serverIds: z.array(id).optional(),
   pluginVersionIds: z.array(id).optional(),
+  /** The context window, in tokens, of the model the pane's turns run on. It
+   *  sizes the skill list MCPJam's agent puts in its prompt; without it the
+   *  list gets the default size, as on a turn whose model states none. */
+  modelContextTokens: z.number().positive().optional(),
 });
 
-/** Why a client is not handed a skill. The server's turn plan adds its own. */
+/** Why a turn's engine is not handed a skill: the turn plan's
+ *  `SkillExclusionReason`, which the previews show as is. */
 export const paneSkillReason = z.enum([
   "unsupported-harness",
   "server-skill-unsupported",
   "plugin-disabled",
   "name-collision",
   "invalid-skill-name",
+  "over-cap",
 ]);
 
 export const paneSkillsPreview = z.object({
@@ -54,9 +60,9 @@ export const paneSkillsPreview = z.object({
         })
         .optional(),
       /** MCPJam's agent can load the skill but leaves it out of the skill
-       *  list in its prompt to stay within the model's budget. A preview
-       *  names no model, so it sizes that list as for a model of unknown
-       *  context; a larger model may list the skill. */
+       *  list in its prompt to stay within the model's budget. The list is
+       *  sized for the request's `modelContextTokens`; the suite preview
+       *  names no model and sizes it as for a model of unknown context. */
       omittedFromCatalog: z.boolean().optional(),
     }),
   ),

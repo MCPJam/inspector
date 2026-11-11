@@ -45,10 +45,11 @@ import {
 } from "./effective-capabilities.js";
 
 /**
- * Why an engine is not handed a skill: the Compare preview's reasons, plus
- * `over-cap` (a stated cap on a turn's skills left it out; none applies today).
+ * Why an engine is not handed a skill, which the previews show as is.
+ * `over-cap`: the backend left it out of the environment because a skill scope
+ * covered more skills than its cap.
  */
-export type SkillExclusionReason = PaneSkillReason | "over-cap";
+export type SkillExclusionReason = PaneSkillReason;
 
 /** The engine that runs a turn. */
 export type TurnRuntime =
@@ -216,18 +217,19 @@ export function resolveTurnSkills({
 }
 
 /** A resolved environment or a client's own skills, planned for the engine
- *  that runs the turn. A skill the turn switched off stays off on both. */
+ *  that runs the turn. A skill the turn switched off, or the backend left out
+ *  of the environment, stays out on both. */
 function planSource(
   source: EnvironmentSkillSource | LiveSkillSource,
   runtime: TurnRuntime,
   modelContextTokens: number | undefined,
 ): TurnSkills {
-  const { set, refs, agent, box, disabled } = sourcePlan(source);
+  const { set, refs, agent, box, excluded } = sourcePlan(source);
   const plan =
     runtime.kind === "harness"
       ? planBox(runtime, set, refs, box)
       : planAgentSet(set, refs, agent, modelContextTokens);
-  return { ...plan, excluded: [...disabled, ...plan.excluded] };
+  return { ...plan, excluded: [...excluded, ...plan.excluded] };
 }
 
 /**

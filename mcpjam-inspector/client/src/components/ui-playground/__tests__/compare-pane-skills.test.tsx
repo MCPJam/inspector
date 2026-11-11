@@ -1,6 +1,16 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ComparePaneSkills } from "../compare-pane-skills";
+import {
+  ComparePaneSkills,
+  useComparePaneSkillsSection,
+} from "../compare-pane-skills";
 import type { RecoveryPane } from "@/lib/comparison-recovery-record";
 
 const { flag, fetchPreview } = vi.hoisted(() => ({
@@ -153,7 +163,9 @@ describe("Compare pane Skills", () => {
     expect(await within(a).findByText("1 skill available")).toBeVisible();
     expect(await within(b).findByText("0 skills available")).toBeVisible();
     expect(
-      within(b).getByText("This client can’t use skills from MCP servers."),
+      within(b).getByText(
+        "Skills from MCP servers don’t load on this client yet.",
+      ),
     ).toBeVisible();
     expect(within(a).getByText(row.description)).toBeVisible();
     const requests = fetchPreview.mock.calls.map(([, init]) =>
@@ -163,6 +175,77 @@ describe("Compare pane Skills", () => {
       { projectId: "proj", target: paneA.target, serverIds: [] },
       { projectId: "proj", target: paneB.target, pluginVersionIds: [] },
     ]);
+  });
+
+  it("says why the turn plan leaves each skill out, and marks one the model won't see listed", async () => {
+    fetchPreview.mockResolvedValue(
+      Response.json({
+        deliveredCount: 1,
+        skills: [
+          { ...row, omittedFromCatalog: true },
+          {
+            ...row,
+            skillId: "s2",
+            name: "search",
+            channels: ["mcp-server"],
+            reason: "server-skill-unsupported",
+            origin: { kind: "mcp-server", server: "Linear" },
+          },
+          {
+            ...row,
+            skillId: "s3",
+            name: "Draft replies",
+            channels: ["project"],
+            reason: "over-cap",
+            origin: { kind: "library" },
+          },
+        ],
+      }),
+    );
+    render(view(paneA));
+    expect(await screen.findByText("1 skill available")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Not in the model’s skill list. Ask for it by name to use it.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Skills from Linear don’t load on this client yet."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Over the skill limit, so it doesn’t load."),
+    ).toBeVisible();
+    expect(screen.queryByText(row.description)).toBeNull();
+  });
+
+  it("sizes the skill list for the model each pane runs", async () => {
+    fetchPreview.mockImplementation(async () =>
+      Response.json({ deliveredCount: 0, skills: [] }),
+    );
+    const { result } = renderHook(() =>
+      useComparePaneSkillsSection("proj", true),
+    );
+    const lane = { environmentId: null, pending: false };
+    const model = { id: "m", name: "M", provider: "openai" };
+    render(
+      <>
+        {result.current({
+          pane: paneA,
+          lane,
+          model: { ...model, contextLength: 200_000 },
+        })}
+        {result.current({ pane: paneB, lane, model })}
+      </>,
+    );
+    expect(await screen.findAllByText("No skills for this pane.")).toHaveLength(
+      2,
+    );
+    const [sized, unsized] = fetchPreview.mock.calls.map(([, init]) =>
+      JSON.parse(String(init?.body)),
+    );
+    expect(sized).toMatchObject({ modelContextTokens: 200_000 });
+    // A turn on a model that states no size uses the default list size.
+    expect(unsized).not.toHaveProperty("modelContextTokens");
   });
 
   it("never shows a late response for a previous target and reads a client's composed setup", async () => {

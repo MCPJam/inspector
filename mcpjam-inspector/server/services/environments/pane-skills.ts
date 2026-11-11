@@ -43,7 +43,13 @@ import {
 export async function previewPaneSkills(
   client: ConvexHttpClient,
   bearer: string,
-  { projectId, target, pluginVersionIds, serverIds }: PaneSkillsRequest,
+  {
+    projectId,
+    target,
+    pluginVersionIds,
+    serverIds,
+    modelContextTokens,
+  }: PaneSkillsRequest,
   signal?: AbortSignal,
 ): Promise<PaneSkillsPreview> {
   const environmentId = target.environmentId;
@@ -118,6 +124,7 @@ export async function previewPaneSkills(
         }
       : { kind: "live", liveExtras: { projectSkills: pool ?? [] } },
     runtime,
+    modelContextTokens,
   });
   return previewOf(skills, rowsOf(spec, attribution, pool));
 }
@@ -255,6 +262,17 @@ function rowsOf(
       origin: { kind: "library" },
     });
   }
+  // The project's skills a scope covered but the backend left out; last, as
+  // the plan reads them.
+  for (const skill of spec?.skillScopeExclusions ?? []) {
+    add({
+      skillId: skill.skillId,
+      name: skill.name,
+      description: skill.description,
+      channels: ["project"],
+      origin: { kind: "library" },
+    });
+  }
   return [...rows.values()];
 }
 
@@ -277,8 +295,7 @@ function previewOf(skills: TurnSkills, rows: Row[]): PaneSkillsPreview {
     });
   }
   for (const { ref, reason } of skills.excluded) {
-    // No plan applies a cap, and the wire has no reason to show for one.
-    if (reason !== "over-cap") verdicts.set(ref.skillId, { reason });
+    verdicts.set(ref.skillId, { reason });
   }
   const shown = rows.flatMap((row) => {
     const verdict = verdicts.get(row.skillId);

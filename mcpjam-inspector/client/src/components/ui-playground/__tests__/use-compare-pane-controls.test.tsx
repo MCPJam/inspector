@@ -332,7 +332,7 @@ describe("Compare pane settings", () => {
     expect(useComparePaneStore.getState().selectedPaneId).toBe("cursor");
   });
 
-  it("hands later sections the pane and the lane its card composed", async () => {
+  it("hands later sections the pane, its model and the lane its card composed", async () => {
     const user = userEvent.setup();
     const sections = vi.fn<ComparePaneSections>(() => <p>Skills section</p>);
     render(
@@ -350,6 +350,7 @@ describe("Compare pane settings", () => {
     expect(sections).toHaveBeenCalledWith({
       pane: panes[0],
       lane: { environmentId: "hidden-env", pending: false },
+      model: expect.objectContaining({ id: "openai/gpt-5.5" }),
     });
   });
 

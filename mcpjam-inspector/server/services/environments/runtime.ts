@@ -142,6 +142,19 @@ export interface ResolvedEnvironmentRuntime {
     }>;
   };
   skills?: ResolvedEnvironmentSkill[];
+  /**
+   * Skills a scope (such as "all shared Library skills") covered that the
+   * backend left out of `skills`: over the scope's cap, or under a name
+   * another entry already takes. The list has a cap of its own, so it can be
+   * shorter than what was left out. Absent when no scope applies.
+   */
+  skillScopeExclusions?: Array<{
+    skillId: string;
+    name: string;
+    description: string;
+    /** `over-cap` or `name-collision`; a turn plan skips any other value. */
+    reason: string;
+  }>;
   /** Captured MCP-server skills selected by the environment. */
   serverSkills?: Array<{
     serverSkillId: string;
