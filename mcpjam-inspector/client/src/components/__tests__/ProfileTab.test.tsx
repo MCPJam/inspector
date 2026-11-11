@@ -144,6 +144,12 @@ describe("Profile settings", () => {
     ).toBeEnabled();
     expect(document.getElementById("settings-content")).toBeInTheDocument();
   });
+  it("leaves the newsletter off for an account that has not opted in", () => {
+    render(<ProfileTab />);
+    expect(
+      screen.getByRole("switch", { name: "Email me the MCPJam newsletter" }),
+    ).not.toBeChecked();
+  });
   it("keeps the existing name-save mutation", async () => {
     render(<ProfileTab />);
     const input = screen.getByPlaceholderText("Enter your name");
