@@ -1,5 +1,4 @@
 import { reportRouteFailure } from "../../utils/route-error-report.js";
-import { randomBytes } from "node:crypto";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
   settingsOperationIntent,
@@ -11,6 +10,9 @@ import {
 } from "../../../shared/plugin-operation-authorization.js";
 import { settingsOperation } from "../../services/plugin-host/settings-operation.js";
 import {
+  closePluginSettingsChild,
+  issuePluginSettingsChild,
+  readPluginSettingsChild,
   readPluginSettingsState,
   storePluginSettingsDocument,
 } from "../../services/plugin-host/settings-state.js";
@@ -88,16 +90,6 @@ const invocation = handle.extend({
   toolName: z.string().optional(),
   approval: z.object({ id: z.string(), approved: z.boolean() }).optional(),
 });
-const children = new Map<
-  string,
-  {
-    parent: string;
-    action: string;
-    revision: string;
-    signal: AbortSignal;
-    dispose: () => void;
-  }
->();
 const childHandle = handle.extend({ childToken: z.string().min(1) });
 const denied = () => new PluginInvocationError("INSTANCE_DENIED");
 async function identity(c: Context, body: z.infer<typeof scope>) {
@@ -204,27 +196,20 @@ routes.post("/renew", (c) =>
       method: body.operation.params?.name,
       ...body.operation.params?.arguments,
     });
-    const child =
-      intent.method === "app/call"
-        ? children.get(intent.childToken)
-        : undefined;
-    if (
-      intent.method === "app/call" &&
-      (!child || child.parent !== body.instanceToken)
-    )
-      throw denied();
+    if (intent.method === "app/call")
+      await readPluginSettingsChild(
+        intent.childToken,
+        actor,
+        instance,
+        c.req.raw.signal,
+      );
     await assertPluginInstanceBindingCurrent({
       admission,
       bearer,
       instance,
       signal: c.req.raw.signal,
     });
-    const lifetime = child
-      ? AbortSignal.any([
-          pluginInstances.signal(body.instanceToken, actor),
-          child.signal,
-        ])
-      : pluginInstances.signal(body.instanceToken, actor);
+    const lifetime = pluginInstances.signal(body.instanceToken, actor);
     const operationAuthorization = await preparePluginOperation(
       c,
       instance,
@@ -564,19 +549,13 @@ routes.post("/app/open", (c) =>
         )
       )
         throw denied();
-      await pluginInstances.getPersistent(
+      const childToken = await issuePluginSettingsChild(
         body.instanceToken,
         actor,
+        await readPluginSettingsState(body.instanceToken, actor, c.req.raw.signal),
+        { action: body.toolName, revision: action.revision, resourceUri: uri },
         c.req.raw.signal,
       );
-      if (
-        children.size >= 128 ||
-        [...children.values()].filter(
-          (child) => child.parent === body.instanceToken,
-        ).length >= 8
-      )
-        throw denied();
-      const childToken = randomBytes(32).toString("base64url");
       const sourceReceipt = await sandboxSourceReceipt(
         c,
         {
@@ -588,24 +567,6 @@ routes.post("/app/open", (c) =>
         widgetContent.csp,
         body.projectId,
       );
-      const signal = pluginInstances.signal(body.instanceToken, actor);
-      const lifetime = new AbortController();
-      const dispose = () => {
-        lifetime.abort();
-        children.delete(childToken);
-        signal.removeEventListener("abort", dispose);
-        clearTimeout(timer);
-      };
-      const timer = setTimeout(dispose, 30 * 60_000);
-      timer.unref?.();
-      children.set(childToken, {
-        parent: body.instanceToken,
-        action: body.toolName,
-        revision: action.revision,
-        signal: lifetime.signal,
-        dispose,
-      });
-      signal.addEventListener("abort", dispose, { once: true });
       return c.json({
         childToken,
         resourceUri: uri,
@@ -640,15 +601,15 @@ routes.post("/app/call", (c) =>
       actor,
       c.req.raw.signal,
     );
-    const child = children.get(body.childToken);
-    if (
-      !child ||
-      child.parent !== body.instanceToken ||
-      !document ||
-      !instance.activation.settings
-    )
-      throw denied();
-    const active = AbortSignal.any([c.req.raw.signal, child.signal]);
+    if (!document || !instance.activation.settings) throw denied();
+    // Read at the start: the checks during the call cannot wait on the store.
+    const child = await readPluginSettingsChild(
+      body.childToken,
+      actor,
+      instance,
+      c.req.raw.signal,
+    );
+    const active = c.req.raw.signal;
     const authorization = await bindPluginOperation(
       c,
       instance,
@@ -675,7 +636,6 @@ routes.post("/app/call", (c) =>
       );
       const live = () => {
         active.throwIfAborted();
-        if (children.get(body.childToken) !== child) throw denied();
         pluginInstances.get(body.instanceToken, actor);
       };
       return await invokePluginRequest(c, {
@@ -752,18 +712,18 @@ routes.post("/app/close", (c) =>
       bearer,
       signal: c.req.raw.signal,
     });
+    const cleanup = {
+      actorId,
+      projectId: body.projectId,
+      workspaceId: body.pluginWorkspace.workspaceId,
+      subject,
+    };
     await pluginInstances.getPersistent(
       body.instanceToken,
-      {
-        actorId,
-        projectId: body.projectId,
-        workspaceId: body.pluginWorkspace.workspaceId,
-        subject,
-      },
+      cleanup,
       c.req.raw.signal,
     );
-    const child = children.get(body.childToken);
-    if (child?.parent === body.instanceToken) child.dispose();
+    await closePluginSettingsChild(body.childToken, cleanup, c.req.raw.signal);
     return c.json({ ok: true });
   }),
 );

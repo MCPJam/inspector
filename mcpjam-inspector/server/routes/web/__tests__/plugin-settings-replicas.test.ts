@@ -179,7 +179,7 @@ async function replica(): Promise<Replica> {
   const { default: routes } = await import("../plugin-settings");
   const app = new Hono().route("/settings", routes);
   return {
-    post: (path, body) =>
+    post: async (path, body) =>
       app.request(`/settings/${path}`, {
         method: "POST",
         headers: {
@@ -201,7 +201,12 @@ const scope = {
   projectId: "project",
   pluginWorkspace: { version: 1, workspaceId: "workspace" },
 };
-const plugin = { values: {} as Record<string, unknown>, reads: 0, updates: 0 };
+const plugin = {
+  values: {} as Record<string, unknown>,
+  reads: 0,
+  updates: 0,
+  resets: 0,
+};
 let hold: (() => Promise<void>) | undefined;
 
 async function open(on: Replica) {
@@ -242,6 +247,43 @@ async function leg(
   });
 }
 const read = (on: Replica, token: string) => leg(on, on, token, "read");
+async function openApp(on: Replica, token: string) {
+  const response = await on.post("app/open", {
+    ...scope,
+    instanceToken: token,
+    toolName: "reset",
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()).childToken as string;
+}
+/** A Settings App's tool call: its own `/renew`, then the call. */
+async function callApp(
+  renewOn: Replica,
+  sendOn: Replica,
+  token: string,
+  childToken: string,
+  operationId: string = crypto.randomUUID(),
+) {
+  const params = { name: "reset", arguments: {} };
+  const renew = await renewOn.post("renew", {
+    ...scope,
+    instanceToken: token,
+    operation: {
+      kind: "call",
+      invocationId: operationId,
+      requestId: crypto.randomUUID(),
+      params: { name: "app/call", arguments: { childToken, params } },
+    },
+  });
+  if (renew.status !== 200) return renew;
+  return sendOn.post("app/call", {
+    ...scope,
+    instanceToken: token,
+    childToken,
+    operationId,
+    params,
+  });
+}
 
 beforeEach(() => {
   shared.store = undefined;
@@ -254,6 +296,7 @@ beforeEach(() => {
     values: { ...settingsFixture().values },
     reads: 0,
     updates: 0,
+    resets: 0,
   });
   shared.call = async (params) => {
     if (params.name === "read") {
@@ -269,6 +312,7 @@ beforeEach(() => {
       Object.assign(plugin.values, params.arguments?.set);
       return { content: [], structuredContent: { values: { ...plugin.values } } };
     }
+    if (params.name === "reset") plugin.resets++;
     return { content: [] };
   };
 });
@@ -397,5 +441,64 @@ describe("Settings across replicas", () => {
     expect(refused.status).toBe(403);
     expect((await refused.json()).code).toBe("INSTANCE_STORE_UNAVAILABLE");
     expect(plugin.reads).toBe(1);
+  });
+});
+
+describe("Settings Apps across replicas", () => {
+  it("opens a Settings App on one replica, calls it on another, and replays a retry on a third", async () => {
+    const [a, b, c] = await replicas(3);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    const id = crypto.randomUUID();
+    const called = await callApp(b, b, token, app, id);
+    expect(called.status).toBe(200);
+    const first = await called.json();
+    const retried = await callApp(c, c, token, app, id);
+    expect(retried.status).toBe(200);
+    expect(await retried.json()).toEqual(first);
+    expect(plugin.resets).toBe(1);
+  });
+
+  it("ends a Settings App on every replica once it closes on one", async () => {
+    const [a, b, c] = await replicas(3);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    expect(
+      (await b.post("app/close", { ...scope, instanceToken: token, childToken: app }))
+        .status,
+    ).toBe(200);
+    const refused = await callApp(c, c, token, app);
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("INSTANCE_UNAVAILABLE");
+    expect(plugin.resets).toBe(0);
+  });
+
+  it("ends a Settings App when its Settings closes on another replica", async () => {
+    const [a, b, c] = await replicas(3);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    expect((await b.post("close", { ...scope, instanceToken: token })).status).toBe(200);
+    const refused = await callApp(c, c, token, app);
+    expect(refused.status).toBe(403);
+    expect(plugin.resets).toBe(0);
+  });
+
+  it("refuses a Settings App call after the server changes the App's action", async () => {
+    const [a, b] = await replicas(2);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    shared.tools = (current) => ({
+      ...current,
+      tools: current.tools.map((tool) =>
+        tool.name === "reset" ? { ...tool, description: "Reset changed" } : tool,
+      ),
+    });
+    const refused = await callApp(b, b, token, app);
+    expect(refused.status).toBe(403);
+    expect(plugin.resets).toBe(0);
   });
 });

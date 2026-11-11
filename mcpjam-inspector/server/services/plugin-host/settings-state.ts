@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   createPluginInstanceControlPort,
@@ -9,6 +10,7 @@ import {
   type PluginPreviewInstance,
 } from "./instances.js";
 import { PluginInvocationError } from "./invocation.js";
+import { pluginInvocationOwnerHash, pluginReceiptHash } from "./receipt-store.js";
 import type { PluginSettingsActionBinding } from "./settings-catalog.js";
 import {
   PluginSettingsError,
@@ -16,6 +18,7 @@ import {
   type PluginSettingsDocument,
 } from "../../../shared/plugin-settings.js";
 import {
+  INVOCATION_RECEIPT_TTL_MS,
   PLUGIN_SETTINGS_CONTROL_BYTES,
   type DurablePluginInstanceControl,
 } from "../../../shared/plugin-invocation-receipts.js";
@@ -44,6 +47,8 @@ export type PluginSettingsEnvelope = z.infer<typeof envelopeSchema>;
 
 export type PluginSettingsState = {
   instance: PluginPreviewInstance;
+  /** The row's current lease; a Settings App child never outlives it. */
+  expiresAt: number;
   /** The row's settings version; undefined when the row has no slot. */
   version: number | undefined;
   /** The document the last settings read stored, if one has. */
@@ -90,6 +95,7 @@ export async function readPluginSettingsState(
   const settingsJson = seen.control?.settingsJson;
   return {
     instance,
+    expiresAt: seen.control?.expiresAt ?? 0,
     version,
     document: settingsJson
       ? parsePluginSettingsEnvelope(settingsJson).document
@@ -147,4 +153,97 @@ export async function storePluginSettingsDocument(
       signal,
     );
   }
+}
+
+/** What a Settings App child's row records: which Settings App opened it, and
+ * for which App action at which revision. */
+const childSnapshotSchema = z.strictObject({
+  kind: z.literal("settings-child"),
+  version: z.literal(1),
+  parentInstanceId: z.string(),
+  parentGeneration: z.number().int(),
+  action: z.string(),
+  revision: z.string(),
+  resourceUri: z.string(),
+});
+export type PluginSettingsChild = z.infer<typeof childSnapshotSchema>;
+
+/** Open an App from a Settings App action as a row of its own, so any replica
+ * can serve its calls. The backend admits it only while the Settings App
+ * lives and its stored document lists the action at this revision. */
+export async function issuePluginSettingsChild(
+  token: string,
+  actor: PluginInstanceIdentity,
+  state: Pick<PluginSettingsState, "instance" | "expiresAt">,
+  app: { action: string; revision: string; resourceUri: string },
+  signal: AbortSignal,
+) {
+  const port = createPluginInstanceControlPort(actor);
+  if (!port?.issueChild)
+    throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
+  const childToken = randomBytes(32).toString("base64url");
+  const snapshot: PluginSettingsChild = {
+    kind: "settings-child",
+    version: 1,
+    parentInstanceId: state.instance.owner.instanceId,
+    parentGeneration: state.instance.owner.generation,
+    ...app,
+  };
+  const issued = await port.issueChild(
+    childToken,
+    {
+      // Each open is its own App; a lost reply leaves an unused row that
+      // expires with the Settings App.
+      childAnchorHash: pluginReceiptHash(["settings-child-anchor", childToken]),
+      childParentOwnerHash: pluginInvocationOwnerHash(
+        state.instance.owner,
+        actor.subject,
+      ),
+      childParentScopeHash: pluginReceiptHash(["settings-child-scope", token]),
+      // Apps one Settings App opens for the same action share one quota.
+      childSourceHash: pluginReceiptHash(["settings-child-source", token, app.action]),
+      childBindingHash: pluginReceiptHash(["settings-child-binding", snapshot]),
+      childSettingsAction: { name: app.action, revision: app.revision },
+      ownerHash: pluginReceiptHash(["settings-child-owner", childToken]),
+      snapshotJson: JSON.stringify(snapshot),
+      expiresAt: Math.min(
+        state.expiresAt,
+        Date.now() + INVOCATION_RECEIPT_TTL_MS,
+      ),
+    },
+    signal,
+  );
+  return issued.token;
+}
+
+/** Read a Settings App child for the Settings App that opened it. Its row is
+ * gone once the child or the Settings App closes, expires, or the action
+ * leaves the stored document. */
+export async function readPluginSettingsChild(
+  childToken: string,
+  actor: PluginInstanceIdentity,
+  parent: PluginPreviewInstance,
+  signal: AbortSignal,
+): Promise<PluginSettingsChild> {
+  const port = createPluginInstanceControlPort(actor);
+  if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
+  const control = await port.read(childToken, signal);
+  if (!control) throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+  const child = childSnapshotSchema.parse(JSON.parse(control.snapshotJson));
+  if (
+    child.parentInstanceId !== parent.owner.instanceId ||
+    child.parentGeneration !== parent.owner.generation
+  )
+    throw new PluginInvocationError("INSTANCE_DENIED");
+  return child;
+}
+
+export async function closePluginSettingsChild(
+  childToken: string,
+  actor: PluginInstanceIdentity,
+  signal: AbortSignal,
+) {
+  const port = createPluginInstanceControlPort(actor);
+  if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
+  await port.close(childToken, signal);
 }
