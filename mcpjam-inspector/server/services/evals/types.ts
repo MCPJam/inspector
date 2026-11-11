@@ -31,7 +31,7 @@ export type EvalMatchContext = {
 
 /**
  * When skills are active, a skill tool call (`loadSkill` / file tools, or
- * `listSkills` on the SEP-2640 wrapper) is
+ * `listSkills` in a stored trace) is
  * agent housekeeping, not a task action — so it must not be counted against a
  * turn's tool-call expectations (else a `maxExtraToolCalls: 0` turn fails merely
  * because the model discovered/loaded a skill). Returns the calls the matcher

@@ -54,9 +54,9 @@ import {
 } from "./chat-helpers.js";
 import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
-import { withServerSkills } from "./server-skill-tools.js";
+import { listLiveServerSkills } from "./computers/live-server-skills.js";
 import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
-import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
+import { withLiveServerSkills } from "../services/environments/effective-capabilities.js";
 import type { TurnSkills } from "../services/environments/turn-skills.js";
 import { logger } from "./logger.js";
 import {
@@ -1217,6 +1217,8 @@ export function applySkillToolApproval(
 }
 
 export interface PrepareChatV2Result {
+  /** A selected server serves skills on this live turn, read now rather
+   *  than captured, so the turn cannot record what they were. */
   liveServerSkills?: boolean;
   connectionsAtTurn?: Array<{
     serverId: string;
@@ -1481,19 +1483,55 @@ export async function prepareChatV2(
     tools: Record<string, unknown>;
     systemPromptSection: string;
   };
+  // Skills over MCP (SEP-2640): the connected servers' own skills join a LIVE
+  // plan's set here, once the tool listing above has connected the servers,
+  // since only then can the manager say which of them declare the extension.
+  // A frozen or environment set's server skills were captured with it, so a
+  // live fetch would falsify the claim that the set describes the turn; a
+  // turn with no plan gets no skills at all.
+  const liveServerSkills =
+    skills?.agent?.kind === "live"
+      ? await listLiveServerSkills(
+          mcpClientManager,
+          // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
+          // Slug collision suffixes are assigned over whatever set they are
+          // given, and the playground picker mints its refs from the raw
+          // selection because it cannot see which ids the manager registered.
+          // Handing the filtered list here would shift every suffix behind a
+          // dropped id, so the picker's `acme-2/refunds` would address a
+          // different server than `loadSkill`'s. The listing keeps only the
+          // servers that declare the extension, and an unregistered id does
+          // not, so nothing unknown is contacted either way.
+          (selectedServers ?? []).map((serverId) => ({
+            serverId,
+            // The user-assigned label from OUR registry, never
+            // `serverInfo.name` — a server must not be able to choose the
+            // namespace its skills are addressed under. Falls back to the
+            // server id, which is host-assigned too and therefore still safe;
+            // it just reads worse in a ref.
+            serverLabel: serverLabels?.[serverId] ?? serverId,
+          })),
+        )
+      : undefined;
   const skillPrep: SkillPrep = !skills?.agent
     ? { tools: {}, systemPromptSection: "" }
     : skills.agent.kind === "frozen-names"
       ? getPinnedSkillToolsAndPrompt(skills.agent.skills, modelContextTokens)
-      : getEffectiveSkillToolsAndPrompt(skills.set, {
-          ...(abortSignal ? { signal: abortSignal } : {}),
-          // The discovery listing is budgeted against THIS model's context
-          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-          // model definition; the budget helper falls back to 8,000 chars.
-          // `resolveTurnSkills` plans the same listing, so the plan and this
-          // prompt agree on which skills the model can see.
-          ...modelContextTokens,
-        });
+      : getEffectiveSkillToolsAndPrompt(
+          liveServerSkills
+            ? withLiveServerSkills(skills.set, liveServerSkills)
+            : skills.set,
+          {
+            ...(abortSignal ? { signal: abortSignal } : {}),
+            // The discovery listing is budgeted against THIS model's context
+            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+            // model definition; the budget helper falls back to 8,000 chars.
+            // `resolveTurnSkills` plans the same listing, so the plan and
+            // this prompt agree on which of the plan's skills the model can
+            // see; the servers' skills come after them in it.
+            ...modelContextTokens,
+          },
+        );
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
@@ -1505,75 +1543,13 @@ export async function prepareChatV2(
     },
   );
 
-  // Skills over MCP (SEP-2640), LIVE path. A COMPOSING wrapper, not a fifth
-  // arm of the chain above: the chain is an exclusive choice, but a turn can
-  // legitimately have both a Computer skill and a skill served by a connected
-  // MCP server, and picking one would silently drop the other.
-  //
-  // Only a `live` plan composes it. A frozen or environment set's server skills
-  // were captured with it, so a live fetch would falsify the claim that the
-  // set describes the turn; a turn with no plan gets no skills at all.
-  //
-  // Returns its input UNCHANGED when no selected server declares the
-  // extension, which is what keeps every pre-existing turn byte-identical.
-  // What the wrapper adds unconditionally to a server-origin load is ORIGIN
-  // TAGGING and the manifest digest binding — not a prompt. Its approval
-  // declaration delegates to the base skill tool (`hostWantsApproval` in
-  // `server-skill-tools.ts`), so whether the user is asked follows the switch
-  // like any other tool on the turn.
-  const composeLiveServerSkills = skills?.agent?.kind === "live";
-
-  const serverSkills = !composeLiveServerSkills
-    ? { tools: approvalWrappedSkillTools, buildPromptSection: null }
-    : withServerSkills(approvalWrappedSkillTools, {
-        manager: mcpClientManager,
-        // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
-        // Slug collision suffixes are assigned over whatever set they are
-        // given, and the playground picker mints its refs from the raw
-        // selection because it cannot see which ids the manager registered.
-        // Handing the filtered list here would shift every suffix behind a
-        // dropped id, so the picker's `acme-2/refunds` would address a
-        // different server than `loadSkill`'s. `withServerSkills` filters to
-        // extension-active servers itself, and an unregistered id is not
-        // active, so nothing unknown is contacted either way.
-        servers: (selectedServers ?? []).map((serverId) => ({
-          serverId,
-          // The user-assigned label from OUR registry, never
-          // `serverInfo.name` — a server must not be able to choose the
-          // namespace its skills are addressed under. Falls back to the
-          // server id, which is host-assigned too and therefore still safe;
-          // it just reads worse in a ref.
-          serverLabel: serverLabels?.[serverId] ?? serverId,
-        })),
-      });
   // COPIED, not aliased. The reserved-namespace sweep below deletes from this
-  // map, and in the un-wrapped case it is the caller's own skill set — a
+  // map, and with the switch off it is the skill builder's own object — a
   // function that quietly removed an entry from an object it was handed would
   // be a surprise waiting for whoever hands it the same one twice.
-  const finalSkillTools: Record<string, unknown> = { ...serverSkills.tools };
-  // Level 1 of progressive disclosure: the catalog goes in the prompt so the
-  // model can decide which skill fits, and only bodies are fetched on demand.
-  // Drained here, sharing ONE `skills/list` with any `loadSkill` later in the
-  // same turn.
-  //
-  // The metadata budget is SHARED, not per-catalog, and the OTHER catalog has
-  // first claim on it — deliberately: a project's own skills should not be
-  // pushed out of the prompt by a connected third party's. Both stanzas are always in
-  // context, so giving each the full allowance would let discovery metadata
-  // take twice the share the cap exists to hold it to. The other catalog is
-  // already built, so what it spent comes off the top — measured on the
-  // rendered string, which over-counts by its framing and therefore errs
-  // toward leaving the model MORE room, never less.
-  const serverSkillsPromptSection = serverSkills.buildPromptSection
-    ? await serverSkills.buildPromptSection({
-        ...modelContextTokens,
-        budgetChars: Math.max(
-          0,
-          skillMetadataBudgetChars(modelContextTokens.modelContextTokens) -
-            (skillsPromptSection?.length ?? 0)
-        ),
-      })
-    : "";
+  const finalSkillTools: Record<string, unknown> = {
+    ...approvalWrappedSkillTools,
+  };
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
@@ -1839,17 +1815,14 @@ export async function prepareChatV2(
 
   // 3. System prompt concatenation
   //
-  // The server-skills stanza carries its own catalog and is empty unless a
-  // connected server both declares the extension AND listed something — so it
-  // can be concatenated unconditionally. It used to be gated on a tool-map
-  // identity comparison, which could only answer "a server declared it", not
-  // "there is anything to name".
+  // The skills stanza lists every skill the turn can load, the connected
+  // servers' included, and is empty when there is nothing to name.
   const enhancedSystemPrompt = [
     systemPrompt,
     snapshot.size > 1
       ? "When the account is ambiguous, ask which connected account to use before creating or modifying data."
       : "",
-    `${skillsPromptSection ?? ""}${serverSkillsPromptSection}`,
+    skillsPromptSection,
     buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
     buildDeclaredToolsSystemPrompt(
       [...advertisedPageToolNames, ...Object.keys(pageToolEntries)],
@@ -1897,7 +1870,7 @@ export async function prepareChatV2(
     );
 
   return {
-    liveServerSkills: serverSkills.buildPromptSection !== null,
+    liveServerSkills: liveServerSkills !== undefined,
     ...(selectedGroups
       ? {
           toolConnections,
