@@ -136,11 +136,10 @@ export async function createSavedClientRunner(
     (Array.isArray(config.builtInToolIds) && config.builtInToolIds.length) ||
     (config.skillSelection as { skillIds?: unknown[] } | undefined)?.skillIds
       ?.length ||
-    config.progressiveToolDiscovery ||
     config.requireToolApproval
   ) {
     throw new Error(
-      "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, progressive discovery, or interactive approval). Use a client configured for code-connected MCP servers."
+      "This client requires a runtime feature unsupported by runWithClient (computer/browser, built-in tools, saved skills, or interactive approval). Use a client configured for code-connected MCP servers."
     );
   }
   // The saved selection says whose credentials serve the model. It gets the
@@ -253,6 +252,9 @@ export async function createSavedClientRunner(
         ? { reasoningEffort: savedSettings.reasoningEffort }
         : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
+      // A saved client left on Auto stores no value, and hosted runs of it
+      // apply the Auto thresholds; read it the same way here.
+      progressiveToolDiscoveryWhenUnset: "auto",
       apiKey: input.apiKey,
       mcpClientManager: input.manager,
       mcpjamProject: input.projectId,

@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { TestCaseIterationsTable } from "./test-case-iterations-table";
+import { RunAccountsProvider } from "./run-accounts-context";
 import {
   formatRunCaseLatencyMs,
   groupRunIterationsByTestCase,
@@ -124,14 +125,17 @@ export function RunTestCaseDetailView({
       <RunCaseSummaryStrip iterations={iterations} title={title} />
 
       <div className={cn("min-h-0 flex-1")}>
-        <TestCaseIterationsTable
-          testCase={tableTestCase}
-          iterations={iterations}
-          serverNames={serverNames}
-          label={`All iterations (${iterations.length})`}
-          sortMode="failing-first"
-          {...(chainFor ? { chainFor } : {})}
-        />
+        {/* Each iteration's trace names the account its tool calls ran on. */}
+        <RunAccountsProvider accounts={run.accountsAtRun}>
+          <TestCaseIterationsTable
+            testCase={tableTestCase}
+            iterations={iterations}
+            serverNames={serverNames}
+            label={`All iterations (${iterations.length})`}
+            sortMode="failing-first"
+            {...(chainFor ? { chainFor } : {})}
+          />
+        </RunAccountsProvider>
       </div>
     </div>
   );

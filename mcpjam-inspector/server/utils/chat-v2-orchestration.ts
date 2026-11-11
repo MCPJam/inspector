@@ -93,8 +93,8 @@ import {
   type ProgressiveDiscoveryOptions,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
-import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
+} from "@mcpjam/sdk";
+import { createProgressiveMetaTools } from "@mcpjam/sdk";
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
 // eval runtime can apply it without reaching into this file. Re-exported here

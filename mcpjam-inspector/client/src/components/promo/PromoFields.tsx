@@ -48,28 +48,31 @@ export function PromoFields(props: Props) {
       <p className="text-sm ph-mask" data-sentry-mask>
         Signed in as {context.account.email}
       </p>
-      {fields.map((field) => (
-        <div key={field.id} className="space-y-2">
-          <Label htmlFor={`promo-${field.id}`}>{field.label}</Label>
-          <Input
-            id={`promo-${field.id}`}
-            className="ph-mask"
-            data-sentry-mask
-            placeholder={
-              field.id === "company"
-                ? "Company, Independent or Student"
-                : "Your full name"
-            }
-            autoComplete={field.autoComplete}
-            required
-            maxLength={field.max}
-            value={field.value}
-            onChange={(event) => field.change(event.target.value)}
-          />
-        </div>
-      ))}
+      {context.collectLead &&
+        fields.map((field) => (
+          <div key={field.id} className="space-y-2">
+            <Label htmlFor={`promo-${field.id}`}>{field.label}</Label>
+            <Input
+              id={`promo-${field.id}`}
+              className="ph-mask"
+              data-sentry-mask
+              placeholder={
+                field.id === "company"
+                  ? "Company, Independent or Student"
+                  : "Your full name"
+              }
+              autoComplete={field.autoComplete}
+              required
+              maxLength={field.max}
+              value={field.value}
+              onChange={(event) => field.change(event.target.value)}
+            />
+          </div>
+        ))}
       <div className="space-y-4 border-t border-border pt-4">
-        <PromoCode code={props.code} setCode={props.setCode} />
+        {context.mode !== "shared" && (
+          <PromoCode code={props.code} setCode={props.setCode} />
+        )}
         <PromoDestination context={context} orgId={orgId} setOrgId={setOrgId} />
       </div>
     </>
@@ -157,7 +160,7 @@ function PromoCode({ code, setCode }: Pick<Props, "code" | "setCode">) {
             aria-describedby="promo-code-help"
           />
           <p id="promo-code-help" className="text-sm">
-            On the back of your conference card.
+            On the back of your card.
           </p>
         </>
       ) : (

@@ -343,6 +343,7 @@ const mockUseChatSession = {
   },
   setSelectedModel: vi.fn(),
   seedReasoningEffort: vi.fn(),
+  hasPickedModel: false,
   reasoningEffortLevelsFor: vi.fn(() => ["low", "medium", "high"]),
   setReasoningEffortForModel: vi.fn(),
   // The steady state: the persisted lead id has matched `availableModels`.
@@ -1677,6 +1678,30 @@ describe("PlaygroundMain", () => {
         });
         // …but the compare panes are exactly what the user saved.
         expect(JSON.parse(localStorage.getItem(V2_KEY) ?? "[]")).toEqual(saved);
+        mockUseChatSession.availableModels = [];
+      });
+
+      it("keeps the single chat's picked model on a reload, and seeds again on a host edit", async () => {
+        mockUseChatSession.availableModels = [hostedGpt5, byokGpt5] as any;
+        mockUseChatSession.hasPickedModel = true;
+        previewHost(selection("high"));
+        const { rerender } = render(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSystemPrompt).toHaveBeenCalled();
+        });
+        expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+        expect(mockUseChatSession.seedReasoningEffort).not.toHaveBeenCalled();
+
+        switchHost("cfg-edited", selection("high"));
+        rerender(
+          <PlaygroundMain {...defaultProps} activeProjectId="project-1" />
+        );
+        await waitFor(() => {
+          expect(mockUseChatSession.setSelectedModel).toHaveBeenCalled();
+        });
+        mockUseChatSession.hasPickedModel = false;
         mockUseChatSession.availableModels = [];
       });
 

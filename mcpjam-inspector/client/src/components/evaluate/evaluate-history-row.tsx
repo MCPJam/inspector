@@ -29,14 +29,18 @@ import {
   formatRunHistoryMetric,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
+import { RunAccountCells } from "./run-account-facts";
 
 export function EvaluateHistoryHeader({
   showSuite = false,
   showActions = false,
+  showAccounts = false,
 }: {
   showSuite?: boolean;
   /** Adds the untitled last column that holds each row's delete button. */
   showActions?: boolean;
+  /** Adds "Ran as" and "Accounts", for runs that recorded their accounts. */
+  showAccounts?: boolean;
 }) {
   return (
     <TableHeader>
@@ -49,6 +53,7 @@ export function EvaluateHistoryHeader({
           "Result",
           "Rate",
           "Platform",
+          ...(showAccounts ? ["Ran as", "Accounts"] : []),
           "Commit",
           "Date",
           "Latency",
@@ -159,6 +164,7 @@ export function EvaluateHistoryRow({
   hostNamesById,
   showSuite = false,
   showActions = false,
+  showAccounts = false,
   onDelete,
   onOpen,
   testId,
@@ -173,6 +179,8 @@ export function EvaluateHistoryRow({
   /** Pairs with the header's `showActions`: the row keeps the column even
    *  when this caller may not delete it, so the columns stay aligned. */
   showActions?: boolean;
+  /** Pairs with the header's `showAccounts`. */
+  showAccounts?: boolean;
   /** Absent hides the button (no permission, or nothing to delete). */
   onDelete?: () => void;
   onOpen?: () => void;
@@ -313,6 +321,14 @@ export function EvaluateHistoryRow({
           })}
         </div>
       </TableCell>
+      {showAccounts ? (
+        <RunAccountCells
+          runs={rows.flatMap((row) => {
+            const run = details.get(row._id)?.run;
+            return run ? [run] : [];
+          })}
+        />
+      ) : null}
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
           {commits.map(({ row, git }) => (

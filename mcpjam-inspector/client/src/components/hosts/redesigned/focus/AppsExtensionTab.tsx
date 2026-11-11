@@ -43,6 +43,7 @@ import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   PLUGIN_EXTENSION_CAPABILITY_LABELS,
   pluginExtensionsForHost,
+  readPluginExtensionBehavior,
   setPluginExtensionCapabilityOnDraft,
   setPluginExtensionsEnabledOnDraft,
 } from "@/lib/client-config-v2-plugin-extensions";
@@ -546,7 +547,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 /**
  * Soft-validate a hand-edited `pluginExtensions` block: `enabled` must be a
  * boolean (otherwise the block is dropped), and only known extension keys
- * with boolean values survive.
+ * with boolean values, and known behavior fields with known values, survive.
  */
 function parsePluginExtensionsDoc(
   value: unknown
@@ -561,9 +562,12 @@ function parsePluginExtensionsDoc(
       if (typeof entry === "boolean") capabilities[key] = entry;
     }
   }
-  return Object.keys(capabilities).length > 0
-    ? { enabled: value.enabled, capabilities }
-    : { enabled: value.enabled };
+  const behavior = readPluginExtensionBehavior(value.behavior);
+  return {
+    ...(Object.keys(behavior).length > 0 ? { behavior } : {}),
+    ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+    enabled: value.enabled,
+  };
 }
 
 export function applyJsonToDraft(
@@ -2113,8 +2117,9 @@ function WidgetToolResultsCard({
 /**
  * `mcpProfile.apps.pluginExtensions` — which OpenAI plugin extensions this
  * client offers. Defaults follow the client style (on for ChatGPT and Codex,
- * off for everything else). Turning one extension off removes only that
- * extension; the master switch turns them all off.
+ * Display modes only for Claude, off for everything else). Turning one
+ * extension off removes only that extension; the master switch turns them
+ * all off.
  */
 function PluginExtensionsCard({
   draft,

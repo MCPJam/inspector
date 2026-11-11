@@ -8,6 +8,12 @@ import * as apiContext from "@/lib/apis/web/context";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useSandboxView } from "../../../../../../widget-react/src/use-sandbox-view";
 
+const logged = vi.hoisted(() => ({ event: vi.fn() }));
+vi.mock("../extension-log", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../extension-log")>()),
+  logExtensionEvent: logged.event,
+}));
+
 const host = {
   environment: {
     draftHostContext: {
@@ -29,6 +35,8 @@ const host = {
   },
 } as unknown as WidgetHost;
 const handle = { appToolsEnabled: true } as ThreadAppHandle;
+const OPENAI_RULES = { hints: "openai/ui", start: "hint-first" } as const;
+const CLAUDE_RULES = { hints: "ui", start: "inline-then-move" } as const;
 
 describe("owned App display contract", () => {
   it.each(["global", "thread"] as const)(
@@ -111,26 +119,32 @@ describe("who decides an owned App's display mode", () => {
     const owned = createThreadAppHost(host, handle, "server", "model");
     expect(owned.surface.fixedDisplayMode).toBeUndefined();
   });
-  it("applies OpenAI's display-mode rules only when the Display modes toggle is on", () => {
+  it("applies the client's display behavior only when the Display modes toggle is on", () => {
     for (const kind of ["model", "global", "thread"] as const) {
       expect(
         createThreadAppHost(host, handle, "server", kind).surface
-          .openAIDisplayModes,
+          .displayBehavior,
       ).toBeUndefined();
-      expect(
-        createThreadAppHost(host, handle, "server", kind, {
-          openAIDisplayModes: true,
-        }).surface.openAIDisplayModes,
-      ).toBe(true);
+      for (const displayBehavior of [OPENAI_RULES, CLAUDE_RULES])
+        expect(
+          createThreadAppHost(host, handle, "server", kind, {
+            displayBehavior,
+          }).surface.displayBehavior,
+        ).toBe(displayBehavior);
     }
   });
-  it("lets the rules pick a model App's starting mode instead of forcing inline", () => {
+  it("lets OpenAI's rules pick a model App's starting mode instead of forcing inline", () => {
     const ruled = createThreadAppHost(host, handle, "server", "model", {
-      openAIDisplayModes: true,
+      displayBehavior: OPENAI_RULES,
     });
     expect(ruled.environment.draftHostContext?.displayMode).toBe("pip");
     const plain = createThreadAppHost(host, handle, "server", "model");
     expect(plain.environment.draftHostContext?.displayMode).toBe("inline");
+    // Claude's rule starts every App inline.
+    const claude = createThreadAppHost(host, handle, "server", "model", {
+      displayBehavior: CLAUDE_RULES,
+    });
+    expect(claude.environment.draftHostContext?.displayMode).toBe("inline");
   });
 });
 
@@ -351,4 +365,49 @@ describe("owned App document admission", () => {
       await expect(owned.services.authFetch("/unscoped")).rejects.toThrow("unavailable");
     },
   );
+});
+
+describe("a _meta.ui.preferredDisplayMode that isn't a mode", () => {
+  const ignoring = () =>
+    ({
+      ...handle,
+      toolTitle: "Weather",
+      resourceUri: "ui://weather",
+      widgetContent: {
+        html: "<p>weather</p>",
+        ignoredPreferredDisplayMode: '"sidebar"',
+      },
+    }) as ThreadAppHandle;
+  const request = {
+    serverId: "server",
+    resourceUri: "ui://weather",
+  } as Parameters<WidgetHost["services"]["fetchWidgetContent"]>[0];
+
+  it("is one display-mode warning in Logs for a client that reads _meta.ui", async () => {
+    logged.event.mockClear();
+    const owned = createThreadAppHost(host, ignoring(), "server", "model", {
+      displayBehavior: CLAUDE_RULES,
+    });
+    await owned.services.fetchWidgetContent(request);
+    await owned.services.fetchWidgetContent(request);
+    expect(logged.event).toHaveBeenCalledTimes(1);
+    expect(logged.event).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "server",
+        label: "display-mode",
+        level: "warning",
+        message:
+          'Weather\'s resource sets _meta.ui.preferredDisplayMode to "sidebar", which MCPJam ignores. Set it to "fullscreen" or "inline".',
+      }),
+    );
+  });
+
+  it("stays out of Logs for clients that read openai/ui", async () => {
+    logged.event.mockClear();
+    for (const displayBehavior of [OPENAI_RULES, undefined])
+      await createThreadAppHost(host, ignoring(), "server", "model", {
+        displayBehavior,
+      }).services.fetchWidgetContent(request);
+    expect(logged.event).not.toHaveBeenCalled();
+  });
 });

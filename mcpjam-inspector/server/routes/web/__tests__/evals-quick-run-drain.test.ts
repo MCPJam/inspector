@@ -42,6 +42,13 @@ vi.mock("../auth.js", async () => ({
   createAuthorizedManager: async () => ({ manager: { disconnectAllServers } }),
 }));
 
+vi.mock("../../../services/evals/suite-account-choices.js", () => ({
+  loadSuiteConnectionIdSets: async () => undefined,
+}));
+vi.mock("../../../services/evals/route-helpers.js", async () => ({
+  ...(await vi.importActual<object>("../../../services/evals/route-helpers.js")),
+  createConvexClient: () => ({}),
+}));
 vi.mock("../../../utils/v1-convex-token.js", async () => ({
   ...(await vi.importActual<object>("../../../utils/v1-convex-token.js")),
   getConvexBearerForRequest: async () => "token",

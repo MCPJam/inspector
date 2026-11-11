@@ -3,7 +3,7 @@ import { localHarnessCapabilities } from "../../services/evals/runner-capabiliti
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
-import { listBaseServers } from "../../utils/mcp-connections.js";
+import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
 import { suppressedSuiteStandardCheckIdsSchema } from "@mcpjam/sdk/contract";
 import { githubExecutionPolicy } from "../../services/github-checks/credential-policy.js";
 import { ConvexHttpClient } from "convex/browser";
@@ -2791,6 +2791,7 @@ export async function prepareEvalRun(
     // and an approval that never arrives is reported to the caller as the
     // backend refusing a run they did approve.
     ...(importApprovals?.length ? { importApprovals } : {}),
+    accountsAtRun: managerAccountsAtRun(clientManager),
     // Same rule, same reason. Spread apart rather than as one `launchContext`
     // object because the recorder's parameter list is the mutation's argument
     // list, and the backend takes the two as siblings of `source`.
