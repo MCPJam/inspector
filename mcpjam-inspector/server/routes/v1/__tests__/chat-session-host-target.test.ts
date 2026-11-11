@@ -157,10 +157,17 @@ vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
 }));
 
-vi.mock("../../../services/environments/effective-capabilities.js", () => ({
-  resolveEffectiveCapabilities: () => undefined,
-  buildLiveEffectiveCapabilities: () => undefined,
-}));
+// The real set builders: every turn plans its skills from one. Only an
+// environment's set is stubbed out.
+vi.mock(
+  "../../../services/environments/effective-capabilities.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../services/environments/effective-capabilities.js")
+    >()),
+    resolveEffectiveCapabilities: () => undefined,
+  }),
+);
 
 vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},
