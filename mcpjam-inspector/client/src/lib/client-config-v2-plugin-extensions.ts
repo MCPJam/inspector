@@ -11,14 +11,18 @@ import { pluginRuntimeProfile } from "@/shared/plugin-runtime-profile";
 
 import {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
+  pluginExtensionStyleDefaults,
   pluginExtensionsDefaultEnabled,
+  readPluginExtensionBehavior,
   readPluginExtensionsSetting,
+  resolvePluginExtensionBehavior,
   resolvePluginExtensions,
   type HostConfigPluginExtensionsV1,
   type PluginExtensionCapabilities,
   type PluginExtensionCapabilityKey,
   type ResolvedPluginExtensions,
 } from "@mcpjam/sdk/host-config/internal";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   isMcpProfileEmpty,
   type HostConfigInputV2,
@@ -28,6 +32,7 @@ import {
 export {
   PLUGIN_EXTENSION_CAPABILITY_KEYS,
   pluginExtensionsDefaultEnabled,
+  readPluginExtensionBehavior,
   resolvePluginExtensions,
 };
 export type {
@@ -53,6 +58,28 @@ export function pluginExtensionsForHost(
   hostConfig: PluginExtensionsHostConfig | null | undefined,
 ): ResolvedPluginExtensions {
   return resolvePluginExtensions(hostConfig ?? undefined);
+}
+
+const DISPLAY_BEHAVIORS = new Map<string, DisplayBehavior>();
+
+/**
+ * How this client's Apps choose a display mode (the renderer's
+ * `displayBehavior`): undefined while the Display modes extension is off.
+ * One frozen object per combination, so it stays the same across renders.
+ */
+export function displayBehaviorForHost(
+  hostConfig: PluginExtensionsHostConfig | null | undefined,
+): DisplayBehavior | undefined {
+  if (!pluginExtensionsForHost(hostConfig).capabilities.displayModes)
+    return undefined;
+  const { displayHints: hints, displayStart: start } =
+    resolvePluginExtensionBehavior(hostConfig ?? undefined);
+  const key = `${hints} ${start}`;
+  const known = DISPLAY_BEHAVIORS.get(key);
+  if (known) return known;
+  const behavior: DisplayBehavior = Object.freeze({ hints, start });
+  DISPLAY_BEHAVIORS.set(key, behavior);
+  return behavior;
 }
 
 /** App behavior follows the MCP client profile, independently of its agent loop. */
@@ -162,33 +189,53 @@ function withPluginExtensions(
 }
 
 /**
+ * The setting to store: empty `capabilities` and `behavior` are left out,
+ * and the saved `behavior` rides along on every write.
+ */
+function pluginExtensionsSetting(
+  enabled: boolean,
+  capabilities: Partial<Record<PluginExtensionCapabilityKey, boolean>>,
+  behavior: HostConfigPluginExtensionsV1["behavior"],
+): HostConfigPluginExtensionsV1 {
+  return {
+    ...(behavior && Object.keys(behavior).length > 0 ? { behavior } : {}),
+    ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
+    enabled,
+  };
+}
+
+/**
  * Master switch. Turning it off clears per-extension choices (they mean
- * nothing while everything is off). Off on a style whose default is already
- * off collapses to "not set", so a Cursor client that never opted in keeps
- * its original config hash.
+ * nothing while everything is off), so turning it back on restores the
+ * client style's defaults. Off on a style whose default is already off, with
+ * no saved behavior, collapses to "not set", so a Cursor client that never
+ * opted in keeps its original config hash.
  */
 export function setPluginExtensionsEnabledOnDraft(
   prev: HostConfigInputV2,
   enabled: boolean,
 ): HostConfigInputV2 {
   const current = readPluginExtensionsSetting(prev.mcpProfile);
+  const behavior = current?.behavior;
   if (!enabled && !pluginExtensionsDefaultEnabled(prev)) {
-    return withPluginExtensions(prev, undefined);
+    if (!behavior || Object.keys(behavior).length === 0)
+      return withPluginExtensions(prev, undefined);
   }
-  if (!enabled) return withPluginExtensions(prev, { enabled: false });
-  const capabilities = current?.capabilities ?? {};
   return withPluginExtensions(
     prev,
-    Object.keys(capabilities).length > 0
-      ? { enabled: true, capabilities }
-      : { enabled: true },
+    pluginExtensionsSetting(
+      enabled,
+      enabled ? (current?.capabilities ?? {}) : {},
+      behavior,
+    ),
   );
 }
 
 /**
- * One extension. Only switched-off extensions are stored; switching one on
- * removes its entry. Switching an extension on while the master switch is
- * off also turns the master switch on, with every other extension off.
+ * One extension. Only choices that differ from the client style's default
+ * are stored: switching an extension to its default removes its entry.
+ * Switching an extension on while the master switch is off also turns the
+ * master switch on, with every other extension off.
  */
 export function setPluginExtensionCapabilityOnDraft(
   prev: HostConfigInputV2,
@@ -197,25 +244,23 @@ export function setPluginExtensionCapabilityOnDraft(
 ): HostConfigInputV2 {
   const resolved = resolvePluginExtensions(prev);
   const current = readPluginExtensionsSetting(prev.mcpProfile);
+  const defaults = pluginExtensionStyleDefaults(prev).capabilities;
   let capabilities: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
   if (!resolved.enabled) {
     if (!enabled) return prev;
     capabilities = Object.fromEntries(
-      PLUGIN_EXTENSION_CAPABILITY_KEYS.filter((k) => k !== key).map((k) => [
-        k,
-        false,
-      ]),
+      PLUGIN_EXTENSION_CAPABILITY_KEYS.filter(
+        (k) => (k === key) !== defaults[k],
+      ).map((k) => [k, k === key]),
     );
   } else {
     capabilities = { ...(current?.capabilities ?? {}) };
-    if (enabled) delete capabilities[key];
-    else capabilities[key] = false;
+    if (enabled === defaults[key]) delete capabilities[key];
+    else capabilities[key] = enabled;
   }
   return withPluginExtensions(
     prev,
-    Object.keys(capabilities).length > 0
-      ? { enabled: true, capabilities }
-      : { enabled: true },
+    pluginExtensionsSetting(true, capabilities, current?.behavior),
   );
 }
 
