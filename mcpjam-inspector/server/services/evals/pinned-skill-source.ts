@@ -10,6 +10,7 @@
  *     file");
  *   - the harness shape downloads those same files, here in preparation rather
  *     than per iteration.
+ * A run stopped here reports its skills-delivered event as `failed`.
  *
  * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
  * `[]` (the harness selects its pinned source by presence, and `undefined`
@@ -25,6 +26,10 @@ import {
   type PinnedSkillSource,
   type TurnSkills,
 } from "../environments/turn-skills.js";
+import {
+  reportSkillsDelivered,
+  reportSkillsUndelivered,
+} from "../environments/skills-delivered-event.js";
 import { runPinnedSkillsToHarnessArtifacts } from "./run-pinned-harness-skills.js";
 import {
   assertPinnedSkillFilesReachable,
@@ -53,28 +58,33 @@ export async function buildPinnedSkillSource(args: {
   /** Display names index-aligned with `effectiveServerIds`; may be empty. */
   serverNames?: readonly string[];
 }): Promise<BuiltPinnedSkillSource> {
-  assertPinnedSkillFilesReachable(args.pins);
-  const pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
-    args.pins,
-  );
-  return {
-    pinnedHarnessSkills,
-    pinnedSkillSource: {
-      kind: "pins",
-      pins: args.pins,
-      set: buildRunCapabilitySet({
+  try {
+    assertPinnedSkillFilesReachable(args.pins);
+    const pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
+      args.pins,
+    );
+    return {
+      pinnedHarnessSkills,
+      pinnedSkillSource: {
+        kind: "pins",
         pins: args.pins,
-        // Pinned files are read from the bytes downloaded above, not from the
-        // prepared links, which a long run can outlast.
-        downloadedPins: pinnedHarnessSkills,
-        pluginVersions: args.pluginVersions,
-        pluginServers: args.pluginServers,
-        effectiveServerIds: args.effectiveServerIds,
-        ...(args.serverNames ? { serverNames: args.serverNames } : {}),
-      }),
-      harnessSkills: pinnedHarnessSkills,
-    },
-  };
+        set: buildRunCapabilitySet({
+          pins: args.pins,
+          // Pinned files are read from the bytes downloaded above, not from the
+          // prepared links, which a long run can outlast.
+          downloadedPins: pinnedHarnessSkills,
+          pluginVersions: args.pluginVersions,
+          pluginServers: args.pluginServers,
+          effectiveServerIds: args.effectiveServerIds,
+          ...(args.serverNames ? { serverNames: args.serverNames } : {}),
+        }),
+        harnessSkills: pinnedHarnessSkills,
+      },
+    };
+  } catch (error) {
+    reportSkillsUndelivered("eval", args.pins.length);
+    throw error;
+  }
 }
 
 /**
@@ -83,9 +93,14 @@ export async function buildPinnedSkillSource(args: {
  * harness iteration can never be handed its run's pins as agent tools as well
  * as on its box.
  *
- * Rows only for a run that froze its skills: an iteration without frozen
- * skills (a quick run without an environment) has nothing to record, and an
- * empty list would claim it ran with none.
+ * A run that froze its skills records them on every turn, as `[]` when it
+ * froze none (a suite without skills, or the without-skills arm of an A/B
+ * run): those turns did run with none. An iteration with no frozen set to go
+ * by (a quick run without an environment) records nothing, since `[]` would
+ * claim it ran with none.
+ *
+ * The plan is also the iteration's skills-delivered event. Until the box
+ * writer reports what it wrote, a harness iteration reports its plan.
  */
 export function iterationTurnSkills(args: {
   pinnedSkillSource?: PinnedSkillSource;
@@ -100,6 +115,7 @@ export function iterationTurnSkills(args: {
       ? { modelContextTokens: args.modelContextTokens }
       : {}),
   });
+  reportSkillsDelivered("eval", skills);
   return args.pinnedSkillSource
     ? { skills, skillsAtTurn: toSkillsAtTurn(skills) }
     : { skills };

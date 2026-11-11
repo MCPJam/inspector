@@ -8,10 +8,17 @@
  * `resolveTurnSkills` itself.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import type { PluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  runtimeSkills,
+  type ResolvedEnvironmentRuntime,
+} from "../../services/environments/runtime.js";
 import { buildPinnedSkillSource } from "../../services/evals/pinned-skill-source.js";
-import type {
-  RunPinnedPluginVersion,
-  RunPinnedSkill,
+import {
+  pinnedSkillMeta,
+  type RunPinnedPluginVersion,
+  type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
 import type { TurnSkills } from "../../services/environments/turn-skills.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
@@ -22,6 +29,7 @@ import {
 } from "../../utils/harness/box-skills-writer.js";
 import { materializePinnedSkillFiles } from "../../utils/harness/pinned-harness-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { harnessTurnSkills } from "../../utils/harness/skill-delivery.js";
 import { BOX_HOME, fakeSkillBox, type FakeSkillBox } from "./fake-skill-box.js";
 
@@ -144,19 +152,17 @@ export function preparedRunSkills(pins: RunPinnedSkill[] = evalRunPins()) {
 
 const SKILL_TOOLS = ["loadSkill", "listSkillFiles", "readSkillFile"];
 
-/**
- * What MCPJam's agent is handed for a plan, read off the turn `prepareChatV2`
- * builds: the skill refs its prompt lists and the skill tools it gets. With
- * `harness`, MCPJam's side of a harness turn.
- */
-export async function agentReceives(
+interface AgentProbeOptions {
+  modelContextTokens?: number;
+  harness?: string;
+}
+
+/** The turn `prepareChatV2` builds for a plan, with no servers connected. */
+function prepareAgentTurn(
   skills: TurnSkills,
-  {
-    modelContextTokens,
-    harness,
-  }: { modelContextTokens?: number; harness?: string } = {},
-): Promise<{ listed: string[]; tools: string[] }> {
-  const prepared = await prepareChatV2({
+  { modelContextTokens, harness }: AgentProbeOptions,
+) {
+  return prepareChatV2({
     mcpClientManager: {
       getToolsForAiSdk: async () => ({}),
       listTools: async () => ({ tools: [] }),
@@ -179,6 +185,18 @@ export async function agentReceives(
     ...(harness ? { harness: harness as never } : {}),
     skills,
   });
+}
+
+/**
+ * What MCPJam's agent is handed for a plan, read off the turn `prepareChatV2`
+ * builds: the skill refs its prompt lists and the skill tools it gets. With
+ * `harness`, MCPJam's side of a harness turn.
+ */
+export async function agentReceives(
+  skills: TurnSkills,
+  options: AgentProbeOptions = {},
+): Promise<{ listed: string[]; tools: string[] }> {
+  const prepared = await prepareAgentTurn(skills, options);
   const section =
     prepared.enhancedSystemPrompt.split("## Skills")[1]?.split("\n## ")[0] ??
     "";
@@ -190,6 +208,27 @@ export async function agentReceives(
       SKILL_TOOLS.includes(name),
     ),
   };
+}
+
+/**
+ * What MCPJam's agent gets back when its model asks `loadSkill` for `ref` on
+ * the turn `prepareChatV2` builds for a plan: the skill's text, or the tool's
+ * error.
+ */
+export async function agentLoads(
+  skills: TurnSkills,
+  ref: string,
+  options: AgentProbeOptions = {},
+): Promise<string> {
+  const { allTools } = await prepareAgentTurn(skills, options);
+  const output = await allTools.loadSkill?.execute?.(
+    { name: ref },
+    { toolCallId: "probe", messages: [], context: {} },
+  );
+  if (typeof output !== "string") {
+    throw new Error(`The agent's loadSkill returned no text for ${ref}.`);
+  }
+  return output;
 }
 
 /**
@@ -227,15 +266,15 @@ export async function writeTurnToBox(
 }
 
 /**
- * The skill folders a harness finds on its box after a run's turn: every
- * folder in any skills folder the runtime reads. The box first ran Claude Code
+ * A harness turn's box: what the writer reports and every skill folder the
+ * runtime then finds in the folders it reads. The box first ran Claude Code
  * and Codex turns with a skill of their own, so a folder another runtime left
  * behind shows up here unless the writer cleared it.
  */
 export async function boxReceives(
   harnessId: string,
-  pinnedHarnessSkills: PinnedSkillArtifact[],
-): Promise<string[]> {
+  source: Parameters<typeof harnessTurnSkills>[0],
+) {
   const box = fakeSkillBox();
   const leftBehind: PinnedSkillArtifact = {
     skillId: "sk_left_behind",
@@ -247,9 +286,126 @@ export async function boxReceives(
   for (const runtime of ["claude-code", "codex"]) {
     await writeTurnToBox(runtime, { pinnedHarnessSkills: [leftBehind] }, box);
   }
-  await writeTurnToBox(harnessId, { pinnedHarnessSkills }, box);
+  const written = await writeTurnToBox(harnessId, source, box);
   const { readFolders } = getHarnessAdapter(harnessId).skills;
-  return readFolders.flatMap((folder) =>
-    box.skillFolders(`${BOX_HOME}/${folder}`),
-  );
+  return {
+    written,
+    folders: readFolders.flatMap((folder) =>
+      box.skillFolders(`${BOX_HOME}/${folder}`),
+    ),
+  };
+}
+
+/**
+ * The eval fixture's environment as `resolveEnvironmentForRuntime` returns it,
+ * before a run freezes it into {@link evalRunPins}, with the plugin origins
+ * `fetchPluginRuntimeAttribution` reads for it.
+ */
+export function evalEnvironment(): {
+  spec: ResolvedEnvironmentRuntime;
+  attribution: PluginRuntimeAttribution;
+} {
+  const server = serverPin();
+  const skills = [authoredPin(), pluginPin()].map((pin) => ({
+    skillId: pin.skillId ?? pin.name,
+    name: pin.name,
+    description: pin.description,
+    content: pin.content,
+    aggregateHash: pin.aggregateHash ?? pin.contentHash,
+    channels: pin.channels ?? [],
+    provenance: pinnedSkillMeta(pin),
+    files: (pin.files ?? []).map(({ path, size, url }) => ({
+      path,
+      size,
+      url,
+    })),
+  }));
+  const acme = EVAL_PLUGIN_VERSIONS[0]!;
+  return {
+    spec: {
+      environmentRef: { environmentId: "env_eval", name: "Eval", revision: 1 },
+      host: { hostId: "host_eval", runtimeConfig: {} },
+      servers: {
+        effectiveServerIds: ["srv_docs"],
+        connectable: [
+          { serverId: "srv_docs", name: "Docs", source: "host_or_group" },
+        ],
+      },
+      skills,
+      serverSkills: [
+        {
+          serverSkillId: "ss_docs_search",
+          versionId: "ssv_docs_search_2",
+          serverId: "srv_docs",
+          serverSlug: "docs",
+          serverLabel: "Docs",
+          ref: "docs/search",
+          skillUri: "skill://docs/search",
+          name: server.name,
+          description: server.description,
+          content: server.content,
+          contentSha256: server.contentHash,
+          versionHash: server.contentHash,
+          versionNumber: 2,
+          capturedAt: 1_700_000_000_000,
+          provenance: pinnedSkillMeta(server),
+          files: [],
+        },
+      ],
+      pluginVersions: EVAL_PLUGIN_VERSIONS,
+    },
+    attribution: {
+      serverOrigins: new Map(),
+      skillOrigins: new Map([
+        [
+          "sk_acme_summarize",
+          {
+            modelRef: "acme/summarize",
+            plugin: { ...acme, bundleHash: acme.bundleHash ?? null },
+          },
+        ],
+      ]),
+      unattributedVersionIds: [],
+    },
+  };
+}
+
+/** A skill only its author sees, as a harness turn reads the caller's
+ *  project pool (`listSkillsForRuntime`). */
+export function personalRuntimeSkill(): RuntimeSkill {
+  return {
+    skillId: "sk_my_notes",
+    name: "my-notes",
+    description: "My own notes.",
+    content: "# My notes",
+    aggregateHash: "agg-my-notes",
+  };
+}
+
+/** The same skill in the caller's live pool, as a turn's plan takes it. */
+export function personalSkill(): RuntimeStandaloneSkill {
+  const skill = personalRuntimeSkill();
+  return { ...skill, ref: skill.name, files: [], channels: [] };
+}
+
+/**
+ * A live environment turn's skill source, as a harness turn reads it: the
+ * environment's skills, or in live-plus mode a client's `pool` beside them.
+ */
+export function liveTurnSource(
+  spec: Pick<ResolvedEnvironmentRuntime, "skills">,
+  pool?: RuntimeSkill[],
+): Parameters<typeof harnessTurnSkills>[0] {
+  return {
+    runtimeSkillsOverride: runtimeSkills(spec),
+    ...(pool
+      ? {
+          includeProjectSkills: true,
+          project: {
+            skills: async () => ({ ok: true as const, skills: pool }),
+            files: async () => ({ ok: true as const, files: [] }),
+          },
+        }
+      : {}),
+  };
 }

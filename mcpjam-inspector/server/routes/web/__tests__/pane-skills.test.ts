@@ -193,4 +193,147 @@ describe("per-pane Skills preview", () => {
       (await preview(named, { pluginVersionIds: ["unrelated"] })).status,
     ).toBe(400);
   });
+  it("marks a skill MCPJam's agent loads but leaves out of its prompt's list", async () => {
+    // Twelve long descriptions overrun the skill list's budget for a model of
+    // unknown size, which is all a preview can assume.
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      ...skill(`many${index}`, `skill-${index}`, ["environment"]),
+      description: "x".repeat(900),
+    }));
+    serve({
+      ...spec,
+      host: { hostId: "h1", runtimeConfig: {} },
+      skills: many,
+      serverSkills: [],
+    });
+    const data = await (await preview(named)).json();
+    expect(data.deliveredCount).toBe(12);
+    const unlisted = data.skills.filter(
+      (row: { omittedFromCatalog?: boolean }) => row.omittedFromCatalog,
+    );
+    expect(unlisted.length).toBeGreaterThan(0);
+    expect(
+      unlisted.every((row: { reason: unknown }) => row.reason === null),
+    ).toBe(true);
+    expect(data.skills[0]).not.toHaveProperty("omittedFromCatalog");
+  });
+  it("says where each skill comes from and which revision a turn loads", async () => {
+    serve({
+      ...spec,
+      skills: [
+        {
+          ...ordinary,
+          provenance: { projectSkillVersionNumber: 3, versionPinned: true },
+        },
+        { ...plugin, provenance: { projectSkillVersionNumber: 1 } },
+      ],
+      serverSkills: [
+        { ...spec.serverSkills[0], serverLabel: "Search", versionNumber: 2 },
+      ],
+    });
+    const response = await preview(named);
+    expect(response.status).toBe(200);
+    expect((await response.json()).skills).toEqual([
+      expect.objectContaining({
+        origin: { kind: "library" },
+        version: { number: 3, pinned: true },
+      }),
+      expect.objectContaining({
+        origin: { kind: "plugin" },
+        version: { number: 1, pinned: false },
+      }),
+      expect.objectContaining({
+        origin: { kind: "mcp-server", server: "Search" },
+        version: { number: 2 },
+      }),
+    ]);
+  });
+});
+
+describe("suite Skills preview", () => {
+  const suiteUrl = "/api/web/environments/skills-preview/suite";
+  const suitePreview = (body: object) => {
+    const { app, token } = createWebTestApp();
+    return postJson(app, suiteUrl, { projectId: "project1", ...body }, token);
+  };
+  const loops: Record<string, string> = {
+    env1: "claude-code",
+    env2: "cursor",
+  };
+
+  beforeEach(() => {
+    process.env.CONVEX_URL = "https://example.convex.cloud";
+    vi.resetAllMocks();
+    serve();
+    const answer = query.getMockImplementation()!;
+    query.mockImplementation(
+      async (ref: string, args: Record<string, unknown>) => {
+        if (ref !== "projectEnvironments:resolveEnvironmentForRuntime")
+          return answer(ref, args);
+        const agentLoop = loops[String(args.environmentId)];
+        if (!agentLoop) {
+          throw new ConvexError({ code: "ENV_NOT_FOUND", message: "Gone" });
+        }
+        return {
+          ...spec,
+          host: { hostId: "h1", runtimeConfig: { agentLoop } },
+        };
+      },
+    );
+  });
+
+  it("reads each environment as an eval run of it delivers, one entry each", async () => {
+    const response = await suitePreview({
+      environmentIds: ["env1", "env2", "env1", "gone"],
+    });
+    expect(response.status).toBe(200);
+    const { environments } = await response.json();
+    expect(
+      environments.map(
+        (entry: { environmentId: string }) => entry.environmentId,
+      ),
+    ).toEqual(["env1", "env2", "gone"]);
+    // A run copies a captured server skill onto a harness's box, which the
+    // Compare pane's live turn on the same environment leaves off.
+    expect(environments[0]).toMatchObject({
+      ok: true,
+      preview: { deliveredCount: 3 },
+    });
+    expect(environments[0].preview.skills[2]).toMatchObject({
+      channels: ["mcp-server"],
+      reason: null,
+    });
+    expect(environments[1].preview).toMatchObject({ deliveredCount: 0 });
+    expect(environments[2]).toEqual({
+      environmentId: "gone",
+      ok: false,
+      error: { status: 404, message: "Environment not found" },
+    });
+    expect(JSON.stringify(environments)).not.toMatch(
+      /private instructions|signed-url|private.txt/,
+    );
+    expect(query).not.toHaveBeenCalledWith(
+      "projectSkills:listSkills",
+      expect.anything(),
+    );
+  });
+
+  it("requires sign-in and refuses an empty list or one over the cap", async () => {
+    expect((await suitePreview({ environmentIds: [] })).status).toBe(400);
+    expect(
+      (
+        await suitePreview({
+          environmentIds: Array.from({ length: 51 }, (_, i) => `env${i}`),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await postJson(createWebTestApp().app, suiteUrl, {
+          projectId: "project1",
+          environmentIds: ["env1"],
+        })
+      ).status,
+    ).toBe(401);
+  });
 });
