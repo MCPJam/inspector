@@ -447,8 +447,21 @@ export class PinnedSkillIntegrityError extends Error {
 }
 
 /**
+ * What names a captured MCP-server skill's pin besides its hash. A skill URI
+ * is unique only within its server, so two servers can serve one skill byte
+ * for byte, and their pins then share a `contentHash`.
+ */
+export interface PinnedServerSkill {
+  serverId: string;
+  skillUri: string;
+}
+
+/**
  * Fetch ONE pinned skill's complete runtime artifact for an env-based target:
- * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`.
+ * `GET /journey-execution/runs/skill?runId&projectId&targetId&contentHash`,
+ * plus `serverId` and `skillUri` for a captured MCP-server skill, which pick
+ * that server's pin among pins sharing the hash. A backend that predates them
+ * ignores them and serves the first pin with the hash.
  * Same bearer/authorization as the attempt/heartbeat routes (project member +
  * run launcher). The response mirrors P0.2's complete artifact envelope
  * ({@link PinnedSkillArtifact}) — the shipped backend serves the SKILL.md-only
@@ -469,6 +482,7 @@ export async function fetchPinnedSkill(
     runId: string;
     targetId: string;
     contentHash: string;
+    serverSkill?: PinnedServerSkill;
     signal?: AbortSignal;
   },
 ): Promise<PinnedSkillArtifact> {
@@ -478,6 +492,10 @@ export async function fetchPinnedSkill(
     targetId: args.targetId,
     contentHash: args.contentHash,
   });
+  if (args.serverSkill) {
+    query.set("serverId", args.serverSkill.serverId);
+    query.set("skillUri", args.serverSkill.skillUri);
+  }
   const data = await getJson<{
     ok?: boolean;
     skill?: PinnedSkillArtifact;

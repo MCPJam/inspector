@@ -2454,7 +2454,8 @@ async function runJourneyFanOut(
  *     violation — the fetch route requires it).
  *
  * Bodies are content-addressed and cached process-wide (`pinned-skill-cache`),
- * with in-flight coalescing across targets and bounded retries.
+ * a captured server skill's by its server and URI too, with in-flight
+ * coalescing across targets and bounded retries.
  */
 async function resolveTargetPinnedSkills(args: {
   target: PinnedHostExecutionSpec;
@@ -2548,9 +2549,16 @@ async function resolveTargetPinnedSkills(args: {
 
   const fetched: FetchedTargetSkill[] = [];
   for (const entry of meta) {
+    // A captured server skill is named by its server and URI as well: another
+    // server's identical skill shares its hash.
+    const serverSkill =
+      entry.serverId !== undefined && entry.skillUri !== undefined
+        ? { serverId: entry.serverId, skillUri: entry.skillUri }
+        : undefined;
     const artifact = await resolvePinnedSkillCached({
       projectId,
       contentHash: entry.contentHash,
+      ...(serverSkill ? { serverSkill } : {}),
       // Caller-agnostic: the shared fetch keeps only its own request timeout, so
       // this run's cancellation can't fail another run coalesced on the same
       // body. THIS caller's `signal` detaches its own await below instead.
@@ -2560,6 +2568,7 @@ async function resolveTargetPinnedSkills(args: {
           runId,
           targetId,
           contentHash: entry.contentHash,
+          ...(serverSkill ? { serverSkill } : {}),
         }),
       ...(signal ? { signal } : {}),
     });

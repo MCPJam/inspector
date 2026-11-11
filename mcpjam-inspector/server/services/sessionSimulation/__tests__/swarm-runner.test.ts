@@ -70,6 +70,7 @@ import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
+import type { SyntheticHostSessionAdapter } from "../runner.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 import { logger } from "../../../utils/logger.js";
 
@@ -1797,6 +1798,78 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
         (skill: any) => skill.ref,
       ),
     ).toEqual(["acme/summarize"]);
+  });
+
+  it("gives each target its own server's pin when two servers serve the same skill", async () => {
+    // Byte-identical skills from two servers share a hash; their server and
+    // URI are what tell the pins apart.
+    const capture = (serverId: string, serverLabel: string, slug: string) => ({
+      serverSkillId: `ss_${serverId}`,
+      serverSkillVersionId: `ssv_${serverId}`,
+      serverId,
+      serverLabel,
+      skillUri: "skill://search",
+      serverSkillVersionNumber: 1,
+      serverSkillCapturedAt: 1_700_000_000_000,
+      name: "search",
+      description: "Search the docs.",
+      contentHash: "hash-search",
+      modelRef: `${slug}/search`,
+      sharing: "project" as const,
+      channels: ["mcp-server" as const],
+    });
+    fetchPinnedSkillMock.mockImplementation(async () => ({
+      name: "search",
+      description: "Search the docs.",
+      content: "# Search",
+      contentHash: "hash-search",
+    }));
+    const targetA = {
+      ...ENV_TARGET_A,
+      pinnedSkills: [capture("srv_a", "Docs A", "docs-a")],
+    };
+    const targetB = {
+      ...ENV_TARGET_A,
+      targetId: "target-b",
+      environmentRef: { environmentId: "envB", name: "Env B", revision: 1 },
+      pinnedSkills: [capture("srv_b", "Docs B", "docs-b")],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [targetA, targetB], sessionsPerTarget: 1 }),
+    );
+
+    // One fetch per server, each naming its own: the cache never hands one
+    // server's pin to the other target.
+    expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(2);
+    for (const [targetId, serverId] of [
+      ["target-a", "srv_a"],
+      ["target-b", "srv_b"],
+    ]) {
+      expect(fetchPinnedSkillMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          targetId,
+          contentHash: "hash-search",
+          serverSkill: { serverId, skillUri: "skill://search" },
+        }),
+      );
+    }
+    const servedTo = (environmentId: string) =>
+      runSyntheticHostSessionMock.mock.calls
+        .map((c) => c[0] as SyntheticHostSessionAdapter)
+        .find(
+          (adapter) =>
+            adapter.chatSessionId === `synth_run-1_env_${environmentId}_0`,
+        )
+        ?.runtime.pinnedSkillSource?.set.serverSkills.map((skill) => [
+          skill.serverId,
+          skill.serverLabel,
+          skill.ref,
+        ]);
+    expect(servedTo("envA")).toEqual([["srv_a", "Docs A", "docs-a/search"]]);
+    expect(servedTo("envB")).toEqual([["srv_b", "Docs B", "docs-b/search"]]);
   });
 
   it("caches pinned bodies by (projectId, contentHash): one fetch even across two targets pinning the same hash", async () => {
