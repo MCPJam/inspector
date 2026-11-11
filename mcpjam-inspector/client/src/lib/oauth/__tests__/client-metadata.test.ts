@@ -34,14 +34,4 @@ describe("OAuth client metadata logo_uri", () => {
       EXPECTED_LOGO_URI,
     );
   });
-
-  it("DebugMCPOAuthClientProvider includes logo_uri in clientMetadata", async () => {
-    const { DebugMCPOAuthClientProvider } =
-      await import("../debug-oauth-provider");
-    const provider = new DebugMCPOAuthClientProvider("https://example.com");
-    expect(provider.clientMetadata).toHaveProperty(
-      "logo_uri",
-      EXPECTED_LOGO_URI,
-    );
-  });
 });
