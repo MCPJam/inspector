@@ -42,6 +42,14 @@ import {
 import type { ModelDefinition } from "@/shared/types";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
 import {
+  useComparePaneDisplayStore,
+  type PaneTheme,
+} from "@/stores/compare-pane-display-store";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { extractHostTheme } from "@/lib/client-config";
+import { ComparePaneDisplay, paneDeviceLabel } from "./compare-pane-display";
+import {
   ComparePaneSettings,
   ComparePaneSummary,
   type ComparePaneLane,
@@ -119,6 +127,14 @@ export function useComparePaneControls({
   const [openPaneId, setOpenPaneId] = useState<string | null>(null);
   const publishPanes = useComparePaneStore((state) => state.publishPanes);
   const selectPane = useComparePaneStore((state) => state.selectPane);
+  const paneDisplays = useComparePaneDisplayStore((state) => state.byPane);
+  const setPaneDisplay = useComparePaneDisplayStore(
+    (state) => state.setPaneDisplay,
+  );
+  const sharedDevice = useUIPlaygroundStore((state) => state.deviceType);
+  const sharedTheme = usePreferencesStore(
+    (state) => state.themeMode,
+  ) as PaneTheme;
 
   // A client pane that narrowed the chat's servers keeps only those still in
   // it. An environment pane's servers are the environment's, narrowed on the
@@ -441,6 +457,12 @@ export function useComparePaneControls({
           }
         />
       );
+      const display = paneDisplays[pane.paneId];
+      const device = display?.deviceType ?? sharedDevice;
+      const theme =
+        display?.theme ??
+        (hostConfig ? extractHostTheme(hostConfig.hostContext) : undefined) ??
+        sharedTheme;
       return (lane) => ({
         actions: (
           <ComparePaneSettings
@@ -481,6 +503,17 @@ export function useComparePaneControls({
               restorePanes(movePane(panes, pane.paneId, offset))
             }
           >
+            <ComparePaneDisplay
+              label={label}
+              device={device}
+              theme={theme}
+              onDeviceChange={(deviceType) =>
+                setPaneDisplay(pane.paneId, { deviceType })
+              }
+              onThemeChange={(next) =>
+                setPaneDisplay(pane.paneId, { theme: next })
+              }
+            />
             {sections?.({ pane, lane })}
           </ComparePaneSettings>
         ),
@@ -493,6 +526,7 @@ export function useComparePaneControls({
                 : []),
               ...(effort ? [`${reasoningEffortLabel(effort)} effort`] : []),
               serverCount(enabledServers),
+              ...(device !== "fill" ? [paneDeviceLabel(device)] : []),
             ]}
           />
         ) : undefined,
@@ -502,6 +536,7 @@ export function useComparePaneControls({
       environmentServers,
       openPaneId,
       orgConfig,
+      paneDisplays,
       paneEnvironments,
       panes,
       paneServerNames,
@@ -512,9 +547,12 @@ export function useComparePaneControls({
       selectPane,
       serverIdByName,
       setEnvironmentServer,
+      setPaneDisplay,
       setPaneTarget,
       setServer,
+      sharedDevice,
       sharedServers,
+      sharedTheme,
       targets,
     ],
   );

@@ -12,6 +12,7 @@ import { resolveEnvironmentPaneColumn } from "@/lib/compare-environment-columns"
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
 import type { ComparePaneTargetOption } from "../compare-pane-target-select";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 import {
   useComparePaneControls,
   type ComparePaneSections,
@@ -215,6 +216,37 @@ describe("Compare pane settings", () => {
     expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("codex", {
       serverIds: null,
     });
+  });
+
+  it("sets Device and Theme for one pane only", async () => {
+    useComparePaneDisplayStore.setState({ byPane: {} });
+    const user = userEvent.setup();
+    render(<Harness paneId="codex" spies={spies()} />);
+    expect(screen.getByTestId("compare-pane-summary")).not.toHaveTextContent(
+      "Phone",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Pane settings for codex" }),
+    );
+    expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Fill");
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    expect(useComparePaneDisplayStore.getState().byPane).toEqual({
+      codex: { theme: "dark" },
+    });
+    act(() =>
+      useComparePaneDisplayStore
+        .getState()
+        .setPaneDisplay("codex", { deviceType: "mobile" }),
+    );
+    expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Phone");
+    expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
+      "Phone",
+    );
+    expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    useComparePaneDisplayStore.setState({ byPane: {} });
   });
 
   it("leaves a pane that follows the chat on the chat's servers", () => {

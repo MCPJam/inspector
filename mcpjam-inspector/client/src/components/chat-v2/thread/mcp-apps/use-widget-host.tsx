@@ -38,6 +38,7 @@ import { useScenarioHostCapabilitiesOverride } from "@/contexts/scenario-client-
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { usePaneDisplay } from "@/contexts/pane-display-context";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
@@ -232,9 +233,12 @@ export function useWidgetHost(): WidgetHostImpl {
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const scenarioHostStyle = useScenarioHostStyle();
   const ambientHostTheme = useScenarioHostTheme();
-  const scenarioHostTheme = savedClient
-    ? extractHostTheme(savedClient.hostContext) ?? null
-    : ambientHostTheme;
+  const paneDisplay = usePaneDisplay();
+  const scenarioHostTheme =
+    paneDisplay?.theme ??
+    (savedClient
+      ? extractHostTheme(savedClient.hostContext) ?? null
+      : ambientHostTheme);
   const hostCapabilitiesOverride = useScenarioHostCapabilitiesOverride();
   const activeMcpProfile = useActiveMcpProfile();
   // The profile is bound into the resolvers below (3d-iii) — it no longer leaves
@@ -252,7 +256,8 @@ export function useWidgetHost(): WidgetHostImpl {
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const sharedDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const playgroundDeviceType = paneDisplay?.deviceType ?? sharedDeviceType;
 
   const environment = useMemo<WidgetHostEnvironmentInputs>(
     () => ({
