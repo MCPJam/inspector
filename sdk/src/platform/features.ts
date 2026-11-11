@@ -290,6 +290,13 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
+  // Not hidden by `multi-account-connections`: a first account needs no
+  // feature, and the backend refuses a second one where the feature is off.
+  list_server_accounts: null,
+  get_server_account: null,
+  upload_server_account_tokens: null,
+  update_server_account: null,
+  delete_server_account: null,
   delete_eval_suite: null,
   set_eval_suite_environments: null,
   list_eval_cases: null,

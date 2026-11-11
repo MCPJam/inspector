@@ -150,6 +150,10 @@ const PLAIN_TOOLS = [
   "list_server_revisions",
   "get_server_revision",
   "diff_server_revisions",
+  // Server accounts: metadata reads and the delete, no widget view.
+  "list_server_accounts",
+  "get_server_account",
+  "delete_server_account",
   "call_server_tool",
   // The render verdict is structured evidence (tree, console errors, blocked
   // requests). A widget PANEL here would be a second, drifting copy of the
@@ -455,6 +459,9 @@ describe("platform tool registration", () => {
       "list_server_revisions",
       "get_server_revision",
       "diff_server_revisions",
+      "list_server_accounts",
+      "get_server_account",
+      "delete_server_account",
       "call_server_tool",
       "render_server_widget",
       "list_server_prompts",
@@ -723,6 +730,28 @@ describe("platform tool registration", () => {
     }
     for (const name of ["list_server_tools", "call_server_tool", "run_eval_case", "publish_study", "send_feedback"]) {
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
+    }
+
+    // Server accounts: the reads stay inside MCPJam; the delete asks the
+    // token's issuer to revoke it, and a second delete answers not found.
+    for (const name of ["list_server_accounts", "get_server_account"]) {
+      expect(annotationsOf(name), name).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
+    }
+    expect(annotationsOf("delete_server_account")).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    for (const name of [
+      "upload_server_account_tokens",
+      "update_server_account",
+    ]) {
+      expect(names.has(name), name).toBe(false);
+      expect(EXCLUDED_FROM_CATALOG[name], name).toMatch(/REST and the SDK/);
     }
 
     // A conformance start costs no MCPJam credits, but the server's saved

@@ -371,6 +371,19 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Same as create_secret: a rotation carries the new plaintext as an argument, with the same exposure before any approval.",
   delete_secret:
     "Revokes a credential permanently; the Secrets section names the environments that stop delivering it before you do.",
+  // SERVER ACCOUNTS. The server's Authorization tab already lists them with
+  // their controls; the upload carries a token as an argument, like
+  // `create_secret` above.
+  list_server_accounts:
+    "The server's Authorization tab lists its accounts with each one's state and controls, which an id list in chat leaves out. Available on REST, the SDK and MCP.",
+  get_server_account:
+    "Paired with the list above; the Authorization tab shows the same account next to its controls.",
+  upload_server_account_tokens:
+    "The access token is an argument, so it would reach model context and this chat's transcript before anything could approve it. Upload through the API or SDK, where you choose where the token comes from.",
+  update_server_account:
+    "Choosing the default decides which account runs with no saved account choice sign in as; the Authorization tab shows every account before you choose.",
+  delete_server_account:
+    "Deletes an account and asks its issuer to revoke the token; the Authorization tab shows which account is the default before you do.",
   // TRACE DESTINATIONS. All ten, and the reason is one sentence with two
   // halves. The two credential writes carry vendor headers as ARGUMENTS, with
   // exactly the exposure `create_secret` above describes. The other eight are
