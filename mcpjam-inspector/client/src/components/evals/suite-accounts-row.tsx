@@ -13,6 +13,7 @@ import { useSuiteAccounts } from "@/hooks/use-suite-accounts";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
   checkedAccountIds,
+  choosesAccounts,
   SET_SUITE_ACCOUNT_SELECTION_MUTATION,
   type SuiteAccountsServer,
   type SuiteAccountsView,
@@ -26,13 +27,17 @@ const setSuiteAccountSelection = makeFunctionReference<
   unknown
 >(SET_SUITE_ACCOUNT_SELECTION_MUTATION);
 
+/** Marks a server whose accounts are the project's, as the Authorization tab says. */
+const SHARED_TAG = "Shared with the project";
+
 export const SUITE_ACCOUNTS_HINT =
   "Each run uses the accounts of the person who starts it. A schedule uses its owner's accounts, and an API or CLI run uses the key owner's.";
 
 /**
- * Suite settings → Accounts: which of the person's own accounts this suite
- * runs with, per server, beside the project's fixed connections and the
- * accounts each schedule owner's runs use.
+ * Suite settings → Accounts: which accounts this suite runs with for the
+ * person, per server (their own, or on a shared server the project's), beside
+ * the project's fixed connections and the accounts each schedule owner's runs
+ * use.
  *
  * The choice belongs to the person, not the suite, so it is not part of the
  * settings draft: each checkbox saves right away, like "Where it runs".
@@ -105,10 +110,10 @@ export function SuiteAccountGroups({
   // A save in flight shows its result at once; the query then confirms it,
   // and a failure falls back to what the query says.
   const [pending, setPending] = useState<Record<string, string[]>>({});
-  const own = view.servers.filter((server) => server.mode === "accounts");
-  const project = view.servers.filter(
-    (server) => server.mode === "shared" || server.mode === "xaa",
-  );
+  // A shared server's project accounts are chosen per person like their own,
+  // so they sit with them rather than with the fixed connections.
+  const own = view.servers.filter(choosesAccounts);
+  const project = view.servers.filter((server) => server.mode === "xaa");
   if (!own.length && !project.length && !view.scheduleOwners.length) {
     return (
       <p className="text-xs text-muted-foreground">
@@ -150,8 +155,9 @@ export function SuiteAccountGroups({
             <AccountServerRow
               key={server.serverId}
               name={serverName(server.serverId)}
+              tag={server.mode === "shared" ? SHARED_TAG : undefined}
             >
-              <OwnAccounts
+              <AccountChoices
                 server={server}
                 serverName={serverName(server.serverId)}
                 checked={pending[server.serverId] ?? checkedAccountIds(server)}
@@ -173,16 +179,12 @@ export function SuiteAccountGroups({
               key={server.serverId}
               name={serverName(server.serverId)}
             >
-              {server.mode === "shared" ? (
-                <span>Shared with the project</span>
-              ) : (
-                <span>
-                  {server.xaaSubject ? `${server.xaaSubject} ` : null}
-                  <span className="text-muted-foreground">
-                    Simulated identity
-                  </span>
+              <span>
+                {server.xaaSubject ? `${server.xaaSubject} ` : null}
+                <span className="text-muted-foreground">
+                  Simulated identity
                 </span>
-              )}
+              </span>
             </AccountServerRow>
           ))}
         </AccountGroup>
@@ -211,7 +213,7 @@ export function SuiteAccountGroups({
   );
 }
 
-function OwnAccounts({
+function AccountChoices({
   server,
   serverName,
   checked,
@@ -235,9 +237,11 @@ function OwnAccounts({
       ? [server.accounts[0].connectionId]
       : [];
   if (!server.accounts.length) {
+    // Only a project admin connects a project account, on the server's page.
+    const shared = server.mode === "shared";
     return (
       <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
-        No account connected.
+        {shared ? "No project account connected." : "No account connected."}
         <Button
           type="button"
           variant="link"
@@ -245,7 +249,7 @@ function OwnAccounts({
           className="h-auto p-0 text-xs"
           onClick={() => navigateApp(buildProjectServerPath(server.serverId))}
         >
-          Connect one
+          {shared ? "Open server" : "Connect one"}
         </Button>
       </span>
     );
@@ -401,9 +405,11 @@ function AccountGroup({
 
 function AccountServerRow({
   name,
+  tag,
   children,
 }: {
   name: string;
+  tag?: string;
   children: ReactNode;
 }) {
   return (
@@ -412,7 +418,20 @@ function AccountServerRow({
         scope="row"
         className="break-words px-4 py-2.5 align-top font-medium text-foreground"
       >
-        {name}
+        {tag ? (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {/* The space keeps the name and the tag apart when read aloud. */}
+            {name}{" "}
+            <Badge
+              variant="outline"
+              className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+            >
+              {tag}
+            </Badge>
+          </span>
+        ) : (
+          name
+        )}
       </th>
       <td className="px-4 py-2.5 align-top text-foreground">{children}</td>
     </tr>

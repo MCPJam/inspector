@@ -23,7 +23,7 @@ import type { EvalSuite } from "../evals/types";
 export type AccountPreflight = {
   /** Chosen accounts the launch would refuse: removed, or needing reconnect. */
   accountProblems?: AccountProblem[];
-  /** The person's own accounts the run will use. */
+  /** The accounts the run will use for the person, on servers they choose for. */
   runsAs?: RunsAsEntry[];
   /** Both, for only the servers these refs (ids or names) name. */
   accountsFor?: (

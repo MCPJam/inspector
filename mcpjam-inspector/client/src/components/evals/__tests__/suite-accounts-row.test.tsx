@@ -41,6 +41,7 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => ({
       { _id: "srv-asana", name: "Asana" },
       { _id: "srv-linear", name: "Linear" },
       { _id: "srv-okta", name: "Okta app" },
+      { _id: "srv-tracker", name: "Task tracker" },
     ],
   }),
 }));
@@ -246,10 +247,9 @@ describe("SuiteAccountsRow", () => {
     });
   });
 
-  it("shows the project's shared and XAA connections as fixed rows", () => {
+  it("shows the project's XAA connection as a fixed row", () => {
     state.view = view({
       servers: [
-        { serverId: "srv-linear", mode: "shared", accounts: [], chosen: null },
         {
           serverId: "srv-okta",
           mode: "xaa",
@@ -264,14 +264,104 @@ describe("SuiteAccountsRow", () => {
     const project = screen.getByTestId("suite-accounts-project");
     expect(within(project).getByText("Project connections")).toBeInTheDocument();
     expect(
-      within(project).getByRole("row", { name: /Linear Shared with the project/ }),
-    ).toBeInTheDocument();
-    expect(
       within(project).getByRole("row", {
         name: /Okta app alice-test Simulated identity/,
       }),
     ).toBeInTheDocument();
     expect(within(project).queryByRole("checkbox")).toBeNull();
+  });
+
+  describe("a server shared with the project", () => {
+    const first = {
+      connectionId: "conn-ta1",
+      name: "test-automation-1",
+      isDefault: true,
+      needsReauth: false,
+    };
+    const second = {
+      connectionId: "conn-ta2",
+      name: "test-automation-2",
+      isDefault: false,
+      needsReauth: true,
+    };
+
+    it("lists its project accounts as choices beside the person's own", () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [first, second],
+            chosen: ["conn-ta2"],
+          },
+        ],
+      });
+      renderRow();
+      expect(screen.queryByTestId("suite-accounts-project")).toBeNull();
+      const mine = screen.getByTestId("suite-accounts-mine");
+      expect(
+        within(mine).getByRole("rowheader", {
+          name: "Task tracker Shared with the project",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(mine).getByRole("checkbox", {
+          name: "Task tracker test-automation-1",
+        }),
+      ).not.toBeChecked();
+      expect(
+        within(mine).getByRole("checkbox", {
+          name: "Task tracker test-automation-2",
+        }),
+      ).toBeChecked();
+      expect(within(mine).getByText("Needs reconnect")).toBeInTheDocument();
+    });
+
+    it("saves the project accounts a person chooses", async () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [first, { ...second, needsReauth: false }],
+            chosen: null,
+          },
+        ],
+      });
+      const user = userEvent.setup();
+      renderRow();
+      await user.click(
+        screen.getByRole("checkbox", {
+          name: "Task tracker test-automation-2",
+        }),
+      );
+      expect(state.save).toHaveBeenLastCalledWith({
+        suiteId: "suite-1",
+        serverId: "srv-tracker",
+        connectionIds: ["conn-ta1", "conn-ta2"],
+      });
+    });
+
+    it("says when the project has no account to choose yet", () => {
+      state.view = view({
+        servers: [
+          {
+            serverId: "srv-tracker",
+            mode: "shared",
+            accounts: [],
+            chosen: null,
+          },
+        ],
+      });
+      renderRow();
+      const mine = screen.getByTestId("suite-accounts-mine");
+      expect(
+        within(mine).getByText("No project account connected."),
+      ).toBeInTheDocument();
+      expect(
+        within(mine).getByRole("button", { name: "Open server" }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("lists a schedule owner's accounts read-only", () => {

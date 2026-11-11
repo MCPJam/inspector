@@ -9,8 +9,11 @@ export function useHostedOAuthConnections(
   serverId?: string | null,
   enabled = true,
 ) {
-  const [connections, setConnections] = useState<OAuthConnection[]>([]);
-  const [shared, setShared] = useState(true);
+  const [list, setList] = useState<{
+    key: string;
+    connections: OAuthConnection[];
+    shared: boolean;
+  }>();
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
   const refetch = useCallback(() => setRevision((n) => n + 1), []);
@@ -20,15 +23,11 @@ export function useHostedOAuthConnections(
   }, [refetch]);
   useEffect(() => {
     let cancelled = false;
-    setConnections([]);
     setError(undefined);
     if (enabled && projectId && serverId)
       void listOAuthConnections(projectId, serverId)
         .then((rows) => {
-          if (!cancelled) {
-            setConnections(rows.connections);
-            setShared(rows.shared);
-          }
+          if (!cancelled) setList({ key: `${projectId}/${serverId}`, ...rows });
         })
         .catch((e) => {
           if (!cancelled)
@@ -40,5 +39,17 @@ export function useHostedOAuthConnections(
       cancelled = true;
     };
   }, [projectId, serverId, enabled, revision]);
-  return { connections, shared, error, refetch };
+  // A refetch keeps the current rows on screen until the new ones land, so
+  // nothing that depends on them blinks; another server's rows never show.
+  const current =
+    enabled && list?.key === `${projectId}/${serverId}` ? list : undefined;
+  return {
+    connections: current?.connections ?? [],
+    // Until the list answers, a server counts as shared, which hides adding
+    // an account that the server's mode may not allow.
+    shared: current?.shared ?? true,
+    loaded: current !== undefined,
+    error,
+    refetch,
+  };
 }

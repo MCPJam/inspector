@@ -61,7 +61,13 @@ Open the row menu (⋯) to act on an account:
 
 To add another account, click **Connect another account** at the bottom of the list. Up to 8 accounts per server.
 
-Shared OAuth servers remain single-account and do not show the **Connect another account** button.
+#### Sharing a server's sign-in with the project
+
+Where your organization has account choice for eval suites, a project admin can turn on **Share sign-in with the project** at the top of an OAuth server's **Authorization** tab. A shared server signs in with project accounts instead of each member's own: admins connect up to 8, and every member's hosted runs, evals included, can act as them. Nobody can get a project account's token out, so no local app, browser or sandbox receives it.
+
+Members see a shared server's accounts read-only. Admins manage them like their own accounts: **Reconnect** reauthorizes that account in place, so suites that chose it keep it. In a suite's settings, each member chooses which project accounts their own runs use, under **Runs as you**.
+
+Turning sharing off deletes the project accounts and asks the sign-in provider to revoke their tokens; members' runs use their own accounts again. Either change clears the account choices saved in suites for that server.
 
 When two or more accounts are live, chat exposes a required `link_id` selector so you (or the model) can choose which credential each tool call uses. The selector is named to match what ChatGPT injects, so servers have one reserved argument name to avoid rather than one per host. If a tool's own schema already declares `link_id`, chat exposes per-account variants of that tool instead of merging them. Changing the default mid-conversation does not redirect tool calls that are already in flight.
 
