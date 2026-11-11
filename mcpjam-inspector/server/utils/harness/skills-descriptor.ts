@@ -49,7 +49,9 @@ export interface HarnessSkillsDescriptor {
   /**
    * `box-files`: a frozen run copies each captured MCP-server skill to the box
    * as a plain skill folder, and a live turn leaves them off.
-   * `harness-tools`: MCPJam's skill tools serve them.
+   * `harness-tools`: MCPJam's skill tools serve them, from the turn's set with
+   * the connected servers' skills added (`listLiveServerSkills`, then
+   * `withLiveServerSkills`).
    */
   serverSkills: "box-files" | "harness-tools";
 }
