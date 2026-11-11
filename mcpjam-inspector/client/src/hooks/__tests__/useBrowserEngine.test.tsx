@@ -173,6 +173,13 @@ it("environment mode shows Cloud and does not overwrite the device preference", 
   rerender();
   expect(result.current.engine).toBe("local");
 });
+it("does not force a guest's browser into the cloud for a previously selected environment", () => {
+  state.environment = true;
+  state.member = false;
+  const { result } = renderHook(() => useBrowserEngine("p"));
+  expect(result.current.engine).toBe("local");
+  expect(result.current.environmentMode).toBe(false);
+});
 it("resuming Cloud affects only that conversation and leaves new chats local", () => {
   saveBrowserEngine("p", "local");
   useActiveChatSessionStore.setState({

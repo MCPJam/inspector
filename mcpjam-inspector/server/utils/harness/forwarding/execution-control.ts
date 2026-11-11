@@ -67,6 +67,8 @@ const prepared = z.object({
   state,
   replayed: z.boolean(),
   requireToolApproval: z.boolean(),
+  /** The approval the user gave at the runtime's own prompt was bound to this request. */
+  approved: z.boolean().optional(),
 });
 const payload = z
   .object({
@@ -181,6 +183,27 @@ export function createExecutionControl(args: {
       ),
     turnApprovals: (turnId: string) =>
       post({ kind: "turn_approvals", turnId }, z.array(receipt), "owner"),
+    /** The user approved this ACP call at the runtime's prompt: bind one request to it. */
+    recordApproval: (
+      turnId: string,
+      acpToolCallId: string,
+      toolName: string,
+      argsDigest: string,
+    ) =>
+      post(
+        { kind: "record_approval", turnId, acpToolCallId, toolName, argsDigest },
+        z.union([
+          z.object({ recorded: z.literal(true) }),
+          z.object({ recorded: z.literal(false), reason: z.string() }),
+        ]),
+        "owner",
+      ),
+    voidApprovals: (turnId: string, acpToolCallId?: string) =>
+      post(
+        { kind: "void_approvals", turnId, ...(acpToolCallId ? { acpToolCallId } : {}) },
+        z.object({ voided: z.number() }),
+        "owner",
+      ),
     nativeResult: (turnId: string, nativeToolCallId: string) =>
       post(
         { kind: "native_result", turnId, nativeToolCallId },
@@ -201,6 +224,12 @@ export function createExecutionControl(args: {
       ),
     prepare: (intent: ExecutionIntent) =>
       post({ kind: "prepare", ...intent }, prepared),
+    /** The client cancelled this request: it never runs, even if it arrives later. */
+    cancel: (turnId: string, rpcId: string | number) =>
+      post(
+        { kind: "cancel", turnId, rpcId },
+        z.object({ cancelled: z.number() }),
+      ),
     read: (executionId: string) => post({ kind: "read", executionId }, receipt),
     requestApproval: (
       executionId: string,

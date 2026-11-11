@@ -266,6 +266,7 @@ describe("executeSteps + hosted handlers — widget follow-ups after a pinned st
     expect(vi.mocked(driveHostedEvalTurn)).toHaveBeenCalledOnce();
     expect(vi.mocked(driveHostedEvalTurn)).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "hi from widget", promptIndex: 0 }),
+      "widget-follow-up",
     );
   });
 

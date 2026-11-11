@@ -63,7 +63,7 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function parseBrowserAction(
+export function parseBrowserAction(
   raw: unknown,
 ): { ok: true; action: BrowserActionSpec } | { ok: false; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {

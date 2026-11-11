@@ -1,3 +1,4 @@
+import { resolveE2BPortEndpoint } from "./e2b-port-endpoint.js";
 import {
   attachRunningSandbox,
   attachBrokerPreparedSandbox,
@@ -297,8 +298,13 @@ export function createE2BHarnessSandboxProvider(
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
-    if (!sessionEnv) return env;
-    return { ...sessionEnv, ...(env ?? {}) };
+    // E2B installs its egress proxy CA in the system trust store. Node uses
+    // its bundled roots, so Node-based CLIs need that CA explicitly too.
+    return {
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      ...sessionEnv,
+      ...env,
+    };
   };
 
   // Connect to the host's persistent computer and build a session bound to it.
@@ -352,10 +358,22 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run(harnessPnpmGuardCommand(), {
-        timeoutMs: commandTimeoutMs,
-        ...(connectSignal ? { signal: connectSignal } : {}),
-      });
+      // Both checks must finish before exposing the session. Socket cleanup
+      // targets only the model proxy and is independent of the package guard.
+      const preparation = await Promise.allSettled([
+        sandbox.commands.run(harnessPnpmGuardCommand(), {
+          timeoutMs: commandTimeoutMs,
+          ...(connectSignal ? { signal: connectSignal } : {}),
+        }),
+        ...(resuming
+          ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
+          : []),
+      ]);
+      // Do not release the turn while a failed sibling still has socket
+      // cleanup running: it could close the next owner's connections.
+      for (const result of preparation) {
+        if (result.status === "rejected") throw result.reason;
+      }
     } catch (err) {
       if (err instanceof CommandExitError) {
         const output = (err.stderr || err.stdout || "").trim();
@@ -369,13 +387,6 @@ export function createE2BHarnessSandboxProvider(
         );
       }
       throw err;
-    }
-    if (resuming) {
-      await closeModelProxyConnections(
-        sandbox,
-        opts.proxyUrl?.(),
-        connectSignal,
-      );
     }
 
     // Housekeeping, so best-effort: a failure here never blocks the spawn.
@@ -601,22 +612,18 @@ export function createE2BHarnessSandboxProvider(
 
       // ── infra surface ─────────────────────────────────────────────────
       ports,
-      // The claude-code adapter leases its bridge port from `ports` and calls
-      // this to open its WebSocket. E2B's `getHost` URL is directly reachable,
-      // so no scoped headers are needed on the endpoint. IMPORTANT for the
-      // broker model: this URL is the in-sandbox bridge, NOT a model endpoint —
-      // model traffic leaves the box through the E2B egress transform that
-      // injects the broker lease outside the VM (see harness-model-broker.ts).
-      getPortEndpoint: async ({ port, protocol }) => {
-        const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-        return { url: `${scheme}://${host}` };
-      },
-      // Deprecated in the stable contract but still required; same resolution.
+      // Embed routes ports through its configured client proxy; hosted E2B
+      // continues to use the sandbox's public hostname.
+      getPortEndpoint: async ({ port, protocol }) =>
+        resolveE2BPortEndpoint(sandbox, port, protocol),
       getPortUrl: async ({ port, protocol }) => {
-        const host = sandbox.getHost(port);
-        const scheme = protocol === "ws" ? "wss" : (protocol ?? "https");
-        return `${scheme}://${host}`;
+        const endpoint = resolveE2BPortEndpoint(sandbox, port, protocol);
+        if (endpoint.headers) {
+          throw new Error(
+            "This E2B endpoint requires routing headers. Use getPortEndpoint.",
+          );
+        }
+        return endpoint.url;
       },
       // Never tear down a shared host computer: the control plane owns its
       // lifecycle (provision / wake / hibernate / delete). Ending a harness

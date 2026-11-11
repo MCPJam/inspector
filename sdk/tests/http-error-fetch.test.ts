@@ -381,6 +381,30 @@ describe("Streamable HTTP error diagnostics", () => {
     expect(error.requiredScope).toBe("tools:write");
   });
 
+  it.each([301, 302, 303, 307, 308])(
+    "leaves a %s on a protected call for the transport's redirect follower",
+    async (status) => {
+      for (const method of ["tools/call", "resources/read", "prompts/get"]) {
+        const response = new Response('{"redirect": "/mcp"}', {
+          status,
+          headers: { location: "/mcp", "content-type": "application/json" },
+        });
+        const wrapped = wrapFetchForHttpErrors(
+          vi.fn(async () => response) as typeof fetch,
+          false
+        );
+        expect(
+          await wrapped(url, {
+            method: "POST",
+            redirect: "manual",
+            body: JSON.stringify({ ...request, method }),
+          })
+        ).toBe(response);
+        expect(response.bodyUsed).toBe(false);
+      }
+    }
+  );
+
   it("leaves the optional GET listen stream response intact", async () => {
     const response = new Response(null, { status: 405 });
     const wrapped = wrapFetchForHttpErrors(

@@ -13,7 +13,10 @@ declare const __MCPJAM_SDK_VERSION__: string;
 const SDK_SENTRY_DSN =
   "https://490f3f2a8a287f8a9f86eea23c16c01e@o4510109778378752.ingest.us.sentry.io/4511018761125888";
 const SDK_VERSION = __MCPJAM_SDK_VERSION__;
-const SDK_RELEASE = `@mcpjam/sdk@${SDK_VERSION}`;
+// Sentry rejects a release containing "/" (ingest drops it from the event, and
+// sentry-cli refuses to upload under it), so this is not the npm package name.
+// The SDK source map upload in .github/workflows/release.yml uses this name.
+const SDK_RELEASE = `mcpjam-sdk@${SDK_VERSION}`;
 const API_KEY_HASH_LENGTH = 16;
 const CAPTURED_ERROR_SYMBOL = Symbol.for("@mcpjam/sdk/captured-eval-error");
 

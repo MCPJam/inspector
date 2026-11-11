@@ -2,6 +2,7 @@ import { convertToModelMessages } from "ai";
 import { describe, expect, it } from "vitest";
 import { hydratedToolResultOutput } from "@/shared/hydrated-tool-output";
 import {
+  buildRawToolResultOverrides,
   mergeTranscriptToolResults,
   preserveHydratedMessageIds,
   transcriptToUIMessages,
@@ -816,5 +817,71 @@ describe("persisted supplied App image", () => {
       },
     ]);
     expect(messages[0].parts).toEqual([{ type: "text", text: "Image prompt" }]);
+  });
+});
+
+describe("buildRawToolResultOverrides", () => {
+  const rawResult = {
+    content: [{ type: "text", text: "Showing card Visa" }],
+    structuredContent: { card: "Visa" },
+    _meta: { ui: { resourceUri: "ui://repro/card.html" } },
+  };
+  const modelCopy = {
+    type: "json",
+    value: { content: [{ type: "text", text: "Showing card Visa" }] },
+  };
+  const transcriptWith = (toolResult: Record<string, unknown>) => [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-card",
+          toolName: "show_card",
+          args: { name: "Visa" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-card",
+          toolName: "show_card",
+          ...toolResult,
+        },
+      ],
+    },
+  ];
+
+  it("gives a reopened App its raw result and leaves the model copy alone", () => {
+    const transcript = transcriptWith({ output: modelCopy, result: rawResult });
+
+    expect(buildRawToolResultOverrides(transcript)).toEqual({
+      "call-card": { toolOutput: rawResult },
+    });
+    const toolPart = transcriptToUIMessages(transcript)[0].parts[0] as {
+      output: unknown;
+    };
+    expect(toolPart.output).toEqual(modelCopy);
+  });
+
+  it("unwraps an older result saved only as output", () => {
+    const legacyOutput = { type: "json", value: rawResult };
+
+    expect(
+      buildRawToolResultOverrides(transcriptWith({ output: legacyOutput })),
+    ).toEqual({ "call-card": { toolOutput: rawResult } });
+  });
+
+  it("adds nothing for a failed call or a call with no result", () => {
+    const failed = transcriptWith({
+      output: { type: "error-text", value: "boom" },
+      result: rawResult,
+    });
+
+    expect(buildRawToolResultOverrides(failed)).toEqual({});
+    expect(buildRawToolResultOverrides(failed.slice(0, 1))).toEqual({});
   });
 });

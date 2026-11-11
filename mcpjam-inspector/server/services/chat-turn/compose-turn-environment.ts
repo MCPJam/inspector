@@ -1,12 +1,9 @@
-import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
-import { externalAccountCredentialFor } from "../../../shared/external-credential-selection.js";
 import {
   fetchHostRuntimeConfig,
   type HostRuntimeConfig,
 } from "../../utils/host-runtime-config.js";
-import { resolvePlaygroundCredentialEnvironment } from "../../utils/harness/playground-box.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { translateEnvironmentRuntimeError } from "../environments/runtime.js";
 
@@ -72,32 +69,6 @@ export async function composeTurnEnvironment(args: {
       );
     }
     const harness = runtime.config.agentLoop ?? runtime.config.harness ?? null;
-    if (
-      externalAccountCredentialFor(harness) &&
-      !(await shouldUseLocalHarness(
-        harness ?? undefined,
-        args.bearer,
-        args.projectId,
-      ))
-    ) {
-      const credential = await resolvePlaygroundCredentialEnvironment({
-        projectId: args.projectId,
-        hostId,
-        bearer: args.bearer,
-        harnessId: harness!,
-        chat: true,
-      });
-      if (!credential.ok)
-        throw new WebRouteError(
-          credential.status,
-          credential.status === 502
-            ? ErrorCode.SERVER_UNREACHABLE
-            : ErrorCode.CONFLICT,
-          credential.message,
-          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-        );
-      return { environmentId: credential.environmentId, harness };
-    }
     const result = await args.client.mutation(ensureEnvironment, {
       projectId: args.projectId,
       hostId,

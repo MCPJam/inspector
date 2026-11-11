@@ -1,9 +1,16 @@
+import { useComposerForms } from "@/components/elicitation/composer-form-store";
+import { useExtensionLaunchHealth } from "@/lib/use-extension-launch-health";
+import type { ExtensionLaunchObservation, ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import { withModelAppResources } from "./model-app-resources";
+import { withLocalFileHost } from "./local-file-host";
+import { useWorkspaceFileActions } from "./file-actions";
+import { negotiateRetainedAppHost, withCurrentHostContext } from "./retained-app-host";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +19,7 @@ import {
   WidgetHostProvider,
   MCPAppsRenderer,
   type MCPAppsRendererProps,
+  type WidgetHost,
 } from "@mcpjam/widget-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -60,6 +68,7 @@ type ModelMessageSource = {
   isLive: () => boolean;
 };
 export interface OwnedModelAppPorts {
+  canInvoke?: () => boolean;
   registerMessageSource: (
     token: string,
     source: ModelMessageSource,
@@ -78,6 +87,9 @@ export interface OwnedModelAppPorts {
   ) => Promise<boolean>;
   /** The client's Display modes toggle when the App opened (presentation only). */
   openAIDisplayModes?: boolean;
+  /** Compare lanes publish context without accepting App-initiated messages. */
+  messagesEnabled?: boolean;
+  observeLaunch?: (token: string) => ExtensionLaunchObservation | undefined;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -92,6 +104,7 @@ export function useOwnedModelAppWorkspace(
   contextEnabled = true,
   /** The client's Display modes toggle; read by each App when it opens. */
   openAIDisplayModes = false,
+  launchProfile: ExtensionLaunchProfile = "chatgpt",
 ) {
   // Rotate synchronously: old asynchronous publications cannot enter a new chat,
   // even before the previous leaf's passive cleanup has run.
@@ -103,6 +116,10 @@ export function useOwnedModelAppWorkspace(
         scope.workspaceId,
       ])
     : null;
+  const launchHealth = useExtensionLaunchHealth(identity);
+  const observeLaunch = useCallback((token: string) =>
+    identity ? launchHealth.begin(token, "thread", launchProfile) : undefined,
+    [identity, launchHealth, launchProfile]);
   const current = useRef({
     identity,
     epoch: 0,
@@ -220,8 +237,9 @@ export function useOwnedModelAppWorkspace(
       sendMessage: dispatch,
       registerMessageSource,
       openAIDisplayModes,
+      observeLaunch,
     }),
-    [publishContext, dispatch, registerMessageSource, openAIDisplayModes],
+    [publishContext, dispatch, registerMessageSource, openAIDisplayModes, observeLaunch],
   );
   const contexts =
     scope && contextEnabled && state.epoch === epoch ? state.contexts : {};
@@ -273,6 +291,10 @@ function ModelApp({
   // A retained leaf keeps its original workspace admission. Changing chat or
   // account cannot rebind its publications or messages through a new provider.
   const ports = useRef(currentPorts).current;
+  const files = useWorkspaceFileActions();
+  const currentFiles = useRef(files);
+  useLayoutEffect(() => { currentFiles.current = files; }, [files]);
+  const launch = useMemo(() => ports?.observeLaunch?.(marker.instanceToken), [ports, marker.instanceToken]);
   const [handle, setHandle] = useState<ThreadAppHandle | null>(null);
   const [error, setError] = useState(false);
   const [approval, setApproval] = useState<{
@@ -295,9 +317,11 @@ function ModelApp({
       renderProps.chatSessionId,
     ],
   );
-  const api = useMemo(() => createThreadAppApi(scope, "model/"), [scope]);
+  const invokeGate = useRef(ports?.canInvoke);
+  const api = useMemo(() => createThreadAppApi(scope, "model/", () => invokeGate.current?.() ?? true), [scope]);
   useEffect(() => {
     mounted.current = true;
+    launch?.awaitingReadiness();
     void authFetch("/api/web/apps/plugin-instances/model/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -309,8 +333,12 @@ function ModelApp({
       signal: lifetime.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error("App unavailable");
         const value = await response.json();
+        if (!response.ok) {
+          if (value?.code === "APPROVAL_DENIED" || value?.code === "PLUGIN_EXTENSION_DISABLED")
+            launch?.exclude();
+          throw new Error("App unavailable");
+        }
         if (
           !value ||
           value.instanceToken !== marker.instanceToken ||
@@ -318,15 +346,19 @@ function ModelApp({
           typeof value.resourceUri !== "string"
         )
           throw new Error("App unavailable");
-        if (mounted.current) setHandle(value);
+        if (mounted.current) setHandle({ ...value, serverId: marker.serverId });
       })
       .catch(() => {
-        if (mounted.current && !lifetime.signal.aborted) setError(true);
+        if (mounted.current && !lifetime.signal.aborted) {
+          launch?.fail("execution");
+          setError(true);
+        }
       });
     return () => {
       mounted.current = false;
       queueMicrotask(() => {
         if (!mounted.current) {
+          launch?.exclude();
           lifetime.abort();
           void api
             .close(
@@ -399,7 +431,8 @@ function ModelApp({
     return () => clearInterval(timer);
   }, [api, handle, lifetime]);
   useEffect(() => {
-    if (!handle?.messageEnabled || !ports) return;
+    if (!handle?.messageEnabled || !ports || ports.messagesEnabled === false)
+      return;
     return ports.registerMessageSource(
       marker.instanceToken,
       {
@@ -424,19 +457,42 @@ function ModelApp({
     if (!handle) return null;
     const withContext = withAppContext(
       withModelAppResources(createThreadAppHost(base, handle, marker.serverId, "model", {
+        projectId: scope.projectId,
         openAIDisplayModes: ports?.openAIDisplayModes === true,
       }), base, handle, marker.serverId, api, lifetime.signal),
       base,
       handle,
       context,
     );
-    return ports
-      ? withAppMessages(withContext, base, handle, {
+    const requireFiles = () => {
+      const actions = currentFiles.current;
+      if (!actions || actions.workspaceId !== marker.workspaceId ||
+          actions.enabled === false || !actions.serverIds.includes(marker.serverId))
+        throw new Error("File viewer unavailable");
+      return actions;
+    };
+    // The admitted handle defines support. Availability is checked on each
+    // request so a late workspace registration needs no bridge replacement.
+    const withFiles = withLocalFileHost(withContext, {
+          ...api,
+          resolveLocalFile: (...args) => {
+            requireFiles();
+            return api.resolveLocalFile(...args);
+          },
+        }, handle, lifetime.signal,
+          (entry) => requireFiles().open(marker.serverId, entry),
+          async (entries, signal) => {
+            const selected = await requireFiles().chooseViewer?.(entries, signal) ?? null;
+            requireFiles();
+            return selected;
+          });
+    return ports && ports.messagesEnabled !== false
+      ? withAppMessages(withFiles, base, handle, {
           threadId: scope.threadId,
           isLive: () => mounted.current && !lifetime.signal.aborted,
           send: ports.sendMessage,
         })
-      : withContext;
+      : withFiles;
   }, [
     base,
     handle,
@@ -444,26 +500,34 @@ function ModelApp({
     context.update,
     api,
     ports,
+    scope.projectId,
     scope.threadId,
     lifetime,
   ]);
+  const negotiatedHost = useRef<WidgetHost | null>(null);
+  // Replacing bridge services aborts outstanding requests, including a form
+  // waiting in the native file picker. Negotiate once per mounted owner.
+  if (ownedHost && !negotiatedHost.current)
+    negotiatedHost.current = negotiateRetainedAppHost(ownedHost);
   // Context notifications change environment data, never owned bridge services.
   const host = useMemo(
-    () =>
-      ownedHost
-        ? {
-            ...ownedHost,
-            environment: {
-              ...ownedHost.environment,
-              draftHostContext: {
-                ...ownedHost.environment.draftHostContext,
-                "openai/modelContext": context.snapshot.state,
-              },
-            },
-          }
-        : null,
+    () => {
+      if (!ownedHost || !negotiatedHost.current) return null;
+      const current = withCurrentHostContext(negotiatedHost.current, ownedHost);
+      return {
+        ...current,
+        environment: {
+          ...current.environment,
+          draftHostContext: {
+            ...current.environment.draftHostContext,
+            "openai/modelContext": context.snapshot.state,
+          },
+        },
+      };
+    },
     [ownedHost, context.snapshot],
   );
+  const hostInputPending = useComposerForms(marker.workspaceId).length > 0;
   const queue = useRef(Promise.resolve());
   if (error)
     return (
@@ -481,14 +545,21 @@ function ModelApp({
           {...renderProps}
           toolOutput={withoutModelAppControl(renderProps.toolOutput)}
           toolResponseMetadata={guestMetadata}
+          appToolSourceLabel={`Model App: ${renderProps.toolName}`}
+          hostInputPending={hostInputPending}
           serverId={marker.serverId}
           serverName={serverName}
           resourceUri={handle.resourceUri}
           toolMetadata={handle.toolMetadata}
-          onCallTool={(name, args) =>
+          onInitialRenderOutcome={(outcome) => {
+            if (outcome === "ready") launch?.ready();
+            else launch?.fail("rendering");
+            renderProps.onInitialRenderOutcome?.(outcome);
+          }}
+          onCallTool={(name, args, context) =>
             api.invoke(
               handle,
-              lifetime.signal,
+              context ? AbortSignal.any([lifetime.signal, context.signal]) : lifetime.signal,
               (value, signal) => {
                 const answer = queue.current.then(
                   () =>
@@ -511,6 +582,7 @@ function ModelApp({
                 return answer;
               },
               { name, arguments: args },
+              context?.onInputPending,
             )
           }
         />

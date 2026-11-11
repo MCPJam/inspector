@@ -23,9 +23,12 @@ import {
   harnessBoxUnavailableReason,
   type HarnessBoxSurface,
 } from "../harness-box.js";
-import type { TouchSandboxOutcome } from "../../computers/control-plane-client.js";
+import type { TouchSandboxResult } from "../../computers/control-plane-client.js";
 
 const MINUTE = 60_000;
+/** The backend's idle window, as a conversation box's reserve reply carries it. */
+const IDLE_MS = 5 * MINUTE;
+const touched: TouchSandboxResult = { outcome: "touched" };
 
 /**
  * The control plane's view of one box, as far as the reaper cares: the row's
@@ -40,10 +43,11 @@ function fakeControlPlane(ttlMs: number) {
     async (args: {
       sandboxRowId: string;
       sandboxId: string;
-    }): Promise<TouchSandboxOutcome> => {
-      if (gone || args.sandboxRowId !== "row-1") return "gone";
+      ended?: boolean;
+    }): Promise<TouchSandboxResult> => {
+      if (gone || args.sandboxRowId !== "row-1") return { outcome: "gone" };
       lastUsedAt = Date.now();
-      return "touched";
+      return touched;
     },
   );
   return {
@@ -55,15 +59,22 @@ function fakeControlPlane(ttlMs: number) {
   };
 }
 
-function provisioned() {
+function provisioned(idleMs?: number) {
   return async () => ({
     ok: true as const,
     box: {
       sandboxRowId: "row-1",
       sandboxId: "sbx-1",
       workdir: "/home/user",
+      ...(idleMs ? { idleMs } : {}),
     },
   });
+}
+
+/** An owned scope's copied TTL, or a conversation box's window from its reply. */
+function windowOf(surface: HarnessBoxSurface): number {
+  const scope = HARNESS_BOX_SCOPES[surface];
+  return scope.ownsBox ? scope.idleTtlMs : IDLE_MS;
 }
 
 /** Let the heartbeat's async touch settle after a timer fires. */
@@ -93,11 +104,13 @@ describe("acquireHarnessBox — a turn longer than the idle TTL keeps its box", 
 
   for (const { surface, label } of cases) {
     it(`${label}: survives 3x its TTL of turn, and reaps after the turn ends`, async () => {
-      const ttl = HARNESS_BOX_SCOPES[surface].idleTtlMs;
+      const ttl = windowOf(surface);
       const plane = fakeControlPlane(ttl);
       const acquired = await acquireHarnessBox({
         surface,
-        provision: provisioned(),
+        provision: provisioned(
+          HARNESS_BOX_SCOPES[surface].ownsBox ? undefined : IDLE_MS,
+        ),
         touch: plane.touch,
       });
       expect(acquired.ok).toBe(true);
@@ -113,8 +126,9 @@ describe("acquireHarnessBox — a turn longer than the idle TTL keeps its box", 
         expect.objectContaining({ sandboxRowId: "row-1", sandboxId: "sbx-1" }),
       );
 
-      // The turn ends. Nothing touches the box any more; inside the TTL it
-      // still stands, past it the reaper may take it.
+      // The turn ends (a conversation box hears so in one final touch).
+      // Nothing touches the box any more; inside the TTL it still stands,
+      // past it the reaper may take it.
       await acquired.box.release();
       const touches = plane.touch.mock.calls.length;
       await advance(ttl - MINUTE);
@@ -125,21 +139,31 @@ describe("acquireHarnessBox — a turn longer than the idle TTL keeps its box", 
     });
 
     it(`${label}: without the heartbeat, the same turn would have lost its box`, async () => {
-      const ttl = HARNESS_BOX_SCOPES[surface].idleTtlMs;
+      const ttl = windowOf(surface);
       const plane = fakeControlPlane(ttl);
       await advance(ttl + MINUTE);
       expect(plane.reapable()).toBe(true);
     });
   }
 
-  it("beats at most every third of the TTL on every surface", () => {
+  it("beats at most every third of the window on every surface", () => {
     for (const surface of Object.keys(
       HARNESS_BOX_SCOPES,
     ) as HarnessBoxSurface[]) {
-      expect(harnessBoxHeartbeatIntervalMs(surface)).toBeLessThanOrEqual(
-        HARNESS_BOX_SCOPES[surface].idleTtlMs / 3,
-      );
+      expect(
+        harnessBoxHeartbeatIntervalMs(surface, IDLE_MS) ?? Infinity,
+      ).toBeLessThanOrEqual(IDLE_MS / 3);
+      if (HARNESS_BOX_SCOPES[surface].ownsBox) {
+        expect(harnessBoxHeartbeatIntervalMs(surface)).toBeLessThanOrEqual(
+          windowOf(surface) / 3,
+        );
+      }
     }
+  });
+
+  it("keeps no copy of a conversation box's window", () => {
+    expect(harnessBoxHeartbeatIntervalMs("scenario")).toBeUndefined();
+    expect(harnessBoxHeartbeatIntervalMs("playground")).toBeUndefined();
   });
 });
 
@@ -150,7 +174,7 @@ describe("acquireHarnessBox — ownership and release", () => {
       surface: "eval",
       provision: provisioned(),
       release,
-      touch: vi.fn(async () => "touched" as const),
+      touch: vi.fn(async () => touched),
     });
     if (!acquired.ok) throw new Error("expected a box");
     await Promise.all([acquired.box.release(), acquired.box.release()]);
@@ -164,7 +188,7 @@ describe("acquireHarnessBox — ownership and release", () => {
     const acquired = await acquireHarnessBox({
       surface: "swarm",
       provision: provisioned(),
-      touch: vi.fn(async () => "touched" as const),
+      touch: vi.fn(async () => touched),
     });
     if (!acquired.ok) throw new Error("expected a box");
     await acquired.box.release();
@@ -173,21 +197,55 @@ describe("acquireHarnessBox — ownership and release", () => {
     );
   });
 
-  it("a conversation box outlives the turn: release only stops the heartbeat", async () => {
-    const release = vi.fn(async () => {});
-    const touch = vi.fn(async () => "touched" as const);
+  it.each(["scenario", "playground"] as const)(
+    "a %s box outlives the turn: release stops the heartbeat and says the turn ended",
+    async (surface) => {
+      const release = vi.fn(async () => {});
+      const touch = vi.fn(async (_args: { ended?: boolean }) => touched);
+      const acquired = await acquireHarnessBox({
+        surface,
+        provision: provisioned(IDLE_MS),
+        release,
+        touch,
+      });
+      if (!acquired.ok) throw new Error("expected a box");
+      await Promise.all([acquired.box.release(), acquired.box.release()]);
+      expect(touch).toHaveBeenCalledTimes(1);
+      expect(touch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxRowId: "row-1",
+          sandboxId: "sbx-1",
+          ended: true,
+        }),
+      );
+      await advance(IDLE_MS * 2);
+      expect(touch).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      expect(releaseSandboxMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an end-of-turn touch that fails does not fail the release", async () => {
     const acquired = await acquireHarnessBox({
-      surface: "scenario",
-      provision: provisioned(),
-      release,
-      touch,
+      surface: "playground",
+      provision: provisioned(IDLE_MS),
+      touch: vi.fn(async () => {
+        throw new Error("control plane down");
+      }),
     });
     if (!acquired.ok) throw new Error("expected a box");
+    await expect(acquired.box.release()).resolves.toBeUndefined();
+  });
+
+  it("a conversation box carries its window on the binding", async () => {
+    const acquired = await acquireHarnessBox({
+      surface: "playground",
+      provision: provisioned(IDLE_MS),
+      touch: vi.fn(async () => touched),
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    expect(acquired.box.binding).toMatchObject({ idleMs: IDLE_MS });
     await acquired.box.release();
-    await advance(HARNESS_BOX_SCOPES.scenario.idleTtlMs * 2);
-    expect(touch).not.toHaveBeenCalled();
-    expect(release).not.toHaveBeenCalled();
-    expect(releaseSandboxMock).not.toHaveBeenCalled();
   });
 
   it("a release that throws does not throw out of release()", async () => {
@@ -197,7 +255,7 @@ describe("acquireHarnessBox — ownership and release", () => {
       release: async () => {
         throw new Error("control plane down");
       },
-      touch: vi.fn(async () => "touched" as const),
+      touch: vi.fn(async () => touched),
     });
     if (!acquired.ok) throw new Error("expected a box");
     await expect(acquired.box.release()).resolves.toBeUndefined();
@@ -215,7 +273,7 @@ describe("acquireHarnessBox — ownership and release", () => {
           workdir: "/home/user",
         },
       }),
-      touch: vi.fn(async () => "touched" as const),
+      touch: vi.fn(async () => touched),
     });
     if (!acquired.ok) throw new Error("expected a box");
     expect(acquired.box.binding).toEqual({
@@ -227,8 +285,64 @@ describe("acquireHarnessBox — ownership and release", () => {
     await acquired.box.release();
   });
 
+  it("a paired desktop is heartbeated and released with its pinned box", async () => {
+    // The desktop has its own row and idle clock: left out of either, it is
+    // reaped mid-run or kept alive after the run.
+    const release = vi.fn(async () => {});
+    const touch = vi.fn(async () => touched);
+    const acquired = await acquireHarnessBox({
+      surface: "eval",
+      provision: async () => ({
+        ok: true as const,
+        box: {
+          sandboxRowId: "row-1",
+          sandboxId: "sbx-1",
+          runtimeKind: "terminal" as const,
+          workdir: "/home/user",
+          browser: { sandboxRowId: "row-2", sandboxId: "sbx-2" },
+        },
+      }),
+      release,
+      touch,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    // The harness and shell stay on the pinned box; Browser gets the desktop.
+    expect(acquired.box.binding).toMatchObject({
+      sandboxRowId: "row-1",
+      runtimeKind: "terminal",
+    });
+    expect(acquired.box.browserBinding).toEqual({
+      sandboxRowId: "row-2",
+      sandboxId: "sbx-2",
+      runtimeKind: "desktop-browser",
+    });
+    await advance(harnessBoxHeartbeatIntervalMs("eval"));
+    expect(touch.mock.calls.map(([args]) => args.sandboxRowId).sort()).toEqual(
+      ["row-1", "row-2"],
+    );
+    await acquired.box.release();
+    expect(release.mock.calls.map(([row]) => row).sort()).toEqual([
+      "row-1",
+      "row-2",
+    ]);
+    touch.mockClear();
+    await advance(windowOf("eval"));
+    expect(touch).not.toHaveBeenCalled();
+  });
+
+  it("a box with no paired desktop has no browser binding", async () => {
+    const acquired = await acquireHarnessBox({
+      surface: "eval",
+      provision: provisioned(),
+      touch: vi.fn(async () => touched),
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    expect(acquired.box).not.toHaveProperty("browserBinding");
+    await acquired.box.release();
+  });
+
   it("a refusal comes back untouched, and no heartbeat starts", async () => {
-    const touch = vi.fn(async () => "touched" as const);
+    const touch = vi.fn(async () => touched);
     const refusal = { status: 409, code: "no_pin", error: "No image." };
     const acquired = await acquireHarnessBox({
       surface: "eval",
@@ -236,14 +350,14 @@ describe("acquireHarnessBox — ownership and release", () => {
       touch,
     });
     expect(acquired).toEqual({ ok: false, refusal });
-    await advance(HARNESS_BOX_SCOPES.eval.idleTtlMs);
+    await advance(windowOf("eval"));
     expect(touch).not.toHaveBeenCalled();
   });
 });
 
 describe("acquireHarnessBox — the heartbeat", () => {
   it("stops for good once the control plane says the box is gone", async () => {
-    const plane = fakeControlPlane(HARNESS_BOX_SCOPES.eval.idleTtlMs);
+    const plane = fakeControlPlane(windowOf("eval"));
     const acquired = await acquireHarnessBox({
       surface: "eval",
       provision: provisioned(),
@@ -262,10 +376,10 @@ describe("acquireHarnessBox — the heartbeat", () => {
   });
 
   it("stops itself after its cap, so a holder that never releases cannot keep a box forever", async () => {
-    const touch = vi.fn(async () => "touched" as const);
+    const touch = vi.fn(async () => touched);
     const acquired = await acquireHarnessBox({
       surface: "scenario",
-      provision: provisioned(),
+      provision: provisioned(IDLE_MS),
       touch,
       maxHeartbeatMs: 60 * MINUTE,
     });
@@ -279,7 +393,7 @@ describe("acquireHarnessBox — the heartbeat", () => {
 
   it("stops when the turn's signal aborts, and leaves teardown to release()", async () => {
     const release = vi.fn(async () => {});
-    const touch = vi.fn(async () => "touched" as const);
+    const touch = vi.fn(async () => touched);
     const turn = new AbortController();
     const acquired = await acquireHarnessBox({
       surface: "eval",
@@ -307,7 +421,7 @@ describe("acquireHarnessBox — the heartbeat", () => {
   });
 
   it("starts no heartbeat for a turn that was already aborted", async () => {
-    const touch = vi.fn(async () => "touched" as const);
+    const touch = vi.fn(async () => touched);
     const acquired = await acquireHarnessBox({
       surface: "swarm",
       provision: provisioned(),
@@ -315,17 +429,17 @@ describe("acquireHarnessBox — the heartbeat", () => {
       signal: AbortSignal.abort(),
     });
     if (!acquired.ok) throw new Error("expected a box");
-    await advance(HARNESS_BOX_SCOPES.swarm.idleTtlMs * 2);
+    await advance(windowOf("swarm") * 2);
     expect(touch).not.toHaveBeenCalled();
     await acquired.box.release();
   });
 
   it("keeps beating through a failed touch", async () => {
     const touch = vi
-      .fn<() => Promise<TouchSandboxOutcome>>()
+      .fn<() => Promise<TouchSandboxResult>>()
       .mockRejectedValueOnce(new Error("network"))
-      .mockResolvedValueOnce("failed")
-      .mockResolvedValue("touched");
+      .mockResolvedValueOnce({ outcome: "failed" })
+      .mockResolvedValue(touched);
     const acquired = await acquireHarnessBox({
       surface: "eval",
       provision: provisioned(),
@@ -334,6 +448,43 @@ describe("acquireHarnessBox — the heartbeat", () => {
     if (!acquired.ok) throw new Error("expected a box");
     await advance(harnessBoxHeartbeatIntervalMs("eval") * 3);
     expect(touch).toHaveBeenCalledTimes(3);
+    await acquired.box.release();
+  });
+});
+
+describe("acquireHarnessBox — the backend's window", () => {
+  it("a touch reply carrying a new window moves the beat to a quarter of it", async () => {
+    let windowMs = 30 * MINUTE;
+    const touch = vi.fn(async () => ({ outcome: "touched" as const, idleMs: windowMs }));
+    const acquired = await acquireHarnessBox({
+      surface: "playground",
+      provision: provisioned(30 * MINUTE),
+      touch,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    await advance(7.5 * MINUTE);
+    expect(touch).toHaveBeenCalledTimes(1);
+    // The backend shortens the window while the turn runs.
+    windowMs = IDLE_MS;
+    await advance(7.5 * MINUTE);
+    expect(touch).toHaveBeenCalledTimes(2);
+    await advance(IDLE_MS / 4);
+    expect(touch).toHaveBeenCalledTimes(3);
+    await advance(IDLE_MS);
+    expect(touch).toHaveBeenCalledTimes(7);
+    await acquired.box.release();
+  });
+
+  it("a conversation box that arrives without its window is not beaten against a guess", async () => {
+    const touch = vi.fn(async () => touched);
+    const acquired = await acquireHarnessBox({
+      surface: "scenario",
+      provision: provisioned(),
+      touch,
+    });
+    if (!acquired.ok) throw new Error("expected a box");
+    await advance(60 * MINUTE);
+    expect(touch).not.toHaveBeenCalled();
     await acquired.box.release();
   });
 });

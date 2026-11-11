@@ -30,7 +30,7 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
-const touchSandboxMock = vi.fn(async () => "touched" as const);
+const touchSandboxMock = vi.fn(async () => ({ outcome: "touched" as const }));
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
@@ -684,6 +684,100 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     const terminal = terminalReports()[0]!;
     expect(terminal.status).toBe("failed");
     expect(JSON.stringify(terminal)).toContain("stock desktop image");
+  });
+
+  /** A pinned box plus the desktop the backend paired with it. */
+  function answerWithPair(): void {
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        sandboxId: "sbx_pinned",
+        sandboxRowId: "row_pinned",
+        runtimeKind: "terminal",
+        workdir: "/workspace",
+        browser: {
+          sandboxId: "sbx_desktop",
+          sandboxRowId: "row_desktop",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    }));
+  }
+
+  it("runs a pinned browser target on its pinned box plus a paired desktop", async () => {
+    personaDrivesOneTurn();
+    answerWithPair();
+    // The take lives on the desktop, so that is the row it is collected from.
+    collectHostedRecordingMock.mockImplementation(async (row: string) =>
+      row === "row_desktop"
+        ? {
+            bytes: new Uint8Array([1]),
+            mime: "video/webm",
+            fps: 1,
+            durationMs: 1,
+            distinctFrames: 1,
+            truncated: false,
+          }
+        : null,
+    );
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["bash", "browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runtimeKind: "desktop-browser",
+      pairBrowser: true,
+    });
+    const ctx = resolverContexts()[0]!;
+    // Bash stays on the pinned image; Browser gets the desktop.
+    expect(ctx.sandboxBinding).toEqual({
+      sandboxId: "sbx_pinned",
+      sandboxRowId: "row_pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+    expect(ctx.browserSandboxBinding).toEqual({
+      sandboxId: "sbx_desktop",
+      sandboxRowId: "row_desktop",
+      runtimeKind: "desktop-browser",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+    expect(collectHostedRecordingMock).toHaveBeenCalledWith("row_desktop");
+    expect(stageVideoMock).toHaveBeenCalledTimes(1);
+    // Both boxes are handed back on the attempt's way out.
+    const released = releaseSandboxMock.mock.calls.map(
+      (call) => (call[0] as { sandboxRowId: string }).sandboxRowId
+    );
+    expect(released.sort()).toEqual(["row_desktop", "row_pinned"]);
+  });
+
+  it("runs a pinned harness target's harness on the pinned box, not the desktop", async () => {
+    personaDrivesOneTurn();
+    answerWithPair();
+
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(turnOptions().harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_pinned",
+      sandboxId: "sbx_pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+    expect(resolverContexts()[0]!.browserSandboxBinding).toMatchObject({
+      sandboxRowId: "row_desktop",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
   it("names the DESKTOP budget when capacity is what it waited on", async () => {

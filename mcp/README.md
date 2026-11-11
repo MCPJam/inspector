@@ -54,6 +54,11 @@ beta; they are listed [after the table](#held-tools).
 | `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
 | `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
+| `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
+| `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
+| `get_conformance_report` | Page through a conformance run's failing checks, 50 at a time, each with the suite and id to read it in full. | — |
+| `get_conformance_check` | Read one conformance check in full: its failure, duration, and stored details and output, each capped at 16 KB. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
@@ -179,11 +184,9 @@ is resolved per caller, these are held off this surface for **everyone**
 (`HELD_WHILE_IN_BETA` in `src/tools/platformTools.ts`, which also writes their
 `EXCLUDED_FROM_CATALOG` reasons). REST, the SDK and the CLI are unaffected.
 
-- Conformance and readiness: `start_claude_readiness_run`,
-  `start_openai_readiness_run`, `start_muse_readiness_run`,
-  `get_readiness_run`, `list_readiness_runs`,
-  `cancel_readiness_run`, `get_readiness_report`, `start_conformance_run`,
-  `get_conformance_run`, `list_conformance_runs`, `get_conformance_report`
+- Readiness: `start_claude_readiness_run`, `start_openai_readiness_run`,
+  `start_muse_readiness_run`, `get_readiness_run`, `list_readiness_runs`,
+  `cancel_readiness_run`, `get_readiness_report`
 - Unified sessions: `search_sessions`
 - Registry directory: `search_registry_directory`,
   `get_registry_directory_server`, `list_registry_directory_sources`,

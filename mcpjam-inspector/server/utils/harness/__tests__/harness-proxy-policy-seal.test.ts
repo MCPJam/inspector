@@ -1,3 +1,4 @@
+import { createDecipheriv, hkdfSync } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import {
@@ -6,9 +7,12 @@ import {
   isHarnessProxyPolicySealAvailable,
   isSealedHarnessProxyToken,
   sealHarnessProxyToken,
+  sealHarnessSessionEnvelope,
   unsealHarnessProxyToken,
 } from "../harness-proxy-policy-seal.js";
 import { verifyHarnessProxyToken } from "../harness-proxy-token.js";
+import { harnessConnectionProfileSchema } from "../harness-connection-profile.js";
+import { sessionPolicyDigest } from "../session-mcp-config.js";
 import { signTestProxyToken } from "./sign-test-token.js";
 
 const SECRET = "test-harness-proxy-secret-32-chars-min";
@@ -182,5 +186,119 @@ describe("harness proxy policy seal", () => {
     expect(verifyHarnessProxyToken(opened!.token, "srv-a")).toMatchObject({
       externalId: "u_ext",
     });
+  });
+});
+
+describe("sealHarnessSessionEnvelope (one value for a whole session)", () => {
+  const session = (overrides: Partial<Parameters<typeof sealHarnessSessionEnvelope>[0]> = {}) =>
+    sealHarnessSessionEnvelope({
+      handle: "lane-session-handle",
+      serverId: "srv-a",
+      policy: snapshot,
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+      ...overrides,
+    });
+
+  it("is deterministic, so a fingerprinting runtime sees no change between turns", () => {
+    expect(session()).toBe(session());
+    expect(session()).toMatch(/^mcpjps4\./);
+    expect(isSealedHarnessProxyToken(session())).toBe(true);
+  });
+
+  it("changes whenever the handle, policy or profile does", () => {
+    const base = session();
+    expect(session({ handle: "another-handle" })).not.toBe(base);
+    expect(session({ policy: { ...snapshot, unknownTool: "allow" } })).not.toBe(base);
+    expect(session({ profile: { clientCapabilities: {}, timeout: 10_000 } })).not.toBe(base);
+  });
+
+  it("opens as a session with no expiry, for its server only", () => {
+    const opened = unsealHarnessProxyToken(session(), "srv-a", {
+      nowMs: Date.now() + 365 * 24 * 60 * 60 * 1000,
+    });
+    expect(opened).toMatchObject({
+      session: true,
+      token: "lane-session-handle",
+      serverId: "srv-a",
+      policy: snapshot,
+      profile: { clientCapabilities: {}, timeout: 60_000 },
+    });
+    expect(unsealHarnessProxyToken(session(), "srv-b")).toBeNull();
+  });
+
+  it("refuses a tampered envelope", () => {
+    const [prefix, iv, body] = session().split(".");
+    const flipped = body!.slice(0, -2) + (body!.endsWith("A") ? "BB" : "AA");
+    expect(unsealHarnessProxyToken(`${prefix}.${iv}.${flipped}`, "srv-a")).toBeNull();
+    // A per-turn envelope cannot be relabelled as a session one.
+    const perTurn = seal({}).split(".");
+    expect(unsealHarnessProxyToken(`mcpjps4.${perTurn[1]}.${perTurn[2]}`, "srv-a")).toBeNull();
+  });
+});
+
+describe("a profile's negotiation across a mixed fleet", () => {
+  /** The profile schema of an instance that predates the negotiation. */
+  const preNegotiationSchema = harnessConnectionProfileSchema.omit({
+    versionNegotiation: true,
+  });
+  /** The plaintext an instance opens, with the seal's own key derivation. */
+  const plaintext = (sealed: string) => {
+    const [, iv, body] = sealed.split(".");
+    const bytes = Buffer.from(body!, "base64url");
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      Buffer.from(
+        hkdfSync(
+          "sha256",
+          SECRET,
+          "mcpjam-harness-mcp-proxy-policy-seal",
+          "harness-mcp-proxy-policy-seal.v1",
+          32,
+        ),
+      ),
+      Buffer.from(iv!, "base64url"),
+    );
+    decipher.setAuthTag(bytes.subarray(bytes.byteLength - 16));
+    return JSON.parse(
+      Buffer.concat([
+        decipher.update(bytes.subarray(0, bytes.byteLength - 16)),
+        decipher.final(),
+      ]).toString("utf8"),
+    ) as { profile?: unknown; vn?: unknown };
+  };
+  const profile = {
+    clientCapabilities: {},
+    timeout: 300_000,
+    versionNegotiation: "legacy-first" as const,
+  };
+
+  it.each([
+    [
+      "a session envelope",
+      () =>
+        sealHarnessSessionEnvelope({
+          handle: "lane-handle",
+          serverId: "srv-a",
+          policy: snapshot,
+          profile,
+        }),
+    ],
+    ["a per-turn token", () => seal({ profile })],
+  ])("keeps %s open under the older schema, and whole here", (_kind, make) => {
+    const sealed = make();
+    const opened = plaintext(sealed);
+    expect(preNegotiationSchema.safeParse(opened.profile).success).toBe(true);
+    expect(opened.vn).toBe("legacy-first");
+    expect(unsealHarnessProxyToken(sealed, "srv-a")?.profile).toEqual(profile);
+  });
+
+  it("binds the turn to the digest an older instance computes", () => {
+    const { versionNegotiation: _outside, ...older } = profile;
+    expect(sessionPolicyDigest("srv-a", snapshot, profile)).toBe(
+      sessionPolicyDigest("srv-a", snapshot, older),
+    );
+    expect(sessionPolicyDigest("srv-a", snapshot, profile)).not.toBe(
+      sessionPolicyDigest("srv-a", snapshot, { ...older, timeout: 60_000 }),
+    );
   });
 });

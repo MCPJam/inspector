@@ -377,6 +377,11 @@ export interface SyntheticHostRuntime {
    */
   sandboxBinding?: TrustedSandboxBinding;
   /**
+   * The desktop this session's Browser runs on when {@link sandboxBinding} is
+   * a pinned terminal box. Trusted the same way, and set the same way.
+   */
+  browserSandboxBinding?: TrustedSandboxBinding;
+  /**
    * The SPECIFIC reason this session gets no shell, when one is known — e.g.
    * "this environment has no built image yet". Replaces the resolver's generic
    * "swarm sessions don't get bash" message in the surfaced notice.
@@ -578,6 +583,7 @@ export async function runSyntheticHostSession(
     agentLoop,
     tasks,
     sandboxBinding,
+    browserSandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
     accessVersion,
@@ -845,8 +851,9 @@ export async function runSyntheticHostSession(
     // session's transcript is read back like any other, and a card in it wants
     // the same answer: which tool on which page, as it was then.
     let advertisedPageTools: MintedDeclaredTool[] = [];
+    const browserBox = browserSandboxBinding ?? sandboxBinding;
     const pageToolsSnapshot = pageToolsSnapshotFrom(
-      sandboxBinding?.runtimeKind === "desktop-browser" &&
+      browserBox?.runtimeKind === "desktop-browser" &&
         browserApprovalDelivery
         ? await peekPageToolsForChatTurn({
             builtInToolIds,
@@ -860,7 +867,7 @@ export async function runSyntheticHostSession(
             engine: "hosted",
             projectId,
             bearer: authHeader,
-            sandboxRowId: sandboxBinding.sandboxRowId,
+            sandboxRowId: browserBox.sandboxRowId,
           })
         : undefined,
     );
@@ -916,6 +923,7 @@ export async function runSyntheticHostSession(
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(browserSandboxBinding ? { browserSandboxBinding } : {}),
         ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         onBrowserPageTools: ({ minted }) => {
           advertisedPageTools = minted;

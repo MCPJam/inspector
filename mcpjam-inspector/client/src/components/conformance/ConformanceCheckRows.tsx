@@ -71,27 +71,16 @@ function formatDetailValue(value: unknown) {
 }
 
 /**
- * The shut-row preview gives failures context without opening the row. The
- * full message stays mounted inside Collapse so it slides with the explanation
- * and details; only one message is visible at a time. Red means a failure that
- * counts; skip reasons and unscored findings use the neutral box.
- *
- * A shut row shows the box only when it says something to act on: a failure,
- * or why a check that applies could not run. A not-applicable reason waits
- * for the row to open, or every era-skipped row would carry a box of noise.
+ * What went wrong, under the explanation in an open row. A shut row shows only
+ * its title, whatever the status, so every row opens the same way. Red means
+ * a failure that counts; skip reasons and unscored findings use the neutral box.
  */
-function showsMessageShut(status: string, skipReason?: string): boolean {
-  return status === "failed" || skipReason === "could-not-run";
-}
-
 function ResultMessage({
   message,
   tone,
-  expanded,
 }: {
   message: string;
   tone: "error" | "neutral";
-  expanded: boolean;
 }) {
   return (
     <span
@@ -102,9 +91,7 @@ function ResultMessage({
           : "border-border/60 bg-muted/30 text-muted-foreground",
       )}
     >
-      {/* Clamped inside the padded box: clamped on the box itself, a third
-          line shows through the bottom padding. */}
-      <span className={cn(!expanded && "line-clamp-2")}>{message}</span>
+      {message}
     </span>
   );
 }
@@ -116,6 +103,28 @@ export function pendingIdSet(
 }
 
 /** Says a result row opens: nothing else on it does. */
+/**
+ * The status icon has no text, and a shut row shows no message, so screen
+ * readers get the result from this hidden label on the row button.
+ */
+function RowStatusLabel({
+  status,
+  skipReason,
+}: {
+  status: string;
+  skipReason?: string;
+}) {
+  const label =
+    status === "passed"
+      ? "passed"
+      : status === "failed"
+        ? "failed"
+        : skipReason === "could-not-run"
+          ? "could not run"
+          : "not applicable";
+  return <span className="sr-only">{`, ${label}`}</span>;
+}
+
 function RowChevron({ expanded }: { expanded: boolean }) {
   return (
     <ChevronRight
@@ -196,7 +205,7 @@ export function NeedsInputTag({
 export function NotRunTag() {
   return (
     <span
-      title="This check needs an input before it can run."
+      title="This check needs a setup change before it can run."
       className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
     >
       Not run
@@ -228,7 +237,7 @@ export function CheckRow({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
-    ([key]) => key !== "missingInput",
+    ([key]) => key !== "missingInput" && key !== "missingInputMessage",
   );
   const warnings = check.warnings;
 
@@ -249,32 +258,20 @@ export function CheckRow({
         </span>
         {missingInput ? <NotRunTag /> : pending ? <UnscoredTag /> : null}
         {isTimedOutCheck(check) ? <TimedOutTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span
-            className={cn(
-              "text-sm",
-              check.status === "skipped" &&
-                (missingInput || check.skipReason !== "could-not-run") &&
-                "text-muted-foreground",
-            )}
-          >
-            {check.title}
-          </span>
-          {check.error &&
-          !expanded && showsMessageShut(check.status, check.skipReason) ? (
-            <ResultMessage
-              message={
-                missingInputMessage(check) ??
-                noTaskCreatedMessage(check) ??
-                check.error.message
-              }
-              tone={
-                check.status === "failed" && !pending ? "error" : "neutral"
-              }
-              expanded={false}
-            />
-          ) : null}
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-sm",
+            check.status === "skipped" &&
+              (missingInput || check.skipReason !== "could-not-run") &&
+              "text-muted-foreground",
+          )}
+        >
+          {check.title}
         </span>
+        {/* A missing-input row already says "Not run" in its tag. */}
+        {missingInput ? null : (
+          <RowStatusLabel status={check.status} skipReason={check.skipReason} />
+        )}
         {/* A skipped check never ran: its 0ms says nothing. */}
         {check.status !== "skipped" && check.durationMs !== undefined && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
@@ -298,7 +295,6 @@ export function CheckRow({
               tone={
                 check.status === "failed" && !pending ? "error" : "neutral"
               }
-              expanded
             />
           )}
 
@@ -386,18 +382,8 @@ export function OAuthStepRow({
           />
         </span>
         {pending ? <UnscoredTag /> : null}
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm">{step.title}</span>
-          {step.error &&
-          !expanded && showsMessageShut(step.status, step.skipReason) ? (
-            <ResultMessage
-              message={step.error.message}
-              // An unscored failure is reported, not counted: grey, as in CheckRow.
-              tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded={false}
-            />
-          ) : null}
-        </span>
+        <span className="min-w-0 flex-1 text-sm">{step.title}</span>
+        <RowStatusLabel status={step.status} skipReason={step.skipReason} />
         {step.status !== "skipped" && (
           <span className="flex-shrink-0 pt-0.5 text-xs text-muted-foreground">
             {step.durationMs}ms
@@ -413,8 +399,8 @@ export function OAuthStepRow({
           {step.error && (
             <ResultMessage
               message={step.error.message}
+              // An unscored failure is reported, not counted: grey, as in CheckRow.
               tone={step.status === "failed" && !pending ? "error" : "neutral"}
-              expanded
             />
           )}
 
@@ -510,8 +496,12 @@ export function CatalogRow({
   notApplicable,
 }: {
   entry: CatalogEntry;
-  /** Shown under the row, e.g. the tool a picked check will call. */
-  children?: ReactNode;
+  /**
+   * Shown under the row, e.g. the tool a picked check will call. As a
+   * function it gets whether the row is open, so an off check can show its
+   * field only then.
+   */
+  children?: ReactNode | ((opened: boolean) => ReactNode);
   /** Shown after the title, e.g. that the check needs an input. */
   tag?: ReactNode;
   /**
@@ -530,6 +520,7 @@ export function CatalogRow({
   const [expanded, setExpanded] = useState(false);
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
+  const extra = typeof children === "function" ? children(expanded) : children;
   const title = (
     <button
       type="button"
@@ -596,7 +587,7 @@ export function CatalogRow({
           {entry.description}
         </div>
       </Collapse>
-      {children ? <div className="pr-1 pb-2 pl-8">{children}</div> : null}
+      {extra ? <div className="pr-1 pb-2 pl-8">{extra}</div> : null}
     </div>
   );
 }
@@ -610,6 +601,7 @@ export function CatalogList({
   note = ".",
   heading,
   isSelected,
+  isLocked,
   onSelectedChange,
   renderExtra,
   renderTag,
@@ -620,8 +612,8 @@ export function CatalogList({
   note?: string;
   /** Replaces that line, for a list that is not the suite's checks. */
   heading?: string;
-  /** What a row shows under it; see `CatalogRow`'s children. */
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  /** What a row shows under it, given whether it is open; see `CatalogRow`'s children. */
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
   renderTag?: (entry: CatalogEntry) => ReactNode;
   /** Why a row's check does not apply; see `CatalogRow`'s notApplicable. */
@@ -631,6 +623,8 @@ export function CatalogList({
    * `onSelectedChange` too, the user picks rows one by one.
    */
   isSelected?: (id: string) => boolean;
+  /** A row whose checkbox the user cannot change, e.g. one missing its input. */
+  isLocked?: (id: string) => boolean;
   onSelectedChange?: (id: string, selected: boolean) => void;
 }) {
   return (
@@ -643,7 +637,7 @@ export function CatalogList({
           key={entry.id}
           entry={entry}
           {...(isSelected ? { selected: isSelected(entry.id) } : {})}
-          {...(isSelected && onSelectedChange
+          {...(isSelected && onSelectedChange && !isLocked?.(entry.id)
             ? {
                 onSelectedChange: (selected: boolean) =>
                   onSelectedChange(entry.id, selected),
@@ -652,7 +646,9 @@ export function CatalogList({
           tag={renderTag?.(entry)}
           notApplicable={notApplicableReason?.(entry)}
         >
-          {renderExtra?.(entry)}
+          {renderExtra
+            ? (opened: boolean) => renderExtra(entry, opened)
+            : undefined}
         </CatalogRow>
       ))}
     </div>

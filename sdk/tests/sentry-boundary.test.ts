@@ -23,7 +23,7 @@ it("reconstructs real SDK capture and direct-send envelopes at the only final se
   const client = new NodeClient({
     dsn: "https://public@example.ingest.sentry.io/123",
     integrations: [], stackParser: defaultStackParser,
-    transport: () => sdkDiagnosticBoundary("@mcpjam/sdk@1.2.3")({
+    transport: () => sdkDiagnosticBoundary("mcpjam-sdk@1.2.3")({
       send: async (envelope) => { sent.push(envelope); return {}; },
       flush: async () => true,
     }),
@@ -49,7 +49,7 @@ it("reconstructs real SDK capture and direct-send envelopes at the only final se
 
 it.each(["DO_NOT_TRACK", "MCPJAM_TELEMETRY_DISABLED"])("rechecks late %s opt-out for queued errors and transactions", async (key) => {
   const sent: unknown[] = [];
-  const transport = sdkDiagnosticBoundary("@mcpjam/sdk@1.2.3")({ send: async (value) => { sent.push(value); return {}; }, flush: async () => true });
+  const transport = sdkDiagnosticBoundary("mcpjam-sdk@1.2.3")({ send: async (value) => { sent.push(value); return {}; }, flush: async () => true });
   const envelope = () => [{}, [[{ type: "event" }, { message: "PRIVATE_SENTINEL" }], [{ type: "transaction" }, { transaction: "PRIVATE_SENTINEL" }], [{ type: "attachment" }, "PRIVATE_SENTINEL"]]];
   await transport.send(envelope() as never);
   expect(sent).toHaveLength(1);
@@ -63,7 +63,7 @@ it.each(["DO_NOT_TRACK", "MCPJAM_TELEMETRY_DISABLED"])("rechecks late %s opt-out
 
 it("never coerces customer basenames or invalid line values into verified locations", async () => {
   const sent: unknown[] = [];
-  const transport = sdkDiagnosticBoundary("@mcpjam/sdk@1.2.3")({ send: async (value) => { sent.push(value); return {}; }, flush: async () => true });
+  const transport = sdkDiagnosticBoundary("mcpjam-sdk@1.2.3")({ send: async (value) => { sent.push(value); return {}; }, flush: async () => true });
   const frames = [
     { filename: "/customer/src/sentry.ts", lineno: 1 },
     { filename: "src/sentry.ts", lineno: "PRIVATE_SENTINEL" },

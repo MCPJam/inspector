@@ -238,7 +238,7 @@ export class PluginInstanceRegistry {
     { instance: PluginFormOwner; expiresAt: number; signal: AbortSignal }
   >();
 
-  /** The normal gated model executor owns this lifetime; no UI entrypoint is invented. */
+  /** A gated model call or retained model App owns this lifetime. */
   retainModelOwner(instance: PluginFormOwner, signal: AbortSignal) {
     signal.throwIfAborted();
     this.sweep();
@@ -261,10 +261,19 @@ export class PluginInstanceRegistry {
       pluginFormSources.closeOwner(instance.owner);
       pluginFormFileGrants.closeOwner(instance.owner);
     };
-    const expiry = setTimeout(release, this.ttlMs);
+    let expiry = setTimeout(release, this.ttlMs);
     expiry.unref();
     signal.addEventListener("abort", release, { once: true });
-    return release;
+    const renew = () => {
+      signal.throwIfAborted();
+      if (this.modelOwners.get(key) !== record)
+        throw new PluginInvocationError("FORM_SOURCE_UNAVAILABLE");
+      clearTimeout(expiry);
+      record.expiresAt = this.now() + this.ttlMs;
+      expiry = setTimeout(release, this.ttlMs);
+      expiry.unref();
+    };
+    return Object.assign(release, { renew });
   }
   private readonly closed = new Map<string, number>();
   constructor(
@@ -353,7 +362,9 @@ export class PluginInstanceRegistry {
     const control = this.parseControl(saved.control);
     if (activationBindingHash(bindingFromControl(control)) !== bindingHash)
       throw new PluginInvocationError("ACTIVATION_BINDING_CHANGED");
-    const instance = this.restore(saved.token, identity, saved.control);
+    const instance = await this.restoreRead(
+      saved.token, identity, saved.control, undefined, port, signal,
+    );
     return {
       token: saved.token,
       instance,
@@ -396,12 +407,19 @@ export class PluginInstanceRegistry {
     try {
       return this.restore(token, identity, saved);
     } catch (error) {
-      if (
-        known === undefined ||
-        !(error instanceof PluginInvocationError) ||
-        error.code !== "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE"
-      )
-        throw error;
+      const current = this.records.get(token);
+      const overtakenLease =
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTROL_CHANGED" &&
+        saved && current && saved.expiresAt < current.expiresAt &&
+        current.snapshotHash === pluginBindingDigest(saved.snapshotJson);
+      const missingContext = known !== undefined &&
+        error instanceof PluginInvocationError &&
+        error.code === "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE";
+      if (!overtakenLease && !missingContext) throw error;
+      // A concurrent renewal may overtake this read. Only an identical
+      // immutable control may be read again; the fresh reply still passes
+      // every owner, expiry and context fence in restore.
       const full = await port.read(token, signal);
       signal.throwIfAborted();
       return this.restore(token, identity, full);

@@ -69,6 +69,7 @@ import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { createSandboxViewServices } from "./sandbox-view-services";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import type { CheckoutSession } from "@/shared/acp-types";
 import {
@@ -190,6 +191,7 @@ export function useWidgetHost(): WidgetHostImpl {
 
   const services = useMemo<WidgetHostServices>(
     () => ({
+      ...createSandboxViewServices(() => webManagedServersRef.current),
       fetchWidgetContent: fetchMcpAppsWidgetContent,
       readResource,
       listResources,

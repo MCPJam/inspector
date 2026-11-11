@@ -1,6 +1,7 @@
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ConvexHttpClient } from "convex/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ModelMessage } from "ai";
 import type {
   BrowserInteractionStepPayload,
@@ -180,6 +181,10 @@ type FanoutResult =
   | { persisted: true; turnsWritten: number }
   | { persisted: false; turnsWritten: number; error: Error };
 
+/** Whose model spend an eval session was (`chatSessions.modelSource`). */
+export type EvalTraceModelSource =
+  "mcpjam" | "byok" | "local_byok" | "external-account";
+
 export async function persistEvalTraceFanout(args: {
   convexClient: ConvexHttpClient;
   iterationId: string;
@@ -192,10 +197,16 @@ export async function persistEvalTraceFanout(args: {
   iterationStartedAt?: number;
   modelId?: string;
   /** Maps to `chatSessions.modelSource`. Defaults to 'mcpjam'. */
-  modelSource?: "mcpjam" | "byok" | "local_byok";
+  modelSource?: EvalTraceModelSource;
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /**
+   * Each harness turn's MCP route, by promptIndex. Sent with its own turn, and
+   * only when that turn has one: a turn without a record keeps the payload
+   * shape an older backend's validator accepts.
+   */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
   prompts: PromptTraceSummary[] | undefined;
   /**
    * Eval widget snapshots captured via `captureMcpAppWidgetSnapshots`.
@@ -294,6 +305,9 @@ export async function persistEvalTraceFanout(args: {
       // wire shape of non-Computer-Use evals is unchanged.
       const obsForThisTurn = obsByPromptIndex.get(turn.promptIndex) ?? [];
       const stepsForThisTurn = stepsByPromptIndex.get(turn.promptIndex) ?? [];
+      const harnessMcpAtTurn = args.harnessMcpByPromptIndex?.get(
+        turn.promptIndex,
+      );
       const result = (await args.convexClient.action(
         "testSuites:appendEvalTurnTrace" as any,
         {
@@ -347,6 +361,7 @@ export async function persistEvalTraceFanout(args: {
             ...(stepsForThisTurn.length
               ? { browserInteractionSteps: stepsForThisTurn }
               : {}),
+            ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
           },
         },
       )) as { skipped?: boolean } | undefined;

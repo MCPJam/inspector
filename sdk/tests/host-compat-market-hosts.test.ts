@@ -139,7 +139,10 @@ describe("buildMarketHostProfiles", () => {
 
   it("keeps legacy initialize versions separate from modern catalog support", () => {
     // The catalog list spans both eras. The nested initialize list contains
-    // only legacy revisions; modern support is discovered separately.
+    // only legacy revisions; modern support is discovered separately. Cursor
+    // CLI is the exception: forwarding passes the real CLI's handshake
+    // through, so its template advertises nothing and the catalog's version
+    // is what the probe observed.
     for (const profile of buildMarketHostProfiles()) {
       const seeded = seedHostTemplate(profile.id as HostTemplateId);
       const initialize = seeded.mcpProfile?.initialize as
@@ -149,6 +152,11 @@ describe("buildMarketHostProfiles", () => {
         profile.supportedProtocolVersions?.filter(
           (version) => version < "2026-07-28"
         ) ?? [];
+      if (profile.id === "cursor-cli") {
+        expect(initialize, profile.id).toBeUndefined();
+        expect(legacyCatalogVersions, profile.id).toEqual(["2025-11-25"]);
+        continue;
+      }
       expect(initialize?.supportedProtocolVersions ?? [], profile.id).toEqual(
         legacyCatalogVersions
       );

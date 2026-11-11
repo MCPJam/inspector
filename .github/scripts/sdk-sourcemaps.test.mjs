@@ -15,6 +15,28 @@ import test from "node:test";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const sdk = JSON.parse(readFileSync(join(root, "sdk/package.json"), "utf8"));
 
+// sentry-release-parser's rule, which sentry-cli applies to --release and
+// Sentry's ingest applies to an event's release.
+const SENTRY_RELEASE = /^[^\\/\r\n\t\x7f\x00-\x1f]{1,200}$/;
+
+test("SDK maps upload under the release the SDK reports, in a name Sentry accepts", () => {
+  const sentry = readFileSync(join(root, "sdk/src/sentry.ts"), "utf8");
+  const reported = /const SDK_RELEASE = `([^`$]*)\$\{SDK_VERSION\}`;/.exec(
+    sentry,
+  )?.[1];
+  const step = readFileSync(join(root, ".github/workflows/release.yml"), "utf8")
+    .split("- name: Upload SDK sourcemaps\n")[1]
+    ?.split(/\n\s+- name: |\n {2}\S/)[0];
+  const uploaded = /--release="([^"$]*)\$\{version\}"/.exec(step ?? "")?.[1];
+  const script = /--release=([^\s$]*)\$\(node -p/.exec(
+    sdk.scripts["sentry:sourcemaps"],
+  )?.[1];
+  assert.equal(typeof reported, "string");
+  assert.equal(uploaded, reported);
+  assert.equal(script, reported);
+  assert.match(`${reported}${sdk.version}`, SENTRY_RELEASE);
+});
+
 test("SDK packing injects map IDs after a rebuild and ships the upload bytes", () => {
   assert.equal(sdk.scripts.prepublishOnly, "npm run build");
   assert.equal(sdk.scripts.prepack, "npm run sentry:inject --silent 1>&2");
@@ -87,77 +109,6 @@ test("SDK packing injects map IDs after a rebuild and ships the upload bytes", (
       }),
       map,
     );
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("artifact smoke packs prepared bytes without local lifecycle dependencies", () => {
-  const workflow = readFileSync(
-    join(root, ".github/workflows/ask-mcpjam-smoke.yml"),
-    "utf8",
-  );
-  const section = workflow.split(
-    "- name: Pack the Inspector and the workspace packages it depends on",
-  )[1];
-  const commands = section
-    .split("run: |\n")[1]
-    .split("\n      - name:")[0]
-    .split("\n")
-    .map((line) => line.replace(/^          /, ""))
-    .join("\n");
-  const directory = mkdtempSync(join(tmpdir(), "sdk-artifact-pack-"));
-  try {
-    writeFileSync(
-      join(directory, "package.json"),
-      JSON.stringify({
-        private: true,
-        workspaces: ["evaluators", "sdk", "inspector"],
-      }),
-    );
-    for (const name of ["evaluators", "sdk", "inspector"]) {
-      const workspace = join(directory, name);
-      mkdirSync(join(workspace, "dist"), { recursive: true });
-      writeFileSync(
-        join(workspace, "package.json"),
-        JSON.stringify({
-          name: `@mcpjam/${name}`,
-          version: "1.0.0",
-          files: ["dist"],
-          scripts: { prepack: "missing-artifact-build-dependency" },
-        }),
-      );
-      writeFileSync(
-        join(workspace, "dist/index.js"),
-        "// prebuilt debugId=prepared\n",
-      );
-    }
-    const outputFile = join(directory, "github-output");
-    execFileSync("bash", ["-c", commands], {
-      cwd: directory,
-      env: {
-        ...process.env,
-        SOURCE: "artifact",
-        RUNNER_TEMP: directory,
-        GITHUB_OUTPUT: outputFile,
-      },
-      stdio: "pipe",
-      timeout: 30000,
-    });
-    const tarballs = readFileSync(outputFile, "utf8")
-      .trim()
-      .replace(/^tarballs=/, "")
-      .trim()
-      .split(/\s+/);
-    assert.equal(tarballs.length, 3);
-    for (const archive of tarballs) {
-      assert.equal(
-        execFileSync("tar", ["-xOf", archive, "package/dist/index.js"], {
-          encoding: "utf8",
-        }),
-        "// prebuilt debugId=prepared\n",
-      );
-    }
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

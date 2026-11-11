@@ -324,6 +324,28 @@ describe("forwarded execution gate", () => {
       /^[a-f0-9]{64}$/,
     );
   });
+  it("dispatches a request its bound approval already covers, asking nothing more", async () => {
+    const f = fixture(true);
+    f.control.prepare.mockImplementation(async () => {
+      f.events.push("prepare");
+      return {
+        executionId: "execution",
+        state: "prepared" as const,
+        replayed: false,
+        requireToolApproval: true,
+        approved: true,
+      };
+    });
+    const ask = vi.fn();
+    await executeForwardedOperation({
+      ...f,
+      operation,
+      approval: { binding, ask },
+    });
+    expect(ask).not.toHaveBeenCalled();
+    expect(f.control.requestApproval).not.toHaveBeenCalled();
+    expect(f.events).toEqual(["prepare", "claim", "dispatch", "settle"]);
+  });
   it.each(["denied", "cancelled"] as const)(
     "does not dispatch an approval answered %s",
     async (decision) => {

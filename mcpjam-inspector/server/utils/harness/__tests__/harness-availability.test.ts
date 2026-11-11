@@ -336,22 +336,19 @@ describe("checkHarnessRuntimeAvailable", () => {
         expect(noDataPlane.kind).toBe("computers-unconfigured");
 
       setFullyAvailable();
-      // Approval: `supportsMcpToolApproval` is false pending a live check, so
-      // an approval host WITH servers is refused rather than run with some MCP
-      // calls unapproved.
-      const approvalWithServers = checkHarnessRuntimeAvailable(
-        args({
-          harnessId: "cursor" as HarnessId,
-          model: { id: "cursor/auto", provider: "cursor" },
-          requireToolApproval: true,
-          hasSelectedMcpServers: true,
-        }),
-      );
-      expect(approvalWithServers.ok).toBe(false);
-      if (!approvalWithServers.ok)
-        expect(approvalWithServers.kind).toBe("tool-approval");
+      // Approval: Cursor asks before every MCP call (measured), so an approval
+      // host WITH servers runs, as one without them does.
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+            requireToolApproval: true,
+            hasSelectedMcpServers: true,
+          }),
+        ),
+      ).toEqual({ ok: true });
 
-      // …but approval WITHOUT servers is fine: the native surface does pause.
       expect(
         checkHarnessRuntimeAvailable(
           args({
@@ -506,7 +503,8 @@ describe("harnessModelEligibleForRuntime", () => {
         const preflightModelRefusal =
           !preflight.ok &&
           (preflight.kind === "model-not-hosted" ||
-            preflight.kind === "model-unsupported");
+            preflight.kind === "model-unsupported" ||
+            preflight.kind === "model-unverified");
         expect(eligible, `${id} / ${model.modelId}`).toBe(
           !preflightModelRefusal,
         );
@@ -1018,7 +1016,21 @@ describe("organization-key selections", () => {
     ],
     ["codex", "gpt-5", "openai", "openai/gpt-5", "ok"],
     [
+      "opencode",
+      "claude-haiku-4-5",
+      "anthropic",
+      "anthropic/claude-haiku-4.5",
+      "ok",
+    ],
+    [
       "claude-code",
+      "gpt-5",
+      "openai",
+      "openai/gpt-5",
+      "model-provider-unsupported",
+    ],
+    [
+      "opencode",
       "gpt-5",
       "openai",
       "openai/gpt-5",
@@ -1054,6 +1066,42 @@ describe("organization-key selections", () => {
       else expect(r).toMatchObject({ ok: false, kind: expected });
     },
   );
+
+  it("runs OpenCode on an organization Anthropic key", () => {
+    setFullyAvailable();
+    expect(
+      checkHarnessRuntimeAvailable(
+        args({
+          harnessId: "opencode",
+          model: { id: "claude-haiku-4-5", provider: "anthropic" },
+          selection: orgSel("anthropic/claude-haiku-4.5"),
+          purpose: "eval",
+        }),
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("leaves a gateway selection's API and model to lease start, whatever its name's prefix", () => {
+    setFullyAvailable();
+    const row = { id: "custom:litellm:gpt-5.5", provider: "custom" };
+    // The gateway's own names say nothing about the API it serves or the
+    // catalog model they map to: `/reserve` refuses with the backend's reason.
+    for (const harnessId of ["claude-code", "codex", "copilot-cli", "opencode"] as const) {
+      for (const modelId of [
+        "custom:litellm/gpt-5.5",
+        "custom:litellm/anthropic/claude-haiku-4-5",
+      ]) {
+        expect(
+          checkHarnessRuntimeAvailable(
+            args({ harnessId, model: row, selection: orgSel(modelId), purpose: "eval" }),
+          ),
+        ).toEqual({ ok: true });
+        expect(
+          runsHarness({ harness: harnessId, model: row, selection: orgSel(modelId) }),
+        ).toBe(true);
+      }
+    }
+  });
 
   it("an org row still answers to the evidence table: unverified is refused for evals", () => {
     setFullyAvailable();

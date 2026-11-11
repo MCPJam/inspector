@@ -1,3 +1,6 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import type { TurnTiming } from "./turn-timing.js";
+import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readProtectedResourceUrl } from "../services/chat-turn/local-interactions.js";
@@ -8,7 +11,7 @@ import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
 import type { ResolvedEnvironmentRuntime } from "../services/environments/runtime.js";
-import { assertConversationExecution } from './harness/conversation-execution.js';
+import { assertConversationExecution, conversationExecutionArgs } from './harness/conversation-execution.js';
 import { assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { preservePluginMessageTitles } from "../../shared/plugin-message-history.js";
 import {
@@ -34,16 +37,24 @@ import { toolApprovalBindingFor } from "./tool-approval-token.js";
 import type { Context } from "hono";
 import { type ToolSet, type UIMessageChunk } from "ai";
 import { logger } from "./logger.js";
+import { findMalformedHistory } from "./client-history-shape.js";
 import { createRequestStreamFailureReporter } from "./stream-failure-reporter.js";
 import type { FailureCapture } from "./agent-failure-capture.js";
 import { type SandboxNoticeReason } from "@/shared/sandbox-notice";
-import { emitHistoryNotice, emitSandboxNotices } from "./turn-notices.js";
+import {
+  emitHistoryNotice,
+  emitReasoningEffortNotice,
+  emitSandboxNotices,
+} from "./turn-notices.js";
 import { emitPluginServersUnavailable } from "./plugin-server-isolation.js";
 import { WEB_CHAT_TOOL_LISTING_TIMEOUT_MS } from "@/shared/hosted-web-timeouts";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import { directChatEffort } from "./chat-reasoning-effort.js";
+import {
+  directChatEffort,
+  withoutCustomProviderEffort,
+} from "./chat-reasoning-effort.js";
 import type {
   AuthChallengePolicy,
   Harness,
@@ -218,6 +229,8 @@ export interface WebChatTurnPersistContext {
   executionBindingVersion?: 1;
   /** Required to enable persistence; without it, no ingest. */
   chatSessionId: string | undefined;
+  retryOwner?: { subject: string; projectId: string };
+  getAuthorization?: () => Promise<string>;
   projectId: string;
   /** Closed union per `chatIngestion/common.ts`. */
   sourceType: "scenario" | "direct";
@@ -432,7 +445,6 @@ export interface WebChatTurnPrepareInputs {
   requireNativeToolDiscovery?: boolean;
   /** A local ingress has selected its direct-provider path. */
   directProvider?: DirectProviderInput;
-  localMcpRuntimeRequired?: boolean;
   modelToolExecutor?: import("./model-tool-executor.js").ModelToolExecutor;
   selectedServerIds: string[];
   modelDefinition: ModelDefinition;
@@ -569,6 +581,11 @@ export interface WebChatTurnPrepareInputs {
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
 export interface WebChatTurnRuntime {
+  turnAuthorization?: TurnAuthorization;
+  /** This turn's stage timing; the harness adds its stages and first text. */
+  turnTiming?: TurnTiming;
+  /** The execution-binding check, when the route already started it. */
+  executionBinding?: EarlyStart<void>;
   localScopeStepUp?: {
     bindingKey: string;
     resumeRequest?: ScopeStepUpResumeRequest;
@@ -747,7 +764,20 @@ export async function streamChatTurn(
   args: StreamWebChatTurnArgs,
   source: "managed" | "standalone",
 ): Promise<Response> {
-  const { manager, prepare, persist, runtime } = args;
+  const { manager, persist, runtime } = args;
+  const { prepare, omitted: omittedEffort } = withoutCustomProviderEffort(
+    args.prepare,
+  );
+  if (omittedEffort) {
+    logger.warn(
+      "[web-chat-turn] a custom provider connection takes no reasoning effort; running the turn without it",
+      {
+        modelId: String(prepare.modelDefinition.id),
+        effort: omittedEffort,
+        chatSessionId: persist.chatSessionId,
+      },
+    );
+  }
   if (!persist.harness) assertNativeDiscovery({ required: persist.requireNativeToolDiscovery });
   const { c } = runtime;
   if (source === "standalone" && (HOSTED_MODE || persist.projectId ||
@@ -827,6 +857,20 @@ export async function streamChatTurn(
   const historyNoticeDue =
     historyPresentation !== undefined &&
     (provenanceReport?.omittedReplyParts ?? 0) > 0;
+
+  const malformedHistory = findMalformedHistory(uiMessagesForTurn as unknown[]);
+  if (malformedHistory) {
+    // Ids only, never content, so the next occurrence joins to its 400
+    // request and to the chat that keeps sending this history.
+    logger.warn("[web-chat-turn] client-sent history has a shape conversion cannot read", {
+      ...malformedHistory,
+      requestId: c.var.requestLogContext?.requestId,
+      route: c.var.requestLogContext?.route,
+      projectId: persist.projectId,
+      chatSessionId: persist.chatSessionId,
+    });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "This chat's history has a message the server can't read. Start a new chat to continue.", { ...malformedHistory });
+  }
 
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
@@ -929,6 +973,7 @@ export async function streamChatTurn(
   const emitTurnNotices = (writer: ElicitationChunkWriter): void => {
     runtime.onStreamWriterReady?.(writer);
     emitHistoryNotice(writer, historyNoticeDue, persist.chatSessionId);
+    emitReasoningEffortNotice(writer, omittedEffort !== undefined);
     emitPluginServersUnavailable(writer, persist.chatSessionId, {
       ...prepare.isolatedServers,
       failed: unavailableServers,
@@ -1064,17 +1109,19 @@ export async function streamChatTurn(
           toolName: string;
           toolInput: unknown;
         }) => {
+          const connection = toolConnectionAttribution(
+            preparedTools[toolName],
+            toolInput,
+            info.toolCallId,
+          );
           const event = await createHostedScopeStepUpContinuation({
             bearer: runtime.scopeStepUp!.bearer,
             authPrincipal: runtime.scopeStepUp!.authPrincipal,
             projectId: persist.projectId,
             chatSessionId: persist.chatSessionId!,
             manager,
-            connectionId: toolConnectionAttribution(
-              preparedTools[toolName],
-              toolInput,
-              info.toolCallId,
-            )?.connectionId,
+            connectionId: connection?.connectionId,
+            ...(connection?.implicit ? { connectionImplicit: true } : {}),
             serverName: scopeStepUpServerNamesById[info.serverId],
             info,
             toolName,
@@ -1177,15 +1224,10 @@ export async function streamChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
-  await assertConversationExecution({
-    mcpClientManager: manager,
-    projectId: persist.projectId, chatSessionId: hostedChatSessionId,
-    origin: persist.scenarioId ? "scenario" : "playground",
-    executionBindingVersion: persist.executionBindingVersion,
-    scenarioId: persist.scenarioId, executionScope: persist.executionScope,
-    harness: persist.harness, agentLoop: persist.agentLoop,
-    authHeader: runtime.authHeader, signal: runtime.abortSignal,
-  });
+  if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
+  else await assertConversationExecution(conversationExecutionArgs({
+    manager, scope: persist, authHeader: runtime.authHeader, signal: runtime.abortSignal,
+  }));
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1401,8 +1443,21 @@ export async function streamChatTurn(
       // Returned, not discarded: the engine turns this into the turn's
       // `data-persist-receipt` so the client is TOLD what happened to its save
       // rather than inferring it from a version poll.
+      let authHeader: string | undefined;
+      let authorizationFailure: { status?: number } | undefined;
+      try {
+        authHeader = persist.getAuthorization ? await persist.getAuthorization() : runtime.authHeader;
+      } catch (error) {
+        const status = error instanceof WebRouteError ? error.status : undefined;
+        logger.warn("Chat save authorization unavailable", {
+          status, errorName: error instanceof Error ? error.name : typeof error,
+        });
+        authorizationFailure = { status };
+      }
       return await persistChatSessionToConvex({
         chatSessionId: hostedChatSessionId,
+        authorizationFailure,
+        retryOwner: persist.retryOwner,
         // Applied to the SERIALIZED ingest body, so it covers every payload
         // this call can carry — session messages, the tool snapshot, assistant
         // text, a nested JSON string a tool returned — without a per-field list
@@ -1425,7 +1480,7 @@ export async function streamChatTurn(
           ? { surface: persist.surface }
           : {}),
         scenarioId: persist.scenarioId,
-        authHeader: runtime.authHeader,
+        authHeader,
         // WHAT WAS SENT, for the Raw view and `get_chat_session` — distinct
         // from `resumeConfig.systemPrompt` below, which is what a RESUMED turn
         // replays.
@@ -1592,6 +1647,7 @@ export async function streamChatTurn(
     // suspended inserts its answer here, and the saved history must carry it.
     const directHistory = scrubMessages(modelMessages);
     return streamDirectChatWithLiveTrace({
+      turnAuthorization: runtime.turnAuthorization,
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
       maxSteps: runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
@@ -1663,11 +1719,14 @@ export async function streamChatTurn(
     // Cloud-only providers skip the /stream/org/resolve round-trip — the
     // answer is always "cloud" for those. See chat-v2 history for the
     // BYOK regression that motivated this fast path.
+    // Every eligible provider asks, local-only MCP servers or not: the cloud
+    // route refuses a local-runtime connection (`local_runtime_required`),
+    // and either runtime runs this turn's tools from this process.
     // A refusal by the organization's AI-key policy (a local-runtime
     // connection when the org requires its own keys, a connection that is
     // gone) is answered as the refusal it is, never as an outage and never by
     // falling back to another rail.
-    const orgRuntime: OrgProviderRuntime = !prepare.localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
+    const orgRuntime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
       ? await resolveOrgProviderRuntime(
           persist.projectId,
           providerKey,
@@ -1740,6 +1799,7 @@ export async function streamChatTurn(
         );
       }
       return handleLocalOrgChatModel({
+        turnAuthorization: runtime.turnAuthorization,
         maxSteps: orgMaxSteps,
         provider: orgRuntime.provider,
         admission: orgRuntime.admission,
@@ -1794,6 +1854,7 @@ export async function streamChatTurn(
     }
 
     return handleHostedOrgChatModel({
+      turnAuthorization: runtime.turnAuthorization,
       maxSteps: orgMaxSteps,
       projectId: persist.projectId,
       failureReporter,
@@ -1944,6 +2005,8 @@ export async function streamChatTurn(
     requireNativeToolDiscovery: persist.requireNativeToolDiscovery,
     harnessHostCapabilities: prepare.harnessHostCapabilities,
     harnessStartupRequestId: prepare.harnessStartupRequestId,
+    turnAuthorization: runtime.turnAuthorization,
+    ...(runtime.turnTiming ? { turnTiming: runtime.turnTiming } : {}),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // The browser sent this history (MJ-008): its unresolved calls run only
     // under a verified approval.
@@ -1961,7 +2024,8 @@ export async function streamChatTurn(
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(persist.agentLoop ? { agentLoop: persist.agentLoop } : {}),
     harnessTurnContext: widgetModelContextSystemPrompt,
-    harnessUnavailableAppTools: Boolean(prepare.appTools?.length || prepare.pageTools?.length || prepare.uiTools?.length),
+    harnessAppTools: persist.harness === "codex" ? prepare.appTools : undefined,
+    harnessUnavailableAppTools: Boolean((persist.harness !== "codex" && prepare.appTools?.length) || prepare.pageTools?.length || prepare.uiTools?.length),
     // Preserve the resolved selection for hosted steps and harness leases.
     ...(forwardableSelection(prepare.routingSelection)
       ? { modelSelection: forwardableSelection(prepare.routingSelection), modelSelectionOrigin: prepare.routingSelectionOrigin }

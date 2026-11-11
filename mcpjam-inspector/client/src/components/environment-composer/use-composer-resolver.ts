@@ -15,7 +15,6 @@ import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useHostHarnessLoader } from "@/hooks/use-host-harness-targets";
-import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 
 export function useComposerResolver(
   rawProjectId: string,
@@ -23,11 +22,8 @@ export function useComposerResolver(
     /** Explicit selection is required for eval and swarm targets. */
     requireServerAttachment?: boolean;
     allowEmptyServerSelection?: boolean;
-    /**
-     * User Testing passes `true`: its participants are not the composer, so a
-     * Cursor client's key has to be project-shared to reach them.
-     */
-    requireSharedExternalCredential?: boolean;
+    /** User Testing: a client on the organization's vendor key can't run there. */
+    refuseOrgKeyClients?: boolean;
   } = {},
 ): (args: {
   state: EnvironmentComposerState;
@@ -49,11 +45,7 @@ export function useComposerResolver(
   // client's harness cannot run is skipped (and reported) instead of minted.
   const loadHostHarness = useHostHarnessLoader();
   const modelSelectionsEnabled = useModelSelectionsCapability(projectId);
-  // The key a Cursor client's environment must grant. Only read at resolve time
-  // for such a client; held here because it is a reactive query.
-  const projectSecrets = useProjectSecrets(projectId || null);
-  const requireSharedExternalCredential =
-    options.requireSharedExternalCredential === true;
+  const refuseOrgKeyClients = options.refuseOrgKeyClients === true;
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -70,12 +62,10 @@ export function useComposerResolver(
         allowEmptyServerSelection,
         loadHostHarness,
         modelSelectionsEnabled: modelSelectionsEnabled === true,
-        projectSecrets,
-        requireSharedExternalCredential,
+        refuseOrgKeyClients,
       }),
     [
-      projectSecrets,
-      requireSharedExternalCredential,
+      refuseOrgKeyClients,
       ensureAdhocEnvironments,
       loadHostHarness,
       modelMatrixEnabled,

@@ -11,10 +11,8 @@ import { shouldUseLocalHarness, withLocalHarnessSlot, prepareLocalHarnessRun, as
 import { localHarnessCapabilities, runnerCapabilities } from "./evals/runner-capabilities.js";
 import type { LocalHarnessExecutionTarget } from "../utils/harness/local/local-turn.js";
 import { ConvexError } from "convex/values";
-import {
-  assertOrgModelAllowed,
-  buildOrgModelFromResolvedConfig,
-} from "@mcpjam/sdk/model-factory";
+import { assertOrgModelAllowed } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "../utils/guarded-org-model.js";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -78,6 +76,7 @@ import {
 
 import {
   applyVisibilityPolicyAndCountSignals,
+  type HarnessMcpAtTurn,
   type HostExecutionPolicy,
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
@@ -2532,6 +2531,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   extraBodyFields?: Record<string, unknown>;
   /** The selection `extraBodyFields` forwards, typed for a harness turn. */
   modelSelection?: ModelSelection;
+  /** The harness runs the model on the customer's own vendor account (Cursor). */
+  modelSource?: "external-account";
   /** See {@link RunEvalSuiteOptions.extraHeaders}. */
   extraHeaders?: Record<string, string>;
 };
@@ -3594,15 +3595,16 @@ const executeTestCase = async (params: {
   // already admitted. A per-case model is normal in evals, so that refusal hit
   // legitimate Cursor suites.
   const caseModel = buildModelDefinition(test);
-  const promotedModel = resolveEvalCaseModelDefinition({
-    hostConfig: suiteHostConfig,
-    caseModel,
-  });
+  // Only an external-account host (Cursor) promotes its model, and its runtime
+  // runs the case on the customer's own vendor account: neither MCPJam's spend
+  // nor an org provider's. The org's key is checked at launch and at the box.
+  const { modelDefinition: promotedModel, externalAccount } =
+    resolveEvalCaseModelDefinition({ hostConfig: suiteHostConfig, caseModel });
   // The case's saved selection decides the rail — unless the host promoted
   // its own runtime-chosen model, in which case the case's model (and so its
   // selection) describes nothing that runs.
   const selectionRoute =
-    test.selection && promotedModel === caseModel
+    test.selection && !externalAccount
       ? resolveEvalSelectionRoute({
           test,
           selection: test.selection,
@@ -3628,7 +3630,7 @@ const executeTestCase = async (params: {
   // A stored legacy selection (own key only) for the model that runs. Same
   // gate as `selectionRoute`: a promoted host model is not the case's.
   const legacySelection =
-    !selectionRoute && promotedModel === caseModel
+    !selectionRoute && !externalAccount
       ? routingSelectionForModel(test.legacySelection, caseModel)
       : undefined;
   // `hosted: false` on a legacy one, so every check downstream (harness
@@ -3641,17 +3643,20 @@ const executeTestCase = async (params: {
     : getCanonicalModelId(String(modelDefinition.id), modelDefinition.provider);
   // Who pays: the saved selection's rail; a legacy one is never `hosted`;
   // without either, today's hosted-list check on the canonical id
-  // (`decideTurnRail` with no selection IS that check).
-  const isJamModel = selectionRoute
-    ? selectionRoute.rail === "hosted"
-    : decideTurnRail({
-        selection: legacySelection,
-        model: {
-          id: resolvedModelId,
-          provider: modelDefinition.provider,
-          hosted: modelDefinition.hosted,
-        },
-      }) === "hosted";
+  // (`decideTurnRail` with no selection IS that check). Never MCPJam for an
+  // external-account case, whatever the hosted list says.
+  const isJamModel =
+    !externalAccount &&
+    (selectionRoute
+      ? selectionRoute.rail === "hosted"
+      : decideTurnRail({
+          selection: legacySelection,
+          model: {
+            id: resolvedModelId,
+            provider: modelDefinition.provider,
+            hosted: modelDefinition.hosted,
+          },
+        }) === "hosted");
   // "Use your keys for all AI features": when the organization requires its
   // own provider keys, the case runs on an org connection through the
   // backend's `/stream/org` (cloud) route or not at all — never on MCPJam's
@@ -3664,7 +3669,7 @@ const executeTestCase = async (params: {
     throw orgKeysRequiredRefusal({ source: "hosted", model: resolvedModelId });
   }
   const orgByokRuntime =
-    isJamModel || selectionRoute?.rail === "local"
+    isJamModel || externalAccount || selectionRoute?.rail === "local"
       ? undefined
       : await resolveOrgByokEvalRuntime({
           test,
@@ -3691,12 +3696,13 @@ const executeTestCase = async (params: {
       },
     ]);
   }
-  if (requireOrgKeys) {
+  if (requireOrgKeys && !externalAccount) {
     // Only the cloud org route remains: a local runtime, or no org route at
     // all (which would fall through to this machine's keys), is refused. The
     // connection itself must be one the backend calls eligible
     // (`policyEligibility` on its resolved row; a row without one fails
-    // closed). The backend admits the same connections on `/stream/org`.
+    // closed). The backend admits the same connections on `/stream/org`. An
+    // external-account case runs on the org's vendor key, not a connection.
     if (orgByokRuntime?.kind !== "cloud") {
       throw orgKeysRequiredRefusal({
         rail: orgByokRuntime?.kind ?? "direct",
@@ -3842,7 +3848,9 @@ const executeTestCase = async (params: {
       : shouldPrecreateIterations
         ? precreatedIterationIds[runIndex]
         : undefined;
-    if (isJamModel) {
+    // An external-account case runs the hosted iteration too, where its
+    // harness turn takes the box; it carries no billing target or selection.
+    if (isJamModel || externalAccount) {
       const backendParams = {
         test,
         runIndex,
@@ -3858,6 +3866,9 @@ const executeTestCase = async (params: {
         convexAuthToken,
         modelId: resolvedModelId,
         modelDefinition,
+        ...(externalAccount
+          ? { modelSource: "external-account" as const }
+          : {}),
         extraBodyFields:
           jamBillingTarget || hostedSelection
             ? {
@@ -4407,7 +4418,7 @@ export const runEvalSuiteWithAiSdk = async ({
                 }),
             )
             .map((test) => {
-              const modelDefinition = resolveEvalCaseModelDefinition({
+              const { modelDefinition } = resolveEvalCaseModelDefinition({
                 hostConfig: suiteHostConfig,
                 caseModel: buildModelDefinition(test),
               });
@@ -5653,7 +5664,7 @@ const runLocalIteration = async ({
               // turn's later steps and retries each ask again first.
               assertOrgModelAllowed(admitted.provider, String(modelDefinition.id));
               return admitEachLocalOrgAttempt(
-                buildOrgModelFromResolvedConfig(admitted.provider, String(modelDefinition.id)),
+                buildGuardedOrgModel(admitted.provider, String(modelDefinition.id)),
                 admitted.admission,
                 String(modelDefinition.id),
               );
@@ -6346,6 +6357,7 @@ const runHostedIterationWithBrowser = async (
     endpointPath = "/stream",
     extraBodyFields,
     modelSelection,
+    modelSource,
     extraHeaders,
     convexClient,
     runId,
@@ -6614,12 +6626,18 @@ const runHostedIterationWithBrowser = async (
   // This used to run here, unconditionally, which is why it is a thunk rather
   // than a value: the one call site below is inside the try that turns a
   // provisioning failure into a cleanly recorded failed iteration.
-  const buildBuiltInTools = async (sandboxBinding?: {
+  type EvalBoxBinding = {
     sandboxId: string;
     sandboxRowId: string;
     runtimeKind: "terminal" | "desktop-browser";
     workdir?: string;
-  }) => {
+  };
+  const buildBuiltInTools = async (
+    sandboxBinding?: EvalBoxBinding,
+    // The desktop paired with a pinned shell box; Browser alone runs there.
+    browserSandboxBinding?: EvalBoxBinding,
+  ) => {
+    const browserBox = browserSandboxBinding ?? sandboxBinding;
     // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
     // provisioned, never the project computer: an unattended run drives a
     // disposable desktop nothing else can reach, and asking about the project's
@@ -6629,8 +6647,7 @@ const runHostedIterationWithBrowser = async (
     // unless the run declared a browser policy — an eval with no browser must
     // not pay a daemon round trip to discover it has no browser.
     const pageToolsSnapshot = pageToolsSnapshotFrom(
-      sandboxBinding?.runtimeKind === "desktop-browser" &&
-        browserApprovalDelivery
+      browserBox?.runtimeKind === "desktop-browser" && browserApprovalDelivery
         ? await peekPageToolsForChatTurn({
             builtInToolIds: resolvedExecution.builtInToolIds,
             browserToolId: BROWSER_BUILT_IN_TOOL_ID,
@@ -6645,7 +6662,7 @@ const runHostedIterationWithBrowser = async (
               ? { projectId: builtInTarget.projectId }
               : { projectId: undefined }),
             bearer: convexAuthToken,
-            sandboxRowId: sandboxBinding.sandboxRowId,
+            sandboxRowId: browserBox.sandboxRowId,
             // A cancelled run must not sit out the peek's full deadline before
             // its cancellation takes effect.
             ...(abortSignal ? { signal: abortSignal } : {}),
@@ -6709,6 +6726,7 @@ const runHostedIterationWithBrowser = async (
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.
             ...(sandboxBinding ? { sandboxBinding } : {}),
+            ...(browserSandboxBinding ? { browserSandboxBinding } : {}),
             ...(pageToolsSnapshot
               ? { browserPageTools: pageToolsSnapshot }
               : {}),
@@ -6880,9 +6898,13 @@ const runHostedIterationWithBrowser = async (
                   runId: String(runId),
                   ...(iterationId ? { iterationId: String(iterationId) } : {}),
                   // Absent for a terminal box, so every request that predates
-                  // desktops is byte-identical on the wire.
+                  // desktops is byte-identical on the wire. `pairBrowser` lets
+                  // a pinned image keep its own box beside the desktop.
                   ...(sandboxNeed.runtimeKind === "desktop-browser"
-                    ? { runtimeKind: "desktop-browser" as const }
+                    ? {
+                        runtimeKind: "desktop-browser" as const,
+                        pairBrowser: true,
+                      }
                     : {}),
                 }
               : { iterationId: String(iterationId) }),
@@ -6901,6 +6923,14 @@ const runHostedIterationWithBrowser = async (
                     : {}),
                   ...(result.value.workdir
                     ? { workdir: result.value.workdir }
+                    : {}),
+                  ...(result.value.browser
+                    ? {
+                        browser: {
+                          sandboxRowId: result.value.browser.sandboxRowId,
+                          sandboxId: result.value.browser.sandboxId,
+                        },
+                      }
                     : {}),
                 },
               }
@@ -6954,6 +6984,11 @@ const runHostedIterationWithBrowser = async (
               : {}),
           }
         : undefined;
+    // A pinned image with a browser boots two boxes: shell, files and harness
+    // stay on `sandboxBinding`, and Browser gets this desktop.
+    const browserSandboxBinding = sandboxBinding
+      ? evalBox?.browserBinding
+      : undefined;
     // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
     // terminal binding, so a desktop request answered with a terminal box
     // would run the iteration with no browser tools at all and score it as an
@@ -6963,7 +6998,8 @@ const runHostedIterationWithBrowser = async (
     // failed iteration rather than a misleading passing one.
     if (
       sandboxNeed.runtimeKind === "desktop-browser" &&
-      sandboxBinding?.runtimeKind !== "desktop-browser"
+      (browserSandboxBinding ?? sandboxBinding)?.runtimeKind !==
+        "desktop-browser"
     ) {
       throw new Error(
         "This eval declares a browser tool policy, which needs a desktop " +
@@ -6972,7 +7008,10 @@ const runHostedIterationWithBrowser = async (
           "tool from this host config, or update the deployment.",
       );
     }
-    builtInTools = await buildBuiltInTools(sandboxBinding);
+    builtInTools = await buildBuiltInTools(
+      sandboxBinding,
+      browserSandboxBinding,
+    );
 
     prepared = await prepareChatV2({
       connectionsByServerId: {},
@@ -7194,6 +7233,8 @@ const runHostedIterationWithBrowser = async (
     | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
   const requestPayloads: LiveChatTraceRequestPayloadEntry[] = [];
+  /** Each harness turn's MCP route, by promptIndex; empty on emulated runs. */
+  const harnessMcpByPromptIndex = new Map<number, HarnessMcpAtTurn>();
   /**
    * Wire results for the friction signals, keyed as the GRADED call array
    * keys its calls. Filled per turn by `drive-hosted-eval-turn`; empty when
@@ -7275,6 +7316,7 @@ const runHostedIterationWithBrowser = async (
   const hostedHandlers = buildHostedStepHandlers({
     // See the local path: one turn's slice of the run's frozen budget.
     turnTimeoutMs: budgets.turnTimeoutMs,
+    iterationDeadlineAt,
     browser,
     prepared,
     modelDefinition,
@@ -7299,9 +7341,10 @@ const runHostedIterationWithBrowser = async (
     // the emulated path, which is why they are all conditional).
     //
     // THE SAME BOX the tool resolver already exposes as `bash`, handed to the
-    // harness as well: one box per iteration, never two. It rides the handler
-    // options rather than the host config because the run's config snapshot is
-    // member-readable, so a binding writable there would be forgeable.
+    // harness as well; a paired desktop holds Browser alone. It rides the
+    // handler options rather than the host config because the run's config
+    // snapshot is member-readable, so a binding writable there would be
+    // forgeable.
     //
     // The whole binding, `workdir` included: dropping it rooted every eval
     // harness Shell at whatever the turn fell back to instead of the box's.
@@ -7416,6 +7459,7 @@ const runHostedIterationWithBrowser = async (
       traceMessageHistory,
       capturedSpans,
       requestPayloads,
+      harnessMcpByPromptIndex,
       evidenceResults,
       evidenceHadHole,
       accumulatedUsage,
@@ -7658,11 +7702,13 @@ const runHostedIterationWithBrowser = async (
     // attribution here agrees with the provider request. (This runner is never
     // reached by a model-free case — those dispatch to the local runner.)
     modelId,
+    ...(modelSource ? { modelSource } : {}),
     ...(backendEnhancedSystemPromptForPersist
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),
     spans: capturedSpans,
     requestPayloads,
+    harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,
     // and the middle one is the reason this is threaded at all:
@@ -7779,10 +7825,14 @@ const runHostedIterationWithBrowser = async (
   });
 
   return {
-    creditsExhausted: isCreditExhaustion({
-      message: iterationError,
-      details: iterationErrorDetails,
-    }),
+    // An external-account turn spends no MCPJam credits, so its errors (the
+    // vendor's own words) never stop the run as if MCPJam's had run out.
+    creditsExhausted:
+      modelSource !== "external-account" &&
+      isCreditExhaustion({
+        message: iterationError,
+        details: iterationErrorDetails,
+      }),
     evaluation,
     iterationId: iterationId ?? undefined,
     ...(toolPolicyGate?.blocks.length

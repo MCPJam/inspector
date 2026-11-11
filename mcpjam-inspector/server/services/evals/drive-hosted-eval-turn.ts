@@ -55,8 +55,9 @@ import {
   type CanonicalMcpCall,
 } from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
-import { runAssistantTurn } from "../../utils/assistant-turn.js";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
+import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
 import { withWidgetContextSystemPrompt, buildEvalWidgetContextSystemPrompt } from "./widget-interaction-context.js";
@@ -350,6 +351,8 @@ export interface DriveHostedEvalTurnParams {
    * iteration's own clock still bounds the sum of them.
    */
   turnTimeoutMs: number;
+  /** When the enclosing iteration's deadline fires (epoch ms). */
+  iterationDeadlineAt?: number;
   maxSteps: number;
   runStartedAt: number;
   isAborted: () => boolean;
@@ -377,6 +380,11 @@ export interface DriveHostedEvalTurnParams {
     traceMessageHistory: ModelMessage[];
     capturedSpans: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+    /**
+     * Each harness turn's MCP route (`turnTrace.harnessMcpAtTurn`), by eval
+     * `promptIndex`, for the per-turn persist. Empty on an emulated run.
+     */
+    harnessMcpByPromptIndex?: Map<number, HarnessMcpAtTurn>;
     /**
      * Wire results, keyed by the `toolCallId` the GRADED call array uses:
      * a matched call under its narrated id, a wire-only call under
@@ -498,6 +506,7 @@ export function failedLayerForEngineError(
 
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
+  origin: "prompt" | "widget-follow-up" = "prompt",
 ): Promise<HostedEvalTurnOutcome> {
   const {
     promptIndex,
@@ -545,7 +554,6 @@ export async function driveHostedEvalTurn(
   // move together everywhere or the trace view drifts silently.
   acc.messageHistory.push({ role: "user", content: params.prompt });
   acc.traceMessageHistory.push({ role: "user", content: params.prompt });
-  const messageCountBeforeTurn = acc.messageHistory.length;
   let appContext: ReturnType<BrowserSessionContext["getModelContext"]>;
   const inputMessages: ModelMessage[] = [...acc.messageHistory];
 
@@ -771,10 +779,21 @@ export async function driveHostedEvalTurn(
   // turn holds the iteration until the ITERATION's budget expires — the whole
   // remaining allowance spent on a turn that was never coming back.
   turnDeadline = withDeadline(abortSignal, turnTimeoutMs, "turn");
+  const activeTurnDeadline = turnDeadline;
 
-  let turnResult: Awaited<ReturnType<typeof runAssistantTurn>>;
+  let turnResult: Awaited<ReturnType<typeof runUnifiedAssistantTurn>>;
   try {
-    turnResult = await runAssistantTurn({
+    turnResult = await runUnifiedAssistantTurn({
+      // Harness-gated selection: emulated evals forward none.
+      runtime: {
+        kind: "hosted",
+        endpointPath: params.endpointPath,
+        extraBodyFields: mergedExtraBodyFields,
+        ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
+        ...(params.harness
+          ? { harness: params.harness, modelSelection: params.modelSelection }
+          : {}),
+      },
       messages: appendPluginModelContext(inputMessages, appContext),
       // Eval's `runTestCase` already resolved the canonical model id
       // (`getCanonicalModelId(modelDefinition.id, provider)`) and threads it
@@ -805,19 +824,13 @@ export async function driveHostedEvalTurn(
       streamSink: "none",
       persistMode: "caller",
       approvalMode: "auto-deny",
-      // Harness eval (host harness === "claude-code"): forward the selector and
-      // the host's real approval intent. A gated native call can fail during
-      // streaming because evals cannot interactively approve it, while
-      // still running non-approval hosts under allow-all. Gated on harness so
-      // emulated evals stay byte-identical (they forward neither today).
+      // Harness eval (host harness === "claude-code"): forward the host's real
+      // approval intent. Evals cannot approve a gated native call interactively,
+      // and non-approval hosts still run under allow-all.
       ...(params.harness
         ? {
-            harness: params.harness,
             agentLoop: params.agentLoop,
             harnessTurnContext: EVAL_WIDGET_MODEL_CONTEXT ? buildEvalWidgetContextSystemPrompt(browser.browserInteractionSteps) : undefined,
-            ...(params.modelSelection
-              ? { modelSelection: params.modelSelection }
-              : {}),
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
               ? { requireToolApproval: params.requireToolApproval }
@@ -891,10 +904,17 @@ export async function driveHostedEvalTurn(
             ...(params.tasks !== undefined ? { tasks: params.tasks } : {}),
           }
         : {}),
-      endpointPath: params.endpointPath,
-      extraBodyFields: mergedExtraBodyFields,
-      ...(params.extraHeaders ? { extraHeaders: params.extraHeaders } : {}),
       abortSignal: turnDeadline.signal,
+      // A busy-admission wait that would outlast the turn returns the refusal
+      // instead of sleeping into the turn's abort. The turn's signal also
+      // fires on the iteration's deadline, which a later turn can reach first.
+      remainingTurnMs: () =>
+        Math.min(
+          activeTurnDeadline.remainingMs(),
+          params.iterationDeadlineAt === undefined
+            ? Infinity
+            : Math.max(0, params.iterationDeadlineAt - Date.now()),
+        ),
       maxSteps: params.maxSteps,
       progressivePlan: prepared.progressivePlan,
       discoveryState: prepared.discoveryState,
@@ -917,7 +937,7 @@ export async function driveHostedEvalTurn(
         await browser.handleEngineToolResult(event);
       },
       ...(sinks.onStepFinish ? { onStepFinish: sinks.onStepFinish } : {}),
-      onEngineError: (event) => {
+      onEngineError: (event: MCPJamEngineErrorEvent) => {
         lastEngineError = event;
       },
       // The run's FROZEN evidence decision, as the mint reported it. Captured
@@ -979,7 +999,7 @@ export async function driveHostedEvalTurn(
   // to earlier turns' calls. ONE slice, consumed by the reconciler, the
   // grading projection and the trace roll below — three slices could
   // disagree if the engine ever mutated the array between them.
-  const newMessages = turnResult.messages.slice(messageCountBeforeTurn);
+  const { newMessages } = turnResult;
   const evidence = await reconcileTurnEvidence({
     ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
     ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
@@ -1000,6 +1020,12 @@ export async function driveHostedEvalTurn(
       turnResult.turnTrace?.requestPayloads ?? [],
     ).map((entry) => ({ ...entry, promptIndex: params.promptIndex })),
   );
+  // Widget follow-ups share the authored prompt's index. Leave it empty if
+  // the authored prompt supplied no receipt.
+  const routeRecord = turnResult.turnTrace?.harnessMcpAtTurn;
+  if (origin === "prompt" && routeRecord) {
+    acc.harnessMcpByPromptIndex?.set(params.promptIndex, routeRecord);
+  }
   collectEvidenceResults(acc, evidence);
   // Reconcile accumulated usage to the engine's canonical post-turn total
   // against the pre-turn baseline. The stream runner's `onStepFinish` sink

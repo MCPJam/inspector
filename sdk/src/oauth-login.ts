@@ -221,7 +221,11 @@ function toAuthorizationPlanInput(
   };
 }
 
-async function resolveOAuthLoginAuthorizationPlan(
+/**
+ * The login's plan: the strategy it names, or Auto's choice after probing the
+ * server. `runConformance` settles an OAuth suite's `"auto"` with it too.
+ */
+export async function resolveOAuthLoginAuthorizationPlan(
   input: OAuthLoginConfig,
 ): Promise<ResolvedAuthorizationPlan> {
   const basePlan = resolveAuthorizationPlan(toAuthorizationPlanInput(input));

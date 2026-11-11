@@ -22,12 +22,6 @@ import {
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
-import {
-  readLocalTimeout,
-  saveLocalTimeout,
-  readSessionTimeout,
-  saveSessionTimeout,
-} from "./conformance-local-timeout";
 import { toast } from "@/lib/toast";
 import type { ConformancePersistConfig } from "@/components/conformance/PersistConformanceRun";
 import {
@@ -175,6 +169,8 @@ export function ConformanceTab({
   // Bumped to send a finished run's view back to the page's home: its key
   // changes, so it mounts fresh, on the server list.
   const [homeVersion, setHomeVersion] = useState(0);
+  // The tab a run was started from, so the run's Back returns there.
+  const [runFrom, setRunFrom] = useState<ConformanceView>("overview");
   // The server whose Conformance Settings are open, over the run view.
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   // The tools each server's checks may call: set in step 2, and
@@ -215,37 +211,39 @@ export function ConformanceTab({
         : pending;
     });
   }, [serverTimeouts, persist?.projectId]);
-  const [, refreshSessionTimeout] = useState(0);
-  const isSessionTimeout = (name: string) =>
-    Boolean(
-      persist && isSavedServer && !isSavedServer(name) && !projectServersLoading,
-    );
+  // The timeout is set in a server's Settings, which only a saved project
+  // server has. Every other run (an unsaved server, or no project) takes the
+  // default, the most a run may take anyway.
   const timeoutFor = (name: string) => {
-    if (persist && isSessionTimeout(name)) {
-      return readSessionTimeout(persist.projectId, name);
-    }
     const changed = changedTimeouts[timeoutKeyFor(name)];
     if (changed) return changed.seconds ?? undefined;
-    return savedTimeoutFor(name) ?? (!persist ? readLocalTimeout(name) : undefined);
+    return savedTimeoutFor(name);
   };
-  const saveTimeout = async (name: string, seconds: number | null) => {
-    if (persist && isSessionTimeout(name)) {
-      saveSessionTimeout(persist.projectId, name, seconds);
-      refreshSessionTimeout((version) => version + 1);
-      return;
-    }
-    if (onSaveServerTimeout) await onSaveServerTimeout(name, seconds);
-    else if (!persist) saveLocalTimeout(name, seconds);
-    else throw new Error("Server timeout settings are unavailable. Reload the page and try again.");
-    setChangedTimeouts((previous) => ({
-      ...previous,
-      [timeoutKeyFor(name)]: {
-        projectId: persist?.projectId ?? null,
-        serverName: name,
-        seconds,
-      },
-    }));
-  };
+  // Settings offers the timeout only where it can be saved. The change counts
+  // before its save lands, as `saveDefaults` does: Back works while the
+  // timeout saves, so Run again right after must already run with it. A save
+  // that fails takes its entry back, unless a later change owns it by then.
+  const saveTimeout = onSaveServerTimeout
+    ? async (name: string, seconds: number | null) => {
+        const key = timeoutKeyFor(name);
+        const entry = {
+          projectId: persist?.projectId ?? null,
+          serverName: name,
+          seconds,
+        };
+        setChangedTimeouts((previous) => ({ ...previous, [key]: entry }));
+        try {
+          await onSaveServerTimeout(name, seconds);
+        } catch (error) {
+          setChangedTimeouts((previous) => {
+            if (previous[key] !== entry) return previous;
+            const { [key]: _failed, ...rest } = previous;
+            return rest;
+          });
+          throw error;
+        }
+      }
+    : undefined;
   const defaultsFor = (serverName: string) =>
     Object.hasOwn(changedDefaults, serverName)
       ? changedDefaults[serverName]
@@ -343,6 +341,10 @@ export function ConformanceTab({
     changeView("overview");
   };
   const [loadingDefaults, setLoadingDefaults] = useState(false);
+  /** The server whose run is waiting on its defaults, for its card. */
+  const [startingServer, setStartingServer] = useState<string | null>(null);
+  /** The server a run is connecting before it starts, for its card. */
+  const [connectingServer, setConnectingServer] = useState<string | null>(null);
   const [failedRequest, setFailedRequest] = useState<{
     name: string;
     pin?: ProtocolVersionPin;
@@ -378,6 +380,7 @@ export function ConformanceTab({
   ) => {
     const id = ++requestId.current;
     setLoadingDefaults(true);
+    setStartingServer(pin ? name : null);
     setFailedRequest(null);
     try {
       const defaults = await readDefaults(name);
@@ -394,8 +397,10 @@ export function ConformanceTab({
       if (mounted.current && id === requestId.current)
         setFailedRequest({ name, pin });
     } finally {
-      if (mounted.current && id === requestId.current)
+      if (mounted.current && id === requestId.current) {
         setLoadingDefaults(false);
+        setStartingServer(null);
+      }
     }
   };
   // A saved run's Run again lands here with `?run=<server>`: start that
@@ -447,12 +452,18 @@ export function ConformanceTab({
     const run = lastRuns?.[offered.name];
     return run ? [{ serverName: offered.name, run }] : [];
   });
+  // A run connecting its server holds every Run off, even before the server
+  // itself reports "connecting": a second Run would replace the pending one.
   const cardsDisabled =
-    !serverDefaultsLoaded || loadingDefaults || selectionIsReconnecting;
-  const runServer = (serverName: string) =>
-    onLoadServerDefaults
-      ? void requestDefaults(serverName, "auto")
-      : startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+    !serverDefaultsLoaded ||
+    loadingDefaults ||
+    selectionIsReconnecting ||
+    connectingServer !== null;
+  const runServer = (serverName: string) => {
+    setRunFrom("overview");
+    if (onLoadServerDefaults) void requestDefaults(serverName, "auto");
+    else startRun(serverName, "auto", defaultsFor(serverName) ?? {});
+  };
   const home =
     recentServers.length > 0 && onViewRun ? (
       <ConformanceServerList
@@ -461,6 +472,9 @@ export function ConformanceTab({
         onViewRun={onViewRun}
         disabled={cardsDisabled}
         disabledServerName={failedRequest?.name}
+        startingServerName={
+          (loadingDefaults ? startingServer : connectingServer) ?? undefined
+        }
         onRun={runServer}
       />
     ) : undefined;
@@ -488,8 +502,6 @@ export function ConformanceTab({
             ? start.selection
             : undefined
         }
-        timeoutFor={timeoutFor}
-        onSaveTimeout={saveTimeout}
         defaultsFor={defaultsFor}
         defaultsLoaded={serverDefaultsLoaded}
         onLoadDefaults={onLoadServerDefaults ? readDefaults : undefined}
@@ -538,7 +550,14 @@ export function ConformanceTab({
     const noServerRunButton = (
       <Button
         size="sm"
-        onClick={openSetup ?? (() => toast.info(NO_SERVERS_MESSAGE))}
+        onClick={
+          openSetup
+            ? () => {
+                setRunFrom(activeView);
+                openSetup();
+              }
+            : () => toast.info(NO_SERVERS_MESSAGE)
+        }
       >
         {RUN_LABEL}
       </Button>
@@ -584,8 +603,12 @@ export function ConformanceTab({
       onViewChange={changeView}
       onShowHome={() => {
         setHomeVersion((version) => version + 1);
-        changeView("overview");
+        changeView(runFrom);
       }}
+      backLabel={
+        runFrom === "history" ? "Conformance History" : "Conformance"
+      }
+      onRunFrom={setRunFrom}
       serverIconUrl={serverIcons?.[server.name]}
       showHistory={showHistory}
       history={history}
@@ -619,6 +642,9 @@ export function ConformanceTab({
       onAutoStart={() => {
         if (start) startedIdRef.current = start.id;
       }}
+      onConnectingChange={(connecting) =>
+        setConnectingServer(connecting ? server.name : null)
+      }
       initialVersionPin={startsHere ? start?.versionPin : undefined}
       initialResolvedProtocolVersion={
         startsHere ? start?.resolvedProtocolVersion : undefined
@@ -679,6 +705,12 @@ export function ConformanceTab({
             }
             onSave={(selection, inputs) =>
               saveDefaults(settingsServer, selection, inputs)
+            }
+            timeoutSeconds={timeoutFor(settingsServer)}
+            onSaveTimeout={
+              saveTimeout
+                ? (seconds) => saveTimeout(settingsServer, seconds)
+                : undefined
             }
             onBack={() => setSettingsFor(null)}
           />

@@ -31,6 +31,7 @@ import {
   GOOSE_HOST_STYLE_VARIABLES,
   GOOSE_PLATFORM,
 } from "./goose-style.js";
+import { MCP_APPS_NO_CLAIMS } from "../../host-compat/capabilities.js";
 import { SLACK_FONT_CSS, getSlackStyleVariables } from "./slack-style.js";
 import { CHATGPT_MODEL_CONTEXT_POLICY } from "./chatgpt-model-context-policy.js";
 
@@ -243,6 +244,7 @@ export const HOST_TEMPLATE_IDS = [
   "goose",
   "slack",
   "cursor",
+  "copilot-cli",
   "cursor-cli",
   "codex",
   "copilot",
@@ -1221,12 +1223,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
-          // OpenAI plugin extensions (sidebar Apps, forms, …) are on for
-          // ChatGPT; each one can be switched off in the client's Apps tab.
-          // This seed emulates ChatGPT on the web, so the extensions the
-          // OpenAI extensions spec's Platform Support table marks "Not
-          // supported" on Web start off: fileViewers, localFiles,
-          // fileResources and mentions. Mirrors the backend template.
+          // Match the backend Web preset and current product availability:
+          // composer mentions and file capabilities require the desktop app.
+          // Explicit client overrides can emulate the broader protocol support.
           pluginExtensions: {
             capabilities: {
               fileResources: false,
@@ -2189,6 +2188,33 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     },
   },
   {
+    id: "copilot-cli",
+    label: "GitHub Copilot CLI",
+    description:
+      "Run GitHub Copilot CLI with your selected MCP tools in a hosted sandbox.",
+    seed: () => ({
+      ...emptyHostConfigInputV2({
+        hostStyle: "copilot-cli",
+        modelId: "openai/gpt-5.5",
+        temperature: 1,
+        requireToolApproval: true,
+        harness: "copilot-cli",
+        computer: { kind: "personal" },
+      }),
+      progressiveToolDiscovery: false,
+      clientCapabilities: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "MCPJam", version: "1.0" },
+        },
+        apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
+      },
+    }),
+  },
+  {
     id: "cursor-cli",
     label: "Cursor CLI",
     description:
@@ -2208,26 +2234,29 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "cursor/auto",
         temperature: 1.0,
         requireToolApproval: false,
+        // The real CLI ignores SEP-1865 App-only visibility: it lists
+        // `_meta.ui.visibility: ["app"]` tools to its model and calls them.
+        // Filtering them here would hide tools the CLI exposes.
+        respectToolVisibility: false,
         // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
         // of MCPJam's emulated engine. It executes inside an attached personal
         // computer, so seed one too — the backend enforces `harness ⇒ computer`
         // on write.
         harness: "cursor",
         computer: { kind: "personal" },
+        // MCPJam's outer limit, not Cursor's. Cursor cancels its own MCP calls
+        // 60 s after sending them, so that limit governs on every route, and
+        // native forwarding admits no other explicit timeout than this one.
+        connectionDefaults: { headers: {}, requestTimeout: 300_000 },
       });
-      // REPLACED, not spread. A spread would leak the SDK default's
-      // `extensions["io.modelcontextprotocol/ui"]` back in and advertise a
-      // widget-rendering surface a terminal CLI cannot have — the same move the
-      // Claude Code and Codex templates make, and for the same reason.
-      //
-      // Conservative rather than probed: unlike Claude Code's, these are NOT
-      // from a live `start-host-probe` capture. `roots` + `elicitation` is the
-      // floor an ACP client is expected to support; widen it only from a real
-      // capture (the backend catalog row is `provenance: 'assumed'` to match).
-      base.clientCapabilities = {
-        roots: {},
-        elicitation: {},
-      };
+      // REPLACED with an empty set, not spread. A spread would leak the SDK
+      // default's UI extension back in. There are no capability, identity or
+      // protocol pins at all, and so no `mcpProfile.initialize`: forwarding
+      // passes the real CLI's own handshake through, and any pin here would
+      // make MCPJam's connection differ from it, which keeps the client off
+      // pass-through. The backend catalog row records the measured handshake
+      // as evidence. Kept in lockstep with the backend template.
+      base.clientCapabilities = {};
       // The real Cursor CLI owns native tool discovery from the MCP servers
       // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
       // off — `search_mcp_tools` must never look like a Cursor built-in.
@@ -2242,32 +2271,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // The CLI's native toolset (bash/read/edit/…) is NOT seeded into
       // `builtInToolIds`: under `harness: "cursor"` those come from the real
       // runtime inside the sandbox, not MCPJam's built-in tool registry.
+      //
+      // The CLI's own negotiation, measured: `initialize` at 2025-11-25 on
+      // every server, and `server/discover` at 2026-07-28 only after a
+      // `-32022` refusal naming it. Not a pin: Auto would probe 2026-07-28
+      // first and land a both-era server on a revision the CLI never speaks.
       base.mcpProfile = {
         profileVersion: 1,
-        initialize: {
-          // ASSUMED, inherited from the same-vendor `cursor` template rather
-          // than measured — kept in lockstep with the backend catalog row.
-          supportedProtocolVersions: ["2025-11-25"],
-          // TODO(cursor-cli probe): capture the real clientInfo the cursor-agent
-          // MCP client sends and replace these.
-          //
-          // `version` is REQUIRED by the canonicalizer (non-empty string), so
-          // it cannot be omitted to signal "unknown". It carries the build
-          // actually OBSERVED during the harness spike — real, not a guess —
-          // but it is NOT a pin: the bootstrap installs via
-          // `curl https://cursor.com/install | bash`, which always fetches the
-          // current build, so most sessions run something newer. That gap is
-          // why the turn records the installed `agent --version` per session
-          // (see `runtimeVersionCommand` in the server registry); do not read
-          // this field as what ran. Kept in lockstep with the backend catalog.
-          clientInfo: {
-            name: "cursor-agent",
-            title: "Cursor CLI",
-            version: "2026.08.31-4057e58",
-            description: "Cursor's agentic coding CLI",
-            websiteUrl: "https://cursor.com/cli",
-          },
-        },
+        versionNegotiation: "legacy-first",
       };
       return base;
     },
