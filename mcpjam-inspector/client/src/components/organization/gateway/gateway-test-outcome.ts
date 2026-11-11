@@ -42,7 +42,7 @@ export function testedFromLabel(origin: "backend" | "inspector"): string {
 function statusTitle(status: number | undefined): string {
   if (status === 401)
     return "The provider needs a valid API key. Update the key and test again.";
-  if (status === 403) return "The provider refused the request";
+  if (status === 403) return "The provider refused the request. Check the key's access on the provider, then test again.";
   return "The provider test failed. Check the base URL and key, then test again.";
 }
 
@@ -105,7 +105,7 @@ export function gatewayTestOutcome(
   if (response.message) {
     return {
       tone: "warning",
-      title: "The provider listed no models",
+      title: "The provider listed no models. Name a model below, or add models to the provider and test again.",
       message: response.message,
       testedFrom,
     };
