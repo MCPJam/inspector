@@ -273,6 +273,38 @@ function buildListing(
   };
 }
 
+function catalogOf(
+  capabilities: EffectiveCapabilitySet,
+  modelContextTokens: number | undefined
+) {
+  const skills = allEffectiveSkills(capabilities);
+  const pluginRefs = new Set(
+    capabilities.pluginSkills.map((skill) => skill.ref)
+  );
+  const serverRefs = new Set(
+    capabilities.serverSkills.map((skill) => skill.ref)
+  );
+  const listing = buildListing(
+    skills,
+    pluginRefs,
+    serverRefs,
+    modelContextTokens
+  );
+  return { skills, pluginRefs, serverRefs, listing };
+}
+
+/**
+ * The refs the prompt's skill list leaves out to stay within this model's
+ * budget. It is the list `getEffectiveSkillToolsAndPrompt` builds, so a turn's
+ * plan and its prompt agree on which skills the model can see.
+ */
+export function skillCatalogOmissions(
+  capabilities: EffectiveCapabilitySet,
+  modelContextTokens?: number
+): string[] {
+  return catalogOf(capabilities, modelContextTokens).listing.omittedRefs;
+}
+
 export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
   /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
@@ -471,22 +503,13 @@ export function getEffectiveSkillToolsAndPrompt(
   tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
 } {
-  const skills = allEffectiveSkills(capabilities);
+  const { skills, pluginRefs, serverRefs, listing } = catalogOf(
+    capabilities,
+    options?.modelContextTokens
+  );
   if (skills.length === 0) {
     return { tools: {}, systemPromptSection: "" };
   }
-  const pluginRefs = new Set(
-    capabilities.pluginSkills.map((skill) => skill.ref)
-  );
-  const serverRefs = new Set(
-    capabilities.serverSkills.map((skill) => skill.ref)
-  );
-  const listing = buildListing(
-    skills,
-    pluginRefs,
-    serverRefs,
-    options?.modelContextTokens
-  );
   if (listing.omittedRefs.length > 0) {
     logger.warn(
       "[effective-skills] skill metadata budget exceeded; skills omitted from prompt catalog",

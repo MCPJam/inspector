@@ -136,6 +136,7 @@ import {
   buildLiveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
+import { turnSkillsFromLegacySource } from "../../services/environments/turn-skills.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
@@ -1592,26 +1593,26 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
-      ...(turnCapabilities
-        ? {
-            skillsSource: {
-              kind: "resolved" as const,
+      // Without a set the turn is still live: it gets the connected servers'
+      // skills.
+      skills: turnSkillsFromLegacySource(
+        turnCapabilities
+          ? {
+              kind: "resolved",
               capabilities: turnCapabilities,
               // Only a LIVE set composes live server skills, and that is the
               // same rule `web-chat-turn` follows. An environment's server
               // skills were CAPTURED; fetching more from the connection would
               // falsify the claim that the set describes the turn — which is
-              // exactly what this flag exists to prevent. On the live arm it
-              // keeps #4419's server skills composed alongside the project's.
-              ...(capabilitiesAreLive
-                ? { composeLiveServerSkills: true as const }
-                : {}),
-              // The turn's own controller, so a lazy body or file read stops
-              // with the turn instead of running to its own fetch timeout.
-              abortSignal: abortController.signal,
-            },
-          }
-        : {}),
+              // exactly what this flag exists to prevent.
+              ...(capabilitiesAreLive ? { composeLiveServerSkills: true } : {}),
+            }
+          : undefined,
+        modelDefinition.contextLength,
+      ),
+      // The turn's own controller, so a lazy body or file read stops with the
+      // turn instead of running to its own fetch timeout.
+      abortSignal: abortController.signal,
       // Without this every server-skill ref is namespaced by the raw server
       // id, in the `listSkills` catalog the model reads AND in the origin
       // banner prepended to loaded skill content.
@@ -1874,7 +1875,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // into its sandbox. Without this `selectHarnessSkillSource` falls to its
       // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
       // environment's decision honoured by the emulated engine (through
-      // `skillsSource` above) and silently discarded by the harness, which is
+      // `skills` above) and silently discarded by the harness, which is
       // the same class of mismatch as running the wrong engine.
       //
       // Harness-only and presence-semantic. The emulated arm ignores this

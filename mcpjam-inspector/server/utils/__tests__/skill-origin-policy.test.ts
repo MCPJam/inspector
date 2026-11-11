@@ -22,6 +22,10 @@ vi.mock("../skill-tools.js", () => ({
 
 import { prepareChatV2 } from "../chat-v2-orchestration.js";
 import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
+import {
+  turnSkillsFromLegacySource,
+  type LegacySkillsSource,
+} from "../../services/environments/turn-skills.js";
 
 function mockManager(tools: Record<string, unknown> = {}) {
   return {
@@ -98,13 +102,13 @@ const base = {
 };
 
 async function prompt(
-  skillsSource: unknown,
+  source: LegacySkillsSource,
   extra: Record<string, unknown> = {}
 ): Promise<string> {
   const result = await prepareChatV2({
     ...base,
     mcpClientManager: mockManager(),
-    skillsSource,
+    skills: turnSkillsFromLegacySource(source),
     ...extra,
   } as never);
   return result.enhancedSystemPrompt;
@@ -159,10 +163,10 @@ describe("the origin matrix", () => {
       ...base,
       selectedServers: ["srv"],
       mcpClientManager: liveSkillsManager(),
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: capabilities({ standaloneSkills: [PROJECT_SKILL] }),
-      },
+      }),
     } as never);
 
     expect(result.enhancedSystemPrompt).toContain("**code-review**");
@@ -177,11 +181,11 @@ describe("the origin matrix", () => {
       ...base,
       selectedServers: ["srv"],
       mcpClientManager: liveSkillsManager(),
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: capabilities({ standaloneSkills: [PROJECT_SKILL] }),
         composeLiveServerSkills: true,
-      },
+      }),
     } as never);
 
     expect(Object.keys(result.allTools)).toContain("listSkills");
@@ -194,7 +198,7 @@ describe("the origin matrix", () => {
       ...base,
       mcpClientManager: mockManager(),
       requireToolApproval: true,
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "pinned",
         skills: [
           {
@@ -204,7 +208,7 @@ describe("the origin matrix", () => {
             contentHash: "h",
           },
         ],
-      },
+      }),
     } as never);
     expect(result.enhancedSystemPrompt).toContain("frozen");
     expect(
@@ -223,14 +227,14 @@ describe("the origin matrix", () => {
         ...base,
         mcpClientManager: mockManager(),
         harness: "claude-code" as never,
-        skillsSource: {
+        skills: turnSkillsFromLegacySource({
           kind: "resolved",
           capabilities: capabilities({
             localSkills: [LOCAL_SKILL],
             standaloneSkills: [PROJECT_SKILL],
           }),
           composeLiveServerSkills: true,
-        },
+        }),
       } as never)
     ).rejects.toThrow(/deliberately disjoint/);
   });
@@ -240,7 +244,7 @@ describe("the origin matrix", () => {
       ...base,
       mcpClientManager: mockManager(),
       harness: "claude-code" as never,
-      skillsSource: { kind: "none" },
+      skills: turnSkillsFromLegacySource({ kind: "none" }),
     } as never);
     expect(Object.keys(result.allTools)).not.toContain("loadSkill");
     expect(result.enhancedSystemPrompt).toBe("Base prompt.");
@@ -263,13 +267,13 @@ describe("the origin matrix", () => {
     const result = await prepareChatV2({
       ...base,
       mcpClientManager: mockManager(),
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: capabilities({
           localSkills: [LOCAL_SKILL],
           standaloneSkills: [PROJECT_SKILL],
         }),
-      },
+      }),
     } as never);
     const loadSkill = (
       result.allTools as unknown as Record<
@@ -291,7 +295,7 @@ describe("the origin matrix", () => {
     const result = await prepareChatV2({
       ...base,
       mcpClientManager: mockManager(),
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: capabilities({
           localSkills: [LOCAL_SKILL],
@@ -309,7 +313,7 @@ describe("the origin matrix", () => {
             } as never,
           ],
         }),
-      },
+      }),
     } as never);
     const loadSkill = (
       result.allTools as unknown as Record<

@@ -1499,7 +1499,6 @@ agent.post("/projects/:projectId/agent", async (c) => {
       modelDefinition: agentModel.modelDefinition,
       systemPrompt: AGENT_API_SYSTEM_PROMPT,
       builtInTools,
-      skillsSource: { kind: "none" },
       // The toolset is small and fixed — discovery meta-tools would only
       // add search/load indirection steps and hide the op schemas.
       progressiveToolDiscovery: { enabled: false },

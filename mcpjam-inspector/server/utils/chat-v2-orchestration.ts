@@ -57,8 +57,7 @@ import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-too
 import { withServerSkills } from "./server-skill-tools.js";
 import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
 import { skillMetadataBudgetChars } from "./computers/skill-metadata-budget.js";
-import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
-import type { PinnableSkill } from "../../shared/skill-types.js";
+import type { TurnSkills } from "../services/environments/turn-skills.js";
 import { logger } from "./logger.js";
 import {
   modelDefinitionSupportsTemperature,
@@ -802,80 +801,20 @@ export interface PrepareChatV2Options {
    */
   pageToolsMayGrow?: boolean;
   /**
-   * When set, skills are sourced from the caller's **Computer** (E2B sandbox)
-   * instead of the local filesystem — the hosted/`/web` path. Only set by
-   * callers whose host actually has a computer, so "advertise == enforce".
-   * The turn's only skill source.
+   * The turn's skills: the plan `resolveTurnSkills` made for this engine, or
+   * the one `turnSkillsFromLegacySource` states for a surface that has not
+   * moved to it (both in `services/environments/turn-skills.ts`). MCPJam's
+   * agent gets the skill tools `skills.agent` describes; a harness plan gives
+   * it none, because the harness's box gets the skills. Absent: the turn gets
+   * no skills at all, not even the connected servers'.
    */
+  skills?: TurnSkills;
   /**
-   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
-   * the legacy paths never set it → the existing precedence is byte-identical.
-   *
-   *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
-   *    content (zero network in execute). Tools bypass approval: pure reads of
-   *    frozen content under an auto-deny eval run.
-   *  - `resolved` — a Project-Environment turn. Same in-memory delivery,
-   *    DIFFERENT policy: this is an ordinary interactive turn, so the skill
-   *    tools follow the host's normal `requireToolApproval` rule. The eval
-   *    approval exemption is deliberately NOT inherited — a user watching their
-   *    own turn should still get the approval prompt they configured. It
-   *    carries the whole `EffectiveCapabilitySet` rather than a skill list
-   *    (INS-3) because the tools address skills by REF: a plugin skill is
-   *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
-   *    lives on the set, not on a flattened `PinnableSkill`.
-   *  - `pinned-effective` — EVAL RUNNERS ONLY, for a run whose pins carry a
-   *    plugin `modelRef` or supporting FILES (INS-5). Same frozen-content,
-   *    approval-exempt policy as `pinned`; the ref-addressed `resolved` tool
-   *    surface, because a bare-name surface cannot express `<plugin>/<skill>`
-   *    and has no file tools to serve a pinned `scripts/` directory with. The
-   *    set is built from the RUN SNAPSHOT, so "in-memory over frozen content"
-   *    still holds — the only network is the signed `_storage` GET for a file
-   *    the model actually asks for, and that URL was minted against the pinned
-   *    blob, not the live one.
-   *  - `none`     — suppress skills entirely.
-   *
-   * `resolved` and the two pinned kinds are separate kinds rather than one
-   * "in-memory" kind with a flag precisely because that approval divergence is
-   * the whole distinction, and a shared kind would make it a caller's job to
-   * remember.
+   * The turn's abort signal. A skill body or supporting-file read fetches a
+   * signed `_storage` URL, and without it that fetch runs its full 30s timeout
+   * after the client has already disconnected.
    */
-  skillsSource?:
-    | { kind: "pinned"; skills: PinnableSkill[] }
-    | {
-        kind: "pinned-effective";
-        capabilities: EffectiveCapabilitySet;
-        /** See `resolved` below — same reason, same lifetime. */
-        abortSignal?: AbortSignal;
-      }
-    | {
-        kind: "resolved";
-        capabilities: EffectiveCapabilitySet;
-        /**
-         * The turn's abort signal. Carried HERE rather than added to
-         * `PrepareChatV2Options` because this is the only consumer: a skill
-         * supporting-file read fetches a signed `_storage` URL, and without it
-         * that fetch runs its full 30s timeout after the client has already
-         * disconnected.
-         */
-        abortSignal?: AbortSignal;
-        /**
-         * Whether to ALSO compose live SEP-2640 skills from the connected
-         * servers (see the `withServerSkills` block below).
-         *
-         * Opt-in, and the distinction is the whole reason this flag exists.
-         * An ENVIRONMENT-resolved set is a snapshot: its server skills were
-         * captured, and fetching more from a live connection would falsify the
-         * claim that the set describes the turn. An INTERACTIVE surface — the
-         * desktop app, the hosted Playground's default target — resolves no
-         * environment; its set is just "what the user has right now", and its
-         * server skills are only available live. Without this flag those
-         * surfaces would lose server skills the moment they started passing a
-         * `skillsSource` at all, which is exactly how a convergence quietly
-         * drops a capability.
-         */
-        composeLiveServerSkills?: boolean;
-      }
-    | { kind: "none" };
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -1376,7 +1315,8 @@ export async function prepareChatV2(
     pageTools,
     builtInTools,
     pageToolsMayGrow,
-    skillsSource,
+    skills,
+    abortSignal,
     harness,
     tasks,
     serverLabels,
@@ -1512,44 +1452,25 @@ export async function prepareChatV2(
       }
     }
   }
-  // ONE skill source per turn, stated by the caller. Where a skill comes FROM —
-  // the project, a plugin, a connected server, this machine's filesystem — is a
-  // property of the skill inside an `EffectiveCapabilitySet`, not a mode the
-  // orchestrator picks between:
-  //   - `pinned` / `pinned-effective` ⇒ frozen eval content; the ONLY kinds
-  //     that bypass approval (decision 12), because an eval run auto-denies.
-  //   - `resolved` ⇒ a live or environment-resolved set, keeping the host's
-  //     approval rule. `composeLiveServerSkills` says which of the two it is.
-  //   - `none` ⇒ no skills, said deliberately.
-  // Every surface inlines its catalog in the prompt; there is no `listSkills`
-  // discovery tool on any of them.
+  // ONE skill plan per turn, made for this turn's engine. Where a skill comes
+  // FROM (the project, a plugin, a connected server, this machine) is a
+  // property of the skill inside the plan's set, not a mode the orchestrator
+  // picks between. Every surface inlines its catalog in the prompt; there is no
+  // `listSkills` discovery tool on any of them.
   const skillsArePinned =
-    skillsSource?.kind === "pinned" ||
-    skillsSource?.kind === "pinned-effective";
+    skills?.agent?.kind === "frozen" || skills?.agent?.kind === "frozen-names";
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
   // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
-  // an emulated turn gets in-memory `loadSkill` tools from `skillsSource`.
-  // Delivering both would hand the model the same skill twice, by two mechanisms.
-  //
-  // So this is a CALLER contract, not a statement about what a harness can do:
-  // harness callers pass `{ kind: "none" }` here and put their pins on
-  // `pinnedHarnessSkills`. (Historical note: this once read "harness runs
-  // live-fetch skills" — that stopped being true when on-box pinned delivery
-  // landed, and the stale wording cost real debugging time. `run-harness-turn`
-  // does not call `fetchRuntimeSkills` at all in pinned mode.)
-  if (harness && skillsSource !== undefined && skillsSource.kind !== "none") {
-    // Generalized from "pinned" to ANY in-memory source. The rule was always
-    // about DOUBLE DELIVERY; `pinned` was merely the only shape a harness
-    // caller could reach when it was written. Once `resolved` became the shape
-    // every live surface passes, a harness turn carrying one would have been
-    // handed the same skill twice — as SKILL.md on the box AND as a `loadSkill`
-    // tool — with nothing to catch it, because callers guard this themselves
-    // and a forgotten guard is silent.
+  // MCPJam's agent gets in-memory `loadSkill` tools. A plan for one engine on
+  // the other would hand the model the same skill twice, by two mechanisms, or
+  // claim skills the model never gets. Callers guard this themselves and a
+  // forgotten guard is silent, so the turn refuses to start instead.
+  if (skills && (skills.runtime.kind === "harness") !== Boolean(harness)) {
     throw new Error(
-      "Harness turns receive skills on box via `pinnedHarnessSkills`, not via " +
-        "`skillsSource`. Pass `skillsSource: { kind: 'none' }` for a harness " +
-        "turn — the two delivery channels are deliberately disjoint.",
+      "This turn's skills were planned for a different engine: a harness gets " +
+        "its skills on its box and MCPJam's agent gets them as tools, so the " +
+        "two delivery channels are deliberately disjoint.",
     );
   }
   const modelContextTokens =
@@ -1560,35 +1481,19 @@ export async function prepareChatV2(
     tools: Record<string, unknown>;
     systemPromptSection: string;
   };
-  const skillPrep: SkillPrep = skillsSource
-    ? skillsSource.kind === "pinned"
-      ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
-      : skillsSource.kind === "resolved" ||
-          skillsSource.kind === "pinned-effective"
-        ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
-            ...(skillsSource.abortSignal
-              ? { signal: skillsSource.abortSignal }
-              : {}),
-            // The discovery listing is budgeted against THIS model's context
-            // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-            // model definition; the budget helper falls back to 8,000 chars.
-            ...modelContextTokens,
-          })
-        : { tools: {}, systemPromptSection: "" }
-    : // No source is no SKILLS OF ITS OWN — not a fallback. The old chain
-      // ended `cloudSkills ? … : HOSTED_MODE ? {} : localFS` — exclusive arms
-      // chosen by DEPLOYMENT rather than by what the user had, which is why a
-      // desktop turn could never see a project skill and a hosted one could
-      // never see a local file. That chain is gone; what remains here is the
-      // empty set.
-      //
-      // It is still meaningfully different from `{ kind: "none" }`, which is
-      // why both exist: `undefined` is the LIVE shape and still composes the
-      // connected servers' SEP-2640 skills (see `composeLiveServerSkills`
-      // below), while `none` means this turn gets no skills from anywhere. The
-      // hosted host/adhoc path lands here whenever its project catalog is
-      // gated off or fails, and its server skills must survive that.
-      { tools: {}, systemPromptSection: "" };
+  const skillPrep: SkillPrep = !skills?.agent
+    ? { tools: {}, systemPromptSection: "" }
+    : skills.agent.kind === "frozen-names"
+      ? getPinnedSkillToolsAndPrompt(skills.agent.skills, modelContextTokens)
+      : getEffectiveSkillToolsAndPrompt(skills.set, {
+          ...(abortSignal ? { signal: abortSignal } : {}),
+          // The discovery listing is budgeted against THIS model's context
+          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+          // model definition; the budget helper falls back to 8,000 chars.
+          // `resolveTurnSkills` plans the same listing, so the plan and this
+          // prompt agree on which skills the model can see.
+          ...modelContextTokens,
+        });
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
@@ -1605,9 +1510,9 @@ export async function prepareChatV2(
   // legitimately have both a Computer skill and a skill served by a connected
   // MCP server, and picking one would silently drop the other.
   //
-  // Excluded whenever an explicit skills source is present, and from harness
-  // paths. Those sources are frozen, captured, or explicitly skill-less; a
-  // live fetch would either falsify the snapshot claim or bypass `none`.
+  // Only a `live` plan composes it. A frozen or environment set's server skills
+  // were captured with it, so a live fetch would falsify the claim that the
+  // set describes the turn; a turn with no plan gets no skills at all.
   //
   // Returns its input UNCHANGED when no selected server declares the
   // extension, which is what keeps every pre-existing turn byte-identical.
@@ -1616,16 +1521,7 @@ export async function prepareChatV2(
   // declaration delegates to the base skill tool (`hostWantsApproval` in
   // `server-skill-tools.ts`), so whether the user is asked follows the switch
   // like any other tool on the turn.
-  // A LIVE turn composes server skills whether or not it also carries an
-  // explicit source; a captured or frozen one never does. `skillsSource ===
-  // undefined` is the legacy live shape (no caller passes it once every surface
-  // is explicit); `resolved` + the opt-in flag is how a live surface says so
-  // while still using the merged, ref-addressed catalog.
-  const composeLiveServerSkills =
-    !harness &&
-    (skillsSource === undefined ||
-      (skillsSource.kind === "resolved" &&
-        skillsSource.composeLiveServerSkills === true));
+  const composeLiveServerSkills = skills?.agent?.kind === "live";
 
   const serverSkills = !composeLiveServerSkills
     ? { tools: approvalWrappedSkillTools, buildPromptSection: null }

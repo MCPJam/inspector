@@ -131,6 +131,15 @@ function budgetedCatalogBody(
   return { body: formatSkillCatalogBody(lines, omittedRefs), omittedRefs };
 }
 
+/** The names the bare-name skill list leaves out to stay within this model's
+ *  budget, as `getPinnedSkillToolsAndPrompt` builds the list. */
+export function pinnedCatalogOmissions(
+  skills: PinnableSkill[],
+  modelContextTokens?: number
+): string[] {
+  return budgetedCatalogBody(skills, modelContextTokens).omittedRefs;
+}
+
 /**
  * Strengthened trigger: when the user names a skill or a task clearly
  * matches one's purpose, load it before acting. Mirrors/upgrades the

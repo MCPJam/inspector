@@ -15,6 +15,15 @@ export const paneSkillsRequest = z.object({
   pluginVersionIds: z.array(id).optional(),
 });
 
+/** Why a client is not handed a skill. The server's turn plan adds its own. */
+export const paneSkillReason = z.enum([
+  "unsupported-harness",
+  "server-skill-unsupported",
+  "plugin-disabled",
+  "name-collision",
+  "invalid-skill-name",
+]);
+
 export const paneSkillsPreview = z.object({
   deliveredCount: z.number().int().nonnegative(),
   skills: z.array(
@@ -25,18 +34,11 @@ export const paneSkillsPreview = z.object({
       channels: z.array(
         z.enum(["project", "environment", "host", "plugin", "mcp-server"]),
       ),
-      reason: z
-        .enum([
-          "unsupported-harness",
-          "server-skill-unsupported",
-          "plugin-disabled",
-          "name-collision",
-          "invalid-skill-name",
-        ])
-        .nullable(),
+      reason: paneSkillReason.nullable(),
     }),
   ),
 });
+export type PaneSkillReason = z.infer<typeof paneSkillReason>;
 export type PaneSkillsRequest = z.infer<typeof paneSkillsRequest>;
 export type PaneSkillsPreview = z.infer<typeof paneSkillsPreview>;
 export type PaneSkillRow = PaneSkillsPreview["skills"][number];
