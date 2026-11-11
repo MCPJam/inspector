@@ -619,7 +619,7 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
   /** How the backend answered `connectionIdSets`; see `oauth-account-sets.ts`. */
-  oauthAccountSet?: "applied" | "shared";
+  oauthAccountSet?: "applied";
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
    * Which rule withheld the token, sent with `credential_export_denied`.

@@ -152,10 +152,74 @@ describe("accountSetGroup", () => {
     ).toContain("couldn't confirm which Asana account");
   });
 
-  it("leaves a shared server on its project connection", () => {
-    expect(
-      group([DUMMY], authorized({ oauthAccountSet: "shared" })),
-    ).toBeUndefined();
+  describe("on a server shared with the project", () => {
+    const FIRST = "c".repeat(32);
+    const SECOND = "d".repeat(32);
+    // Project accounts carry no profile; the backend names them by their names.
+    const project = authorized({
+      oauthConnections: [
+        {
+          connectionId: FIRST,
+          label: "test-automation-1",
+          displayName: "test-automation-1",
+          isDefault: true,
+          accessToken: "token-1",
+        },
+        {
+          connectionId: SECOND,
+          label: "test-automation-2",
+          displayName: "test-automation-2",
+          isDefault: false,
+          accessToken: "token-2",
+        },
+      ],
+    });
+
+    const tracker = (set: string[], auth: ConvexBatchAuthorizeSuccess) =>
+      accountSetGroup({
+        serverId: "tracker",
+        serverName: "Task tracker",
+        auth,
+        set,
+      });
+
+    it("runs with exactly the project accounts the person chose", () => {
+      expect(tracker([SECOND], project)).toEqual([
+        {
+          serverId: "tracker",
+          connectionId: SECOND,
+          key: "tracker",
+          label: "test-automation-2",
+          isDefault: true,
+        },
+      ]);
+      expect(
+        tracker([SECOND, FIRST], project)?.map(({ connectionId, key }) => ({
+          connectionId,
+          key,
+        })),
+      ).toEqual([
+        { connectionId: SECOND, key: `tracker#${SECOND}` },
+        { connectionId: FIRST, key: "tracker" },
+      ]);
+    });
+
+    it("refuses a chosen project account that needs reconnecting, by name", () => {
+      const quarantined = authorized({
+        oauthConnections: [
+          {
+            connectionId: SECOND,
+            displayName: "test-automation-2",
+            isDefault: false,
+            accessToken: null,
+            needsReauth: true,
+          },
+        ],
+      });
+      expect(refusal(() => tracker([SECOND], quarantined))).toBe(
+        "Task tracker test-automation-2 needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.",
+      );
+    });
   });
 });
 

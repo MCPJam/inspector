@@ -12,8 +12,9 @@ export type SuiteAccount = {
 
 /**
  * `accounts`: the person's own accounts, one or more of which they choose.
- * `shared`: one connection the whole project uses. `xaa`: a simulated
- * identity. `none`: nothing to choose, so the server is not listed.
+ * `shared`: the project's accounts on a server shared with the project, which
+ * each member chooses among the same way. `xaa`: a simulated identity.
+ * `none`: nothing to choose, so the server is not listed.
  */
 export type SuiteAccountsMode = "accounts" | "shared" | "xaa" | "none";
 
@@ -35,6 +36,11 @@ export type SuiteAccountsView = {
   servers: SuiteAccountsServer[];
   scheduleOwners: SuiteAccountsScheduleOwner[];
 };
+
+/** Whether the person chooses which of this server's accounts their runs use. */
+export function choosesAccounts(server: SuiteAccountsServer): boolean {
+  return server.mode === "accounts" || server.mode === "shared";
+}
 
 export const SUITE_ACCOUNTS_VIEW_QUERY =
   "testSuiteAccountSelections:getSuiteAccountsView";
@@ -77,7 +83,7 @@ export function chosenAccountProblems(
 ): AccountProblem[] {
   const problems: AccountProblem[] = [];
   for (const server of view.servers) {
-    if (server.mode !== "accounts" || !server.chosen?.length) continue;
+    if (!choosesAccounts(server) || !server.chosen?.length) continue;
     const name = serverName(server.serverId);
     const byId = new Map(server.accounts.map((a) => [a.connectionId, a]));
     if (server.chosen.some((id) => !byId.has(id))) {
@@ -108,13 +114,16 @@ export type RunsAsEntry = {
   accounts: Array<{ name: string; needsReauth: boolean }>;
 };
 
-/** "Runs as you": each of the person's own servers with the accounts it runs with. */
+/**
+ * "Runs as you": each server the person chooses accounts for, with the
+ * accounts their runs use there.
+ */
 export function runsAsEntries(
   view: SuiteAccountsView,
   serverName: (serverId: string) => string,
 ): RunsAsEntry[] {
   return view.servers.flatMap((server) => {
-    if (server.mode !== "accounts") return [];
+    if (!choosesAccounts(server)) return [];
     const checked = new Set(checkedAccountIds(server));
     const accounts = server.accounts
       .filter((account) => checked.has(account.connectionId))
