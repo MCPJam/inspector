@@ -18,6 +18,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "cursor-host-enabled",
   "description-experiments-enabled",
   "discord-agent",
+  "eval-account-selection-enabled",
   "eval-run-stage-analytics",
   "evaluate-enabled",
   "evaluate-observe-first",
