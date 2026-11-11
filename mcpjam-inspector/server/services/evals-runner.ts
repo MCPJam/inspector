@@ -6284,10 +6284,15 @@ const runLocalIteration = async ({
       finishParams: failParams,
     });
     return {
-      creditsExhausted: isCreditExhaustion({
-        message: errorMessage,
-        details: errorDetails,
-      }),
+      // This rail runs on the customer's own key, so a provider's "insufficient
+      // credits" is their provider balance, not MCPJam's: it must not stop the
+      // run as out of MCPJam credits.
+      creditsExhausted:
+        acc.stepErrorEvidence?.source !== "provider_call" &&
+        isCreditExhaustion({
+          message: errorMessage,
+          details: errorDetails,
+        }),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
