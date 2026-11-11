@@ -24,7 +24,7 @@
 
 # SDK, protocol/OAuth support, and product documentation.
 /sdk/ @chelojimenez @ZeHuari @nachocossio
-/docs/ @Paoli99 @prathmeshpatel
+/docs/ @MCPJam/docs-reviewers
 
 # CI and quality policy have explicit owners regardless of the application area.
 /.github/ @prathmeshpatel @chelojimenez @olartgabo
@@ -38,3 +38,6 @@
 # They still require the normal PR approval, but not a code-owner approval.
 package.json
 package-lock.json
+
+# The Standard BC ruleset requires a docs-reviewers approval for docs/**; this re-owns the README the exemption above clears.
+/docs/README.md @MCPJam/docs-reviewers
