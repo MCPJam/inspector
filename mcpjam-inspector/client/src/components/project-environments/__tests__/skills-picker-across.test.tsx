@@ -116,6 +116,32 @@ describe("ProjectEnvironmentSkillsPicker across environments", () => {
     });
   });
 
+  it("removes a partly-on skill that a full environment blocks only with its button", async () => {
+    const onChange = vi.fn();
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={null}
+        onChange={onChange}
+        across={across({
+          partialIds: new Set(["triage"]),
+          largestCount: 20,
+          canAdd: () => false,
+        })}
+      />,
+    );
+    const box = await screen.findByLabelText("triage");
+    expect(box).toHaveAttribute("aria-checked", "mixed");
+    expect(box).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove from every client" }),
+    );
+    expect(onChange).toHaveBeenCalledWith(null, {
+      kind: "remove",
+      skillId: "triage",
+    });
+  });
+
   it("removes a partly-on skill that left the library only with its button", async () => {
     const onChange = vi.fn();
     render(

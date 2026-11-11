@@ -273,8 +273,8 @@ export function ProjectEnvironmentSkillsPicker({
           const rejection = pinRejection(skill);
           const ineligible = rejection !== null;
           const capBlocked = !checked && !canAdd(skillId);
-          // Ineligible and partly on: only its own button removes it.
-          const removeOnly = partial && ineligible;
+          // Partly on but can't be turned on: only its own button removes it.
+          const removeOnly = partial && (ineligible || capBlocked);
           // Ineligibility (and the cap) block NEW selections only — a skill that
           // was pinned and later became ineligible must stay uncheckable so the
           // user can repair the selection.

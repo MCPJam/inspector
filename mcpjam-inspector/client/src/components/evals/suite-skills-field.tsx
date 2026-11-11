@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
+import type { HostListItem } from "@/hooks/useClients";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { fetchSkillsPreview } from "@/lib/apis/web/skills-preview-api";
@@ -79,12 +80,18 @@ type Delivery =
 function useSuiteSkillDelivery(
   projectId: string | null,
   environments: readonly ProjectEnvironmentView[],
+  findHost: (hostId: string) => HostListItem | undefined,
 ): Delivery {
+  // A host edit rotates its content-addressed config id but bumps no revision.
   const key =
     projectId && environments.length
       ? JSON.stringify([
           projectId,
-          environments.map((row) => [row.environmentId, row.revision]),
+          environments.map((row) => [
+            row.environmentId,
+            row.revision,
+            findHost(row.hostId)?.hostConfigId,
+          ]),
         ])
       : null;
   const [result, setResult] = useState<{
@@ -113,7 +120,7 @@ function useSuiteSkillDelivery(
       },
     );
     return () => controller.abort();
-    // `key` stands for the environments: same ids and revisions, same answer.
+    // `key` stands for the environments and their hosts' configs.
   }, [key, attempt]);
   if (!key || result?.key !== key) return { status: "loading" };
   if (result.previews) return { status: "ready", previews: result.previews };
@@ -129,19 +136,21 @@ function useSuiteSkillDelivery(
 export function SuiteSkillsHints({
   projectId,
   environments,
-  hostName,
+  findHost,
 }: {
   projectId: string;
   /** The suite's attached environments, all resolved. */
   environments: readonly ProjectEnvironmentView[];
-  hostName: (hostId: string) => string;
+  findHost: (hostId: string) => HostListItem | undefined;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const delivery = useSuiteSkillDelivery(
     skillsEnabled ? projectId : null,
     environments,
+    findHost,
   );
   if (!skillsEnabled) return null;
+  const hostName = (hostId: string) => findHost(hostId)?.name ?? "Client";
   // A client with two models gets two environments; name the model too.
   const client = (row: ProjectEnvironmentView) =>
     environments.filter((other) => other.hostId === row.hostId).length > 1

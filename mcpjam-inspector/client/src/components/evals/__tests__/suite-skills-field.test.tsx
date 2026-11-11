@@ -19,19 +19,14 @@ const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
   authFetch: vi.fn(),
   previews: {} as Record<string, PaneSkillsPreview>,
+  hosts: [] as { hostId: string; name: string; hostConfigId: string }[],
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
   useMutation: () => mocks.save,
 }));
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({
-    hosts: [
-      { hostId: "chat", name: "MCPJam agent" },
-      { hostId: "codex", name: "Codex" },
-    ],
-    isLoading: false,
-  }),
+  useHostList: () => ({ hosts: mocks.hosts, isLoading: false }),
 }));
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
@@ -118,6 +113,10 @@ beforeEach(() => {
     },
   ]);
   mocks.previews = {};
+  mocks.hosts = [
+    { hostId: "chat", name: "MCPJam agent", hostConfigId: "chat-config-1" },
+    { hostId: "codex", name: "Codex", hostConfigId: "codex-config-1" },
+  ];
   mocks.authFetch.mockImplementation(
     async (_url: string, init: RequestInit) => {
       const { target } = JSON.parse(String(init.body));
@@ -312,6 +311,23 @@ describe("Skills hints", () => {
         },
       ],
     ]);
+  });
+
+  it("reads the previews again when a client's config changes", async () => {
+    mocks.previews = {
+      "chat-env": { deliveredCount: 1, skills: [row("triage")] },
+      "codex-env": { deliveredCount: 1, skills: [row("triage")] },
+    };
+    const view = renderSettings();
+    await screen.findByText("Every client loads triage.");
+    expect(mocks.authFetch).toHaveBeenCalledTimes(2);
+    // Editing a client rotates its config id; the environment's revision stays.
+    mocks.hosts = [
+      { ...mocks.hosts[0]!, hostConfigId: "chat-config-2" },
+      mocks.hosts[1]!,
+    ];
+    view.rerender(<SuiteClientsSettings suite={suite} projectId="project" />);
+    await waitFor(() => expect(mocks.authFetch).toHaveBeenCalledTimes(4));
   });
 
   it("says when the previews fail, and reads them again on Retry", async () => {

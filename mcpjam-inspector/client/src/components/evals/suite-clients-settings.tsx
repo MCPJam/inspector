@@ -740,7 +740,7 @@ export function SuiteClientsSettings({
         <SuiteSkillsHints
           projectId={projectId}
           environments={attached}
-          hostName={hostName}
+          findHost={(hostId) => hosts.find((host) => host.hostId === hostId)}
         />
       )}
     </div>

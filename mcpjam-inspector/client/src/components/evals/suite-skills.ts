@@ -47,10 +47,7 @@ function versionsBySkill(
     (selection?.versionPins ?? []).map((pin) => [pin.skillId, pin.versionId]),
   );
   return new Map(
-    (selection?.skillIds ?? []).map((skillId) => [
-      skillId,
-      pins.get(skillId) ?? null,
-    ]),
+    (selection?.skillIds ?? []).map((id) => [id, pins.get(id) ?? null]),
   );
 }
 
@@ -144,6 +141,9 @@ type LeftOutReason = Exclude<
 const one = (count: number, singular: string, plural: string) =>
   count === 1 ? singular : plural;
 
+/** A hint line for the clients that share one outcome. */
+type Line = (clients: string[]) => string;
+
 function listText(items: readonly string[]): string {
   return items.length < 2
     ? (items[0] ?? "")
@@ -206,15 +206,8 @@ export function skillDeliveryLines(
       `Every client loads ${countText(rows[0]!.loaded.map((skill) => skill.name))}.`,
     ];
   }
-  const groups = new Map<
-    string,
-    { clients: Set<string>; line: (clients: string[]) => string }
-  >();
-  const add = (
-    key: string,
-    client: string,
-    line: (clients: string[]) => string,
-  ) => {
+  const groups = new Map<string, { clients: Set<string>; line: Line }>();
+  const add = (key: string, client: string, line: Line) => {
     const group = groups.get(key) ?? { clients: new Set<string>(), line };
     group.clients.add(client);
     groups.set(key, group);
@@ -237,12 +230,11 @@ export function skillDeliveryLines(
           `${listText(clients)} ${one(clients.length, "runs", "run")} without skills.`,
       );
     }
-    const byReason = new Map<LeftOutReason, { id: string; name: string }[]>();
-    for (const skill of row.leftOut)
-      byReason.set(skill.reason, [
-        ...(byReason.get(skill.reason) ?? []),
-        skill,
-      ]);
+    const byReason = new Map<LeftOutReason, typeof row.leftOut>();
+    for (const skill of row.leftOut) {
+      const same = byReason.get(skill.reason) ?? [];
+      byReason.set(skill.reason, [...same, skill]);
+    }
     for (const [reason, skills] of byReason) {
       const names = skills.map((skill) => skill.name);
       add(
