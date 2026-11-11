@@ -13,7 +13,10 @@ import {
   type AccountProblem,
   type RunsAsEntry,
 } from "@/lib/evals/eval-accounts";
-import { getEffectiveSuiteServers } from "../evals/helpers";
+import {
+  buildSuiteHostRunPlans,
+  getEffectiveSuiteServers,
+} from "../evals/helpers";
 import type { EvalSuite } from "../evals/types";
 
 /** The account half of the Setup Run preflight. Each field is absent until there is something to say. */
@@ -104,12 +107,15 @@ export function scopeAccountPreflight<T extends AccountPreflight>(
   const refs = suite.environmentIds?.length
     ? environmentServerRefs(suite, selectedIds)
     : suite.hostAttachments?.length
-      ? getEffectiveSuiteServers({
-          ...suite,
-          hostAttachments: suite.hostAttachments.filter((host) =>
-            selectedIds.includes(host.namedHostId),
-          ),
-        })
+      ? // The launch's own per-client plans: a client with servers of its
+        // own runs on those alone, not the suite's legacy list.
+        buildSuiteHostRunPlans(suite)
+          .filter(
+            (plan) =>
+              plan.namedHostId !== undefined &&
+              selectedIds.includes(plan.namedHostId),
+          )
+          .flatMap((plan) => plan.serverIds)
       : undefined;
   if (!refs || !preflight.accountsFor) return preflight;
   const { accountProblems, runsAs } = preflight.accountsFor(refs);

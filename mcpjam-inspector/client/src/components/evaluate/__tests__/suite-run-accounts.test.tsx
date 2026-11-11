@@ -320,9 +320,11 @@ describe("the Setup Run account checks, kept to what the run connects", () => {
     hostName: null,
     resolvedServerNames: [server],
   });
+  // Its legacy list names both servers, but each client has servers of its
+  // own, and a client runs on those alone.
   const clientSuite: EvalSuite = {
     ...suite,
-    environment: { servers: [] },
+    environment: { servers: ["Asana", "Linear"] },
     hostAttachments: [
       host("host-asana", "Asana"),
       host("host-linear", "Linear"),
