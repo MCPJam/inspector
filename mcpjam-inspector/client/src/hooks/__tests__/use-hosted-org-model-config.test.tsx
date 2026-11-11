@@ -172,6 +172,50 @@ describe("useHostedOrgModelConfig", () => {
       args: "skip",
     });
   });
+
+  // A project still being created carries a temporary local id until its
+  // Convex id resolves. `getVisibleConfigForProject` validates
+  // `v.id("projects")`, so sending one throws and takes down the page.
+  it.each([
+    ["a UUID", "8f14e45f-ceea-467a-9575-9a6f1f6c2b11"],
+    ["a local_ placeholder", "local_default"],
+    ["a project_ placeholder", "project_1730000000000"],
+  ])(
+    "never sends a temporary project id (%s), and stays pending",
+    (_label, temporaryProjectId) => {
+      mockState.queryResults.set(
+        "organizationModelProviders:getVisibleConfig",
+        { providers: [{ providerKey: "openai", enabled: true }] },
+      );
+
+      const { result } = renderHook(() =>
+        useHostedOrgModelConfig({
+          projectId: temporaryProjectId,
+          organizationId: "org-1",
+        }),
+      );
+
+      // Pending, not undefined: a template create keeps waiting for the
+      // project's policy instead of treating it as off.
+      expect(result.current).toBe(PENDING_ORG_MODEL_CONFIG);
+      const projectCalls = mockState.queryCalls.filter(
+        (call) =>
+          call.name === "organizationModelProviders:getVisibleConfigForProject",
+      );
+      expect(projectCalls.length).toBeGreaterThan(0);
+      expect(projectCalls.every((call) => call.args === "skip")).toBe(true);
+    },
+  );
+
+  it("stays undefined for a temporary project id while signed out", () => {
+    mockState.isAuthenticated = false;
+
+    const { result } = renderHook(() =>
+      useHostedOrgModelConfig({ projectId: "local_default" }),
+    );
+
+    expect(result.current).toBeUndefined();
+  });
 });
 
 describe("useHostedOrgModelConfig — organization AI key policy", () => {

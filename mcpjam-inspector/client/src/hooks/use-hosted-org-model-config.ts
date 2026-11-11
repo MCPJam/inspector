@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 
@@ -88,13 +89,21 @@ export function useHostedOrgModelConfig({
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const hasScope = !disabled && (!!projectId || !!organizationId);
+  // A project still being created has a temporary local id (a UUID, or a
+  // `local_`/`project_` placeholder) until its Convex id resolves. Sending it
+  // to `v.id("projects")` throws an ArgumentValidationError that takes down
+  // the page, so wait for the real id: as pending, not as "no policy", so a
+  // template create still waits for the policy.
+  const projectIdResolving = !!projectId && !shouldQueryProjectId(projectId);
   // Signed in (or still finding out), but the policy cannot be read yet: the
-  // sign-in is resolving, the user row is still being set up, or reads are
-  // paused while the session recovers.
+  // sign-in is resolving, the user row is still being set up, the project id
+  // is still temporary, or reads are paused while the session recovers.
   const policyUnreadable =
-    hasScope && (isAuthLoading || (isAuthenticated && !isUserReady));
+    hasScope &&
+    (isAuthLoading ||
+      (isAuthenticated && (!isUserReady || projectIdResolving)));
   const shouldQuery = isAuthenticated && isUserReady && !disabled;
-  const queriesProject = shouldQuery && !!projectId;
+  const queriesProject = shouldQuery && !!projectId && !projectIdResolving;
   const queriesOrganization = shouldQuery && !!organizationId;
 
   const projectConfig = useQuery(
