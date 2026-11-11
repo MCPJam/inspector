@@ -150,6 +150,20 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     },
   },
   {
+    id: "credits-free-member",
+    label: "Free, member",
+    note: "A member on Free (PLB-176). Cannot upgrade, so the action is a request to the owner: by email, or copied for Slack or browser Gmail.",
+    props: {
+      ...CREDITS_SHARED,
+      description:
+        "Get more monthly credits and top-ups with Pro or Team. Ask an owner to upgrade.",
+      isKnownNonManager: true,
+      requestRecipients: [
+        { email: "dana@acmerobotics.com", name: "Dana Ruiz" },
+      ],
+    },
+  },
+  {
     id: "credits-member",
     label: "Member, cannot buy or upgrade",
     note: "Can do neither, so the only action is asking someone who can.",
@@ -304,7 +318,10 @@ export function PlanLimitDialogPreview() {
         />
       ) : (
         <CreditsLimitDialogView
-          isFreePlan={creditsVariantId === "credits-free-owner"}
+          isFreePlan={
+            creditsVariantId === "credits-free-owner" ||
+            creditsVariantId === "credits-free-member"
+          }
           key={creditsVariant.id}
           {...creditsVariant.props}
           modal={false}

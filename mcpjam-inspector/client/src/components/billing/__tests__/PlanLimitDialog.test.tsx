@@ -346,7 +346,13 @@ describe("PlanLimitDialog", () => {
     expect(href).toContain("Organizations, then Billing");
     // Says what it does. It opens a draft; it does not send anything.
     expect(mail).toHaveTextContent(/Request upgrade/);
-    expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
+    expect(screen.getByTestId("request-upgrade-owners")).toHaveTextContent(
+      "Send the request to Dana Ruiz (owner) by email, or copy it for Slack or anywhere else.",
+    );
+    expect(screen.getByTestId("request-upgrade-copy")).toHaveTextContent(
+      "Copy request",
+    );
+    expect(screen.queryByText(/Opens a draft/)).not.toBeInTheDocument();
     expect(trackMock).not.toHaveBeenCalledWith(
       "plan_limit_upgrade_requested",
       expect.anything(),
