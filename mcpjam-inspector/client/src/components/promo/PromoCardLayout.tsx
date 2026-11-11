@@ -28,7 +28,7 @@ export function PromoCardLayout({
             alt="MCPJam"
             className="hidden h-7 w-auto dark:block"
           />
-          <p className="mt-4 text-xl font-semibold">1,000 credits. On us.</p>
+          <p className="mt-4 text-xl font-semibold">Free credits. On us.</p>
         </div>
         <div className="shrink-0 [&_img]:w-20">
           <JamIllustration />
@@ -41,7 +41,7 @@ export function PromoCardLayout({
         <DialogDescription className={signedIn ? "sr-only" : "text-base"}>
           {signedIn
             ? "Review your details and credit destination."
-            : "Sign in to claim your conference credits."}
+            : "Sign in to claim your credits."}
         </DialogDescription>
       </DialogHeader>
       {children}
