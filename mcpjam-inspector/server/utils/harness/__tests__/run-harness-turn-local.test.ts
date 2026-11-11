@@ -362,6 +362,22 @@ describe("runHarnessTurn local continuity", () => {
     }
   });
 
+  it("fails the turn before the model runs when the frontmatter pass throws", async () => {
+    // The pass throws only when it can neither rewrite nor remove a skill that
+    // carries `allowedTools`. The turn must stop, not swallow it, and the
+    // finalizer must still release the lane.
+    harnessState.invokeSandboxCallback = true;
+    harnessState.supportsSkills = true;
+    const failure = new Error('Could not update or remove the skill "test-skill" in the sandbox.');
+    vi.mocked(materializeSkillFrontmatter).mockRejectedValueOnce(failure);
+    const onEngineError = vi.fn();
+    const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
+    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError }) as any, "none");
+    expect(onEngineError).toHaveBeenCalledWith(expect.objectContaining({ message: failure.message, phase: "setup" }));
+    expect(harnessState.streamStarted).not.toHaveBeenCalled();
+    expect(releaseHarnessSessionState).toHaveBeenCalled();
+  });
+
   it("runs a scenario-scoped turn on a local target: only a CLOUD scenario harness needs a box", async () => {
     await runHarnessTurn(baseOptions({
       executionScope: {
