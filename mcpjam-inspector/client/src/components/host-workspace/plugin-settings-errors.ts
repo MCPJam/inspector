@@ -53,7 +53,7 @@ const SETTINGS_ERROR_DESCRIPTIONS: Record<string, string> = {
   INSTANCE_STORE_UNAVAILABLE:
     "MCPJam couldn't reach this Settings session. Try again in a moment.",
   INSTANCE_PRIVATE_PARENT_UNAVAILABLE:
-    "This App stopped because Settings closed or the server changed its actions. Reopen Settings to run it again.",
+    "This App stopped. Reopen Settings to run it again.",
   INVOCATION_OUTCOME_UNKNOWN:
     "MCPJam couldn't confirm whether the save went through. Refresh Settings to see the current values before saving again.",
 };
