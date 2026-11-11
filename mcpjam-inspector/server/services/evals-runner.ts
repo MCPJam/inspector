@@ -194,7 +194,7 @@ import {
   resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";

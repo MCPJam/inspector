@@ -112,9 +112,12 @@ optional `baseUrl` is the MCPJam app origin for a custom deployment.
 Your code owns server connections, credentials, and MCP connection settings;
 the client's saved server IDs and connection overrides are not applied to those
 connections. The first release does not launch cloud computers, browsers, saved
-skills, built-in tools, progressive tool discovery, or interactive approvals.
-Clients requiring these features fail before tests execute. Existing
-`run(executor)` calls keep their current behavior.
+skills, built-in tools, or interactive approvals. Clients requiring these
+features fail before tests execute. Existing `run(executor)` calls keep their
+current behavior.
+
+The client's **Progressive tools** setting applies as it does in hosted runs. See
+[progressive tool discovery](/sdk/reference/host-runner#progressive-tool-discovery).
 
 #### Several clients at once
 

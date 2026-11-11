@@ -18,7 +18,7 @@ import {
   searchToolCatalog,
   shouldForceInitialToolSearch,
   sumCatalogTokens,
-} from "../progressive-tool-discovery.js";
+} from "../src/progressive-discovery/discovery.js";
 
 // ---------------------------------------------------------------------------
 // helpers
