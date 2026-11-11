@@ -86,7 +86,7 @@ import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 

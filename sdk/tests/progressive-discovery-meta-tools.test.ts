@@ -5,8 +5,8 @@ import {
   DEFAULT_TOOL_DISCOVERY_POLICY,
   META_TOOL_LOAD,
   META_TOOL_SEARCH,
-} from "@/shared/progressive-tool-discovery";
-import { createProgressiveMetaTools } from "../progressive-tool-meta-tools";
+} from "../src/progressive-discovery/discovery.js";
+import { createProgressiveMetaTools } from "../src/progressive-discovery/meta-tools.js";
 import type { ToolSet } from "ai";
 
 function makeMcpTool(opts: {
