@@ -4726,7 +4726,7 @@ export async function runHarnessTurn(
           // adapter (re)writes on the fresh start) — expected, not a bug.
           //
           // See `shouldAdoptSandboxSkills` for why each condition is there —
-          // in particular why a PINNED turn must never adopt.
+          // in particular why a PINNED turn and the hosted app never adopt.
           if (
             shouldAdoptSandboxSkills({
               runSucceeded,
@@ -4738,8 +4738,6 @@ export async function runHarnessTurn(
               hasExecutionScope: Boolean(executionScope),
               hasCredentials: Boolean(authHeader && projectId),
               hasFileSession: Boolean(sandboxFileSession),
-              adoptionDisabled:
-                process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1",
             }) &&
             authHeader &&
             projectId &&

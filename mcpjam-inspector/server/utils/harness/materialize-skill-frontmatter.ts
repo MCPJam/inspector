@@ -4,13 +4,16 @@
  * The harness adapter writes SKILL.md from the `skills` param, but that param is
  * structurally `{name, description, content, files?}` — it can't carry the
  * preserved Agent-Skills-spec fields (`license` / `compatibility` /
- * `allowed-tools` / `metadata`), so an adapter-written SKILL.md silently drops
- * them (an imported marketplace skill would lose its `allowed-tools` semantics
- * on the box). This pass rewrites `<runtime skills root>/<name>/SKILL.md` (the
- * adapter's own root — `HarnessRuntimeAdapter.skillsBaseDir`) for every
- * delivered skill that HAS extras, with the full SKILL.md whose frontmatter
- * byte-mirrors the backend's `generateSkillMd` (the same bytes the Computer-FS
- * materializer and the adoption round-trip see).
+ * `metadata`), so an adapter-written SKILL.md silently drops them. This pass
+ * rewrites `<runtime skills root>/<name>/SKILL.md` (the adapter's own root —
+ * `HarnessRuntimeAdapter.skillsBaseDir`) for every delivered skill that HAS
+ * extras, with frontmatter in the backend `generateSkillMd`'s format.
+ *
+ * `allowed-tools` is the one stored field never written. The Agent Skills spec
+ * makes it a list of pre-approved tools, so a skill could approve its own calls
+ * past MCPJam's approval host, and SEP-2640 has hosts ignore it on server
+ * skills. A skill whose only extra is `allowedTools` is still rewritten, so a
+ * reused box drops a line an earlier write left there.
  *
  * MUST run AFTER the harness session is created: the adapter writes SKILL.md in
  * `doStart` (after `onSandboxSession`), and it only writes on a FRESH start —
@@ -55,10 +58,12 @@ function yamlDoubleQuoted(value: string): string {
 }
 
 /**
- * Generate the full SKILL.md, byte-identical to the backend `generateSkillMd`:
- * `name` unquoted (validated charset), `description` and string extras as YAML
- * double-quoted scalars, `allowed-tools`/`metadata` as JSON (a subset of YAML
- * flow syntax), fields in the backend's stable order.
+ * Generate the full SKILL.md, byte-identical to the backend `generateSkillMd`
+ * minus `allowed-tools` (see the header): `name` unquoted (validated charset),
+ * `description` and string extras as YAML double-quoted scalars, `metadata` as
+ * JSON (a subset of YAML flow syntax), fields in the backend's stable order.
+ * Only these named fields are emitted, so an unknown key a drifted wire adds to
+ * `extraFrontmatter` never reaches the box.
  */
 export function generateSkillMdWithExtras(args: {
   name: string;
@@ -75,9 +80,6 @@ export function generateSkillMdWithExtras(args: {
     }
     if (extra.compatibility !== undefined) {
       frontmatter += `\ncompatibility: ${yamlDoubleQuoted(extra.compatibility)}`;
-    }
-    if (extra.allowedTools !== undefined) {
-      frontmatter += `\nallowed-tools: ${JSON.stringify(extra.allowedTools)}`;
     }
     if (extra.metadata !== undefined) {
       frontmatter += `\nmetadata: ${JSON.stringify(extra.metadata)}`;
@@ -111,6 +113,8 @@ export async function materializeSkillFrontmatter(args: {
   let skipped = 0;
   for (const skill of args.skills) {
     if (args.signal?.aborted) break;
+    // The stored extras decide, `allowedTools` included: that is what makes
+    // a skill whose only extra is `allowedTools` get rewritten without it.
     if (!hasExtras(skill.extraFrontmatter)) continue;
     // Never interpolate an unvalidated name into a box path.
     if (!isValidSkillName(skill.name)) {
