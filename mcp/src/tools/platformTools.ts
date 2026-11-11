@@ -101,6 +101,9 @@ import {
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
   PlatformApiClient,
   readServerResourceOperation,
   listServerSkillsOperation,
@@ -325,6 +328,11 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
+  // Stored history, read without connecting: when a server's tools changed
+  // and how. Read-only and confined to MCPJam's own records.
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
   callServerToolOperation,
   renderServerWidgetOperation,
   listServerPromptsOperation,

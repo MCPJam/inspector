@@ -186,6 +186,9 @@ import type {
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceSuiteKind,
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSummary,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
   PlatformDirectorySearchPage,
@@ -601,6 +604,11 @@ type ServerScope = {
   projectId: string;
   serverId: string;
 };
+
+function serverRevisionsPath(scope: ServerScope): string {
+  const { projectId, serverId } = scope;
+  return `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/revisions`;
+}
 
 /**
  * Minimal fetch-based client for the MCPJam Platform API. Runtime-agnostic
@@ -3840,6 +3848,36 @@ export class PlatformApiClient {
     options?: RequestOptions
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "export", options);
+  }
+
+  /** A saved server's stored revisions, newest first. */
+  listServerRevisions(
+    params: ServerScope & { limit?: number; cursor?: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformServerRevisionSummary>> {
+    const query = pageQuery(params);
+    return this.request("GET", serverRevisionsPath(params), { query }, options);
+  }
+
+  getServerRevision(
+    params: ServerScope & { revisionNumber: number },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevision> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Compares `fromRevisionNumber` (default: the one before) with `revisionNumber`. */
+  diffServerRevisions(
+    params: ServerScope & {
+      revisionNumber: number;
+      fromRevisionNumber?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevisionDiff> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}/diff`;
+    const query = { from: params.fromRevisionNumber };
+    return this.request("GET", path, { query }, options);
   }
 
   listServerTools(
