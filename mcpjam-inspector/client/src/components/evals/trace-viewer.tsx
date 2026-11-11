@@ -60,6 +60,7 @@ import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-
 import type { TestStep } from "@/shared/steps";
 import type { EvalStepStatus } from "@/shared/eval-stream-events";
 import { ToolCallsDiffView } from "./tool-calls-diff-view";
+import { TraceToolCallAccounts } from "./run-accounts-context";
 import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
@@ -1270,15 +1271,19 @@ export function TraceViewer({
     </div>
   );
 
+  // The transcript's tool cards name the account their call ran on.
+  const labelled = (
+    <TraceToolCallAccounts spans={recordedSpans}>{content}</TraceToolCallAccounts>
+  );
   return hostSnapshot !== undefined ? (
     <HostStyledShell
       hostSnapshot={hostSnapshot}
       activeHost={activeHost ?? null}
       className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
     >
-      {content}
+      {labelled}
     </HostStyledShell>
   ) : (
-    content
+    labelled
   );
 }

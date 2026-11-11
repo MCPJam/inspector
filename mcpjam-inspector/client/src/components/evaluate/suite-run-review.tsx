@@ -33,6 +33,7 @@ import {
 } from "./case-workspace/case-launch-preview";
 import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
+import { RunsAsLine } from "./suite-runs-as";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
@@ -407,6 +408,7 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
+          <RunsAsLine entries={scopedPreflight?.runsAs} />
           {scopedPreflight && (
             <RunPreflightNotices
               preflight={scopedPreflight}

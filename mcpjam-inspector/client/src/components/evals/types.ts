@@ -917,6 +917,22 @@ export type EvalSuiteRunSummary = {
   policyBlockedIterations?: number;
 };
 
+/**
+ * One account a run had for one server, recorded when the run started. The
+ * name is the one the account had then, so a later rename does not rewrite
+ * history. Names never carry an email.
+ */
+export type EvalRunAccount = {
+  serverId: string;
+  /** A person's own account, the project's shared connection, or an XAA identity. */
+  kind: "account" | "shared" | "xaa";
+  connectionId?: string;
+  name: string;
+  profileId?: string;
+  /** The simulated identity an XAA server ran as. */
+  xaaSubject?: string;
+};
+
 export type EvalSuiteRun = {
   name?: string;
   tags?: string[];
@@ -1140,6 +1156,14 @@ export type EvalSuiteRun = {
     surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
     apiKeyId?: string | null;
   };
+  /**
+   * The accounts this run connected with, per server. Absent on runs from
+   * before accounts were recorded, which is how readers tell "not recorded"
+   * from "no accounts".
+   */
+  accountsAtRun?: EvalRunAccount[];
+  /** Whose accounts the run used: who clicked Run, the schedule's or the key's owner. */
+  ranAsName?: string;
   replayedFromRunId?: string;
   /**
    * Set when this run re-ran a SUBSET of `rerunOfRunId`: only the cases that
@@ -1615,6 +1639,8 @@ export type EvalSuiteRunListItem = Pick<
   | "source"
   | "launcher"
   | "attribution"
+  | "accountsAtRun"
+  | "ranAsName"
   | "ciMetadata"
   | "replayedFromRunId"
   | "rerunOfRunId"
