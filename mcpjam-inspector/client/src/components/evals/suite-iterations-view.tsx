@@ -5,6 +5,7 @@ import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
+import { SuiteAccountsRow } from "./suite-accounts-row";
 import type { ReactNode } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -3069,6 +3070,7 @@ export function SuiteIterationsView({
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
+              <SuiteAccountsRow suite={suite} projectId={projectId} />
               <BudgetSettingRow
                 settingKey="turnTimeoutMs"
                 label="Per-turn timeout"
