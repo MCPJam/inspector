@@ -56,7 +56,9 @@ If all five check out and you still see a failure, copy the full error from the 
 
 The browser's Web Crypto API (`crypto.subtle`) is only available in **secure contexts** — that means HTTPS, or `http://localhost` / `http://127.0.0.1`. If you're hitting Inspector over a non-localhost HTTP URL (for example, a LAN IP like `http://192.168.1.10:6274`), the browser disables `crypto.subtle` and OAuth/PKCE flows fail.
 
-**Fix:** open Inspector at `http://localhost:6274` or `http://127.0.0.1:6274`, or put HTTPS in front of it. The hosted app and the desktop app are unaffected.
+Chrome reports the same failure as `Cannot read properties of undefined (reading 'digest')`.
+
+**Fix:** open Inspector at `http://localhost:6274` or `http://127.0.0.1:6274`; for a remote install, use SSH forwarding. HTTPS in front of Inspector also fixes MCP server OAuth, but not MCPJam account sign-in, which works only at those two addresses or on [app.mcpjam.com](https://app.mcpjam.com). See [Accessing over the network](/installation#accessing-over-the-network). The hosted app and the desktop app are unaffected.
 
 ### Server fails to start or connect
 
