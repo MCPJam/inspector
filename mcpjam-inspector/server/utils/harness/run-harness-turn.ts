@@ -3541,9 +3541,10 @@ export async function runHarnessTurn(
         // rewrite survives the turn; it runs post-createSession only to keep it
         // off the session-start critical path. Zero session calls when no skill
         // has extras; same gating as the onSandboxSession skill passes.
-        // Fail-soft, except that it throws when it can neither rewrite nor
-        // remove a skill that carries `allowedTools`. It runs inside this `try`
-        // so that throw fails the turn and the `finally` releases the box.
+        // Fail-soft, except that it throws when a failed rewrite leaves a
+        // SKILL.md it can't read, or one listing `allowed-tools` that it can't
+        // remove. It runs inside this `try` so that throw fails the turn and
+        // the `finally` releases the box.
         if (deliveredSkills.length > 0 && sandboxFileSession) {
           await materializeSkillFrontmatter({
             session: sandboxFileSession,

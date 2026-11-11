@@ -21,10 +21,9 @@
  * `onSandboxSession` would therefore be clobbered on the turns that matter.
  *
  * Invariants:
- *  - Fail-soft: a write error skips that skill, never the turn. The one
- *    exception fails closed: a skill that carries `allowedTools` is taken off
- *    the box when its rewrite fails, and the pass throws if it can't be (see
- *    {@link removeSkillAfterFailedRewrite}).
+ *  - Fail-soft: a write error skips that skill, never the turn, unless the
+ *    SKILL.md left on the box may still grant tools: then the skill comes off
+ *    the box, or the pass throws (see {@link clearGrantAfterFailedRewrite}).
  *  - Zero session calls when no delivered skill carries extras.
  *  - Skill names are re-validated before path interpolation (defense-in-depth;
  *    cloud names are already backend-validated).
@@ -39,9 +38,10 @@ import { shellQuote } from "./shell-quote.js";
 import { logger } from "../logger.js";
 
 /** Minimal live-session surface: the text write that replaces SKILL.md, and
- *  the command that removes a skill folder when that write fails. */
+ *  the read and command that check and remove a skill when that write fails. */
 export interface FrontmatterSession {
   writeTextFile(args: { path: string; content: string }): PromiseLike<unknown>;
+  readTextFile(args: { path: string }): PromiseLike<string | null>;
   run(args: {
     command: string;
   }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
@@ -103,19 +103,48 @@ function hasExtras(
   return !!extra && Object.keys(extra).length > 0;
 }
 
+/** A frontmatter key a runtime or MCPJam's own parser reads as a tool grant. */
+const GRANT_KEY = /^\s*["']?allowed[-_]?tools["']?\s*:/im;
+
 /**
- * Take a skill off the box after its rewrite failed while it carries
- * `allowedTools`. On a box reused across turns its SKILL.md can still list the
- * grant from an earlier write, and the adapter won't rewrite a skill whose hash
- * is unchanged, so the turn runs without the skill rather than with the grant.
- * Throws when the folder can't be removed, so the turn stops before the model
- * runs.
+ * Whether a SKILL.md lists pre-approved tools. Scans the whole file when it
+ * has no frontmatter block to delimit, so an unusual file errs toward yes.
  */
-async function removeSkillAfterFailedRewrite(
+export function hasAllowedToolsGrant(skillMd: string): boolean {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(skillMd)?.[1];
+  return GRANT_KEY.test(frontmatter ?? skillMd);
+}
+
+/**
+ * After a skill's rewrite fails, decide from the SKILL.md already on the box,
+ * not from the stored extras. The adapter's hash covers only name,
+ * description, body and files, so when only the extras change it leaves the
+ * file an earlier write put on a reused box, and that file can list
+ * `allowed-tools` the stored extras no longer have. A file with no grant stays.
+ * One with a grant comes off the box, so the turn runs without the skill.
+ * Throws, which stops the turn before the model runs, when the file can't be
+ * read or the folder can't be removed.
+ */
+async function clearGrantAfterFailedRewrite(
   session: FrontmatterSession,
   skillsBase: string,
   skillName: string,
 ): Promise<void> {
+  let current: string | null;
+  try {
+    current = await session.readTextFile({
+      path: `${skillsBase}/${skillName}/SKILL.md`,
+    });
+  } catch (error) {
+    logger.warn("[materialize-skill-frontmatter] could not read skill", {
+      skill: skillName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error(
+      `Could not update or read the skill "${skillName}" in the sandbox, so this turn stopped rather than risk running with the skill's old tool permissions. Try again.`,
+    );
+  }
+  if (current === null || !hasAllowedToolsGrant(current)) return;
   let failure: string | undefined;
   try {
     const result = await session.run({
@@ -143,9 +172,10 @@ async function removeSkillAfterFailedRewrite(
 
 /**
  * Overwrite the on-box SKILL.md of every delivered skill that carries extra
- * frontmatter. Per-skill fail-soft (a write error logs and skips), except for a
- * skill that carries `allowedTools` (see {@link removeSkillAfterFailedRewrite});
- * makes no session call at all when no skill has extras.
+ * frontmatter. Per-skill fail-soft (a write error logs and skips), except
+ * where the file left on the box may still grant tools (see
+ * {@link clearGrantAfterFailedRewrite}); makes no session call at all when no
+ * skill has extras.
  */
 export async function materializeSkillFrontmatter(args: {
   session: FrontmatterSession;
@@ -188,13 +218,7 @@ export async function materializeSkillFrontmatter(args: {
         error: error instanceof Error ? error.message : String(error),
       });
       skipped += 1;
-      if (skill.extraFrontmatter?.allowedTools !== undefined) {
-        await removeSkillAfterFailedRewrite(
-          args.session,
-          skillsBase,
-          skill.name,
-        );
-      }
+      await clearGrantAfterFailedRewrite(args.session, skillsBase, skill.name);
     }
   }
   if (rewritten > 0) {

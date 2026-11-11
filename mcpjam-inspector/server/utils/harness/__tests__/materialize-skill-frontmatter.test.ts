@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import matter from "gray-matter";
 import {
   generateSkillMdWithExtras,
+  hasAllowedToolsGrant,
   materializeSkillFrontmatter,
   type FrontmatterSession,
 } from "../materialize-skill-frontmatter";
@@ -9,27 +10,46 @@ import type { RuntimeSkill } from "../runtime-skills";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
 
+/** A SKILL.md an earlier write left on a reused box, grant included. */
+const STALE_GRANT_MD =
+  '---\nname: git-helper\ndescription: "Git"\nlicense: "MIT"\nallowed-tools: ["Bash(*)"]\n---\n\nUse git.\n';
+/** What the adapter writes: no extras, so no grant. */
+const ADAPTER_MD = "---\nname: git-helper\ndescription: Git\n---\n\nUse git.\n";
+
 function fakeSession() {
   const writes: { path: string; content: string }[] = [];
   const session: FrontmatterSession = {
     writeTextFile: async (args) => {
       writes.push(args);
     },
+    readTextFile: async () => null,
     run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
   };
   return { session, writes };
 }
 
-/** A box whose SKILL.md writes all fail, recording each command it runs. */
-function failingWriteSession(run?: FrontmatterSession["run"]) {
+/**
+ * A box whose SKILL.md writes all fail. A read returns `onBox` unless
+ * `readTextFile` is given; each command it runs is recorded.
+ */
+function failingWriteSession(
+  opts: {
+    onBox?: string | null;
+    readTextFile?: FrontmatterSession["readTextFile"];
+    run?: FrontmatterSession["run"];
+  } = {},
+) {
   const commands: string[] = [];
   const session: FrontmatterSession = {
     writeTextFile: async () => {
       throw new Error("box unreachable");
     },
+    readTextFile: opts.readTextFile ?? (async () => opts.onBox ?? null),
     run: async (args) => {
       commands.push(args.command);
-      return run ? run(args) : { exitCode: 0, stdout: "", stderr: "" };
+      return opts.run
+        ? opts.run(args)
+        : { exitCode: 0, stdout: "", stderr: "" };
     },
   };
   return { session, commands };
@@ -157,6 +177,36 @@ describe("generateSkillMdWithExtras", () => {
   });
 });
 
+describe("hasAllowedToolsGrant", () => {
+  it.each([
+    ["the pass's own JSON list", STALE_GRANT_MD, true],
+    [
+      "a comma string",
+      "---\nname: s\ndescription: d\nallowed-tools: Bash, Read\n---\n\nc\n",
+      true,
+    ],
+    [
+      "a quoted key",
+      '---\nname: s\n"allowed-tools": ["Read"]\n---\n\nc\n',
+      true,
+    ],
+    [
+      "the camelCase key",
+      "---\nname: s\nallowedTools: [Read]\n---\n\nc\n",
+      true,
+    ],
+    ["the adapter's SKILL.md", ADAPTER_MD, false],
+    [
+      "the key only in the body",
+      "---\nname: s\ndescription: d\n---\n\nallowed-tools: Read\n",
+      false,
+    ],
+    ["a file with no frontmatter block", "allowed-tools: Read\n", true],
+  ])("reads %s", (_, md, expected) => {
+    expect(hasAllowedToolsGrant(md)).toBe(expected);
+  });
+});
+
 describe("materializeSkillFrontmatter", () => {
   it("rewrites SKILL.md only for skills WITH extras (zero calls otherwise)", async () => {
     const { session, writes } = fakeSession();
@@ -195,6 +245,7 @@ describe("materializeSkillFrontmatter", () => {
       writeTextFile: async (args) => {
         box.set(args.path, args.content);
       },
+      readTextFile: async (args) => box.get(args.path) ?? null,
       run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
     };
     const res = await materializeSkillFrontmatter({
@@ -247,8 +298,8 @@ describe("materializeSkillFrontmatter", () => {
   });
 
   it("is fail-soft: a write error skips that skill, never throws", async () => {
-    // Neither skill carries `allowedTools`, so a failed write can't leave a
-    // grant behind: no removal, no thrown error.
+    // The SKILL.md left on the box grants nothing, so the failed write needs
+    // no removal and no thrown error.
     const writes: string[] = [];
     const commands: string[] = [];
     const session: FrontmatterSession = {
@@ -256,6 +307,7 @@ describe("materializeSkillFrontmatter", () => {
         if (path.includes("/boom/")) throw new Error("box unreachable");
         writes.push(path);
       },
+      readTextFile: async () => ADAPTER_MD,
       run: async ({ command }) => {
         commands.push(command);
         return { exitCode: 0, stdout: "", stderr: "" };
@@ -281,21 +333,61 @@ describe("materializeSkillFrontmatter", () => {
     expect(commands).toEqual([]);
   });
 
-  it("removes a skill that carries allowedTools from the box when its rewrite fails", async () => {
-    // A reused box may still hold the grant from an earlier write, so the
-    // skill comes off the box and the turn runs without it.
-    const { session, commands } = failingWriteSession();
+  it("removes the skill when its rewrite fails and the box's SKILL.md still lists allowed-tools", async () => {
+    // The stored extras no longer have `allowedTools`, but only the extras
+    // changed, so the adapter left the file an earlier write put there. The
+    // file on the box decides, and the skill comes off the box.
+    const { session, commands } = failingWriteSession({
+      onBox: STALE_GRANT_MD,
+    });
     const res = await materializeSkillFrontmatter({
       session,
       skills: [
-        skill({
-          name: "git-helper",
-          extraFrontmatter: { license: "MIT", allowedTools: ["Bash(*)"] },
-        }),
+        skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
       ],
     });
     expect(res).toEqual({ rewritten: 0, skipped: 1 });
     expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
+  });
+
+  it.each([
+    ["the adapter's SKILL.md", ADAPTER_MD],
+    ["no SKILL.md", null],
+  ])(
+    "leaves the skill alone when its rewrite fails and the box holds %s",
+    async (_, onBox) => {
+      // Stored `allowedTools` alone doesn't remove anything: the box grants
+      // nothing, so the turn keeps the skill.
+      const { session, commands } = failingWriteSession({ onBox });
+      const res = await materializeSkillFrontmatter({
+        session,
+        skills: [
+          skill({
+            name: "git-helper",
+            extraFrontmatter: { allowedTools: ["Bash(*)"] },
+          }),
+        ],
+      });
+      expect(res).toEqual({ rewritten: 0, skipped: 1 });
+      expect(commands).toEqual([]);
+    },
+  );
+
+  it("stops the turn when its rewrite fails and the box's SKILL.md can't be read", async () => {
+    const { session, commands } = failingWriteSession({
+      readTextFile: async () => {
+        throw new Error("box unreachable");
+      },
+    });
+    await expect(
+      materializeSkillFrontmatter({
+        session,
+        skills: [
+          skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
+        ],
+      }),
+    ).rejects.toThrow('Could not update or read the skill "git-helper"');
+    expect(commands).toEqual([]);
   });
 
   it.each([
@@ -309,21 +401,24 @@ describe("materializeSkillFrontmatter", () => {
         throw new Error("box unreachable");
       },
     ],
-  ])("stops the turn when that removal %s", async (_, run) => {
-    const { session, commands } = failingWriteSession(run);
-    await expect(
-      materializeSkillFrontmatter({
-        session,
-        skills: [
-          skill({
-            name: "git-helper",
-            extraFrontmatter: { allowedTools: ["Bash(*)"] },
-          }),
-        ],
-      }),
-    ).rejects.toThrow('Could not update or remove the skill "git-helper"');
-    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
-  });
+  ])(
+    "stops the turn when removing a skill that still grants tools %s",
+    async (_, run) => {
+      const { session, commands } = failingWriteSession({
+        onBox: STALE_GRANT_MD,
+        run,
+      });
+      await expect(
+        materializeSkillFrontmatter({
+          session,
+          skills: [
+            skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
+          ],
+        }),
+      ).rejects.toThrow('Could not update or remove the skill "git-helper"');
+      expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
+    },
+  );
 
   it("never interpolates an invalid skill name into a box path", async () => {
     const { session, writes } = fakeSession();
