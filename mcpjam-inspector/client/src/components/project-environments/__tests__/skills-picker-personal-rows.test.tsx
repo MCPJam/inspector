@@ -199,7 +199,12 @@ describe("ProjectEnvironmentSkillsPicker — personal skills", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(row);
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith(null));
+    await waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith(null, {
+        kind: "remove",
+        skillId: "skill-scratchpad",
+      }),
+    );
   });
 
   it("disables a personal skill on a backend that sends no pinnability", async () => {

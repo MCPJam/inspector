@@ -3,13 +3,12 @@ import { ComparePaneSettingsSection } from "./compare-pane-settings";
 import type { ComparePaneSections } from "./use-compare-pane-controls";
 import { Button } from "@mcpjam/design-system/button";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
-import { authFetch } from "@/lib/session-token";
+import { fetchSkillsPreview } from "@/lib/apis/web/skills-preview-api";
 import type { RecoveryPane } from "@/lib/comparison-recovery-record";
-import {
-  paneSkillsPreview,
-  type PaneSkillRow,
-  type PaneSkillsPreview,
-  type PaneSkillsRequest,
+import type {
+  PaneSkillRow,
+  PaneSkillsPreview,
+  PaneSkillsRequest,
 } from "@/shared/pane-skills-preview";
 
 const reasonText = {
@@ -57,10 +56,13 @@ export function ComparePaneSkills({
     serverIds: pane.serverIds ?? undefined,
     pluginVersionIds: pane.pluginVersionIds ?? undefined,
   };
-  const body = JSON.stringify(request);
   return (
     <ComparePaneSettingsSection title="Skills">
-      {pending ? <LoadingSkills /> : <DeliveryList key={body} body={body} />}
+      {pending ? (
+        <LoadingSkills />
+      ) : (
+        <DeliveryList key={JSON.stringify(request)} request={request} />
+      )}
     </ComparePaneSettingsSection>
   );
 }
@@ -73,30 +75,25 @@ function LoadingSkills() {
   );
 }
 
-function DeliveryList({ body }: { body: string }) {
+function DeliveryList({ request }: { request: PaneSkillsRequest }) {
   const [result, setResult] = useState<PaneSkillsPreview | "failed" | null>(
     null,
   );
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    async function read() {
-      const response = await authFetch("/api/web/environments/skills-preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        signal: controller.signal,
-      });
-      const data = response.ok
-        ? paneSkillsPreview.parse(await response.json())
-        : "failed";
-      if (!controller.signal.aborted) setResult(data);
-    }
-    void read().catch(() => {
-      if (!controller.signal.aborted) setResult("failed");
-    });
+    fetchSkillsPreview(request, controller.signal).then(
+      (data) => {
+        if (!controller.signal.aborted) setResult(data);
+      },
+      () => {
+        if (!controller.signal.aborted) setResult("failed");
+      },
+    );
     return () => controller.abort();
-  }, [attempt, body]);
+    // The list is keyed by the request's body, so `request` holds for its
+    // whole life; only a retry reads it again.
+  }, [attempt]);
   if (result === null) return <LoadingSkills />;
   if (result === "failed") {
     return (
