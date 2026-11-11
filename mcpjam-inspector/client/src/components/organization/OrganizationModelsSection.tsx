@@ -357,11 +357,7 @@ function OrganizationProviderSettings({
       try {
         await upsertProvider(args);
         toast.success(
-          gatewaysEnabled
-            ? "Gateway saved"
-            : editingCustom
-              ? "Custom provider updated"
-              : "Custom provider added",
+          editingCustom ? "Custom provider updated" : "Custom provider added",
         );
         setCustomDialogOpen(false);
         setEditingCustom(null);
@@ -453,7 +449,9 @@ function OrganizationProviderSettings({
                   </Button>
                   <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
-                    {gatewaysEnabled ? "Add a gateway" : "Add Custom Provider"}
+                    {gatewaysEnabled
+                      ? "Add custom provider"
+                      : "Add Custom Provider"}
                   </Button>
                   <Button
                     variant="outline"

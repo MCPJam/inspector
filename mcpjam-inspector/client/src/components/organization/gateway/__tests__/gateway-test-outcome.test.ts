@@ -49,7 +49,7 @@ describe("gatewayTestOutcome", () => {
       result({
         apis: {
           chatCompletions: { result: "ok", status: 200 },
-          responses: { result: "failed", status: 404, message: "The gateway has nothing at https://gw.example.com/v1/responses. Check the base URL and the APIs this connection serves." },
+          responses: { result: "failed", status: 404, message: "The provider has nothing at https://gw.example.com/v1/responses. Check the base URL and the APIs this connection serves." },
           anthropicMessages: { result: "ok", status: 200 },
         },
       }),
@@ -63,10 +63,10 @@ describe("gatewayTestOutcome", () => {
   });
 
   it("quotes the gateway on a 401 and moves focus to the key", () => {
-    const message = 'The gateway rejected the API key: "Authentication Error, Invalid proxy server token passed". Check the key and test again.';
+    const message = 'The provider rejected the API key: "Authentication Error, Invalid proxy server token passed". Check the key and test again.';
     expect(gatewayTestOutcome(result({ status: 401, message, apis: {}, models: [] }))).toEqual({
       tone: "destructive",
-      title: "The gateway needs a valid API key",
+      title: "The provider needs a valid API key",
       message,
       focus: "secret",
       testedFrom: "Tested from MCPJam's servers",
@@ -75,9 +75,9 @@ describe("gatewayTestOutcome", () => {
 
   it("reports a 403 as the gateway refusing, without blaming a field", () => {
     const outcome = gatewayTestOutcome(
-      result({ status: 403, message: "The gateway refused the request: \"Budget exceeded\". Check the key's budget and model access on the gateway.", apis: {}, models: [] }),
+      result({ status: 403, message: "The provider refused the request: \"Budget exceeded\". Check the key's budget and model access on the provider.", apis: {}, models: [] }),
     );
-    expect(outcome).toMatchObject({ tone: "destructive", title: "The gateway refused the request" });
+    expect(outcome).toMatchObject({ tone: "destructive", title: "The provider refused the request" });
     expect(outcome.focus).toBeUndefined();
   });
 
@@ -98,20 +98,20 @@ describe("gatewayTestOutcome", () => {
 
   it("moves focus to the base URL when the gateway is unreachable", () => {
     expect(
-      gatewayTestOutcome(result({ reachable: false, status: undefined, message: "MCPJam's servers couldn't connect to gw.example.com. Check the base URL and that the gateway is running.", apis: {}, models: [] })),
-    ).toMatchObject({ tone: "destructive", title: "Couldn't reach the gateway. Check the base URL, then test again.", focus: "baseUrl" });
+      gatewayTestOutcome(result({ reachable: false, status: undefined, message: "MCPJam's servers couldn't connect to gw.example.com. Check the base URL and that the provider is running.", apis: {}, models: [] })),
+    ).toMatchObject({ tone: "destructive", title: "Couldn't reach the provider. Check the base URL, then test again.", focus: "baseUrl" });
   });
 
   it("says when no API answered, focusing the key on a 401", () => {
     expect(
-      gatewayTestOutcome(result({ apis: { chatCompletions: { result: "failed", status: 401, message: "The gateway asked for an API key. Enter the key, then test again." } } })),
+      gatewayTestOutcome(result({ apis: { chatCompletions: { result: "failed", status: 401, message: "The provider asked for an API key. Enter the key, then test again." } } })),
     ).toMatchObject({ tone: "destructive", title: "No API answered. Check the base URL and key, then test again.", focus: "secret" });
   });
 
   it("reports a test that couldn't run", () => {
     expect(gatewayTestOutcome({ error: "Too many connection tests for this organization. Wait a minute, then test again." })).toEqual({
       tone: "destructive",
-      title: "Could not start the gateway test. Try again.",
+      title: "Could not start the provider test. Try again.",
       message: "Too many connection tests for this organization. Wait a minute, then test again.",
     });
   });
@@ -139,7 +139,7 @@ describe("filling the editor from a test", () => {
   it("names the connection after the gateway's host", () => {
     expect(suggestedGatewayName("https://litellm.acme.internal/v1")).toBe("litellm");
     expect(suggestedGatewayName("https://api.groq.com/openai/v1")).toBe("groq");
-    expect(suggestedGatewayName("http://10.0.0.8:4000")).toBe("gateway");
+    expect(suggestedGatewayName("http://10.0.0.8:4000")).toBe("custom-provider");
   });
 });
 

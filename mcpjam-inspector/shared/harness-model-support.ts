@@ -224,7 +224,7 @@ export function harnessNoRunnableModelReason(
   const vendor = orgKeyProviderLabel(harnessId);
   const api = harnessWireApi(harnessId);
   if (!vendor || !api) return `${name} has no model it can run here.`;
-  const gateway = `a gateway that serves ${GATEWAY_API_LABELS[api]}`;
+  const gateway = `a custom provider that serves ${GATEWAY_API_LABELS[api]}`;
   return policy.requireOrgKeys
     ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider or ${gateway}.`
     : `${name} runs MCPJam models, your organization's ${vendor} key, or ${gateway}. Set one up in Organization models.`;

@@ -66,7 +66,7 @@ describe("gatewayHarnessModel on a gateway that serves Anthropic Messages", () =
       gatewayHarnessModel("codex", { ...MESSAGES, modelId: "openai/gpt-5.5" }),
     ).toEqual({
       refusal:
-        "This gateway doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
+        "This provider doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
     });
   });
 });
@@ -93,7 +93,7 @@ describe("gatewayHarnessModel on a gateway that serves Responses", () => {
           modelId: "anthropic/claude-haiku-4.5",
         }),
       ).toEqual({
-        refusal: `This gateway doesn't serve Anthropic Messages, which ${label} needs. Turn on Anthropic Messages for it in Organization models, or choose another connection.`,
+        refusal: `This provider doesn't serve Anthropic Messages, which ${label} needs. Turn on Anthropic Messages for it in Organization models, or choose another connection.`,
       });
     }
   });
@@ -103,7 +103,7 @@ describe("gatewayHarnessModel on any gateway", () => {
   it("refuses an unmapped model with the mapping it needs", () => {
     expect(gatewayHarnessModel("claude-code", MESSAGES)).toEqual({
       refusal:
-        "Map this gateway model to a model in Organization models to use it with Claude Code.",
+        "Map this provider model to a model in Organization models to use it with Claude Code.",
     });
   });
 

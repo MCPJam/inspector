@@ -124,7 +124,7 @@ export const NOT_SUPPORTED_YET_GUIDANCE =
  * that API, on the organization's key.
  */
 export const HARNESS_ORG_KEYS_GUIDANCE =
-  "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.";
+  "Claude Code and OpenCode run on an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a custom provider that serves Responses.";
 
 /**
  * The harness row's guidance, or null to fall back to the general one. With
@@ -142,12 +142,12 @@ function harnessGuidance(
       return HARNESS_ORG_KEYS_GUIDANCE;
     case "unconfigured":
       return canManage
-        ? "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers."
-        : "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.";
+        ? "Add an Anthropic or OpenAI provider, or a custom provider that serves Anthropic Messages or Responses, in Providers."
+        : "Ask an organization admin to add an Anthropic or OpenAI provider, or a custom provider that serves Anthropic Messages or Responses.";
     case "unsupported":
       return canManage
-        ? "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider."
-        : "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.";
+        ? "Turn on Anthropic Messages or Responses for your custom provider in Providers, or add an Anthropic or OpenAI provider."
+        : "Ask an organization admin to turn on Anthropic Messages or Responses for your custom provider, or to add an Anthropic or OpenAI provider.";
     default:
       return null;
   }

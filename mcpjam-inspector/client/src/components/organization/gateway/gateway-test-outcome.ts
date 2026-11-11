@@ -40,12 +40,12 @@ export function testedFromLabel(origin: "backend" | "inspector"): string {
 }
 
 function statusTitle(status: number | undefined): string {
-  if (status === 401) return "The gateway needs a valid API key";
-  if (status === 403) return "The gateway refused the request";
-  return "The gateway test failed. Check the base URL and key, then test again.";
+  if (status === 401) return "The provider needs a valid API key";
+  if (status === 403) return "The provider refused the request";
+  return "The provider test failed. Check the base URL and key, then test again.";
 }
 
-/** A 401 is the key; a 404 is the address. A 403 is the gateway's own policy. */
+/** A 401 is the key; a 404 is the address. A 403 is the provider's own policy. */
 function statusFocus(status: number | undefined): GatewayField | undefined {
   if (status === 401) return "secret";
   if (status === 404) return "baseUrl";
@@ -61,7 +61,7 @@ export function gatewayTestOutcome(
   if ("error" in response) {
     return {
       tone: "destructive",
-      title: "Could not start the gateway test. Try again.",
+      title: "Could not start the provider test. Try again.",
       message: response.error,
     };
   }
@@ -84,7 +84,8 @@ export function gatewayTestOutcome(
   if (!response.reachable) {
     return {
       tone: "destructive",
-      title: "Couldn't reach the gateway. Check the base URL, then test again.",
+      title:
+        "Couldn't reach the provider. Check the base URL, then test again.",
       message: response.message,
       focus: "baseUrl",
       testedFrom,
@@ -103,7 +104,7 @@ export function gatewayTestOutcome(
   if (response.message) {
     return {
       tone: "warning",
-      title: "The gateway listed no models",
+      title: "The provider listed no models",
       message: response.message,
       testedFrom,
     };
@@ -205,13 +206,16 @@ export function modelsFromTest(
 
 const GENERIC_HOST_LABELS = new Set(["www", "api", "gateway", "llm", "ai"]);
 
-/** A connection name from the gateway's host: `litellm.acme.internal` → `litellm`. */
+const NAME_FALLBACK = "custom-provider";
+
+/** A provider name from its host: `litellm.acme.internal` → `litellm`. */
 export function suggestedGatewayName(baseUrl: string): string {
   const host = gatewayHost(baseUrl)?.replace(/:\d+$/, "") ?? "";
-  if (!host || /^[\d.]+$/.test(host) || host.startsWith("[")) return "gateway";
+  if (!host || /^[\d.]+$/.test(host) || host.startsWith("["))
+    return NAME_FALLBACK;
   return (
     host.split(".").find((label) => !GENERIC_HOST_LABELS.has(label)) ??
-    "gateway"
+    NAME_FALLBACK
   );
 }
 

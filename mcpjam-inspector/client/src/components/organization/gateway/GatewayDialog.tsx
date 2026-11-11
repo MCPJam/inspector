@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -15,47 +15,26 @@ import type {
   OrgModelProvider,
   UpsertOrgProviderArgs,
 } from "@/hooks/use-org-model-config";
-import {
-  GATEWAY_APIS,
-  type GatewayApi,
-  type GatewayApiTestResult,
-  type GatewayModel,
-} from "@/shared/gateway-connection";
 import { hostedModelDefinitionsFromSnapshot } from "@/shared/types";
-import { useSettingsDraft } from "../../settings/SettingsDraftProvider";
-import { ProviderKeyField } from "../ProviderKeyField";
 import { GatewayModelTable } from "./GatewayModelTable";
-import { GatewayRuntimeField, GatewayTestAlert } from "./GatewayFormParts";
+import {
+  GatewayConnectionFields,
+  GatewayRuntimeField,
+  GatewayTestAlert,
+} from "./GatewayFormParts";
 import { GatewayApiList, GatewayWorksWithList } from "./GatewayReadiness";
-import {
-  apisFromTest,
-  baseUrlKeyProblem,
-  gatewayTestOutcome,
-  inspectorTestKeyOutcome,
-  modelsFromTest,
-  suggestedGatewayName,
-  type GatewayField,
-  type GatewayTestOutcome,
-} from "./gateway-test-outcome";
-import {
-  gatewayWorksWith,
-  type GatewayRuntimeLocation,
-} from "./gateway-works-with";
-import { useGatewayConnectionTest } from "./use-gateway-connection-test";
-
-const FIELD_IDS: Record<GatewayField, string> = {
-  baseUrl: "gateway-base-url",
-  secret: "gateway-secret",
-};
+import { suggestedGatewayName } from "./gateway-test-outcome";
+import { gatewayWorksWith } from "./gateway-works-with";
+import { useGatewayDraft } from "./use-gateway-draft";
 
 /** The slug a new connection is saved under. */
 const providerKeyFor = (name: string) =>
   `custom:${name.trim().toLowerCase().replace(/\s+/g, "-")}`;
 
 /**
- * Add or edit a gateway connection: the base URL and key, a Test that fills in
+ * Add or edit a custom provider: the base URL and key, a Test that fills in
  * the rest (name, APIs, models and their mappings), where calls come from,
- * and what the connection will work with, before it is saved.
+ * and what the provider will work with, before it is saved.
  */
 export function GatewayDialog({
   open,
@@ -78,144 +57,36 @@ export function GatewayDialog({
   onSave: (args: UpsertOrgProviderArgs) => Promise<void>;
   onCancel: () => void;
 }) {
-  const testConnection = useGatewayConnectionTest(organizationId);
+  const draft = useGatewayDraft({
+    open,
+    onOpenChange,
+    organizationId,
+    editProvider,
+    isSaving,
+  });
   const catalogIds = useMemo(
     () => hostedModelDefinitionsFromSnapshot().map((model) => String(model.id)),
     [],
   );
-  const [baseUrl, setBaseUrl] = useState("");
-  const [secret, setSecret] = useState("");
-  const [name, setName] = useState("");
-  const [runtime, setRuntime] = useState<GatewayRuntimeLocation>("cloud");
-  const [apis, setApis] = useState<GatewayApi[]>([]);
-  const [models, setModels] = useState<GatewayModel[]>([]);
-  const [results, setResults] = useState<
-    Partial<Record<GatewayApi, GatewayApiTestResult>>
-  >({});
-  const [outcome, setOutcome] = useState<GatewayTestOutcome | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [keyRequested, setKeyRequested] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const focusRequest = useRef<GatewayField | null>(null);
-  // The latest Test run; a reset or a newer run makes an earlier answer stale.
-  const testRun = useRef(0);
-
+  /** The admin's name for a new provider; null keeps the one from the host. */
+  const [renamed, setRenamed] = useState<string | null>(null);
   useEffect(() => {
-    if (!open) return;
-    testRun.current += 1;
-    setTesting(false);
-    setBaseUrl(editProvider?.baseUrl ?? "");
-    setSecret("");
-    setName(
-      editProvider?.displayName ||
-        editProvider?.providerKey.replace(/^custom:/, "") ||
-        "",
-    );
-    setRuntime(editProvider?.runtimeLocation ?? "cloud");
-    setApis(editProvider?.apis ?? []);
-    setModels(
-      editProvider?.models ??
-        (editProvider?.modelIds ?? []).map((nativeModelId) => ({
-          nativeModelId,
-        })),
-    );
-    setResults(editProvider?.lastTest?.apis ?? {});
-    setOutcome(null);
-    setShowDetails(!!editProvider);
-    setKeyRequested(false);
-    setDirty(false);
-  }, [open, editProvider]);
+    if (open) setRenamed(null);
+  }, [open]);
 
-  useEffect(() => {
-    const field = focusRequest.current;
-    if (!field) return;
-    focusRequest.current = null;
-    document.getElementById(FIELD_IDS[field])?.focus();
-  }, [outcome, keyRequested]);
-
-  useSettingsDraft(open && dirty, () => onOpenChange(false), open && isSaving);
-
-  const edit =
-    <T,>(set: (value: T) => void) =>
-    (value: T) => {
-      set(value);
-      setDirty(true);
-    };
-
-  // A Test answers for the URL and key it ran with. Editing either makes a
-  // pending answer stale, and a new Test can start right away.
-  const editProbe = (set: (value: string) => void) => (value: string) => {
-    testRun.current += 1;
-    setTesting(false);
-    edit(set)(value);
-  };
-
-  const showOutcome = (next: GatewayTestOutcome) => {
-    if (next.focus === "secret") setKeyRequested(true);
-    focusRequest.current = next.focus ?? null;
-    setOutcome(next);
-  };
-
-  const runTest = async (runtimeLocation: GatewayRuntimeLocation = runtime) => {
-    if (!baseUrl.trim() || testing) return;
-    const needsKey = inspectorTestKeyOutcome(
-      editProvider,
-      runtimeLocation,
-      secret,
-    );
-    if (needsKey) {
-      showOutcome(needsKey);
-      return;
-    }
-    const run = ++testRun.current;
-    setTesting(true);
-    setOutcome(null);
-    let response: Awaited<ReturnType<typeof testConnection>>;
-    try {
-      response = await testConnection({
-        runtimeLocation,
-        baseUrl: baseUrl.trim(),
-        ...(secret.trim() ? { secret: secret.trim() } : {}),
-        ...(editProvider ? { providerKey: editProvider.providerKey } : {}),
-      });
-    } finally {
-      if (run === testRun.current) setTesting(false);
-    }
-    // The dialog was reset or reopened for another connection meanwhile.
-    if (run !== testRun.current) return;
-    const next = gatewayTestOutcome(response);
-    if (!("error" in response)) {
-      setResults(
-        Object.fromEntries(
-          GATEWAY_APIS.flatMap((api) => {
-            const result = response.apis[api]?.result;
-            return result ? [[api, result]] : [];
-          }),
-        ),
-      );
-      const answered = apisFromTest(response);
-      if (answered.length > 0) setApis(answered);
-      if (response.models.length > 0) {
-        setModels((current) => modelsFromTest(response, current));
-      }
-      if (response.reachable && !response.refusal) {
-        setShowDetails(true);
-        if (!editProvider && !name.trim())
-          setName(suggestedGatewayName(baseUrl));
-        setDirty(true);
-      }
-    }
-    showOutcome(next);
-  };
-
-  const trimmedName = name.trim();
-  const keyProblem = baseUrlKeyProblem(editProvider, baseUrl, secret);
+  const { baseUrl, runtime, apis, models, keyProblem, outcome } = draft;
+  const trimmedName = (
+    editProvider
+      ? editProvider.displayName ||
+        editProvider.providerKey.replace(/^custom:/, "")
+      : (renamed ?? suggestedGatewayName(baseUrl))
+  ).trim();
+  const showDetails = !!editProvider || draft.passed;
   const nameProblem = /[/:]/.test(trimmedName)
     ? "Use a name without slashes or colons."
     : !editProvider &&
         existingProviderKeys.includes(providerKeyFor(trimmedName))
-      ? `A gateway named "${trimmedName}" already exists. Choose another name.`
+      ? `A custom provider named "${trimmedName}" already exists. Choose another name.`
       : null;
   const canSave =
     showDetails &&
@@ -236,11 +107,7 @@ export function GatewayDialog({
     void onSave({
       providerKey: editProvider?.providerKey ?? providerKeyFor(trimmedName),
       displayName: trimmedName,
-      baseUrl: baseUrl.trim(),
-      runtimeLocation: runtime,
-      apis,
-      models,
-      ...(secret.trim() ? { secret: secret.trim() } : {}),
+      ...draft.connection,
     });
 
   return (
@@ -249,11 +116,11 @@ export function GatewayDialog({
         <DialogHeader>
           <DialogTitle className="text-left">
             {editProvider
-              ? `Edit ${trimmedName || "gateway"}`
-              : "Add a gateway"}
+              ? `Edit ${trimmedName || "provider"}`
+              : "Add custom provider"}
           </DialogTitle>
           <DialogDescription className="text-left">
-            Enter the gateway's base URL and key, then test it. The test fills
+            Enter the provider's base URL and key, then test it. The test fills
             in the rest.
           </DialogDescription>
         </DialogHeader>
@@ -262,57 +129,29 @@ export function GatewayDialog({
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void runTest();
+            void draft.runTest();
           }}
         >
-          <div className="space-y-2">
-            <Label htmlFor={FIELD_IDS.baseUrl}>Base URL</Label>
-            <Input
-              id={FIELD_IDS.baseUrl}
-              type="url"
-              value={baseUrl}
-              onChange={(event) => editProbe(setBaseUrl)(event.target.value)}
-              placeholder="https://litellm.example.com/v1"
-              aria-invalid={!!keyProblem || outcome?.focus === "baseUrl"}
-              aria-describedby={
-                keyProblem ? "gateway-base-url-problem" : undefined
-              }
-            />
-            {keyProblem ? (
-              <p
-                id="gateway-base-url-problem"
-                className="text-sm text-destructive"
-              >
-                {keyProblem}
-              </p>
-            ) : null}
-          </div>
-          <ProviderKeyField
-            id={FIELD_IDS.secret}
-            configured={
-              !!editProvider?.hasSecret && !keyProblem && !keyRequested
-            }
-            value={secret}
-            onChange={editProbe(setSecret)}
-            optional={!keyProblem}
+          <GatewayConnectionFields
+            draft={draft}
+            hasSecret={!!editProvider?.hasSecret}
           />
           <Button
             type="submit"
             variant="outline"
-            disabled={!baseUrl.trim() || testing}
+            disabled={!baseUrl.trim() || draft.testing}
           >
-            {testing ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-            {testing ? "Testing..." : "Test"}
+            {draft.testing ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : null}
+            {draft.testing ? "Testing..." : "Test"}
           </Button>
         </form>
 
         {outcome ? (
           <GatewayTestAlert
             outcome={outcome}
-            onUseInspector={() => {
-              edit(setRuntime)("local");
-              void runTest("local");
-            }}
+            onUseInspector={draft.testFromInspector}
           />
         ) : null}
 
@@ -323,8 +162,8 @@ export function GatewayDialog({
               <Label htmlFor="gateway-name">Name</Label>
               <Input
                 id="gateway-name"
-                value={name}
-                onChange={(event) => edit(setName)(event.target.value)}
+                value={renamed ?? trimmedName}
+                onChange={(event) => setRenamed(event.target.value)}
                 disabled={!!editProvider}
                 aria-invalid={!!nameProblem}
               />
@@ -332,16 +171,16 @@ export function GatewayDialog({
                 <p className="text-sm text-destructive">{nameProblem}</p>
               ) : null}
             </div>
-            <GatewayRuntimeField value={runtime} onChange={edit(setRuntime)} />
+            <GatewayRuntimeField value={runtime} onChange={draft.setRuntime} />
             <div className="space-y-2">
               <GatewayApiList
                 selected={apis}
-                results={results}
-                onChange={edit(setApis)}
+                results={draft.results}
+                onChange={draft.setApis}
               />
               {apis.length === 0 ? (
                 <p className="text-sm text-destructive">
-                  Choose at least one API the gateway serves.
+                  Choose at least one API the provider serves.
                 </p>
               ) : null}
             </div>
@@ -353,7 +192,7 @@ export function GatewayDialog({
               <GatewayModelTable
                 models={models}
                 catalogIds={catalogIds}
-                onChange={edit(setModels)}
+                onChange={draft.setModels}
               />
             </section>
           </div>
@@ -368,7 +207,7 @@ export function GatewayDialog({
               ? "Saving..."
               : editProvider
                 ? "Save changes"
-                : "Add gateway"}
+                : "Add provider"}
           </Button>
         </DialogFooter>
       </DialogContent>

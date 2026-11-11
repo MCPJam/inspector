@@ -31,7 +31,7 @@ const PASSED: GatewayConnectionTestResult = {
   status: 200,
   apis: {
     chatCompletions: { result: "ok", status: 200 },
-    responses: { result: "failed", status: 404, message: "The gateway has nothing at https://litellm.acme.example/v1/responses. Check the base URL and the APIs this connection serves." },
+    responses: { result: "failed", status: 404, message: "The provider has nothing at https://litellm.acme.example/v1/responses. Check the base URL and the APIs this connection serves." },
     anthropicMessages: { result: "ok", status: 200 },
     embeddings: { result: "untested" },
   },
@@ -90,9 +90,9 @@ describe("GatewayDialog", () => {
     expect(screen.getByRole("checkbox", { name: /Chat Completions/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /^Responses/ })).not.toBeChecked();
     expect(screen.getByText("Matched by name")).toBeInTheDocument();
-    expect(screen.getAllByText("Needs Responses, which this gateway doesn't serve.")).toHaveLength(2);
+    expect(screen.getAllByText("Needs Responses, which this provider doesn't serve.")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add gateway" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
     expect(onSave).toHaveBeenCalledWith({
       providerKey: "custom:litellm",
       displayName: "litellm",
@@ -108,7 +108,7 @@ describe("GatewayDialog", () => {
   });
 
   it("moves focus to the key and quotes the gateway when it rejects the key", async () => {
-    const message = 'The gateway rejected the API key: "Invalid proxy server token passed". Check the key and test again.';
+    const message = 'The provider rejected the API key: "Invalid proxy server token passed". Check the key and test again.';
     testConnection.mockResolvedValue({ ...PASSED, status: 401, message, apis: {}, models: [] });
     renderDialog();
     type("gateway-base-url", "https://litellm.acme.example");
@@ -165,8 +165,8 @@ describe("GatewayDialog", () => {
     submitTest();
     await screen.findByText("Responses didn't answer");
     type("gateway-name", "Taken");
-    expect(screen.getByText('A gateway named "Taken" already exists. Choose another name.')).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add gateway" })).toBeDisabled();
+    expect(screen.getByText('A custom provider named "Taken" already exists. Choose another name.')).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add provider" })).toBeDisabled();
   });
   it("ignores a Test answer that arrives after the dialog moved to another connection", async () => {
     let answer: (result: GatewayConnectionTestResult) => void = () => {};

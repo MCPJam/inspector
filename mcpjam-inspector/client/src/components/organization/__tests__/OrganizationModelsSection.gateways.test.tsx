@@ -48,7 +48,7 @@ describe("OrganizationModelsSection gateway editor flag", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Custom Provider" }));
     expect(screen.getByRole("dialog", { name: "Add Custom Provider" })).toBeInTheDocument();
     expect(screen.getByText("Protocol")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add a gateway" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add custom provider" })).not.toBeInTheDocument();
   });
 
   it("treats a flag that hasn't loaded as off", () => {
@@ -57,11 +57,11 @@ describe("OrganizationModelsSection gateway editor flag", () => {
     expect(screen.getByRole("button", { name: "Add Custom Provider" })).toBeInTheDocument();
   });
 
-  it("opens the gateway editor with the flag on, testing from MCPJam's servers", async () => {
+  it("opens Add custom provider with the flag on, testing from MCPJam's servers", async () => {
     mocks.flag = true;
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: "Add a gateway" }));
-    expect(screen.getByRole("dialog", { name: "Add a gateway" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add custom provider" }));
+    expect(screen.getByRole("dialog", { name: "Add custom provider" })).toBeInTheDocument();
     fireEvent.change(document.getElementById("gateway-base-url") as HTMLElement, {
       target: { value: "https://litellm.acme.example" },
     });

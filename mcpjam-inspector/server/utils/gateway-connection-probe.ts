@@ -122,19 +122,19 @@ function statusMessage(
   const quoted = said ? `: "${said}"` : "";
   if (outcome.status === 401) {
     return hasKey
-      ? `The gateway rejected the API key${quoted}. Check the key and test again.`
-      : `The gateway asked for an API key${quoted}. Enter the key, then test again.`;
+      ? `The provider rejected the API key${quoted}. Check the key and test again.`
+      : `The provider asked for an API key${quoted}. Enter the key, then test again.`;
   }
   if (outcome.status === 403) {
-    return `The gateway refused the request${quoted}. Check the key's budget and model access on the gateway.`;
+    return `The provider refused the request${quoted}. Check the key's budget and model access on the provider.`;
   }
   if (outcome.status === 404) {
-    return `The gateway has nothing at ${outcome.url}. Check the base URL and the APIs this connection serves.`;
+    return `The provider has nothing at ${outcome.url}. Check the base URL and the APIs this connection serves.`;
   }
   if (outcome.status >= 300 && outcome.status < 400) {
-    return `The gateway redirected ${outcome.url} elsewhere. Enter the address it redirects to as the base URL.`;
+    return `The provider redirected ${outcome.url} elsewhere. Enter the address it redirects to as the base URL.`;
   }
-  return `The gateway returned an error${quoted}. Check the gateway's logs, then test again.`;
+  return `The provider returned an error${quoted}. Check the provider's logs, then test again.`;
 }
 
 async function send(
@@ -183,10 +183,10 @@ async function send(
       kind: "stopped",
       refused: false,
       message: timedOut
-        ? `${host} didn't answer within ${PROBE_TIMEOUT_MS / 1000} seconds. Check that the gateway is running, then test again.`
+        ? `${host} didn't answer within ${PROBE_TIMEOUT_MS / 1000} seconds. Check that the provider is running, then test again.`
         : error instanceof EgressResolutionError
           ? `This Inspector couldn't look up ${host}. Check the hostname, then test again.`
-          : `This Inspector couldn't connect to ${host}. Check the base URL and that the gateway is running.`,
+          : `This Inspector couldn't connect to ${host}. Check the base URL and that the provider is running.`,
     };
   }
 }
@@ -339,7 +339,7 @@ export async function probeGatewayConnection(
     ...(ids.length === 0
       ? {
           message:
-            "The gateway listed no models. Add models on the gateway, then test again.",
+            "The provider listed no models. Add models to the provider, then test again.",
         }
       : {}),
     apis: Object.fromEntries(requested.map((api, i) => [api, results[i]])),

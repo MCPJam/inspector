@@ -115,7 +115,7 @@ describe("featureGuidance", () => {
         canManage: true,
       }),
     ).toBe(
-      "Claude Code and OpenCode run on an Anthropic provider or a gateway that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a gateway that serves Responses.",
+      "Claude Code and OpenCode run on an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a custom provider that serves Responses.",
     );
     expect(HARNESS_ORG_KEYS_GUIDANCE).not.toMatch(/MCPJam/);
     const guidance = (
@@ -127,17 +127,17 @@ describe("featureGuidance", () => {
         canManage,
       });
     expect(guidance("unconfigured", true)).toBe(
-      "Add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses, in Providers.",
+      "Add an Anthropic or OpenAI provider, or a custom provider that serves Anthropic Messages or Responses, in Providers.",
     );
     expect(guidance("unconfigured", false)).toBe(
-      "Ask an organization admin to add an Anthropic or OpenAI provider, or a gateway that serves Anthropic Messages or Responses.",
+      "Ask an organization admin to add an Anthropic or OpenAI provider, or a custom provider that serves Anthropic Messages or Responses.",
     );
     // A connection exists that no harness runs on: turn its API on first.
     expect(guidance("unsupported", true)).toBe(
-      "Turn on Anthropic Messages or Responses for your gateway in Providers, or add an Anthropic or OpenAI provider.",
+      "Turn on Anthropic Messages or Responses for your custom provider in Providers, or add an Anthropic or OpenAI provider.",
     );
     expect(guidance("unsupported", false)).toBe(
-      "Ask an organization admin to turn on Anthropic Messages or Responses for your gateway, or to add an Anthropic or OpenAI provider.",
+      "Ask an organization admin to turn on Anthropic Messages or Responses for your custom provider, or to add an Anthropic or OpenAI provider.",
     );
     // A rejected key is the general fix.
     expect(
