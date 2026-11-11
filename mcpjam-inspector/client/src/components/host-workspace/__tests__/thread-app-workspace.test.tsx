@@ -15,6 +15,11 @@ const f = vi.hoisted(() => ({
   close: vi.fn(),
   log: vi.fn(),
 }));
+const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock("@/lib/analytics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/analytics")>()),
+  track: analytics.track,
+}));
 vi.mock("../extension-log", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../extension-log")>()),
   logExtensionEvent: f.log,
@@ -769,5 +774,126 @@ describe("retained App leases", () => {
       await result.current.close(result.current.apps[0]);
     });
     expect(result.current.apps).toEqual([]);
+  });
+});
+
+describe("an entry App that can't go fullscreen", () => {
+  const global = { toolName: "board", title: "Board", kind: "global" as const };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    f.discover.mockResolvedValue([global]);
+    f.open.mockResolvedValue(handle);
+    f.invoke.mockResolvedValue({ content: [] });
+    f.close.mockResolvedValue(undefined);
+  });
+  afterEach(async () => {
+    vi.useRealTimers();
+    cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    delete (f as Record<string, unknown>).renew;
+  });
+
+  it("is closed and handed to its owner, without counting as a failed launch", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const handBack = vi.fn();
+    const { result } = renderHook(() =>
+      useThreadAppWorkspace(scope, servers, {
+        onFullscreenUnsupported: handBack,
+      }),
+    );
+    await act(async () => {
+      await result.current.launch(servers[0], global);
+    });
+    const [row] = result.current.apps;
+    expect(result.current.active).toBe(row.key);
+    act(() => result.current.appPorts!.fullscreenUnsupported!(row.key));
+    expect(handBack).toHaveBeenCalledExactlyOnceWith(servers[0], global);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(f.close).toHaveBeenCalledWith(handle, expect.any(AbortSignal));
+    expect(result.current.apps).toEqual([]);
+    expect(result.current.active).toBeNull();
+    // Its readiness wait would otherwise end as a timeout.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    expect(analytics.track).not.toHaveBeenCalled();
+  });
+
+  it("has no port when the owner can't open it another way", () => {
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    expect(result.current.appPorts?.fullscreenUnsupported).toBeUndefined();
+  });
+
+  it("opens inline without selecting or revealing it, retries included", async () => {
+    const onLaunch = vi.fn();
+    f.invoke.mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(() =>
+      useThreadAppWorkspace(scope, servers, { onLaunch }),
+    );
+    await act(async () => {
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    expect(f.open).toHaveBeenCalledWith(
+      "saved",
+      "board",
+      expect.any(AbortSignal),
+      "global",
+      undefined,
+      undefined,
+    );
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "error",
+    });
+    // Retry, as the inline view's Retry button does.
+    await act(async () => {
+      await result.current.launch(servers[0], global);
+    });
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "live",
+    });
+    expect(result.current.active).toBeNull();
+    expect(result.current.open).toBe(false);
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  it("reopens an inline App whose session ended, since it is on screen", async () => {
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"],
+    });
+    (f as Record<string, unknown>).renew = vi.fn(async () => {
+      throw new ThreadAppError("INSTANCE_UNAVAILABLE");
+    });
+    f.open.mockResolvedValueOnce({ ...handle, instanceToken: "first" });
+    const { result } = renderHook(() => useThreadAppWorkspace(scope, servers));
+    await act(async () => {
+      await result.current.launch(
+        servers[0],
+        global,
+        undefined,
+        false,
+        "inline",
+      );
+    });
+    f.open.mockResolvedValueOnce({ ...handle, instanceToken: "second" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(APP_LEASE_RENEW_INTERVAL_MS);
+    });
+    expect(f.open).toHaveBeenCalledTimes(2);
+    expect(result.current.apps[0]).toMatchObject({
+      inline: true,
+      status: "live",
+      handle: { instanceToken: "second" },
+    });
+    expect(result.current.active).toBeNull();
   });
 });

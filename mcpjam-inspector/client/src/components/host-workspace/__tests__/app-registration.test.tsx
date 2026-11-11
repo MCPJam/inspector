@@ -202,6 +202,61 @@ describe("an entrypoint App's display modes", () => {
     expect(fixture.log).not.toHaveBeenCalled();
   });
 
+  const withRow = (
+    base: Parameters<typeof AppRegistration>[0],
+    row: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ) =>
+    ({
+      ...base,
+      ...extra,
+      row: { ...base.row, ...row },
+    }) as Parameters<typeof AppRegistration>[0];
+
+  it("hands a global App without fullscreen back only when its owner can open it another way", () => {
+    const port = vi.fn();
+    const registered = (row: Record<string, unknown>, extra = {}) => {
+      fixture.upsert.mockClear();
+      render(<AppRegistration {...withRow(props(), row, extra)} />);
+      const call = fixture.upsert.mock.calls[0];
+      cleanup();
+      return { params: call[2], host: call[3] };
+    };
+    const global = registered({}, { fullscreenUnsupported: port });
+    global.params.onFixedDisplayModeUnsupported(["inline"]);
+    expect(port).toHaveBeenCalledExactlyOnceWith("k");
+    expect(global.host.surface.fixedDisplayMode).toBe("fullscreen");
+    // No port: the App is refused as before.
+    expect(registered({}).params.onFixedDisplayModeUnsupported).toBeUndefined();
+    // Not a global App, or already inline: nothing to hand back.
+    expect(
+      registered(
+        { declaration: { kind: "thread", toolName: "open", title: "Library" } },
+        { fullscreenUnsupported: port },
+      ).params.onFixedDisplayModeUnsupported,
+    ).toBeUndefined();
+    const inline = registered(
+      { inline: true },
+      { fullscreenUnsupported: port, displayMode: "inline" },
+    );
+    expect(inline.params.onFixedDisplayModeUnsupported).toBeUndefined();
+    expect(inline.params.displayMode).toBe("inline");
+    expect(inline.host.surface.fixedDisplayMode).toBe("inline");
+  });
+
+  it("never logs the fullscreen refusal for an inline App", () => {
+    fixture.upsert.mockClear();
+    fixture.log.mockClear();
+    render(
+      <AppRegistration
+        {...withRow(props(), { inline: true }, { displayMode: "inline" })}
+      />,
+    );
+    const [, , registered] = fixture.upsert.mock.calls[0];
+    registered.onAppSupportedDisplayModesChange(["inline"]);
+    expect(fixture.log).not.toHaveBeenCalled();
+  });
+
   it("doesn't refuse an App without full screen under Claude's rules", () => {
     fixture.upsert.mockClear();
     fixture.log.mockClear();

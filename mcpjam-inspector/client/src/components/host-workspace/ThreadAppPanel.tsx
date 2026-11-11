@@ -71,7 +71,7 @@ import {
 } from "./thread-app-api";
 import { ResultsPanel } from "@/components/tools/ResultsPanel";
 import type { CallToolResult } from "@modelcontextprotocol/client";
-import { createThreadAppHost } from "./thread-app-host";
+import { createThreadAppHost, rowPresentation } from "./thread-app-host";
 import {
   capabilityRefusal,
   guardRetainedAppRequests,
@@ -137,6 +137,8 @@ export interface AppRow {
   /** Its lease ended, but it stays shown as it is: a result-only quick
    * action's result, or a writable file viewer's unsaved edits. */
   leaseEnded?: boolean;
+  /** Drawn at the top of its chat: never active, never a rail tab. */
+  inline?: true;
 }
 /** Instance controls expire 30 minutes after their last renewal. */
 export const APP_LEASE_MS = 30 * 60_000;
@@ -231,6 +233,11 @@ export interface ThreadAppWorkspaceOptions {
   settings?: boolean;
   /** Called when an App is launched or reselected, for presentation. */
   onLaunch?: (key: string, declaration: ThreadAppDeclaration) => void;
+  /** Takes a global App that can't go fullscreen; else it is refused. */
+  onFullscreenUnsupported?: (
+    server: WorkspaceServer,
+    declaration: ThreadAppDeclaration,
+  ) => void;
   /**
    * Launchers listed by this workspace may belong to another owner (a thread
    * entrypoint listed beside a global one). Return a promise to take it over.
@@ -400,6 +407,8 @@ export function useThreadAppWorkspace(
   const retryDiscovery = (serverId: string) => discovery.retry(serverId);
   const activeRef = useRef(active);
   activeRef.current = active;
+  // An inline App is on screen whenever its chat is, without being active.
+  const shown = (row: AppRow) => row.inline || activeRef.current === row.key;
   // The latest launch, for lease timers armed by an earlier render.
   const launchRef = useRef<typeof launch>(null!);
   /** Track a handle's lease and act the moment it ends, shown or not. */
@@ -411,7 +420,7 @@ export function useThreadAppWorkspace(
         row.leaseTimer = undefined;
         if (rows.get(row.key) !== row || !leaseEnded(row)) return;
         expire(row);
-        if (row.reopen && activeRef.current === row.key) reopen(row);
+        if (row.reopen && shown(row)) reopen(row);
       },
       Math.max(0, expiresAt - Date.now()),
     );
@@ -546,7 +555,7 @@ export function useThreadAppWorkspace(
           error.code === "INSTANCE_UNAVAILABLE"
         ) {
           expire(row);
-          if (row.reopen && activeRef.current === row.key) reopen(row);
+          if (row.reopen && shown(row)) reopen(row);
           return;
         }
         if (
@@ -622,7 +631,7 @@ export function useThreadAppWorkspace(
       log("warning", "Retry to open it again (a quick action runs again).");
     }
     refresh();
-    if (row.reopen && activeRef.current === row.key) reopen(row);
+    if (row.reopen && shown(row)) reopen(row);
   }
   // A client save: ask the server whether each open App is still bound to
   // the client's settings. Toggles alone keep every App untouched.
@@ -691,7 +700,8 @@ export function useThreadAppWorkspace(
   }
   useEffect(() => {
     if (lifetime.timer) clearTimeout(lifetime.timer);
-    setApps([]);
+    // This lifetime's rows: none, or an inline App launched as it mounted.
+    setApps(Array.from(rows.values()));
     setActive(null);
     return () => {
       // StrictMode's immediate effect reattachment is not an owner close.
@@ -715,6 +725,7 @@ export function useThreadAppWorkspace(
     declaration: ThreadAppDeclaration,
     deepLink?: string,
     waitForAdmission = false,
+    presentation?: "inline",
   ) {
     settings.hide();
     if (
@@ -750,8 +761,10 @@ export function useThreadAppWorkspace(
       if (waitForAdmission) throw new Error("File viewers are turned off");
       return;
     }
-    setActive(key);
-    options.onLaunch?.(key, declaration);
+    // Retries and reopens of an inline App stay inline.
+    const inline = presentation === "inline" || rows.get(key)?.inline;
+    if (!inline) setActive(key);
+    if (!inline) options.onLaunch?.(key, declaration);
     const retained = rows.get(key);
     // H10: a handle whose lease ended is never reused. Launching it again
     // opens a fresh activation (and, for a file viewer, a fresh file grant),
@@ -821,6 +834,7 @@ export function useThreadAppWorkspace(
       declaration,
       status: "loading",
       abort: new AbortController(),
+      ...(inline ? { inline: true as const } : {}),
     };
     const signal = AbortSignal.any([controller.signal, row.abort.signal]);
     row.status = "loading";
@@ -1163,6 +1177,15 @@ export function useThreadAppWorkspace(
             const row = rows.get(rowKey);
             if (row) renew(row);
           },
+          ...(options.onFullscreenUnsupported && {
+            fullscreenUnsupported: (rowKey: string) => {
+              const row = rows.get(rowKey);
+              if (!row || row.closing) return;
+              row.launch?.exclude(); // Not a failed launch: it opens another way.
+              void close(row);
+              options.onFullscreenUnsupported?.(row.server, row.declaration);
+            },
+          }),
         }
       : null;
   return {
@@ -1299,6 +1322,8 @@ export interface RetainedAppPorts {
   signal: AbortSignal;
   /** An App request said its binding changed: re-check that App now. */
   revalidate?: (rowKey: string) => void;
+  /** Hands a global App that can't go fullscreen to its owner. */
+  fullscreenUnsupported?: (rowKey: string) => void;
 }
 
 export function AppRegistration({
@@ -1322,9 +1347,11 @@ export function AppRegistration({
   containerDimensions,
   renderOutcome,
   revalidate,
+  fullscreenUnsupported,
 }: {
   /** An App request said its binding changed: re-check that App now. */
   revalidate?: (rowKey: string) => void;
+  fullscreenUnsupported?: (rowKey: string) => void;
   renderOutcome?: (rowKey: string, outcome: "ready" | "error") => void;
   chooseViewer?: ChooseFileViewer;
   /** Fixed size of the host container (SEP-1865 `containerDimensions`). */
@@ -1444,6 +1471,7 @@ export function AppRegistration({
     chooseViewer,
     renderOutcome,
     revalidate,
+    fullscreenUnsupported,
   });
   presentationCallbacks.current = {
     navigate,
@@ -1456,7 +1484,10 @@ export function AppRegistration({
     chooseViewer,
     renderOutcome,
     revalidate,
+    fullscreenUnsupported,
   };
+  const handsBack =
+    !!fullscreenUnsupported && row.declaration.kind === "global" && !row.inline;
   const setDisplayMode = useCallback(
     (mode: "inline" | "fullscreen" | "pip") =>
       presentationCallbacks.current.onDisplayModeChange(mode),
@@ -1466,7 +1497,7 @@ export function AppRegistration({
   const setSupportedModes = useCallback(
     (modes: ("inline" | "fullscreen" | "pip")[] | undefined) => {
       // Entrypoints open fullscreen; an App that declares it can't is refused.
-      if (openAIRules && modes && !modes.includes("fullscreen"))
+      if (openAIRules && !row.inline && modes && !modes.includes("fullscreen"))
         logExtensionEvent({
           serverId: row.server.serverId,
           serverName: row.server.name,
@@ -1480,7 +1511,7 @@ export function AppRegistration({
         });
       presentationCallbacks.current.onAppSupportedDisplayModesChange(modes);
     },
-    [openAIRules, row.server, row.declaration],
+    [openAIRules, row.server, row.declaration, row.inline],
   );
   const params = useMemo<MCPAppsRendererProps>(
     () => ({
@@ -1512,6 +1543,10 @@ export function AppRegistration({
         displayMode === "fullscreen" ? handle.instanceId : null,
       onDisplayModeChange: setDisplayMode,
       onAppSupportedDisplayModesChange: setSupportedModes,
+      ...(handsBack && {
+        onFixedDisplayModeUnsupported: () =>
+          presentationCallbacks.current.fullscreenUnsupported?.(row.key),
+      }),
       onInitialRenderOutcome: (outcome: "ready" | "error") =>
         presentationCallbacks.current.renderOutcome?.(row.key, outcome),
       onCallTool: (name, args, context) =>
@@ -1547,6 +1582,7 @@ export function AppRegistration({
       displayMode,
       setDisplayMode,
       setSupportedModes,
+      handsBack,
     ],
   );
   const ownedHost = useMemo(() => {
@@ -1556,7 +1592,7 @@ export function AppRegistration({
           host,
           handle,
           row.server.serverId,
-          row.declaration.kind === "global" ? "global" : "thread",
+          rowPresentation(row),
           {
             displayBehavior: negotiatedDisplayBehavior,
             projectId: scope.projectId,
@@ -1686,6 +1722,7 @@ function RetainedAppsBody({
   active,
   close,
   retry,
+  inline = false,
 }: {
   ports: RetainedAppPorts;
   apps: AppRow[];
@@ -1697,6 +1734,7 @@ function RetainedAppsBody({
     deepLink?: string,
     waitForAdmission?: boolean,
   ) => Promise<void>;
+  inline?: boolean;
 }) {
   const host = useWidgetHost();
   const workspace = useWidgetWorkspace();
@@ -1714,11 +1752,14 @@ function RetainedAppsBody({
   );
   // Entrypoints are always fullscreen: the host owns where they are drawn.
   const ignoreMode = useCallback(() => {}, []);
-  // Fixed container dimensions, so an App can fill the rail tab or takeover.
+  // Fixed container dimensions, so an App can fill the rail tab or takeover;
+  // inline, the App sizes itself and the chat scrolls.
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(
     null,
   );
-  const containerDimensions = useContainerDimensions(surfaceElement);
+  const containerDimensions = useContainerDimensions(
+    inline ? null : surfaceElement,
+  );
   return (
     <>
       {current?.status === "loading" && !current.handle && (
@@ -1760,12 +1801,13 @@ function RetainedAppsBody({
           chooseViewer={ports.chooseViewer}
           renderOutcome={ports.renderOutcome}
           revalidate={ports.revalidate}
+          fullscreenUnsupported={ports.fullscreenUnsupported}
           // A reopened App is a new activation: mount it fresh.
           key={`${row.key}:${row.handle!.instanceId}`}
           row={row}
           navigate={ports.navigate}
           openFile={ports.openFile}
-          displayMode="fullscreen"
+          displayMode={inline ? "inline" : "fullscreen"}
           containerDimensions={containerDimensions}
           onDisplayModeChange={ignoreMode}
           onAppSupportedDisplayModesChange={ignoreMode}
@@ -1789,7 +1831,7 @@ function RetainedAppsBody({
       <div
         ref={setSurfaceElement}
         hidden={!current || !isRenderedAppRow(current)}
-        className="min-h-0 flex-1 overflow-auto"
+        className={inline ? undefined : "min-h-0 flex-1 overflow-auto"}
         data-retained-app-surfaces
       >
         <WidgetWorkspaceSurfaceHost
@@ -1827,32 +1869,39 @@ export function SettingsSessionsView({
 
 /**
  * One owner's retained Apps without chrome, for a host-chosen container (a
- * right-rail tab body or the global takeover). Mount it once per owner.
+ * right-rail tab body or the global takeover). Mount it once per owner;
+ * `inline` draws its inline Apps instead, sized to the App.
  */
 export function RetainedAppsView({
   workspace,
+  inline = false,
 }: {
   workspace: ThreadAppWorkspace;
+  inline?: boolean;
 }) {
   if (!workspace.appPorts || !workspace.scope) return null;
+  const apps = workspace.apps.filter((row) => !!row.inline === inline);
+  // Two widget workspaces sharing an id unregister each other's App tools.
+  const workspaceId = `${workspace.scope.pluginWorkspace.workspaceId}${inline ? "#inline" : ""}`;
   return (
     <>
       <WidgetWorkspaceProvider
         inheritAppTools
-        key={workspace.scope.pluginWorkspace.workspaceId}
-        workspaceId={workspace.scope.pluginWorkspace.workspaceId}
+        key={workspaceId}
+        workspaceId={workspaceId}
       >
         <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
           <RetainedAppsBody
             ports={workspace.appPorts}
-            apps={workspace.apps}
-            active={workspace.active}
+            apps={apps}
+            active={inline ? (apps.at(-1)?.key ?? null) : workspace.active}
             close={workspace.close}
             retry={workspace.launch}
+            inline={inline}
           />
         </div>
       </WidgetWorkspaceProvider>
-      {workspace.approvalDialog}
+      {!inline && workspace.approvalDialog}
     </>
   );
 }

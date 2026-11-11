@@ -2,7 +2,7 @@ import { withModelAppResources } from "../model-app-resources";
 import { describe, expect, it, vi } from "vitest";
 import type { WidgetHost } from "@mcpjam/widget-react";
 import type { ThreadAppHandle } from "../thread-app-api";
-import { createThreadAppHost } from "../thread-app-host";
+import { createThreadAppHost, rowPresentation } from "../thread-app-host";
 import * as sessionToken from "@/lib/session-token";
 import * as apiContext from "@/lib/apis/web/context";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -409,5 +409,37 @@ describe("a _meta.ui.preferredDisplayMode that isn't a mode", () => {
         displayBehavior,
       }).services.fetchWidgetContent(request);
     expect(logged.event).not.toHaveBeenCalled();
+  });
+});
+
+describe("an entry App opened inline in a new chat", () => {
+  it("fixes inline, only inline, and declines mode requests", () => {
+    const owned = createThreadAppHost(host, handle, "server", "inline", {
+      displayBehavior: CLAUDE_RULES,
+    });
+    expect(owned.environment.draftHostContext).toEqual({
+      displayMode: "inline",
+      availableDisplayModes: ["inline"],
+      theme: "dark",
+    });
+    expect(owned.surface.fixedDisplayMode).toBe("inline");
+    const capabilities = owned.resolvers.resolveEffectiveMcpAppsCapabilities({
+      hostStyle: "claude",
+    });
+    expect(capabilities.availableDisplayModes).toEqual(["inline"]);
+    expect(capabilities.widgetDisplayModeRequests).toBe("decline");
+    // Owned bridge services stay as narrow as any entrypoint's.
+    expect(capabilities.updateModelContext).toBe(false);
+    expect(capabilities.message).toBe(false);
+  });
+
+  it("is chosen for inline rows only", () => {
+    const row = (kind: "global" | "thread" | "file" | "quick-action") => ({
+      declaration: { kind },
+    });
+    expect(rowPresentation({ ...row("global"), inline: true })).toBe("inline");
+    expect(rowPresentation(row("global"))).toBe("global");
+    for (const kind of ["thread", "file", "quick-action"] as const)
+      expect(rowPresentation(row(kind))).toBe("thread");
   });
 });

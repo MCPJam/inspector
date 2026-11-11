@@ -61,7 +61,9 @@ export function useExtensionRail() {
   );
   const iconDirectory = usePluginIconDirectory();
   const tabs = useMemo<RailAppTab[]>(() => {
-    const appTabs: RailAppTab[] = (chat?.apps ?? []).map((row) => ({
+    // An inline App sits at the top of its chat, never in the rail.
+    const railApps = (chat?.apps ?? []).filter((row) => !row.inline);
+    const appTabs: RailAppTab[] = railApps.map((row) => ({
       id: `app:${row.key}`,
       kind: "app",
       title: row.declaration.title || row.declaration.toolName,

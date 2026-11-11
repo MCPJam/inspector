@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, act, screen, fireEvent } from "@testing-library/react";
+import {
+  render,
+  act,
+  screen,
+  fireEvent,
+  cleanup,
+} from "@testing-library/react";
 import React from "react";
 import {
   CHATGPT_HOST_STYLE,
@@ -1416,6 +1422,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       displayBehavior?: DisplayBehavior,
       showControls = false,
       panel = true,
+      rendererProps: Partial<React.ComponentProps<typeof MCPAppsRenderer>> = {},
     ) {
       const entered: { current: { label: string; exit: () => void } | null } =
         { current: null };
@@ -1484,6 +1491,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
                   onExitFullscreen={(id) =>
                     setOwner((current) => (current === id ? null : current))
                   }
+                  {...rendererProps}
                 />
               </OwnedHost>
             </InspectorWidgetHostProvider>
@@ -1717,6 +1725,82 @@ describe("MCPAppsRenderer tool input streaming", () => {
           await screen.findByText(/doesn't support full screen/),
         ).toBeInTheDocument();
         expect(mockBridge.close).toHaveBeenCalled();
+      });
+    });
+
+    describe("a host that opens an App without its fixed mode another way", () => {
+      const CLAUDE_RULES: DisplayBehavior = {
+        hints: "ui",
+        start: "inline-then-move",
+      };
+      afterEach(() => {
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      });
+      const initialize = async (availableDisplayModes?: string[]) => {
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue(
+          availableDisplayModes ? { availableDisplayModes } : undefined,
+        );
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+      };
+      const noError = () => {
+        for (const text of [
+          /can't open here/,
+          /no supported display mode/,
+          /Failed to load MCP App/,
+        ])
+          expect(screen.queryByText(text)).toBeNull();
+      };
+
+      it.each([
+        ["Claude's", CLAUDE_RULES],
+        ["OpenAI's", OPENAI_RULES],
+      ] as const)(
+        "hands back an entrypoint without fullscreen under %s rules, with no load error",
+        async (_rules, displayBehavior) => {
+          const unsupported = vi.fn();
+          mountChat("global", displayBehavior, false, true, {
+            onFixedDisplayModeUnsupported: unsupported,
+          });
+          await initialize(["inline"]);
+          expect(unsupported).toHaveBeenCalledExactlyOnceWith(["inline"]);
+          expect(mockBridge.close).toHaveBeenCalled();
+          noError();
+        },
+      );
+
+      it("keeps an entrypoint that declares fullscreen, or nothing", async () => {
+        const unsupported = vi.fn();
+        mountChat("global", CLAUDE_RULES, false, true, {
+          onFixedDisplayModeUnsupported: unsupported,
+        });
+        await initialize(["inline", "fullscreen"]);
+        expect(unsupported).not.toHaveBeenCalled();
+        expect(mockBridge.close).not.toHaveBeenCalled();
+        cleanup();
+        mountChat("global", CLAUDE_RULES, false, true, {
+          onFixedDisplayModeUnsupported: unsupported,
+        });
+        await initialize();
+        expect(unsupported).not.toHaveBeenCalled();
+        noError();
+      });
+
+      it("changes nothing without the prop: OpenAI's rules refuse, Claude's force fullscreen", async () => {
+        mountChat("global", OPENAI_RULES);
+        await initialize(["inline"]);
+        expect(
+          await screen.findByText(/doesn't support full screen/),
+        ).toBeInTheDocument();
+        expect(mockBridge.close).toHaveBeenCalled();
+        cleanup();
+        const { state } = mountChat("global", CLAUDE_RULES);
+        await initialize(["inline"]);
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        noError();
       });
     });
 
