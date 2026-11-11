@@ -24,6 +24,7 @@ import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 const playgroundState = vi.hoisted(() => ({
   onConnect: undefined as ((formData: ServerFormData) => void) | undefined,
   activeServerNames: [] as string[],
+  onSelectMultipleServers: vi.fn(),
   paneServers: vi.fn(),
   builtinHostId: vi.fn(),
   servers: {} as Record<string, ServerWithName>,
@@ -98,6 +99,8 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
     isExecuting: false,
     executeTool: vi.fn(),
     activeServerNames: playgroundState.activeServerNames,
+    selectedServerNames: playgroundState.activeServerNames,
+    onSelectMultipleServers: playgroundState.onSelectMultipleServers,
     savedRequestsHook: {
       openSaveDialog: vi.fn(),
       savedRequests: [],
@@ -372,6 +375,12 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     withSavedServer();
     const first = vi.fn();
     const second = vi.fn();
+    let finish!: (result: EnsureServersReadyResult) => void;
+    playgroundState.ensureServersReady.mockReturnValueOnce(
+      new Promise<EnsureServersReadyResult>((resolve) => {
+        finish = resolve;
+      }),
+    );
     useComparePaneStore.getState().publishPanes([
       {
         paneId: "a",
@@ -396,7 +405,23 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Connect stateless-mcp" }),
     );
-    await waitFor(() => expect(second).toHaveBeenCalledWith("stateless-mcp"));
+    const edited = vi.fn();
+    playgroundState.activeServerNames = ["another-server"];
+    act(() => {
+      const store = useComparePaneStore.getState();
+      store.publishPanes(
+        store.panes.map((pane) =>
+          pane.paneId === "b" ? { ...pane, onServerConnected: edited } : pane,
+        ),
+      );
+    });
+    await act(async () => finish(ready("stateless-mcp")));
+    expect(playgroundState.onSelectMultipleServers).toHaveBeenCalledWith([
+      "another-server",
+      "stateless-mcp",
+    ]);
+    expect(edited).toHaveBeenCalledWith("stateless-mcp");
+    expect(second).not.toHaveBeenCalled();
     expect(first).not.toHaveBeenCalled();
   });
 

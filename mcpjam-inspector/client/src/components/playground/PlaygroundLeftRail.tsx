@@ -340,7 +340,17 @@ function ZeroServerToolsBody({
               catalogKnown={state.areServersHydrated}
               onAddServer={onConnect}
               ensureServersReady={state.ensureServersReady}
-              onConnected={onConnected}
+              onConnected={(name) => {
+                const selected = state.selectedServerNames?.length
+                  ? state.selectedServerNames
+                  : state.activeServerNames;
+                if (!state.selectedServerNames?.includes(name)) {
+                  state.onSelectMultipleServers?.([
+                    ...new Set([...selected, name]),
+                  ]);
+                }
+                onConnected?.(name);
+              }}
               onPendingChange={onPendingChange}
             />
           ) : undefined

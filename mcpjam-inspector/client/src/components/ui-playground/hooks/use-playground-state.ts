@@ -138,6 +138,7 @@ export interface UsePlaygroundStateOptions {
    * Empty / undefined falls back to single-server mode driven by `serverName`.
    */
   selectedServerNames?: string[];
+  onSelectMultipleServers?: (names: string[]) => void;
 }
 
 /**
@@ -1184,6 +1185,8 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     activeServerNames,
 
     // misc
+    selectedServerNames,
+    onSelectMultipleServers: options.onSelectMultipleServers,
     servers,
     activeProjectId: options.activeProjectId,
     areServersHydrated,

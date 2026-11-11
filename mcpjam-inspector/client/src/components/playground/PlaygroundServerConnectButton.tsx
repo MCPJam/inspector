@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Plug, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -42,6 +42,11 @@ export function PlaygroundServerConnectButton({
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  // The shared selection and pane overrides can change during the handshake.
+  const latestOnConnected = useRef(onConnected);
+  useLayoutEffect(() => {
+    latestOnConnected.current = onConnected;
+  }, [onConnected]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -75,7 +80,7 @@ export function PlaygroundServerConnectButton({
       });
       if (!mounted.current) return;
       if (result.readyServerNames.includes(name)) {
-        onConnected?.(name);
+        latestOnConnected.current?.(name);
         setOpen(false);
       } else if (result.reauthServerNames.includes(name)) {
         setError(`${name} needs authorization. Click Connect to sign in.`);
