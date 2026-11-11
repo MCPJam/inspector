@@ -115,7 +115,7 @@ describe("featureGuidance", () => {
         canManage: true,
       }),
     ).toBe(
-      "Claude Code and OpenCode run on an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a custom provider that serves Responses.",
+      "Claude Code and OpenCode need an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI need an OpenAI provider or a custom provider that serves Responses.",
     );
     expect(HARNESS_ORG_KEYS_GUIDANCE).not.toMatch(/MCPJam/);
     const guidance = (
