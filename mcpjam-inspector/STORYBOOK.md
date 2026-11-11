@@ -5,8 +5,8 @@ is a **story**: one component in one state, rendered in isolation so you can loo
 at it and poke it without clicking through the product to reproduce the state.
 
 The first thing in here is **Error Patterns**: the four surfaces that carry
-errors in MCPJam, each with a before/after, plus a proposal page on severity
-and copy.
+errors in MCPJam, each with a before/after, plus a page of open decisions,
+each with a recommendation.
 
 ## Running it
 
