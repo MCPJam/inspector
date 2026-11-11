@@ -11,6 +11,13 @@ import {
 import { buildHostToolCatalog } from "../../codex-appserver/bridge/host-tool-catalog.js";
 import { callHostTool } from "../../codex-appserver/bridge/host-tool-call.js";
 import { toMcpToolResult } from "../../codex-appserver/bridge/host-tool-result.js";
+import {
+  createNativeMcpTranslator,
+  nativeMcpPermission,
+  nativeMcpSessionConfig,
+  parseNativeMcpServers,
+  stampNativeMcpCall,
+} from "./native-mcp.js";
 
 const { values } = parseArgs({
   options: {
@@ -55,6 +62,8 @@ type Start = {
   instructions?: string;
   tools?: Parameters<typeof buildHostToolCatalog>[0];
   resumeThreadId?: string;
+  /** Forwarded servers the CLI's own MCP client dials this turn. */
+  nativeMcpServers?: unknown;
 };
 let threadId: string | undefined;
 await runBridge<Start>({
@@ -66,13 +75,16 @@ await runBridge<Start>({
     const { descriptors, aliasToCanonical } = buildHostToolCatalog(
       start.tools ?? [],
     );
+    const nativeServers = parseNativeMcpServers(start.nativeMcpServers);
+    const { mcpServers, mcpToolPatterns } =
+      nativeMcpSessionConfig(nativeServers);
     const tools = descriptors.map(({ name, description, inputSchema }) => ({
       name,
       description,
       parameters: inputSchema,
       defer: "never" as const,
-      // The host's needsApproval gate owns dispatch. All other CLI permission
-      // requests are denied and no built-in or user-configured tools are exposed.
+      // The host's needsApproval gate owns dispatch. Forwarded MCP calls are
+      // approved at MCPJam's forwarder; every other CLI request is denied.
       skipPermission: true,
       handler: async (input: unknown) => {
         turn.abortSignal.throwIfAborted();
@@ -88,9 +100,15 @@ await runBridge<Start>({
       streaming: true,
       model: start.model,
       tools,
-      availableTools: tools.map(({ name }) => "custom:" + name),
-      excludedTools: ["builtin:*", "mcp:*"],
+      availableTools: [
+        ...tools.map(({ name }) => "custom:" + name),
+        ...mcpToolPatterns,
+      ],
+      excludedTools: mcpServers ? ["builtin:*"] : ["builtin:*", "mcp:*"],
       enableConfigDiscovery: false,
+      ...(mcpServers
+        ? { mcpServers, hooks: { onPreMcpToolCall: stampNativeMcpCall } }
+        : {}),
       ...(start.instructions
         ? {
             systemMessage: {
@@ -106,9 +124,9 @@ await runBridge<Start>({
         baseUrl,
         apiKey,
       },
-      onPermissionRequest: () => ({
-        kind: "denied-interactively-by-user" as const,
-      }),
+      onPermissionRequest: (
+        request: Parameters<typeof nativeMcpPermission>[0],
+      ) => nativeMcpPermission(request, nativeServers),
     };
     const resume = threadId ?? start.resumeThreadId;
     const session = resume
@@ -132,8 +150,12 @@ await runBridge<Start>({
       failTurn = reject;
     });
     let reply: { messageId: string; content: string } | undefined;
+    const translateNative = createNativeMcpTranslator(nativeServers, (part) =>
+      turn.emit(part),
+    );
     const unlisten = session.on((event) => {
       if (turn.abortSignal.aborted) return;
+      if (translateNative(event)) return;
       if (event.type === "assistant.message_delta" && event.data.deltaContent) {
         const id = event.data.messageId;
         if (!openText.has(id)) {

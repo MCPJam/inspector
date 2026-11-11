@@ -2685,10 +2685,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     "copilot-cli": {
       id: "copilot-cli",
       label: "GitHub Copilot CLI",
-      provenance: "assumed",
+      provenance: "probe",
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1794009600000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2725,7 +2725,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       systemPrompt: "",
       temperature: 1,
       requireToolApproval: true,
-      respectToolVisibility: true,
+      respectToolVisibility: false,
       progressiveToolDiscovery: false,
       serverIds: [],
       optionalServerIds: [],
@@ -2736,20 +2736,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       harness: "copilot-cli",
       connectionDefaults: {
         headers: {},
-        requestTimeout: 10000,
+        requestTimeout: 300000,
       },
       clientCapabilities: {},
       hostContext: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: {
-            name: "MCPJam",
-            version: "1.0",
-          },
-        },
         apps: {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],

@@ -1,5 +1,6 @@
 /**
- * The built-in Cursor CLI profile against native forwarding admission.
+ * The built-in Cursor CLI and GitHub Copilot CLI profiles against native
+ * forwarding admission.
  *
  * Pass-through forwards MCP traffic exactly as the real CLI sends it, so it is
  * admitted only when MCPJam's own connection to each server adds nothing the
@@ -96,7 +97,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function gapsFor(profile: Profile) {
+async function gapsFor(profile: Profile, runtime: "cursor" | "copilot-cli" = "cursor") {
   const fixture = await serveLegacy();
   cleanups.push(fixture.close);
   const pins = buildHostConnectionPins(profile, WEB_STREAM_TIMEOUT_MS);
@@ -121,7 +122,7 @@ async function gapsFor(profile: Profile) {
     respectToolVisibility: profile.respectToolVisibility,
     modelVisibleMcpToolResults: profile.modelVisibleMcpToolResults,
     nativeVersionNegotiation: qualifiedForwardingRuntime(
-      getHarnessAdapter("cursor"),
+      getHarnessAdapter(runtime),
     )?.nativeVersionNegotiation,
   });
 }
@@ -149,4 +150,28 @@ describe("built-in Cursor CLI profile", () => {
       );
     },
   );
+});
+
+describe("built-in GitHub Copilot CLI profile", () => {
+  it("adds nothing the real CLI's connection would not, so pass-through is admitted", async () => {
+    expect(await gapsFor(seedHostTemplate("copilot-cli"), "copilot-cli")).toEqual([]);
+  });
+
+  it("keeps a client saved with the old MCPJam pins off pass-through", async () => {
+    const saved = {
+      ...seedHostTemplate("copilot-cli"),
+      respectToolVisibility: true,
+      connectionDefaults: { headers: {}, requestTimeout: 10_000 },
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "MCPJam", version: "1.0" },
+        },
+      },
+    };
+    expect((await gapsFor(saved, "copilot-cli")).sort()).toEqual(
+      ["client-identity", "protocol-pins", "request-timeout", "tool-visibility"].sort(),
+    );
+  });
 });

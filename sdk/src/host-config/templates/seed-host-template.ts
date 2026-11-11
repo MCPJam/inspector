@@ -2198,18 +2198,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5.5",
         temperature: 1,
         requireToolApproval: true,
+        // The CLI lists and calls `_meta.ui.visibility: ["app"]` tools
+        // (measured on 1.0.92), so filtering them would hide tools it exposes.
+        respectToolVisibility: false,
         harness: "copilot-cli",
         computer: { kind: "personal" },
+        // MCPJam's outer limit, the only explicit timeout native forwarding
+        // admits.
+        connectionDefaults: { headers: {}, requestTimeout: 300_000 },
       }),
       progressiveToolDiscovery: false,
+      // No capability, identity or protocol pins: this client is forward-only,
+      // so the CLI's own handshake reaches the server and any pin would keep
+      // MCPJam's connection from matching it. Kept in lockstep with the
+      // backend template, which records the measured handshake.
       clientCapabilities: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: { name: "MCPJam", version: "1.0" },
-        },
         apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
       },
     }),

@@ -14,7 +14,7 @@ import { nativeForwardingSelection, prepareNativeForwarding, hasForwardingOrgani
 import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
 import { startHarnessForwardingGrant } from "./forwarding/forwarding-grant.js";
 import { APPROVAL_UNAVAILABLE, answerOnlyDecidedCalls, decidedCalls, pausedCallsForDecisions, type DecidedCall } from "./forwarding/approval-bindings.js";
-import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
+import { requiredForwardingRefusal, resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
 import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
 import {
@@ -918,7 +918,8 @@ export async function runHarnessTurn(
     (!isWarmChatManager(mcpClientManager) || sourceType !== "direct" ||
       harnessExecutionTarget || !harnessSandboxBinding || harnessMcpProxy?.plane !== "web-authorized")
   ) {
-    throw new Error("Open GitHub Copilot CLI in the signed-in hosted Playground.");
+    // Enrolled VS Code and Microsoft 365 Copilot clients run here too, so name the runtime.
+    throw new Error("GitHub Copilot CLI runs only in the signed-in hosted Playground. Open this client there.");
   }
   // A warm agent exits after its box's idle window, so it runs only on a box
   // whose window the backend sent.
@@ -1699,6 +1700,8 @@ export async function runHarnessTurn(
         forwardingOrganization: hasForwardingOrganization(mcpClientManager), accountRouting: hasAccountRouting(accountGroups),
         plane: harnessMcpProxy?.plane, selectedServerCount: selectedServers?.length ?? 0,
         hostId, scenarioId, evalIterationId, journeyRunId, localExecution: !!harnessExecutionTarget,
+        // Only a client that selects the runtime itself; enrolled profiles keep their route.
+        requiredForwarding: options.agentLoop === undefined ? harnessAdapter.requiredForwarding : undefined,
         admit: () => forwardingAdmission({ manager: mcpClientManager, hostCapabilities: options.harnessHostCapabilities, serverIds: selectedServers ?? [], respectToolVisibility, modelVisibleMcpToolResults, hasClientTools: options.harnessUnavailableAppTools || !!options.harnessAppTools?.length, hasTasks: tasks !== undefined,
           elicitationRuntimeVersion: onHarnessElicitation ? harnessAdapter.pinnedRuntimeVersion : undefined,
           nativeVersionNegotiation: forwardingRuntime?.nativeVersionNegotiation,
@@ -1707,6 +1710,7 @@ export async function runHarnessTurn(
         }),
       });
       turnMcpPlan = mcpPlan;
+      if (mcpPlan.refused) throw new Error(requiredForwardingRefusal(mcpPlan, harnessAdapter.displayName));
       const approvalRefusal = harnessToolApprovalRefusalReason({
         adapter: harnessAdapter,
         mcpClient: mcpPlan.delivery === "host-tools" ? "mcpjam" : "harness",
