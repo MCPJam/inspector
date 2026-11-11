@@ -923,5 +923,18 @@ describe("eval description experiments", () => {
       );
       expect(res.status).toBe(status);
     });
+
+    it("answers a Convex 401 on the list read as 401", async () => {
+      mockConvex({
+        "descriptionExperiments:listDescriptionExperimentsForRun": () => {
+          throw new ConvexHttpStatusError(401, "Unauthorized");
+        },
+      });
+      const res = await request(
+        "GET",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+      );
+      expect(res.status).toBe(401);
+    });
   });
 });

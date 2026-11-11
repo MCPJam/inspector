@@ -266,6 +266,21 @@ export function classifyConvexReadError(error: unknown): ConvexReadFailure {
 }
 
 /**
+ * `translateConvexReadError`'s answer for a failure Convex's HTTP layer
+ * returned before the function ran, or `undefined` for anything else. For a
+ * catch whose own translator, or a rethrow to the v1 boundary, would read the
+ * body as prose: "401 Unauthorized" as a refusal, a proxy's 500 as our own.
+ */
+export function translateConvexStatusError(
+  error: unknown,
+  options: Parameters<typeof translateConvexReadError>[1],
+): WebRouteError | undefined {
+  return error instanceof ConvexHttpStatusError
+    ? translateConvexReadError(error, options)
+    : undefined;
+}
+
+/**
  * Turn a Convex read failure into the response the caller should get.
  *
  * `notFoundMessage` is the one thing that varies between routes — "Not found"

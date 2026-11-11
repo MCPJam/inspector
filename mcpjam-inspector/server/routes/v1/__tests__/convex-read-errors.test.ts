@@ -28,6 +28,7 @@ import {
   convexReadFetch,
   redactedReadRefusalError,
   translateConvexReadError,
+  translateConvexStatusError,
 } from "../convex-read-errors.js";
 import { translateConvexWriteError } from "../convex-errors.js";
 import { WebRouteError } from "../../web/errors.js";
@@ -365,6 +366,25 @@ describe("translateConvexReadError", () => {
     expect(
       redactedReadRefusalError(error, "Scenario not found"),
     ).toBeUndefined();
+  });
+});
+
+describe("translateConvexStatusError", () => {
+  it("answers a status error the way the read translator does", () => {
+    const error = new ConvexHttpStatusError(401, "Unauthorized");
+    expect(
+      translateConvexStatusError(error, { scope: "v1.test" })?.status,
+    ).toBe(401);
+  });
+
+  it("leaves any other error to the caller's own translator", () => {
+    // A plain refusal still means what its text says at those call sites.
+    expect(
+      translateConvexStatusError(new Error("Unauthorized"), {
+        scope: "v1.test",
+      }),
+    ).toBeUndefined();
+    expect(errorMock).not.toHaveBeenCalled();
   });
 });
 

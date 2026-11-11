@@ -48,6 +48,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 function request(
   method: string,
@@ -300,6 +301,15 @@ describe("v1 gate waivers", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as any;
     expect(body.waiver).toBeNull();
+  });
+
+  it("answers a Convex 401 as 401, though its body reads as not visible", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuiteRun") return RUN_DOC;
+      throw new ConvexHttpStatusError(401, "Unauthorized");
+    });
+    const response = await request("GET", BASE);
+    expect(response.status).toBe(401);
   });
 
   // ── Revoke ────────────────────────────────────────────────────────────────

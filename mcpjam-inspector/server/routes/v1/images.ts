@@ -34,9 +34,8 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import {
-  ConvexHttpStatusError,
   redactedReadRefusalError,
-  translateConvexReadError,
+  translateConvexStatusError,
 } from "./convex-read-errors.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
@@ -106,26 +105,24 @@ const ENVIRONMENT_NOT_FOUND =
   "Environment or project not found, or you do not have access to it.";
 
 function translateConvexWriteError(error: unknown): WebRouteError {
-  // Convex's HTTP layer answered before the function ran, so the write
-  // translator's prose fallbacks would read "401 Unauthorized" as a 404 and a
-  // proxy's 500 as our own 500. The status says which failure it was.
-  if (error instanceof ConvexHttpStatusError) {
-    return translateConvexReadError(error, {
+  return (
+    translateConvexStatusError(error, {
       scope: "v1.images",
       notFoundMessage: ENVIRONMENT_NOT_FOUND,
-    });
-  }
-  return translateConvexError(error, {
-    resource: "Environment",
-    // Convex collapses "project missing", "not a member", "env missing", and
-    // the shared-env admin gate into generic errors; keep the v1 message
-    // neutral rather than leaking which.
-    notFoundMessage: ENVIRONMENT_NOT_FOUND,
-    fallbackMessage: "Environment write rejected by the platform",
-    // The admin gate here also guards SHARED environments, so answering 403
-    // would confirm the resource exists to someone who cannot otherwise see it.
-    adminFailureIsForbidden: false,
-  });
+    }) ??
+    translateConvexError(error, {
+      resource: "Environment",
+      // Convex collapses "project missing", "not a member", "env missing", and
+      // the shared-env admin gate into generic errors; keep the v1 message
+      // neutral rather than leaking which.
+      notFoundMessage: ENVIRONMENT_NOT_FOUND,
+      fallbackMessage: "Environment write rejected by the platform",
+      // The admin gate here also guards SHARED environments, so answering 403
+      // would confirm the resource exists to someone who cannot otherwise see
+      // it.
+      adminFailureIsForbidden: false,
+    })
+  );
 }
 
 /**

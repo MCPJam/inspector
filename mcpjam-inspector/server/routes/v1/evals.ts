@@ -234,6 +234,7 @@ import {
   ConvexHttpStatusError,
   classifyConvexReadError,
   translateConvexReadError,
+  translateConvexStatusError,
 } from "./convex-read-errors.js";
 import { createConvexClient } from "./convex-client.js";
 import {
@@ -1178,6 +1179,16 @@ function scopedEvalReadOptions(
     redactedIsRefusal: phase === "preflight",
   } as const;
 }
+
+/**
+ * For a catch that answers through the write translator or rethrows: a
+ * status error there still reads by its status. See
+ * `translateConvexStatusError`.
+ */
+const EVAL_RUN_STATUS_READ = {
+  scope: "v1.evals",
+  notFoundMessage: "Eval run not found",
+} as const;
 
 /**
  * Every id parameter on this surface is a Convex document id, so each one is
@@ -5684,7 +5695,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     // codes to 400 and keeps the message; anything it does not recognize
     // still answers 500, which is the honest outcome for a code we do not
     // know about.
-    throw translateConvexWriteError(error);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexWriteError(error)
+    );
   }
 
   const envelope = (result ?? {}) as Record<string, unknown>;
@@ -6354,7 +6368,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
     // and the write translator is the only thing that knows how to read the
     // backend's `kind: 'forbidden'` shape. Nothing is written on this path;
     // the name is about which error vocabulary it speaks, not about the verb.
-    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS)
+    );
   }
 
   return v1Resource(c, { waiver: toGateWaiverDto(waiver) });
@@ -6714,7 +6731,7 @@ evals.get(
         failure.kind !== "invalid-argument" &&
         failure.kind !== "redacted"
       ) {
-        throw error;
+        throw translateConvexStatusError(error, { scope: "v1.evals" }) ?? error;
       }
       // Counted, not silent: this is now the branch that hides a broken blob
       // loader, so it needs the same rate-alertable footprint the id gate has.
@@ -7836,7 +7853,7 @@ evals.get(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ?? error;
     }
 
     const items = (Array.isArray(rows) ? rows : []).map((row) => {
@@ -7917,9 +7934,12 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     return v1Resource(c, toDescriptionExperimentDto(experiment ?? {}), 202);
@@ -8060,9 +8080,15 @@ evals.post(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, {
+          scope: "v1.evals",
+          notFoundMessage: DESCRIPTION_EXPERIMENT_NOT_FOUND,
+        }) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);

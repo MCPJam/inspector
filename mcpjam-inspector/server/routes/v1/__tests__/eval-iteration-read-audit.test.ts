@@ -55,6 +55,7 @@ vi.mock("../../../utils/route-error-report.js", async () => {
 });
 
 import v1Routes from "../index.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 const PROJECT_ID = "p1";
 const RUN_ID = "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
@@ -267,6 +268,28 @@ describe("GET …/iterations/:iterationId/trace — read audit", () => {
     expect(
       fetchMock.mock.calls.filter((call) => String(call[0]) === AUDIT_URL)
     ).toHaveLength(0);
+  });
+});
+
+describe("GET …/iterations/:iterationId/steps — evidence status errors", () => {
+  // The evidence read is best-effort, but a failure Convex's HTTP layer
+  // reports is not a refusal to swallow, and its body must not decide the
+  // answer: "Server Error" from a 401 would otherwise rethrow as a 500.
+  it.each([
+    [
+      "a Convex 401 as 401",
+      new ConvexHttpStatusError(401, "Server Error"),
+      401,
+    ],
+    [
+      "a proxy's 500 as 502",
+      new ConvexHttpStatusError(500, "500 Internal Server Error"),
+      502,
+    ],
+  ])("answers %s", async (_label, error, status) => {
+    convexActionMock.mockRejectedValue(error);
+    const res = await read("steps");
+    expect(res.status).toBe(status);
   });
 });
 
