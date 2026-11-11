@@ -108,6 +108,64 @@ describe("GatewayDialog", () => {
     });
   });
 
+  it("keeps a new provider's hand-added models when the same URL and key are tested again", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    type("gateway-secret", "sk-test");
+    submitTest();
+    await screen.findByText("Responses didn't answer");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
+      target: { value: "team-extra" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+    await screen.findByText("Responses didn't answer");
+    expect(screen.getByText("team-extra")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        models: [
+          { nativeModelId: "claude-sonnet-4.5", modelId: "anthropic/claude-sonnet-4.5", mappingSource: "name" },
+          { nativeModelId: "house-model" },
+          { nativeModelId: "team-extra" },
+        ],
+      }),
+    );
+  });
+
+  it("starts a new provider's models over when a different URL is tested", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    await screen.findByText("Responses didn't answer");
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
+      target: { value: "team-extra" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    type("gateway-base-url", "https://other.acme.example/v1");
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+    await screen.findByText("Responses didn't answer");
+    expect(screen.queryByText("team-extra")).not.toBeInTheDocument();
+  });
+
+  it("keeps the settings a Test filled in on screen while the URL is edited", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    expect(await screen.findByText("Works with")).toBeInTheDocument();
+    type("gateway-base-url", "https://litellm.acme.example/v2");
+    expect(screen.queryByText("Responses didn't answer")).not.toBeInTheDocument();
+    expect(screen.getByText("Works with")).toBeInTheDocument();
+  });
+
   it("moves focus to the key and quotes the gateway when it rejects the key", async () => {
     const message = 'The provider rejected the API key: "Invalid proxy server token passed". Check the key and test again.';
     testConnection.mockResolvedValue({ ...PASSED, status: 401, message, apis: {}, models: [] });

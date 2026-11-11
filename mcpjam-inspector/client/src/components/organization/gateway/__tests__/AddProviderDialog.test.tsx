@@ -228,6 +228,31 @@ describe("AddProviderDialog", () => {
     );
   });
 
+  it("keeps a model and APIs the admin named when the same provider is tested again", async () => {
+    testConnection.mockResolvedValue({
+      reachable: true,
+      origin: "backend",
+      status: 200,
+      message: "The provider listed no models. Add models to the provider, then test again.",
+      apis: { chatCompletions: { result: "untested" }, responses: { result: "untested" } },
+      models: [],
+    });
+    renderDialog();
+    type("gateway-base-url", "https://empty.acme.example/v1");
+    submitTest();
+    await screen.findByText("The provider listed no models");
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "house-model" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Chat Completions/ }));
+
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+    await screen.findByText("The provider listed no models");
+    expect(screen.getByText("house-model")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Chat Completions/ })).toBeChecked();
+    expect(addButton()).toBeEnabled();
+  });
+
   it("ignores a Test answer that arrives after the dialog reopened", async () => {
     let answer: (result: GatewayConnectionTestResult) => void = () => {};
     testConnection.mockImplementation(
