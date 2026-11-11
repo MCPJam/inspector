@@ -908,7 +908,8 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Agent tooling",
     label: "Require tool approval",
     path: "requireToolApproval",
-    description: "Prompts the user before each tool call.",
+    description:
+      "Asks for approval before MCP tool calls, commands and file edits. Loading a skill never asks.",
     kind: { kind: "boolean" },
     read: (cfg) => cfg.requireToolApproval,
   },

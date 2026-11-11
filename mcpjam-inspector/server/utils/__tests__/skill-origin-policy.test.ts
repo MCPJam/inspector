@@ -188,8 +188,8 @@ describe("the origin matrix", () => {
   });
 
   it("an eval run: pinned content only, and never under approval", async () => {
-    // Pinned is the ONLY kind that bypasses approval, because an eval run
-    // auto-denies and a paused approval would fail every iteration.
+    // An eval run auto-denies, so a skill tool that asked would fail every
+    // iteration. No skill tool asks, on any kind.
     const result = await prepareChatV2({
       ...base,
       mcpClientManager: mockManager(),

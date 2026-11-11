@@ -80,7 +80,6 @@ it("tags local and resolved skill implementations without changing their policy"
   const effective = createEffectiveSkillTools({
     skills: [],
     pluginRefs: new Set(),
-    serverRefs: new Set(),
   });
   for (const tools of [local, effective]) {
     for (const definition of Object.values(tools))

@@ -614,20 +614,60 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
-  it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
+  it("keeps Cloud Skills when the scenario requires tool approval", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so emulated skill tools must not be injected
-    // when requireToolApproval is on (the skip stays correct even though
-    // empty projects no longer advertise phantom tools).
+    // No skill tool asks, so a visitor who can't approve has nothing to
+    // answer; commands still follow the switch.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never,
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.requireToolApproval).toBe(true);
+    expect(prepareOpts.skillsSource.kind).toBe("resolved");
+    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
+    expect(
+      prepareOpts.skillsSource.capabilities.standaloneSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["pdf-tools"]);
+  });
+
+  it("keeps a pinned target's skills when the scenario requires tool approval", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: {
+          requireToolApproval: true,
+          pinnedSkills: [
+            {
+              name: "pdf-tools",
+              description: "Process PDFs",
+              content: "# pdf-tools",
+              contentHash: "hash-1",
+            },
+          ],
+        },
+      }) as never,
+    );
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skillsSource).toEqual({
+      kind: "pinned",
+      skills: [
+        {
+          name: "pdf-tools",
+          description: "Process PDFs",
+          content: "# pdf-tools",
+          contentHash: "hash-1",
+        },
+      ],
+    });
+    // Pinned means the run's own frozen set: the live catalog is not read.
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 

@@ -392,7 +392,8 @@ export interface OrgLocalModelHandlerOptions {
 
 /**
  * Whether this local-runtime turn hits the approval gap the handler cannot
- * serve, and must fail loudly instead.
+ * serve, and must fail loudly instead. A synthetic run on this runtime has no
+ * approval loop either, and is held to the same rule (`resolve-turn-runtime.ts`).
  *
  * The gap is SERVER-EXECUTED tools THAT WOULD ASK: approving one resumes the
  * turn by running it here, and that resume path has never been supported (or
@@ -406,14 +407,14 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the two
- * families that use the form (`effective-skill-tools`, `server-skill-tools`)
- * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
- * "unevaluable" as "asks" refused every local-runtime turn that carried a
- * skill tool, switch or no switch, where before it ran. `streamText` evaluates
- * the function per call, exactly as it did before the declaration was unified;
- * a call that does answer `true` still reaches the unsupported resume, which is
- * the pre-existing gap this guard never covered.
+ * here — this runs before the model has produced an input — and the skill
+ * family that uses the form (`server-skill-tools`) declares it UNCONDITIONALLY
+ * and answers `false`. Reading "unevaluable" as "asks" refused every
+ * local-runtime turn that carried a skill tool, switch or no switch, where
+ * before it ran. `streamText` evaluates the function per call, exactly as it
+ * did before the declaration was unified; a call that does answer `true` still
+ * reaches the unsupported resume, which is the pre-existing gap this guard
+ * never covered.
  *
  * The acting-skill gate (`server-skill-acting-gate.ts`) wraps `bash` and
  * `read_server_resource` in a function on every turn. The guard reads the
@@ -433,7 +434,7 @@ export interface OrgLocalModelHandlerOptions {
  * here would break the UI-only agent surface for local-runtime orgs while
  * protecting nothing.
  */
-function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
+export function hasUnsupportedLocalApprovalGate(tools: ToolSet): boolean {
   return Object.entries(tools).some(([name, tool]) => {
     const declared = unwrapActingServerSkillGate(
       (tool as { needsApproval?: unknown } | undefined)?.needsApproval,

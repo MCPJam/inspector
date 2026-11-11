@@ -1611,15 +1611,19 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       expect(prompt).toContain("never pause");
       expect(prompt).toContain("`app_*`");
       expect(prompt).toContain("discovery meta-tools");
+      expect(prompt).toContain("loading a skill or reading its files");
     }
 
     // And so is the ONE thing that still asks whatever the switch says. This
-    // is the opposite mistake and the worse one: a server-origin skill ref
-    // pauses in either setting, so an approval-off prompt that claimed nothing
-    // would stop the model has it plan straight past a real checkpoint.
+    // is the opposite mistake and the worse one: while a server's skill is
+    // loaded a command pauses in either setting, so an approval-off prompt
+    // that claimed nothing would stop the model has it plan straight past a
+    // real checkpoint. Loading the skill is not that checkpoint.
     for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
-      expect(prompt).toContain("skill that a connected MCP server provides");
-      expect(prompt).toContain("always asks");
+      expect(prompt).toContain(
+        "While a skill that a connected MCP server provides is loaded, running a shell command",
+      );
+      expect(prompt).not.toContain("always asks");
     }
     expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
       "Nothing will stop you",
@@ -1781,9 +1785,10 @@ describe("prepareChatV2 — a live resolved source", () => {
     expect(result.enhancedSystemPrompt).toBe("Base prompt.");
   });
 
-  it("keeps skill tools under the host's approval rule, unlike a pinned source", async () => {
-    // `resolved` is an interactive turn; only the pinned kinds bypass approval,
-    // and that divergence is the whole reason they are separate kinds.
+  it("never asks before a skill tool, even with tool approval on", async () => {
+    // An interactive turn with the switch on, holding a Library skill and a
+    // skill captured from an MCP server: loading or reading either one acts
+    // on nothing, so neither asks.
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
@@ -1792,16 +1797,42 @@ describe("prepareChatV2 — a live resolved source", () => {
       requireToolApproval: true,
       skillsSource: {
         kind: "resolved",
-        capabilities: liveSet([
-          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
-        ]),
+        capabilities: {
+          ...liveSet([
+            {
+              ref: "pdf-tools",
+              name: "pdf-tools",
+              description: "Process PDFs",
+            },
+          ]),
+          serverSkills: [
+            {
+              ref: "acme/refunds",
+              skillId: "server_skill_1",
+              name: "refunds",
+              description: "Handle refunds",
+              content: "CAPTURED SERVER BODY",
+              aggregateHash: "version_hash_1",
+              files: [],
+              serverId: "server_1",
+              serverLabel: "Acme Billing",
+              skillUri: "skill://acme/refunds/SKILL.md",
+              versionId: "version_1",
+              versionNumber: 3,
+              capturedAt: 1,
+            },
+          ],
+        },
         composeLiveServerSkills: true,
       },
     });
-    expect(
-      (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
-        .needsApproval
-    ).toBe(true);
+    const tools = result.allTools as Record<
+      string,
+      { needsApproval?: unknown }
+    >;
+    for (const name of ["loadSkill", "listSkillFiles", "readSkillFile"]) {
+      expect(tools[name]?.needsApproval, name).toBe(false);
+    }
   });
 });
 

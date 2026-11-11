@@ -3,9 +3,9 @@
  *
  * A tool is declared once, at build time, and then passes through a chain of
  * wrappers before an engine sees it: scope step-up observation, two eval-trace
- * wrappers, the skill approval wrap, the SEP-2640 compose, the advertised
- * subset gate. Each one rebuilds the tool object — `{...tool, execute: …}` —
- * and each one preserves `needsApproval` today only because a spread happens
+ * wrappers, the SEP-2640 compose, the advertised subset gate. Each one
+ * rebuilds the tool object — `{...tool, execute: …}` — and each one
+ * preserves `needsApproval` today only because a spread happens
  * to carry it.
  *
  * That is fine while the BYOK path is the only reader. Once every engine reads
@@ -33,7 +33,6 @@ import {
   wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../../services/evals/eval-trace-capture";
-import { applySkillToolApproval } from "../chat-v2-orchestration";
 import { withServerSkills } from "../server-skill-tools";
 
 /** The declaration a function-form tool carries, identity included. */
@@ -125,38 +124,6 @@ describe("ToolSet wrappers preserve the approval declaration", () => {
         () => new Set(["always_true"]),
       ) as Record<string, any>,
     );
-  });
-
-  it("the skill approval wrap, with the switch OFF", () => {
-    // The switch-off arm returns the input untouched, which is what leaves a
-    // function-form declaration intact.
-    expectDeclarationsPreserved(
-      applySkillToolApproval(fixture() as unknown as Record<string, unknown>, {
-        pinned: false,
-        requireToolApproval: false,
-      }) as Record<string, any>,
-    );
-  });
-
-  it("the skill approval wrap, pinned", () => {
-    expectDeclarationsPreserved(
-      applySkillToolApproval(fixture() as unknown as Record<string, unknown>, {
-        pinned: true,
-        requireToolApproval: true,
-      }) as Record<string, any>,
-    );
-  });
-
-  it("the skill approval wrap RAISES with the switch on, and only raises", () => {
-    // The one wrapper that legitimately rewrites the declaration. It may only
-    // raise: a tool that already gated must not come out free.
-    const raised = applySkillToolApproval(
-      fixture() as unknown as Record<string, unknown>,
-      { pinned: false, requireToolApproval: true },
-    ) as Record<string, any>;
-    for (const name of Object.keys(raised)) {
-      expect(raised[name].needsApproval, name).toBe(true);
-    }
   });
 
   it("the SEP-2640 compose, for the tools it does not own", async () => {

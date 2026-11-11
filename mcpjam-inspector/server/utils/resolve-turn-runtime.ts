@@ -38,7 +38,10 @@ import {
   type SyntheticModelSource,
 } from "./org-model-config.js";
 import { admitEachLocalOrgAttempt } from "./local-org-attempt-admission.js";
-import { postLocalUsage } from "./org-model-stream-handler.js";
+import {
+  hasUnsupportedLocalApprovalGate,
+  postLocalUsage,
+} from "./org-model-stream-handler.js";
 import { classifyTurnFailure } from "./turn-failure-classification.js";
 import { logger } from "./logger.js";
 import { harnessOrgProviderUnsupportedReason } from "@/shared/harness-model-support";
@@ -91,9 +94,9 @@ export interface ResolveTurnRuntimeArgs {
   sourceType: TurnSourceType;
   chatSessionId?: string;
   /**
-   * Local-runtime approval guard inputs: a non-empty `tools` set with
-   * `requireToolApproval === true` is refused up-front (the local turn driver
-   * has no approval loop yet).
+   * Local-runtime approval guard inputs: with `requireToolApproval === true`,
+   * a `tools` set holding a tool that would ask is refused up-front (the local
+   * turn driver has no approval loop yet).
    */
   requireToolApproval?: boolean;
   tools?: ToolSet;
@@ -257,10 +260,12 @@ export async function resolveTurnRuntime(
     // driver can't pause for a human, and a synthetic visitor can't approve.
     // Refuse up-front with the SAME message the synthetic dispatch used before
     // this extraction (this guard fired first, before the model was built).
+    // Only a tool that would ask counts, by the interactive local runtime's
+    // rule: skill tools never ask, so a scenario with approval on keeps them.
     if (
       args.requireToolApproval === true &&
       args.tools &&
-      Object.keys(args.tools as Record<string, unknown>).length > 0
+      hasUnsupportedLocalApprovalGate(args.tools)
     ) {
       throw new Error(
         "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this scenario or switch the provider to cloud runtime.",

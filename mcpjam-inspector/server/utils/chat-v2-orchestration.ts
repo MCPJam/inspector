@@ -812,32 +812,28 @@ export interface PrepareChatV2Options {
    * the legacy paths never set it → the existing precedence is byte-identical.
    *
    *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
-   *    content (zero network in execute). Tools bypass approval: pure reads of
-   *    frozen content under an auto-deny eval run.
-   *  - `resolved` — a Project-Environment turn. Same in-memory delivery,
-   *    DIFFERENT policy: this is an ordinary interactive turn, so the skill
-   *    tools follow the host's normal `requireToolApproval` rule. The eval
-   *    approval exemption is deliberately NOT inherited — a user watching their
-   *    own turn should still get the approval prompt they configured. It
+   *    content (zero network in execute).
+   *  - `resolved` — a Project-Environment turn, or a live one (see
+   *    `composeLiveServerSkills`), delivered in memory the same way. It
    *    carries the whole `EffectiveCapabilitySet` rather than a skill list
    *    (INS-3) because the tools address skills by REF: a plugin skill is
    *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
    *    lives on the set, not on a flattened `PinnableSkill`.
    *  - `pinned-effective` — EVAL RUNNERS ONLY, for a run whose pins carry a
-   *    plugin `modelRef` or supporting FILES (INS-5). Same frozen-content,
-   *    approval-exempt policy as `pinned`; the ref-addressed `resolved` tool
-   *    surface, because a bare-name surface cannot express `<plugin>/<skill>`
-   *    and has no file tools to serve a pinned `scripts/` directory with. The
+   *    plugin `modelRef` or supporting FILES (INS-5). Frozen content like
+   *    `pinned`, on the ref-addressed `resolved` tool surface, because a
+   *    bare-name surface cannot express `<plugin>/<skill>` and has no file
+   *    tools to serve a pinned `scripts/` directory with. The
    *    set is built from the RUN SNAPSHOT, so "in-memory over frozen content"
    *    still holds — the only network is the signed `_storage` GET for a file
    *    the model actually asks for, and that URL was minted against the pinned
    *    blob, not the live one.
    *  - `none`     — suppress skills entirely.
    *
-   * `resolved` and the two pinned kinds are separate kinds rather than one
-   * "in-memory" kind with a flag precisely because that approval divergence is
-   * the whole distinction, and a shared kind would make it a caller's job to
-   * remember.
+   * No kind's skill tools ask for approval (see `effective-skill-tools.ts`).
+   * The kind says whether the set is a run's frozen pins or a live or
+   * environment set, and only a live `resolved` set composes the connected
+   * servers' skills.
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
@@ -1222,59 +1218,22 @@ function approvalGuidance(
   // both are halves the model gets wrong in the expensive direction.
   //
   // `free` is why a read it expected to be gated simply happened. `alwaysAsks`
-  // is the opposite mistake and the worse one: loading a skill a connected MCP
-  // server provides pauses whatever this setting says (`effective-skill-tools`
-  // binds the digest and asks), so a model told "nothing will stop you" plans
-  // straight past a checkpoint that will stop it. Stated conditionally — "a
-  // skill a connected MCP server provides" — so a turn with no such skill is
-  // not promised a gate it will never meet.
+  // is the opposite mistake and the worse one: while a skill a connected MCP
+  // server provides is loaded, a command pauses whatever this setting says
+  // (`server-skill-acting-gate.ts`), so a model told "nothing will stop you"
+  // plans straight past a checkpoint that will stop it. Stated conditionally,
+  // so a turn with no such skill is not promised a gate it will never meet.
   const free =
     "Read-only lookups of the user's own project, the discovery meta-tools, " +
-    "read-only `ui_*` actions and an open app's own `app_*` tools never pause, " +
-    "in either setting.";
+    "loading a skill or reading its files, read-only `ui_*` actions and an " +
+    "open app's own `app_*` tools never pause, in either setting.";
   const alwaysAsks =
-    "Loading a skill that a connected MCP server provides always asks for " +
-    "confirmation, in either setting — it brings that server's instructions " +
-    "into this conversation. While such a skill is loaded, running a shell " +
-    "command or reading a resource from a saved server also asks, in either " +
-    "setting.";
+    "While a skill that a connected MCP server provides is loaded, running a " +
+    "shell command or reading a resource from a saved server asks for " +
+    "approval, in either setting.";
   return requireToolApproval
     ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
     : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
-}
-
-/**
- * The turn's approval declaration for its SKILL tools.
- *
- * Pinned skill tools NEVER require approval — pure reads of frozen content
- * under an auto-deny eval run, where a prompt is a hang rather than a
- * question. Every other skill tool follows the host's switch.
- *
- * Extracted from `prepareChatV2` as the one addressable declaration site for
- * this family, so the approval matrix can drive it the way the engines see it.
- *
- * Raises only: a tool that already declared its own approval keeps it when the
- * switch is off, which is what leaves a function-form declaration (the
- * server-origin skill refs in `effective-skill-tools.ts`) intact.
- */
-export function applySkillToolApproval(
-  skillTools: Record<string, unknown>,
-  opts: { pinned: boolean; requireToolApproval: boolean },
-): Record<string, unknown> {
-  const raised = needsApprovalFor(
-    opts.pinned ? "never" : "setting",
-    opts.requireToolApproval,
-  );
-  if (!raised) return skillTools;
-  return Object.fromEntries(
-    Object.entries(skillTools).map(([name, tool]) => [
-      name,
-      {
-        ...(tool && typeof tool === "object" ? tool : {}),
-        needsApproval: true,
-      },
-    ]),
-  );
 }
 
 export interface PrepareChatV2Result {
@@ -1516,16 +1475,12 @@ export async function prepareChatV2(
   // the project, a plugin, a connected server, this machine's filesystem — is a
   // property of the skill inside an `EffectiveCapabilitySet`, not a mode the
   // orchestrator picks between:
-  //   - `pinned` / `pinned-effective` ⇒ frozen eval content; the ONLY kinds
-  //     that bypass approval (decision 12), because an eval run auto-denies.
-  //   - `resolved` ⇒ a live or environment-resolved set, keeping the host's
-  //     approval rule. `composeLiveServerSkills` says which of the two it is.
+  //   - `pinned` / `pinned-effective` ⇒ frozen eval content.
+  //   - `resolved` ⇒ a live or environment-resolved set.
+  //     `composeLiveServerSkills` says which of the two it is.
   //   - `none` ⇒ no skills, said deliberately.
   // Every surface inlines its catalog in the prompt; there is no `listSkills`
-  // discovery tool on any of them.
-  const skillsArePinned =
-    skillsSource?.kind === "pinned" ||
-    skillsSource?.kind === "pinned-effective";
+  // discovery tool on any of them. No kind's skill tools ask for approval.
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
   // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
@@ -1592,14 +1547,6 @@ export async function prepareChatV2(
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
-  const approvalWrappedSkillTools = applySkillToolApproval(
-    skillTools as Record<string, unknown>,
-    {
-      pinned: skillsArePinned,
-      requireToolApproval: requireToolApproval === true,
-    },
-  );
-
   // Skills over MCP (SEP-2640), LIVE path. A COMPOSING wrapper, not a fifth
   // arm of the chain above: the chain is an exclusive choice, but a turn can
   // legitimately have both a Computer skill and a skill served by a connected
@@ -1614,8 +1561,8 @@ export async function prepareChatV2(
   // What the wrapper adds unconditionally to a server-origin load is ORIGIN
   // TAGGING and the manifest digest binding — not a prompt. Its approval
   // declaration delegates to the base skill tool (`hostWantsApproval` in
-  // `server-skill-tools.ts`), so whether the user is asked follows the switch
-  // like any other tool on the turn.
+  // `server-skill-tools.ts`), which never asks, so a live server-skill load
+  // never asks either.
   // A LIVE turn composes server skills whether or not it also carries an
   // explicit source; a captured or frozen one never does. `skillsSource ===
   // undefined` is the legacy live shape (no caller passes it once every surface
@@ -1628,8 +1575,8 @@ export async function prepareChatV2(
         skillsSource.composeLiveServerSkills === true));
 
   const serverSkills = !composeLiveServerSkills
-    ? { tools: approvalWrappedSkillTools, buildPromptSection: null }
-    : withServerSkills(approvalWrappedSkillTools, {
+    ? { tools: skillTools, buildPromptSection: null }
+    : withServerSkills(skillTools, {
         manager: mcpClientManager,
         // The UNFILTERED selection, deliberately — not `knownSelectedServers`.
         // Slug collision suffixes are assigned over whatever set they are

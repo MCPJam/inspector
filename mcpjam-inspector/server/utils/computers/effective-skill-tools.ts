@@ -28,8 +28,9 @@
  * pair with files from another). No extra network round-trip to Convex happens
  * here — only the `_storage` GET for a file the model actually asked for.
  *
- * Approval policy is the CALLER's: `prepareChatV2` wraps these with the host's
- * ordinary `requireToolApproval`. Plugin origin never bypasses approval.
+ * No tool here asks for approval, whatever the switch says or wherever the
+ * skill came from: reading a skill acts on nothing. What a server's skill then
+ * leads the model to do is gated where it acts (`server-skill-acting-gate.ts`).
  */
 import { skillTool as tool } from "../skill-tool.js";
 import { z } from "zod";
@@ -37,6 +38,7 @@ import { sha256HexOfText } from "@mcpjam/sdk";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
 import { logger } from "../logger.js";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner.js";
+import { needsApprovalFor } from "../../../shared/tool-approval.js";
 import {
   MAX_SKILL_FILE_TEXT_BYTES,
   SKILL_FILE_MAX_READ_BYTES,
@@ -277,8 +279,6 @@ export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
   /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
   pluginRefs: Set<string>;
-  /** Refs captured from MCP servers, which always require approval to load. */
-  serverRefs: Set<string>;
   signal?: AbortSignal;
 }) {
   const lookup = buildLookup(args.skills);
@@ -314,13 +314,8 @@ export function createEffectiveSkillTools(args: {
           }
         },
       }),
-      // floor: always for a SERVER-origin ref (a third party's instructions
-      // entering the turn), never for the rest. A function rather than a
-      // constant because the answer depends on which skill the model named.
-      needsApproval: ({ name }: { name: string }) => {
-        const resolved = resolveRef(lookup, name);
-        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
-      },
+      // Floor: never, for every origin. See the header.
+      needsApproval: needsApprovalFor("never", false),
     },
 
     listSkillFiles: tool({
@@ -329,6 +324,7 @@ export function createEffectiveSkillTools(args: {
       inputSchema: z.object({
         name: z.string().describe("The skill reference."),
       }),
+      needsApproval: needsApprovalFor("never", false),
       execute: async ({ name }) => {
         const resolved = resolveRef(lookup, name);
         if (!resolved.ok) return resolved.error;
@@ -433,13 +429,7 @@ export function createEffectiveSkillTools(args: {
           }
         },
       }),
-      // floor: always for a SERVER-origin ref (a third party's instructions
-      // entering the turn), never for the rest. A function rather than a
-      // constant because the answer depends on which skill the model named.
-      needsApproval: ({ name }: { name: string }) => {
-        const resolved = resolveRef(lookup, name);
-        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
-      },
+      needsApproval: needsApprovalFor("never", false),
     },
   };
 }
@@ -517,7 +507,6 @@ export function getEffectiveSkillToolsAndPrompt(
     tools: createEffectiveSkillTools({
       skills,
       pluginRefs,
-      serverRefs,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
     systemPromptSection: `\n\n${parts.join("\n")}`,

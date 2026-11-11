@@ -34,8 +34,8 @@
  * spec asks for a plain load is ORIGIN TAGGING: mark the content as untrusted
  * third-party input. That is the banner, and it is unconditional.
  *
- * So a server-origin load follows the HOST's approval policy, exactly like any
- * other tool on the turn. This used to force a prompt regardless — MCPJam
+ * So a server-origin load asks only when the base skill tool would, and the
+ * agent's skill tools never do. Forcing a prompt regardless was MCPJam
  * policy, not conformance — and that choice made the feature unusable on every
  * surface that is not one long-lived process: the gate recorded its digest-set
  * binding in a Map inside this closure, `prepareChatV2` rebuilds the closure
@@ -690,11 +690,12 @@ export function withServerSkills<T extends Record<string, unknown>>(
    * impossible). What the spec asks for a plain load is ORIGIN TAGGING — mark
    * the content as untrusted third-party input — and that is the banner.
    *
-   * So a server-origin load follows the same rule as any other tool on the
-   * turn instead of forcing its own prompt. Forcing one was MCPJam policy, not
-   * conformance, and it made the feature unusable on every surface that is not
-   * a single long-lived process: the gate wrote its binding into a per-request
-   * closure that `execute` — running in the NEXT request — could never see.
+   * So a server-origin load asks only when the base skill tool would (the
+   * agent's never does) instead of forcing its own prompt. Forcing one was
+   * MCPJam policy, not conformance, and it made the feature unusable on every
+   * surface that is not a single long-lived process: the gate wrote its
+   * binding into a per-request closure that `execute` — running in the NEXT
+   * request — could never see.
    */
   async function hostWantsApproval(
     toolName: "loadSkill" | "readSkillFile",
@@ -873,9 +874,6 @@ export function withServerSkills<T extends Record<string, unknown>>(
         }
       },
     }),
-    // ALWAYS, regardless of the host's approval policy: this admits untrusted
-    // third-party instructions into the turn.
-    //
     // A FUNCTION, not `true`, because the SEP binds host trust to a specific
     // digest set and that set has to be known BEFORE the user is asked. It runs
     // ahead of the prompt, so discovery and the manifest fetch happen here
@@ -886,10 +884,10 @@ export function withServerSkills<T extends Record<string, unknown>>(
     //
     // floor: whatever the BASE skill tool declares — `hostWantsApproval`
     // delegates to it, because SEP-2640 asks for origin TAGGING on a plain
-    // load (the banner), not a prompt. So this is `setting` on the common
-    // path and `always` only where the base is an effective capability set
-    // whose ref came from a server. What is unconditional is the digest
-    // BINDING, which is recorded whether or not a prompt follows.
+    // load (the banner), not a prompt. The agent's skill tools declare
+    // `never` (`effective-skill-tools.ts`), so no prompt follows a live load.
+    // What is unconditional is the digest BINDING, which is recorded either
+    // way.
     needsApproval: rememberApprovedManifest,
   };
 
