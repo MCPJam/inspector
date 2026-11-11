@@ -2,8 +2,8 @@
  * Ownership pre-seed for the adapter's on-box skills write.
  *
  * Since the stable `@ai-sdk/harness` line, the ADAPTER re-writes its skills at
- * the start of EVERY prompt turn (`writeClaudeCodeSkills` in `doPromptTurn`,
- * same for Codex) through `writeSkills`, which tracks ownership in a
+ * the start of EVERY prompt turn (each adapter's `doPromptTurn`: Claude Code,
+ * Codex, OpenCode, ACP) through `writeSkills`, which tracks ownership in a
  * `.ai-sdk-harness-skills.json` manifest and REFUSES any pre-existing skill
  * dir that manifest does not list. That collides with the box writer's other
  * steps (`box-skills-writer.ts`), all of which run earlier (in
@@ -27,13 +27,12 @@
  * survives because `writeSkills` never touches a hash-unchanged skill.
  *
  * VERSION LOCKSTEP: the no-op depends on this package's `@ai-sdk/harness`
- * hashing byte-identically to the copy nested inside each harness adapter
- * (one deduped 1.0.158 copy shared by all of them today). If they drift,
- * nothing breaks loudly — the adapter re-writes each skill once per session
- * and MCPJam's supporting files for it are lost until the next session — but
- * the drift should be closed, not
- * tolerated. `__tests__/preseed-adapter-skills.test.ts` asserts the no-op
- * against this package's copy; verify the nested versions on adapter bumps.
+ * hashing byte-identically to the copy each harness adapter resolves (one
+ * deduped 1.0.158 copy today; no adapter nests its own). If they drift,
+ * nothing breaks loudly, but the adapter re-writes every skill on every turn,
+ * so MCPJam's supporting files and preserved frontmatter never reach the
+ * runtime. `__tests__/preseed-adapter-skills.test.ts` asserts the no-op
+ * against this package's copy; check for a nested copy on adapter bumps.
  */
 import { writeSkills } from "@ai-sdk/harness/utils";
 import { posix } from "node:path";

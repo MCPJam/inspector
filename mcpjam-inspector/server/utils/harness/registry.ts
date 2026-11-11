@@ -1279,7 +1279,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   supportsMcpToolApproval: false,
   supportsHostExecutedToolApproval: true,
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,

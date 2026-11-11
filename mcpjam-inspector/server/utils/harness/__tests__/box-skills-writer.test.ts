@@ -287,16 +287,44 @@ describe("a box that runs more than one runtime", () => {
     expect(box.skillFolders(AGENTS)).toEqual(["gamma"]);
     expect(box.skillFolders(CLAUDE)).toEqual(["alpha", "beta", "hand-placed"]);
 
-    // OpenCode takes no skills, and reads both folders: it finds no MCPJam
-    // skill in either, while the hand-placed one stays.
-    await runTurn("opencode", box, artifact("delta"));
-    expect(box.skillFolders(AGENTS)).toEqual([]);
+    // A runtime that also reads Claude Code's folder finds no MCPJam skill
+    // there but its own, while the hand-placed one stays.
+    const alsoReadsClaude = {
+      ...HARNESS_SKILLS.codex,
+      readFolders: [".agents/skills", ".claude/skills"],
+    };
+    await writeBoxSkills({
+      session: box.session,
+      descriptor: alsoReadsClaude,
+      home: BOX_HOME,
+      plan: planBoxSkills(alsoReadsClaude, [skill("delta")]),
+      readFiles: async () => NO_FILES,
+    });
+    expect(box.skillFolders(AGENTS)).toEqual(["delta"]);
     expect(box.skillFolders(CLAUDE)).toEqual(["hand-placed"]);
 
     // The next Claude Code turn delivers a different set: nothing stale.
     await runTurn("claude-code", box, artifact("beta"));
     expect(box.skillFolders(CLAUDE)).toEqual(["beta", "hand-placed"]);
     expect(box.files.get(HAND_PLACED)).toBe("a person's own skill");
+  });
+
+  it("leaves no stale skill folder where OpenCode reads after a Claude Code turn", async () => {
+    const box = fakeSkillBox();
+    const openCodeReads = () =>
+      HARNESS_SKILLS.opencode.readFolders.flatMap((folder) =>
+        box.skillFolders(`${BOX_HOME}/${folder}`),
+      );
+    await runTurn("claude-code", box, artifact("alpha"), artifact("beta"));
+    const result = await runTurn("opencode", box, artifact("delta"));
+    expect(result.delivered).toEqual([{ skillId: "sk_delta", name: "delta" }]);
+    expect(openCodeReads()).toEqual(["delta"]);
+
+    // A later OpenCode turn with another set keeps nothing of this one, and
+    // neither turn touches Claude Code's folder, which OpenCode doesn't read.
+    await runTurn("opencode", box, artifact("epsilon"));
+    expect(openCodeReads()).toEqual(["epsilon"]);
+    expect(box.skillFolders(CLAUDE)).toEqual(["alpha", "beta"]);
   });
 
   it("puts a Codex turn's skills back whole after an OpenCode turn cleared their shared folder", async () => {

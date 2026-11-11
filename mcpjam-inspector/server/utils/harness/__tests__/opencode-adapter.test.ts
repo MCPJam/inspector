@@ -39,7 +39,7 @@ describe("the OpenCode adapter", () => {
     expect(adapter.supportsHostExecutedToolApproval).toBe(true);
     expect(adapter.supportsMcpToolApproval).toBe(false);
     expect(adapter.supportsNativeToolApproval).toBe(true);
-    expect(adapter.supportsSkills).toBe(false);
+    expect(adapter.supportsSkills).toBe(true);
     expect(adapter.forwardingRuntime).toBeUndefined();
     expect(adapter.liveApprovalRuntime).toBe(true);
     expect(registeredHarnessIds()).toContain("opencode");

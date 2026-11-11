@@ -10,8 +10,7 @@
  *
  * Claude Code and Codex are checked against their installed adapters
  * (`codex-skill-parity.test.ts`). OpenCode, Cursor and Copilot CLI come from
- * their pinned binaries and SDKs, read without a live run, which is why their
- * adapters keep `supportsSkills: false`.
+ * their pinned binaries and SDKs, read without a live run.
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { isValidSkillName } from "../../../shared/skill-types.js";
@@ -91,14 +90,17 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     headlessLoading: "native",
     serverSkills: "box-files",
   },
-  // The adapter writes Codex's folder under the same adapter manifest, and
-  // OpenCode also reads Claude Code's. OpenCode itself checks no name rule.
+  // The adapter writes Codex's folder, under the same adapter manifest and
+  // byte for byte as Codex's adapter (`opencode-skill-parity.test.ts`).
+  // MCPJam starts OpenCode with `OPENCODE_DISABLE_EXTERNAL_SKILLS=1`
+  // (`opencode-adapter.ts`): it reads that folder only because the bridge
+  // names it in `skills.paths`, and no `.claude` or `.agents` folder around
+  // its working directory. OpenCode itself checks no name rule.
   opencode: {
     writeFolder: ".agents/skills",
     trailingNewline: false,
     readFolders: [
       ".agents/skills",
-      ".claude/skills",
       ".config/opencode/skills",
       ".config/opencode/skill",
     ],
