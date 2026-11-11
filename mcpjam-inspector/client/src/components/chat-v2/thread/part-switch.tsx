@@ -125,15 +125,12 @@ function FrozenWidgetScreenshot({
   toolName: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
+    <div className="flex flex-col" data-testid="frozen-widget-replay">
       <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"
       />
-      <span className="text-[11px] text-muted-foreground">
-        Recorded render — this run's captured widget (not re-rendered live)
-      </span>
     </div>
   );
 }
