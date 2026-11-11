@@ -60,24 +60,24 @@ export async function buildPinnedSkillSource(args: {
 }): Promise<BuiltPinnedSkillSource> {
   try {
     assertPinnedSkillFilesReachable(args.pins);
-    const pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
-      args.pins,
-    );
+    const downloaded = await runPinnedSkillsToHarnessArtifacts(args.pins);
+    const set = buildRunCapabilitySet({
+      pins: args.pins,
+      // Pinned files are read from the bytes downloaded above, not from the
+      // prepared links, which a long run can outlast.
+      downloadedPins: downloaded,
+      pluginVersions: args.pluginVersions,
+      pluginServers: args.pluginServers,
+      effectiveServerIds: args.effectiveServerIds,
+      ...(args.serverNames ? { serverNames: args.serverNames } : {}),
+    });
+    const pinnedHarnessSkills = withServerCaptures(args.pins, downloaded, set);
     return {
       pinnedHarnessSkills,
       pinnedSkillSource: {
         kind: "pins",
         pins: args.pins,
-        set: buildRunCapabilitySet({
-          pins: args.pins,
-          // Pinned files are read from the bytes downloaded above, not from the
-          // prepared links, which a long run can outlast.
-          downloadedPins: pinnedHarnessSkills,
-          pluginVersions: args.pluginVersions,
-          pluginServers: args.pluginServers,
-          effectiveServerIds: args.effectiveServerIds,
-          ...(args.serverNames ? { serverNames: args.serverNames } : {}),
-        }),
+        set,
         harnessSkills: pinnedHarnessSkills,
       },
     };
@@ -85,6 +85,50 @@ export async function buildPinnedSkillSource(args: {
     reportSkillsUndelivered("eval", args.pins.length);
     throw error;
   }
+}
+
+/**
+ * The harness copies, each one captured from a server stamped with its
+ * capture as the run's set holds it: under the set's ref, so a harness's
+ * skill tools address it as MCPJam's agent does in the same run.
+ */
+function withServerCaptures(
+  pins: readonly RunPinnedSkill[],
+  copies: PinnedSkillArtifact[],
+  set: PinnedSkillSource["set"],
+): PinnedSkillArtifact[] {
+  return copies.map((copy, index) => {
+    const pin = pins[index];
+    const skill = set.serverSkills.find(
+      (entry) =>
+        entry.skillId === pin?.serverSkillId &&
+        entry.versionId === pin?.serverSkillVersionId,
+    );
+    if (!skill) return copy;
+    return {
+      ...copy,
+      server: {
+        serverSkillId: skill.skillId,
+        versionId: skill.versionId,
+        serverId: skill.serverId,
+        serverLabel: skill.serverLabel,
+        ref: skill.ref,
+        skillUri: skill.skillUri,
+        versionNumber: skill.versionNumber,
+        capturedAt: skill.capturedAt,
+        ...(skill.contentSha256 !== undefined
+          ? { contentSha256: skill.contentSha256 }
+          : {}),
+        ...(skill.files.length > 0
+          ? {
+              fileSizes: Object.fromEntries(
+                skill.files.map((file) => [file.path, file.size]),
+              ),
+            }
+          : {}),
+      },
+    };
+  });
 }
 
 /**

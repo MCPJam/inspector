@@ -10,7 +10,9 @@
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
  * budget, and on a harness the box writer's plan (`planBoxSkills`) over the
- * copies the harness turn writes to its box.
+ * copies the harness turn writes to its box. A harness whose descriptor says
+ * `harness-tools` takes captured MCP-server skills through MCPJam's skill tools
+ * instead, so they are delivered and none of them is on its box.
  *
  * A delivery that fails while the turn runs is not part of the plan. It belongs
  * on the turn's result ({@link TurnSkillsResult}), so a preview of the plan
@@ -81,8 +83,10 @@ export interface SkillExclusion {
 }
 
 /**
- * How MCP-server skills reach the engine on this turn. `box-files` is the
- * plain-file copy a harness gets in a pinned run.
+ * How MCP-server skills reach the engine on this turn. `harness-tools` is
+ * MCPJam's skill tools on a harness, in live and frozen turns alike;
+ * `box-files` is the plain-file copy a frozen run gives a harness that takes
+ * them no other way.
  */
 export type ServerSkillsVia =
   "agent-tools" | "harness-tools" | "box-files" | "none";
@@ -123,8 +127,8 @@ export interface TurnSkills {
   /** What it is not handed, and why. */
   excluded: SkillExclusion[];
   serverSkillsVia: ServerSkillsVia;
-  /** How MCPJam's agent serves the plan; null when it gets no skill tools, as
-   *  on a harness turn, whose box gets the skills. */
+  /** How MCPJam's agent serves the plan; null on a harness turn, whose box
+   *  gets the skills and whose server skills come as `serverSkillsVia` says. */
   agent: AgentSkillTools | null;
 }
 
@@ -353,7 +357,9 @@ function planNames(
   };
 }
 
-/** A harness gets its skills on its box (`boxVerdicts`), never as tools. */
+/** A harness gets its skills on its box (`boxVerdicts`), and captured server
+ *  skills through MCPJam's skill tools when its descriptor says so; never
+ *  MCPJam's agent's tools. */
 function planBox(
   runtime: { kind: "harness"; harnessId: string },
   set: EffectiveCapabilitySet,

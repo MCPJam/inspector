@@ -3,7 +3,8 @@
  * `turn-skills.ts`: a resolved environment, or a client with no environment.
  * Each becomes one capability set, a ref for every skill it names, and the
  * copies a harness turn would hand its box writer; `boxVerdicts` says which of
- * them the writer delivers, for a run's pins as well.
+ * them the writer delivers, and which captured MCP-server skills a harness
+ * takes through MCPJam's skill tools instead, for a run's pins as well.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { planBoxSkills } from "../../utils/harness/box-skills-writer.js";
@@ -12,6 +13,7 @@ import {
   harnessSupportsSkills,
 } from "../../utils/harness/registry.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
 import {
   composeLivePlusSkills,
   pinnedArtifactsToRuntimeSkills,
@@ -56,8 +58,9 @@ export interface EnvironmentSkillSource {
   pluginDisabled?: readonly ResolvedEnvironmentSkill[];
   /**
    * Plans an eval run of the environment, which freezes its skills at start
-   * and hands them over as pins: a harness then gets each captured MCP-server
-   * skill on its box as a plain skill folder, which a live turn leaves off.
+   * and hands them over as pins: a `box-files` harness then gets each
+   * captured MCP-server skill on its box as a plain skill folder, which a
+   * live turn leaves off.
    * A run plans its own turns from its pins; this previews one.
    */
   frozen?: boolean;
@@ -71,13 +74,24 @@ export interface LiveSkillSource {
   liveExtras: LiveSkillExtras;
 }
 
+/**
+ * A skill captured from an MCP server, which a harness takes through MCPJam's
+ * skill tools or as a plain skill folder (`box-files`): its copy for that
+ * folder, which only a frozen run writes, or null on a live turn.
+ */
+export interface ServerSkillEntry {
+  serverSkillCopy: RuntimeSkill | null;
+}
+
 /** What a harness turn writes to its box. */
 export interface BoxInput {
-  /** The list the box writer plans from (`planBoxSkills`). */
+  /** The list the box writer plans from (`planBoxSkills`), server skills'
+   *  plain copies included. */
   copies: readonly RuntimeSkill[];
-  /** For each ref, in ref order: its copy, or why the turn writes none. */
-  copyOf: ReadonlyArray<RuntimeSkill | SkillExclusionReason>;
-  /** How captured MCP-server skills travel when the harness takes skills. */
+  /** For each ref, in ref order: its copy, why the turn writes none, or that
+   *  it is a captured server skill. */
+  copyOf: ReadonlyArray<RuntimeSkill | SkillExclusionReason | ServerSkillEntry>;
+  /** How captured MCP-server skills travel to a `box-files` harness. */
   serverSkillsVia: ServerSkillsVia;
 }
 
@@ -134,8 +148,8 @@ export function sourcePlan(
   );
   const seen = new Set(disabled.map(({ ref }) => ref.skillId));
   const refs: SkillRef[] = [];
-  const copyOf: Array<RuntimeSkill | SkillExclusionReason> = [];
-  const add = (ref: SkillRef, copy: RuntimeSkill | SkillExclusionReason) => {
+  const copyOf: Array<BoxInput["copyOf"][number]> = [];
+  const add = (ref: SkillRef, copy: BoxInput["copyOf"][number]) => {
     if (seen.has(ref.skillId)) return;
     seen.add(ref.skillId);
     refs.push(ref);
@@ -157,7 +171,7 @@ export function sourcePlan(
       skill.ref,
     );
     if (!frozen) {
-      add(ref, "server-skill-unsupported");
+      add(ref, { serverSkillCopy: null });
       continue;
     }
     // A pinned run writes a captured skill under its plain name.
@@ -169,7 +183,7 @@ export function sourcePlan(
       aggregateHash: skill.versionHash,
     };
     serverCopies.push(copy);
-    add(ref, copy);
+    add(ref, { serverSkillCopy: copy });
   }
   const poolCopies = (pool ?? []).map((skill): RuntimeSkill => ({
     skillId: skill.skillId,
@@ -204,19 +218,27 @@ export function sourcePlan(
 
 /**
  * A run's copies, one per pin, as its harness turn writes them in its pinned
- * mode. A captured server skill among them lands as a plain skill folder.
+ * mode. A captured server skill among them is a plain skill folder on a
+ * `box-files` harness.
  */
 export function pinnedBox(
   harnessSkills: readonly PinnedSkillArtifact[],
 ): BoxInput {
   const copies = pinnedArtifactsToRuntimeSkills([...harnessSkills]);
-  return { copies, copyOf: copies, serverSkillsVia: "box-files" };
+  return {
+    copies,
+    copyOf: copies.map((copy, index) =>
+      harnessSkills[index]?.server ? { serverSkillCopy: copy } : copy,
+    ),
+    serverSkillsVia: "box-files",
+  };
 }
 
 /**
  * What the box writer makes of a harness's box: for each ref, null when the
  * writer's plan delivers its copy, else why the box lacks it. A harness with
- * no skill channel takes none.
+ * no skill channel takes none. One that takes server skills through MCPJam's
+ * skill tools gets every captured one there, and none of them on its box.
  */
 export function boxVerdicts(
   harnessId: string,
@@ -228,22 +250,43 @@ export function boxVerdicts(
   if (!harnessSupportsSkills(harnessId)) {
     return { reasonFor: () => "unsupported-harness", serverSkillsVia: "none" };
   }
-  const descriptor = getHarnessAdapter(harnessId).skills;
-  const plan = planBoxSkills(descriptor, box.copies);
+  const adapter = getHarnessAdapter(harnessId);
+  const viaTools = takesServerSkillsAsTools(adapter);
+  const serverCopies = new Set(
+    box.copyOf.flatMap((entry) =>
+      isServerSkillEntry(entry) && entry.serverSkillCopy
+        ? [entry.serverSkillCopy]
+        : [],
+    ),
+  );
+  const plan = planBoxSkills(
+    adapter.skills,
+    viaTools
+      ? box.copies.filter((copy) => !serverCopies.has(copy))
+      : box.copies,
+  );
   const kept = new Set(plan.deliver);
   const skipped = new Map(
     plan.skipped.map(({ skill, reason }) => [skill, reason]),
   );
   return {
     reasonFor: (_ref, index) => {
-      const copy = box.copyOf[index];
+      const entry = box.copyOf[index];
+      if (isServerSkillEntry(entry) && viaTools) return null;
+      // Otherwise a server skill is its plain copy, which a live turn lacks.
+      const copy = isServerSkillEntry(entry)
+        ? (entry.serverSkillCopy ?? "server-skill-unsupported")
+        : entry;
       if (typeof copy === "string") return copy;
       if (copy && kept.has(copy)) return null;
       return (copy && skipped.get(copy)) ?? "name-collision";
     },
-    serverSkillsVia:
-      box.serverSkillsVia === "box-files"
-        ? descriptor.serverSkills
-        : box.serverSkillsVia,
+    serverSkillsVia: viaTools ? "harness-tools" : box.serverSkillsVia,
   };
+}
+
+function isServerSkillEntry(
+  entry: BoxInput["copyOf"][number] | undefined,
+): entry is ServerSkillEntry {
+  return typeof entry === "object" && "serverSkillCopy" in entry;
 }

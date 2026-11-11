@@ -182,6 +182,7 @@ describe("resolveTurnSkills for a client with no environment", () => {
     expect((await agentReceives(agent)).listed).toEqual(["my-notes"]);
     const box = resolveTurnSkills({ source, runtime: harness("claude-code") });
     expect(names(box)).toEqual(["my-notes"]);
-    expect(box.serverSkillsVia).toBe("none");
+    // Its connected servers' own skills join through MCPJam's skill tools.
+    expect(box.serverSkillsVia).toBe("harness-tools");
   });
 });

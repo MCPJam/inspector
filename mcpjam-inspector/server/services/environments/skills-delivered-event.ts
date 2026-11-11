@@ -116,7 +116,8 @@ export function reportSkillsDelivered(
 /**
  * Report a harness turn from what its box writer did with the plan. The box
  * holds one folder per name, so each planned skill is matched to the writer's
- * outcome by name.
+ * outcome by name; a captured server skill a `harness-tools` plan serves
+ * through MCPJam's skill tools is matched to what the turn served, by id.
  */
 export function reportBoxSkillsDelivered(
   surface: SkillsDeliveredSurface,
@@ -124,13 +125,22 @@ export function reportBoxSkillsDelivered(
   written: BoxSkillsResult,
 ): void {
   const delivered = new Set(written.delivered.map(({ name }) => name));
+  const served = new Set(
+    (written.servedByTools ?? []).map(({ skillId }) => skillId),
+  );
+  const familyOf = skillFamilies(skills.set);
+  const viaTools = (ref: SkillRef) =>
+    skills.serverSkillsVia === "harness-tools" &&
+    familyOf(ref) === "mcp-server";
   const failed = new Map(
     written.failed.map(({ name, error }) => [name, error]),
   );
   reportSkillsDelivered(surface, skills, {
-    delivered: skills.delivered.filter(({ name }) => delivered.has(name)),
+    delivered: skills.delivered.filter((ref) =>
+      viaTools(ref) ? served.has(ref.skillId) : delivered.has(ref.name),
+    ),
     failed: skills.delivered.flatMap((ref) => {
-      const error = failed.get(ref.name);
+      const error = viaTools(ref) ? undefined : failed.get(ref.name);
       return error === undefined ? [] : [{ ref, error }];
     }),
   });

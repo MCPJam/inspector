@@ -171,14 +171,14 @@ describe("resolveTurnSkills", () => {
     });
   });
 
-  it("writes a pinned run's copies to a harness box, server skills as plain folders", async () => {
+  it("writes a pinned run's copies to a harness box and serves its server skills through the tools", async () => {
     const run = await preparedRunSkills();
     const skills = resolveTurnSkills({
       source: run.pinnedSkillSource,
       runtime: harness("claude-code"),
     });
     expect(skills.agent).toBeNull();
-    expect(skills.serverSkillsVia).toBe("box-files");
+    expect(skills.serverSkillsVia).toBe("harness-tools");
     expect(skills.delivered.map((ref) => ref.name)).toEqual([
       "release-notes",
       "summarize",
