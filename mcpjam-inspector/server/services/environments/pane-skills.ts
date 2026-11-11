@@ -270,20 +270,15 @@ function previewOf(skills: TurnSkills, rows: Row[]): PaneSkillsPreview {
     string,
     Pick<PaneSkillRow, "reason" | "omittedFromCatalog">
   >();
-  const unlisted = { reason: null, omittedFromCatalog: true } as const;
   for (const ref of skills.delivered) {
-    verdicts.set(
-      ref.skillId,
-      "omittedFromCatalog" in ref && ref.omittedFromCatalog === true
-        ? unlisted
-        : { reason: null },
-    );
+    verdicts.set(ref.skillId, {
+      reason: null,
+      ...(ref.omittedFromCatalog ? { omittedFromCatalog: true } : {}),
+    });
   }
   for (const { ref, reason } of skills.excluded) {
-    // A skill left out of the prompt's skill list still loads by its ref.
-    if (reason === "omitted-from-catalog") verdicts.set(ref.skillId, unlisted);
     // No plan applies a cap, and the wire has no reason to show for one.
-    else if (reason !== "over-cap") verdicts.set(ref.skillId, { reason });
+    if (reason !== "over-cap") verdicts.set(ref.skillId, { reason });
   }
   const shown = rows.flatMap((row) => {
     const verdict = verdicts.get(row.skillId);
