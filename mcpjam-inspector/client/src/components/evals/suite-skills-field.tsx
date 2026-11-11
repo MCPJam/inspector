@@ -203,6 +203,7 @@ export function SuiteSkillsHints({
             const preview = delivery.previews.get(row.environmentId);
             return preview ? [{ client: client(row), preview }] : [];
           }),
+          skillScopeState(environments) !== false,
         )
       : [];
   const mixed = suiteSkillsMixed(environments);

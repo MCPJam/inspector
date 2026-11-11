@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { planSuiteClients } from "../suite-clients-settings";
-import { suiteSkillState } from "../suite-skills";
+import { skillDeliveryLines, suiteSkillState } from "../suite-skills";
 import {
   editedServerSkillSelection,
   leftOutChange,
@@ -227,5 +227,30 @@ describe("planSuiteClients with a scope or server-skill edit", () => {
         skills: (row) => serverChange(row, { kind: "add", skillId: "lookup" }),
       }),
     ).toEqual({ serverSkillSelection: servers("lookup") });
+  });
+});
+
+describe("hint lines under the scope", () => {
+  it("count the loaded skills without claiming they are all of them", () => {
+    const preview = {
+      deliveredCount: 20,
+      skills: Array.from({ length: 20 }, (_, index) => ({
+        skillId: `s${index}`,
+        name: `s${index}`,
+        description: "",
+        channels: ["host" as const],
+        reason: null,
+      })),
+    };
+    const clients = [
+      { client: "MCPJam agent", preview },
+      { client: "Codex", preview },
+    ];
+    expect(skillDeliveryLines(clients, true)).toEqual([
+      "Every client loads 20 skills.",
+    ]);
+    expect(skillDeliveryLines(clients)).toEqual([
+      "Every client loads all 20 skills.",
+    ]);
   });
 });

@@ -208,8 +208,11 @@ const leftOutLine: Record<
     `${listText(clients)} ${one(clients.length, "has", "have")} the plugin for ${listText(skills)} turned off, so ${one(clients.length, "its", "their")} runs leave ${one(skills.length, "it", "them")} out.`,
 };
 
-function countText(names: readonly string[]): string {
+function countText(names: readonly string[], scoped: boolean): string {
   if (names.length === 1) return names[0]!;
+  // The scope is capped when a run starts, and the preview doesn't list
+  // what the cap left out, so "all" could claim more than the runs get.
+  if (scoped) return `${names.length} skills`;
   return names.length === 2 ? "both skills" : `all ${names.length} skills`;
 }
 
@@ -224,6 +227,8 @@ function countText(names: readonly string[]): string {
  */
 export function skillDeliveryLines(
   clients: readonly { client: string; preview: PaneSkillsPreview }[],
+  /** Some client runs "All shared Library skills". */
+  scoped = false,
 ): string[] {
   const rows = clients.map(({ client, preview }) => {
     const loaded: { id: string; name: string }[] = [];
@@ -247,7 +252,10 @@ export function skillDeliveryLines(
     loading.every((row) => !row.leftOut.length);
   if (rows.length > 1 && counted && loading.length === rows.length) {
     return [
-      `Every client loads ${countText(rows[0]!.loaded.map((skill) => skill.name))}.`,
+      `Every client loads ${countText(
+        rows[0]!.loaded.map((skill) => skill.name),
+        scoped,
+      )}.`,
     ];
   }
   const groups = new Map<string, { clients: Set<string>; line: Line }>();
@@ -259,7 +267,7 @@ export function skillDeliveryLines(
   for (const row of rows) {
     if (row.loaded.length) {
       const names = row.loaded.map((skill) => skill.name);
-      const text = counted ? countText(names) : listText(names);
+      const text = counted ? countText(names, scoped) : listText(names);
       add(
         `loads:${row.loadedKey}`,
         row.client,
