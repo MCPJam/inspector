@@ -11,6 +11,10 @@ import {
 } from "../../../shared/plugin-operation-authorization.js";
 import { settingsOperation } from "../../services/plugin-host/settings-operation.js";
 import {
+  readPluginSettingsState,
+  storePluginSettingsDocument,
+} from "../../services/plugin-host/settings-state.js";
+import {
   preparePluginOperation,
   bindPluginOperation,
   cancelPluginOperation,
@@ -95,8 +99,6 @@ const children = new Map<
   }
 >();
 const childHandle = handle.extend({ childToken: z.string().min(1) });
-const documents = new Map<string, PluginSettingsDocument>();
-const observed = new Set<string>();
 const denied = () => new PluginInvocationError("INSTANCE_DENIED");
 async function identity(c: Context, body: z.infer<typeof scope>) {
   const bearer = await getConvexBearerForRequest(c);
@@ -187,7 +189,7 @@ routes.post("/renew", (c) =>
       })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
@@ -230,7 +232,7 @@ routes.post("/renew", (c) =>
         instance,
         intent,
         body.operation.invocationId,
-        documents.get(body.instanceToken),
+        document,
       ),
       body.operation.requestId,
       lifetime,
@@ -304,17 +306,6 @@ routes.post("/open", (c) =>
         },
         c.req.raw.signal,
       );
-      if (!observed.has(opened.token)) {
-        observed.add(opened.token);
-        pluginInstances.signal(opened.token, actor).addEventListener(
-          "abort",
-          () => {
-            documents.delete(opened.token);
-            observed.delete(opened.token);
-          },
-          { once: true },
-        );
-      }
       return c.json({
         instanceToken: opened.token,
         instanceId: opened.instance.owner.instanceId,
@@ -331,14 +322,18 @@ for (const method of ["read", "update", "action"] as const)
     route(c, async () => {
       const body = invocation.parse(await c.req.json());
       const { bearer, admission, actor } = await identity(c, body);
-      const instance = await pluginInstances.getPersistent(
+      const state = await readPluginSettingsState(
         body.instanceToken,
         actor,
         c.req.raw.signal,
       );
+      const { instance } = state;
       const settings = instance.activation.settings;
       if (!settings) throw denied();
-      let document = documents.get(body.instanceToken);
+      let document = state.document;
+      // Set only when this request ran the read itself: a replayed receipt
+      // never validates, so it never overwrites a newer stored document.
+      let fresh: { content: unknown; document: PluginSettingsDocument } | undefined;
       const name =
         method === "read"
           ? settings.readTool
@@ -373,7 +368,7 @@ for (const method of ["read", "update", "action"] as const)
           { hostId: instance.hostId, serverId: instance.owner.serverId },
           instance,
         );
-        let catalog: Awaited<ReturnType<typeof runtime.catalog>>;
+        let catalog: Awaited<ReturnType<typeof runtime.catalog>> | undefined;
         const resolve = async (
           toolName: string,
           signal: AbortSignal,
@@ -392,7 +387,7 @@ for (const method of ["read", "update", "action"] as const)
             throw denied();
           return resolvePluginCatalogTool(catalog, toolName);
         };
-        return await invokePluginRequest(c, {
+        const response = await invokePluginRequest(c, {
           receiptOnly: authorization.receiptOnly,
           actor,
           owner: instance.owner,
@@ -419,13 +414,9 @@ for (const method of ["read", "update", "action"] as const)
                 mcpAppToolResultSchema.parse(result).structuredContent;
               if (method === "read") {
                 document = parsePluginSettingsDocument(content);
-                documents.set(body.instanceToken, document);
+                fresh = { content, document };
               } else if (method === "update") {
-                const values = parsePluginSettingsUpdate(
-                  document!.fields,
-                  content,
-                );
-                documents.set(body.instanceToken, { ...document!, values });
+                parsePluginSettingsUpdate(document!.fields, content);
               }
             });
           },
@@ -440,6 +431,16 @@ for (const method of ["read", "update", "action"] as const)
               "settings",
             ),
         });
+        if (fresh && catalog)
+          await storePluginSettingsDocument(
+            body.instanceToken,
+            actor,
+            state.version,
+            fresh.content,
+            settingsActionBindings(fresh.document, catalog),
+            c.req.raw.signal,
+          );
+        return response;
       } finally {
         authorization.dispose();
       }
@@ -449,13 +450,12 @@ routes.post("/actions", (c) =>
   route(c, async () => {
     const body = handle.parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
     const settings = instance.activation.settings;
-    const document = documents.get(body.instanceToken);
     if (!settings || !document) throw denied();
     const runtime = createPluginRequestRuntime(
       c,
@@ -500,7 +500,6 @@ routes.post("/close", (c) =>
       },
       c.req.raw.signal,
     );
-    documents.delete(body.instanceToken);
     return c.json({ ok: true });
   }),
 );
@@ -510,12 +509,11 @@ routes.post("/app/open", (c) =>
       .extend({ toolName: z.string().min(1) })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
-    const document = documents.get(body.instanceToken);
     if (!document || !instance.activation.settings) throw denied();
     const runtime = createPluginRequestRuntime(
       c,
@@ -637,13 +635,12 @@ routes.post("/app/call", (c) =>
       })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
     const child = children.get(body.childToken);
-    const document = documents.get(body.instanceToken);
     if (
       !child ||
       child.parent !== body.instanceToken ||
