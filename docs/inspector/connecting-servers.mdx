@@ -44,6 +44,8 @@ Click any revision row to expand it. The expanded panel shows:
 
 A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
 
+The same revisions can be read without opening the Inspector, so a script or an agent can check what changed. The [API](/reference/public-api#endpoints) lists them at `GET /projects/{projectId}/servers/{serverId}/revisions`, with each revision and its diff under that path. The [CLI](/cli/reference#cloud-projects-servers-revisions) has `cloud projects servers revisions`, `revision` and `revision-diff`, and the hosted MCP server and Playground chat have the `list_server_revisions`, `get_server_revision` and `diff_server_revisions` tools. These read stored revisions and never connect to the server, so they work for stdio servers too.
+
 ### Multiple OAuth accounts
 
 Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.

@@ -1251,7 +1251,7 @@ List a saved server's stored revisions, newest first. A revision is a capture of
 
 ### `cloud projects servers revision`
 
-Read one stored revision: every tool's definition and the server info it reported.
+Read one stored revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1261,7 +1261,7 @@ Read one stored revision: every tool's definition and the server info it reporte
 
 ### `cloud projects servers revision-diff`
 
-Compare two stored revisions: tools added, removed and changed with both definitions, and server info changes with both values.
+Compare two stored revisions: tools added, removed and changed with both definitions, and server info changes with both values. A field listed in `droppedFields.from` or `droppedFields.to` was not stored on that side, so a change to it is unknown.
 
 | Flag | Required | Description |
 |------|----------|-------------|
