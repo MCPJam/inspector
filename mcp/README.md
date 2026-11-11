@@ -393,6 +393,9 @@ For developing against the **Home/MCPJam agent** locally, use `npm run dev:local
 (`http://localhost:6274/api/v1`). The inspector's own `npm run dev` starts this
 `dev:local` worker automatically (see `CONTRIBUTING.md`), so you normally don't
 run it by hand.
+`dev`, `dev:local` and `start` first rebuild `../sdk` when its `dist/` is older
+than its sources (`MCPJAM_SKIP_SDK_BUILD=1` skips that), since the worker bundles
+`@mcpjam/sdk/platform` from there.
 Both tenants must have **Client ID Metadata Document** enabled under
 *Connect → Configuration* in the WorkOS dashboard — it's off by default, and
 without it dynamic-client-registration MCP clients will fail to connect.

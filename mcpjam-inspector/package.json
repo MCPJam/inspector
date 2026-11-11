@@ -58,7 +58,7 @@
     "telemetry:catalogs": "node ../scripts/generate-telemetry-catalogs.mjs",
     "telemetry:watch": "node ../scripts/generate-telemetry-catalogs.mjs --watch",
     "dev:convex": "convex dev",
-    "predev:server": "npm run telemetry:catalogs",
+    "predev:server": "npm run telemetry:catalogs && node scripts/build-sdk-if-stale.mjs",
     "dev:server": "concurrently -n telemetry,server \"npm run telemetry:watch\" \"npm run dev:server:tsx\"",
     "dev:server:tsx": "cross-env ENVIRONMENT=dev NODE_ENV=development ALLOW_LOCAL_DEV_SERVICE_TOKEN=true tsx watch --tsconfig server/tsconfig.json --include 'evals-cli/src/**/*.ts' --exclude 'evals-cli/dist/**' --exclude 'evals-cli/node_modules/**' server/index.ts",
     "dev:client": "vite --config client/vite.config.ts",
