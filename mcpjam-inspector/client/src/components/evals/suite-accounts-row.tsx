@@ -10,6 +10,7 @@ import { describeConvexFailure } from "@/lib/convex-error";
 import { buildProjectServerPath, navigateApp } from "@/lib/app-navigation";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { useSuiteAccounts } from "@/hooks/use-suite-accounts";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
   checkedAccountIds,
   SET_SUITE_ACCOUNT_SELECTION_MUTATION,
@@ -44,13 +45,11 @@ export function SuiteAccountsRow({
   projectId?: string | null;
 }) {
   const enabled = useEvalAccountSelectionEnabled();
-  if (!enabled) return null;
-  return (
-    <SuiteAccountsSection
-      suite={suite}
-      projectId={projectId ?? suite.projectId ?? null}
-    />
-  );
+  const project = projectId ?? suite.projectId ?? null;
+  // Accounts belong to a hosted project. A local one has no servers query to
+  // wait on, so the row would read "Loading accounts…" forever.
+  if (!enabled || !shouldQueryProjectId(project)) return null;
+  return <SuiteAccountsSection suite={suite} projectId={project} />;
 }
 
 function SuiteAccountsSection({

@@ -2771,7 +2771,7 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div ref={settingsScrollRef} className="flex-1 min-h-0 overflow-auto">
-          <div className="mx-auto w-full max-w-5xl space-y-6 px-6 py-8">
+          <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-8">
             {configLocked ? (
               <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
             ) : null}
@@ -3070,7 +3070,15 @@ export function SuiteIterationsView({
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
-              <SuiteAccountsRow suite={suite} projectId={projectId} />
+            </fieldset>
+            {/* Each person's own choice, not suite configuration, so the CI
+                lock stops here: a CI-owned suite keeps its Run controls, and a
+                run started from it uses the starter's accounts. */}
+            <SuiteAccountsRow suite={suite} projectId={projectId} />
+            <fieldset
+              disabled={editingDisabled}
+              className="m-0 min-w-0 space-y-8 border-0 p-0"
+            >
               <BudgetSettingRow
                 settingKey="turnTimeoutMs"
                 label="Per-turn timeout"

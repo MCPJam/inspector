@@ -32,8 +32,10 @@ vi.mock("convex/react", () => ({
 vi.mock("@/contexts/db-user-ready-context", () => ({
   useDbUserReady: () => true,
 }));
-vi.mock("@/hooks/useProjects", () => ({
-  shouldQueryProjectId: () => true,
+vi.mock("@/hooks/useProjects", async (importOriginal) => ({
+  shouldQueryProjectId: (
+    await importOriginal<typeof import("@/hooks/useProjects")>()
+  ).shouldQueryProjectId,
   useProjectServers: () => ({
     servers: [
       { _id: "srv-asana", name: "Asana" },
@@ -100,6 +102,14 @@ describe("SuiteAccountsRow", () => {
   it("is not shown while the rollout flag is off", () => {
     state.flag = false;
     const { container } = renderRow();
+    expect(container).toBeEmptyDOMElement();
+    expect(state.queried).toEqual([]);
+  });
+
+  it("is not shown for a local project, whose servers are never read", () => {
+    const { container } = render(
+      <SuiteAccountsRow suite={suite} projectId="local_project" />,
+    );
     expect(container).toBeEmptyDOMElement();
     expect(state.queried).toEqual([]);
   });
