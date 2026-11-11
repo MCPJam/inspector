@@ -145,10 +145,21 @@ describe("a Settings App's row in the local store", () => {
     ).rejects.toMatchObject({ code: "INVALID_SETTINGS_CONTROL" });
   });
 
-  it("leaves the slot off an App that owns context when it is opened again", async () => {
+  it.each([
+    { name: "owns context", original: (token: string) => ({ contextToken: token }) },
+    {
+      name: "is not a Settings App",
+      original: () => ({
+        snapshotJson: JSON.stringify({
+          instance: { activation: { selector: { kind: "global" } } },
+        }),
+      }),
+    },
+  ])("leaves the slot off an App that $name when it is opened again", async ({ original }) => {
+    const actorId = randomUUID();
     const port = createPluginInstanceControlPort(
       {
-        actorId: randomUUID(),
+        actorId,
         projectId: "local-project",
         workspaceId: "local-workspace",
         subject: "local-subject",
@@ -165,14 +176,14 @@ describe("a Settings App's row in the local store", () => {
           snapshotJson: JSON.stringify({
             instance: { activation: { selector: { kind: "settings" } } },
           }),
-          ownerHash: h(`owner-${token}`),
+          ownerHash: h(`owner-${actorId}-${token}`),
           expiresAt: Date.now() + 60_000,
           ...slot,
         },
         signal(),
       );
     const first = "a".repeat(43);
-    await issue(first, { contextToken: first });
+    await issue(first, original(first));
     const reopened = await issue("b".repeat(43), { settings: true });
     expect(reopened.token).toBe(first);
     expect(reopened.control.settingsVersion).toBeUndefined();

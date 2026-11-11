@@ -466,11 +466,12 @@ export class LocalPluginControlStore {
           )
             fail("ACTIVATION_BINDING_CHANGED");
           // A Settings App opened before its row kept settings gains the
-          // slot, unless the row owns context, as a fresh issue refuses both.
+          // slot, when a fresh settings issue would accept its row.
           if (
             c.settings &&
             original.settingsVersion === undefined &&
-            original.contextToken === undefined
+            original.contextToken === undefined &&
+            isSettingsActivation(original.snapshotJson)
           )
             original.settingsVersion = 0;
           return {
