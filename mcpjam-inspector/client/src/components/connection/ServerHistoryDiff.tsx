@@ -162,12 +162,15 @@ function ChangedTool({
   onToggle: () => void;
   missingIn: (path: string) => number | undefined;
 }) {
+  // Closed rows draw no diff, so they skip computing one.
   const diffs = useMemo(
     () =>
-      tool.changedFields.map((field) =>
-        diffToolField(tool.before, tool.after, field),
-      ),
-    [tool],
+      isOpen
+        ? tool.changedFields.map((field) =>
+            diffToolField(tool.before, tool.after, field),
+          )
+        : [],
+    [tool, isOpen],
   );
   return (
     <div>
