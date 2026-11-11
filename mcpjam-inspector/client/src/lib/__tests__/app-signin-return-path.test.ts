@@ -22,6 +22,12 @@ describe("generic app sign-in return path", () => {
     expect(consumeAppSignInReturnPath(NOW)).toBe("/redeem?campaign=talk-123");
     expect(readAppSignInReturnPath(NOW)).toBeNull();
   });
+  it("keeps manual entry when sign-in state is missing", () => {
+    writeAppSignInReturnPath("/redeem?manual=1&campaign=talk-123", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe(
+      "/redeem?manual=1&campaign=talk-123",
+    );
+  });
   beforeEach(() => {
     clearAppSignInReturnPath();
   });

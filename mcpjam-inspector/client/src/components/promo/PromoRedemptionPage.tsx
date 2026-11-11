@@ -155,9 +155,12 @@ export function PromoRedemptionPage() {
   const [error, setError] = useState("");
   const [campaignId] = useState(() => readPromoCampaign());
   async function login() {
-    writeAppSignInReturnPath(redeemPath(campaignId));
+    const state = promoSignInState(campaignId);
+    // The saved path is the fallback when sign-in state is lost, so it carries
+    // the same manual-entry flag; otherwise a stale stored code could return.
+    writeAppSignInReturnPath(redeemPath(campaignId, state.promoManualEntry));
     try {
-      await signIn({ state: promoSignInState(campaignId) });
+      await signIn({ state });
     } catch {
       setError("Could not open sign-in. Try again.");
     }
