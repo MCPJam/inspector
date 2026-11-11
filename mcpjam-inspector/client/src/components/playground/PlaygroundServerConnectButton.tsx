@@ -23,7 +23,8 @@ interface PlaygroundServerConnectButtonProps {
     names: string[],
     options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
-  onChooseServer?: (name: string) => void;
+  /** Commits the pick before OAuth can navigate away; returns its undo. */
+  onChooseServer?: (name: string) => (() => void) | undefined;
   onConnected?: (name: string) => void;
   onPendingChange: (pending: boolean) => void;
 }
@@ -76,17 +77,21 @@ export function PlaygroundServerConnectButton({
     setError(null);
     onPendingChange(true);
     track("connecting_server", { location: "playground_tools_rail" });
+    let undoChoice: (() => void) | undefined;
     try {
-      // Persist the pane choice before OAuth can navigate away.
-      onChooseServer?.(name);
+      undoChoice = onChooseServer?.(name);
       const result = await ensureServersReady([name], {
         allowInteractiveOAuthFlow: true,
       });
+      const ready = result.readyServerNames.includes(name);
+      // "reauth" also covers a redirect in flight, which needs the pick.
+      const reauth = result.reauthServerNames.includes(name);
+      if (!ready && !reauth) undoChoice?.();
       if (!mounted.current) return;
-      if (result.readyServerNames.includes(name)) {
+      if (ready) {
         latestOnConnected.current?.(name);
         setOpen(false);
-      } else if (result.reauthServerNames.includes(name)) {
+      } else if (reauth) {
         setError(`${name} needs authorization. Click Connect to sign in.`);
       } else if (result.missingServerNames.includes(name)) {
         setError(
@@ -98,6 +103,7 @@ export function PlaygroundServerConnectButton({
         );
       }
     } catch {
+      undoChoice?.();
       if (mounted.current) {
         setError(
           `Could not connect to ${name}. Check that the server is running and try again.`,

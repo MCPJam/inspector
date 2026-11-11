@@ -16,7 +16,8 @@ export interface ComparePaneOption {
   environmentOverrides?: EnvironmentOverrides;
   /** The pane's own servers, or null when it follows the shared selection. */
   serverNames: string[] | null;
-  onServerConnected?: (serverName: string) => void;
+  /** Adds a server to the pane before it connects; returns how to undo that. */
+  onServerChosen?: (serverName: string) => (() => void) | undefined;
 }
 
 interface ComparePaneState {

@@ -283,7 +283,7 @@ function ToolsBody({
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
       browserTools={browserTools}
-      onConnected={comparePane?.onServerConnected}
+      onChooseServer={comparePane?.onServerChosen}
       onPendingChange={handlePendingChange}
     />
   );
@@ -297,14 +297,14 @@ function ZeroServerToolsBody({
   builtinTools,
   builtinToolsRunLocally,
   browserTools,
-  onConnected,
+  onChooseServer,
   onPendingChange,
 }: {
   previewedHarnessId?: string | null;
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
   browserTools: BrowserToolsState;
-  onConnected?: (name: string) => void;
+  onChooseServer?: (name: string) => (() => void) | undefined;
   onPendingChange: (pending: boolean) => void;
 }) {
   const state = usePlaygroundStateContext();
@@ -343,9 +343,9 @@ function ZeroServerToolsBody({
               catalogKnown={state.areServersHydrated}
               onAddServer={onConnect}
               ensureServersReady={state.ensureServersReady}
-              onChooseServer={onConnected}
+              onChooseServer={onChooseServer}
               onConnected={(name) => {
-                if (onConnected) return;
+                if (onChooseServer) return;
                 const selected = state.selectedServerNames?.length
                   ? state.selectedServerNames
                   : state.activeServerNames;

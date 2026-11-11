@@ -174,7 +174,7 @@ describe("Compare pane settings", () => {
       />,
     );
     const pane = useComparePaneStore.getState().panes[0];
-    act(() => pane.onServerConnected?.("Docs"));
+    act(() => pane.onServerChosen?.("Docs"));
     expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
       panes[0].paneId,
       {
@@ -183,11 +183,54 @@ describe("Compare pane settings", () => {
     );
   });
 
+  it("undoes a failed pick against the pane's current servers", () => {
+    const calls = spies();
+    const docs = serverIdByName.get("Docs")!;
+    const github = serverIdByName.get("GitHub")!;
+    const { rerender } = render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{ [panes[0].paneId]: { serverIds: [] } }}
+      />,
+    );
+    const undo = useComparePaneStore.getState().panes[0].onServerChosen?.("Docs");
+    rerender(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{ [panes[0].paneId]: { serverIds: [docs, github] } }}
+      />,
+    );
+    calls.setPaneOverrides.mockClear();
+    act(() => undo?.());
+    expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
+      panes[0].paneId,
+      { serverIds: [github] },
+    );
+  });
+
+  it("leaves a server the pane already had alone", () => {
+    const calls = spies();
+    render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{
+          [panes[0].paneId]: { serverIds: [serverIdByName.get("Docs")!] },
+        }}
+      />,
+    );
+    const undo = useComparePaneStore.getState().panes[0].onServerChosen?.("Docs");
+    expect(undo).toBeUndefined();
+    expect(calls.setPaneOverrides).not.toHaveBeenCalled();
+  });
+
   it("keeps a pane following the shared selection when a server connects", () => {
     const calls = spies();
     render(<Harness paneId={panes[0].paneId} spies={calls} />);
     act(() =>
-      useComparePaneStore.getState().panes[0].onServerConnected?.("Docs"),
+      useComparePaneStore.getState().panes[0].onServerChosen?.("Docs"),
     );
     expect(calls.setPaneOverrides).not.toHaveBeenCalled();
   });

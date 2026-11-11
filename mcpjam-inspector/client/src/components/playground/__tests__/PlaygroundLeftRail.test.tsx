@@ -388,7 +388,7 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
         hostId: "claude",
         environmentId: null,
         serverNames: [],
-        onServerConnected: first,
+        onServerChosen: first,
       },
       {
         paneId: "b",
@@ -396,7 +396,7 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
         hostId: "codex",
         environmentId: null,
         serverNames: [],
-        onServerConnected: second,
+        onServerChosen: second,
       },
     ]);
     useComparePaneStore.getState().selectPane("b");
@@ -412,7 +412,7 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
       const store = useComparePaneStore.getState();
       store.publishPanes(
         store.panes.map((pane) =>
-          pane.paneId === "b" ? { ...pane, onServerConnected: edited } : pane,
+          pane.paneId === "b" ? { ...pane, onServerChosen: edited } : pane,
         ),
       );
     });
@@ -421,6 +421,69 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(edited).not.toHaveBeenCalled();
     expect(first).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["failedServerNames", true],
+    ["missingServerNames", true],
+    ["reauthServerNames", false],
+    ["readyServerNames", false],
+  ] as const)(
+    "undoes the pane pick after a %s outcome: %s",
+    async (key, undone) => {
+      withSavedServer();
+      const undo = vi.fn();
+      playgroundState.ensureServersReady.mockResolvedValueOnce({
+        ...ready(""),
+        readyServerNames: [],
+        [key]: ["stateless-mcp"],
+      });
+      useComparePaneStore.getState().publishPanes([
+        {
+          paneId: "a",
+          label: "Claude",
+          hostId: "claude",
+          environmentId: null,
+          serverNames: [],
+          onServerChosen: () => undo,
+        },
+      ]);
+      render(<PlaygroundLeftRail />);
+      fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Connect stateless-mcp" }),
+      );
+      await waitFor(() =>
+        expect(playgroundState.ensureServersReady).toHaveBeenCalledTimes(1),
+      );
+      await act(async () => {});
+      expect(undo).toHaveBeenCalledTimes(undone ? 1 : 0);
+    },
+  );
+
+  it("undoes the pane pick when the reconnect throws", async () => {
+    withSavedServer();
+    const undo = vi.fn();
+    playgroundState.ensureServersReady.mockRejectedValueOnce(
+      new Error("offline"),
+    );
+    useComparePaneStore.getState().publishPanes([
+      {
+        paneId: "a",
+        label: "Claude",
+        hostId: "claude",
+        environmentId: null,
+        serverNames: [],
+        onServerChosen: () => undo,
+      },
+    ]);
+    render(<PlaygroundLeftRail />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connect stateless-mcp" }),
+    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(undo).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a retry pending when an earlier attempt finishes after returning to the project", async () => {

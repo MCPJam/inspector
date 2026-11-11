@@ -2,7 +2,9 @@ import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -119,6 +121,10 @@ export function useComparePaneControls({
   const [openPaneId, setOpenPaneId] = useState<string | null>(null);
   const publishPanes = useComparePaneStore((state) => state.publishPanes);
   const selectPane = useComparePaneStore((state) => state.selectPane);
+  const panesRef = useRef(panes);
+  useLayoutEffect(() => {
+    panesRef.current = panes;
+  }, [panes]);
 
   // An explicit client pane selection can include a server outside the chat. An environment pane's servers are the environment's, narrowed on the
   // wire (`environmentOverrides`), never the chat's.
@@ -164,15 +170,23 @@ export function useComparePaneControls({
               serverNames: paneServerNames(pane),
               ...(pane.target.kind === "host" && pane.serverIds != null
                 ? {
-                    onServerConnected: (name: string) => {
+                    onServerChosen: (name: string) => {
                       const id = serverIdByName.get(name);
-                      if (id) {
-                        setPaneOverrides(pane.paneId, {
-                          serverIds: [
-                            ...new Set([...(pane.serverIds ?? []), id]),
-                          ],
-                        });
-                      }
+                      if (!id || pane.serverIds?.includes(id)) return;
+                      setPaneOverrides(pane.paneId, {
+                        serverIds: [...(pane.serverIds ?? []), id],
+                      });
+                      // Undo reads the pane as it is then, not as it was here.
+                      return () => {
+                        const current = panesRef.current.find(
+                          (entry) => entry.paneId === pane.paneId,
+                        )?.serverIds;
+                        if (current?.includes(id)) {
+                          setPaneOverrides(pane.paneId, {
+                            serverIds: current.filter((entry) => entry !== id),
+                          });
+                        }
+                      };
                     },
                   }
                 : {}),
