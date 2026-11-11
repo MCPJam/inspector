@@ -2653,9 +2653,9 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
   // SERVER ACCOUNT WRITES, on the same three grounds as the secrets above.
   upload_server_account_tokens:
-    "The access token is an argument, so it would reach model context and the turn transcript before any approval could run. Available on REST and the SDK, where the caller controls where the token comes from.",
+    "The access token is an argument, so it would reach model context and the turn transcript before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the token comes from.",
   update_server_account:
-    "Making an account the default decides which account runs with no saved account choice sign in as. That is a person's choice, made on REST or the SDK.",
+    "Making an account the default decides which account runs with no saved account choice sign in as. That is a person's choice, made on REST, the SDK or the CLI.",
   delete_server_account:
     "Deletes an account and asks its issuer to revoke the token, which nothing here can undo; the agent proposes authoring, never destruction.",
   // TRACE DESTINATIONS — all ten, and the reasons split into three groups.

@@ -1855,7 +1855,7 @@ describe("tier derives from operation.risk", () => {
         "Exposure would derive gated, but the default decides which " +
         "account runs with no saved account choice sign in as, so an agent " +
         "proposing one would be choosing who its own runs act as. A person " +
-        "sets it on REST or the SDK.",
+        "sets it on REST, the SDK or the CLI.",
     },
     create_trace_destination: {
       tier: "excluded",

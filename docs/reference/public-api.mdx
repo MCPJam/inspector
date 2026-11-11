@@ -687,6 +687,11 @@ curl -fsS -X PATCH \
   -d '{ "isDefault": true }'
 ```
 
+The CLI takes the same steps with `mcpjam cloud server-accounts set`, which
+reads the token from a file, an environment variable or stdin, and
+`mcpjam cloud server-accounts default`. See the
+[CLI reference](/cli/reference#cloud-server-accounts-commands).
+
 The default is shared by every run that key starts, so don't run the same
 key's runs at the same time with different defaults. Where your organization
 has account choice for eval suites, a suite can instead save the accounts it
