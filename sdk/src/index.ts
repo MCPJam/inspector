@@ -1250,31 +1250,18 @@ export {
   commitNewlyLoaded,
   createDiscoveryState,
   decideProgressivePlan,
-  estimateTokens,
-  formatToolSearchMatch,
   gateToolsToActiveSubset,
   hydrateDiscoveryStateFromHistory,
   lookupToolIdByModelName,
   parseProgressiveToolsEnv,
-  readLoadRequest,
   resolveActiveToolNames,
-  resolveDiscoveryPolicy,
-  resolveLoadTarget,
-  searchToolCatalog,
   shouldForceInitialToolSearch,
-  sumCatalogTokens,
 } from "./progressive-discovery/discovery.js";
 export type {
-  DecidePlanInput,
-  ProgressiveDiscoveryEnabled,
   ProgressiveDiscoveryOptions,
   ProgressiveToolPlan,
-  SearchOptions as ToolCatalogSearchOptions,
   ToolCatalogEntry,
-  ToolCatalogFieldSummary,
-  ToolDiscoveryPolicy,
   ToolDiscoveryState,
-  ToolSearchMatch,
 } from "./progressive-discovery/discovery.js";
 export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
 export type {

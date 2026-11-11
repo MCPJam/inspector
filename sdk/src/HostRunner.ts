@@ -123,6 +123,13 @@ interface HostRunnerBaseConfig {
    * result's tool calls — the same projection hosted grading uses.
    */
   policyBlockedToolCallIds?: () => ReadonlySet<string>;
+  /**
+   * @internal How to read a host that leaves `progressiveToolDiscovery` unset.
+   * Saved clients and host templates mean Auto by it, as hosted runs read it,
+   * so `runWithClient` and the suite-file runner pass `"auto"`. A host built
+   * in code stays off unless it sets `true`.
+   */
+  progressiveToolDiscoveryWhenUnset?: "auto";
   baseUrls?: CreateModelOptions["baseUrls"];
   /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
   tools: Tool[] | AiSdkTool;
@@ -366,7 +373,8 @@ export class HostRunner implements HostExecutor {
    * when no host was supplied (legacy explicit-model path).
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
-  /** The host's Progressive tools setting; see the constructor. */
+  private readonly progressiveToolDiscoveryWhenUnset: "auto" | undefined;
+  /** The host's Progressive tools setting, with unset read as above. */
   private readonly progressiveDiscovery: ProgressiveDiscoveryEnabled;
   /**
    * Description rewrites applied after visibility filtering. Stored so
@@ -404,10 +412,13 @@ export class HostRunner implements HostExecutor {
           this.hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
-    // A host that leaves it unset is on Auto, as hosted runs read it. Without
-    // a host there is no setting, and every tool is sent as before.
+    // Without a host there is no setting, and every tool is sent as before.
+    this.progressiveToolDiscoveryWhenUnset =
+      config.progressiveToolDiscoveryWhenUnset;
     this.progressiveDiscovery = this.hostSnapshot
-      ? (this.hostSnapshot.progressiveToolDiscovery ?? "auto")
+      ? (this.hostSnapshot.progressiveToolDiscovery ??
+        this.progressiveToolDiscoveryWhenUnset ??
+        false)
       : false;
 
     // Resolve the model: explicit field wins; otherwise pull from host
@@ -950,7 +961,6 @@ export class HostRunner implements HostExecutor {
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
       const discovery = startProgressiveTurn({
         tools: this.tools,
-        executableTools: instrumentedTools,
         mode: this.progressiveDiscovery,
         priorMessages: contextMessages,
       });
@@ -962,7 +972,7 @@ export class HostRunner implements HostExecutor {
 
       const generateTextOptions: any = {
         model: model as any,
-        tools: discovery?.tools ?? instrumentedTools,
+        tools: { ...instrumentedTools, ...discovery?.metaTools },
         ...(discovery && {
           prepareStep: ({ stepNumber }: { stepNumber: number }) =>
             discovery.prepareStep(stepNumber),
@@ -1018,9 +1028,14 @@ export class HostRunner implements HostExecutor {
           lastCompletedStepText = stepResult.text ?? "";
           completedStepMessages.push(...(stepResult.response?.messages ?? []));
           const blocked = this.policyBlockedToolCallIds?.();
+          discovery?.noteStep(stepResult.toolCalls);
           completedToolCalls.push(
             ...stepResult.toolCalls
-              .filter((toolCall) => !blocked?.has(toolCall.toolCallId))
+              .filter(
+                (toolCall) =>
+                  !blocked?.has(toolCall.toolCallId) &&
+                  !discovery?.refusedCallIds.has(toolCall.toolCallId)
+              )
               .map((toolCall) => ({
                 toolName: toolCall.toolName,
                 arguments: (toolCall.input ?? {}) as Record<string, unknown>,
@@ -1033,10 +1048,15 @@ export class HostRunner implements HostExecutor {
       const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
-      const blockedToolCallIds = this.policyBlockedToolCallIds?.();
+      // Left out: calls a tool policy refused, and calls to tools discovery
+      // had not loaded. Neither reached a server.
+      const blockedToolCallIds = new Set([
+        ...(this.policyBlockedToolCallIds?.() ?? []),
+        ...(discovery?.refusedCallIds ?? []),
+      ]);
       const toolCalls = extractToolCalls(
         result,
-        blockedToolCallIds ? { excludeToolCallIds: blockedToolCallIds } : {}
+        blockedToolCallIds.size ? { excludeToolCallIds: blockedToolCallIds } : {}
       );
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
@@ -1207,6 +1227,9 @@ export class HostRunner implements HostExecutor {
         options.createLanguageModel ?? this.createLanguageModel,
       policyBlockedToolCallIds:
         options.policyBlockedToolCallIds ?? this.policyBlockedToolCallIds,
+      progressiveToolDiscoveryWhenUnset:
+        options.progressiveToolDiscoveryWhenUnset ??
+        this.progressiveToolDiscoveryWhenUnset,
       baseUrls: options.baseUrls ?? this.baseUrls,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,

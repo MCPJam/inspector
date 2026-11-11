@@ -2,11 +2,16 @@
  * One prompt's progressive tool discovery, for a runner that drives the AI SDK
  * loop itself (`HostRunner`). It wires the same functions the hosted turns use
  * (chat-v2 orchestration, the direct and Convex engines), minus their
- * Inspector-only extras: the plan, the two meta-tools, the per-step tool
- * narrowing with the forced first search, and the execution gate.
+ * Inspector-only extras: the plan, the two meta-tools, and the per-step tool
+ * narrowing with the forced first search.
+ *
+ * The narrowing is also the gate: the AI SDK refuses a call to a tool outside
+ * the step's `activeTools` (a `NoSuchToolError`) and never runs it. `noteStep`
+ * collects those calls so the runner can leave them out of the prompt's tool
+ * calls, the way it leaves out calls a tool policy refused.
  */
 
-import type { ModelMessage, ToolSet } from "ai";
+import { NoSuchToolError, type ModelMessage, type ToolSet } from "ai";
 import {
   META_TOOL_NAMES,
   META_TOOL_SEARCH,
@@ -14,12 +19,10 @@ import {
   commitNewlyLoaded,
   createDiscoveryState,
   decideProgressivePlan,
-  gateToolsToActiveSubset,
   hydrateDiscoveryStateFromHistory,
   resolveActiveToolNames,
   shouldForceInitialToolSearch,
   type ProgressiveDiscoveryEnabled,
-  type ProgressiveToolPlan,
 } from "./discovery.js";
 import { createProgressiveMetaTools } from "./meta-tools.js";
 
@@ -29,13 +32,17 @@ export interface ProgressiveStepSettings {
   toolChoice?: { type: "tool"; toolName: string };
 }
 
+/** The fields of a finished step's tool call that `noteStep` reads. */
+type StepToolCall = { toolCallId: string; invalid?: boolean; error?: unknown };
+
 export interface ProgressiveTurn {
-  plan: ProgressiveToolPlan;
-  /** The meta-tools alone, for recording what the model was offered. */
+  /** `search_mcp_tools` and `load_mcp_tools`, to add to the prompt's tools. */
   metaTools: ToolSet;
-  /** The executable tools, gated to the loaded subset, plus the meta-tools. */
-  tools: ToolSet;
   prepareStep(stepNumber: number): ProgressiveStepSettings;
+  /** Records a finished step's calls to tools that were not loaded. */
+  noteStep(toolCalls: ReadonlyArray<StepToolCall>): void;
+  /** Calls the AI SDK refused because their tool was not loaded; none ran. */
+  refusedCallIds: ReadonlySet<string>;
 }
 
 /**
@@ -44,10 +51,7 @@ export interface ProgressiveTurn {
  * already uses a meta-tool's name, as the hosted turns do.
  */
 export function startProgressiveTurn(args: {
-  /** The prompt's tools as prepared; the catalog is built from these. */
   tools: ToolSet;
-  /** What the loop executes: the same keys, possibly wrapped. */
-  executableTools: ToolSet;
   mode: ProgressiveDiscoveryEnabled;
   /** Earlier turns, so a tool they loaded stays loaded. */
   priorMessages?: ReadonlyArray<ModelMessage>;
@@ -55,7 +59,8 @@ export function startProgressiveTurn(args: {
   if (args.mode === false) return undefined;
   const catalog = buildToolCatalog(args.tools);
   // No model context length here, so `"auto"` uses the tool-count and token
-  // thresholds only; the hosted turns also apply the share-of-context one.
+  // thresholds only; hosted turns that know the model's size also apply the
+  // share-of-context one.
   const plan = decideProgressivePlan({
     catalog,
     options: { enabled: args.mode },
@@ -63,7 +68,7 @@ export function startProgressiveTurn(args: {
   if (!plan.enabled) return undefined;
 
   for (const name of META_TOOL_NAMES) {
-    if (Object.prototype.hasOwnProperty.call(args.tools, name)) {
+    if (Object.hasOwn(args.tools, name)) {
       throw new Error(
         `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set the host's progressiveToolDiscovery to false.`
       );
@@ -74,18 +79,13 @@ export function startProgressiveTurn(args: {
   if (args.priorMessages?.length) {
     hydrateDiscoveryStateFromHistory(state, args.priorMessages, catalog);
   }
-  const metaTools = createProgressiveMetaTools({
-    getCatalog: () => catalog,
-    state,
-    policy: plan.policy,
-  });
+  const refusedCallIds = new Set<string>();
   return {
-    plan,
-    metaTools,
-    tools: {
-      ...gateToolsToActiveSubset(args.executableTools, plan, () => state),
-      ...metaTools,
-    },
+    metaTools: createProgressiveMetaTools({
+      getCatalog: () => catalog,
+      state,
+      policy: plan.policy,
+    }),
     prepareStep(stepNumber) {
       // Promote what `load_mcp_tools` loaded on the previous step.
       commitNewlyLoaded(state);
@@ -97,5 +97,13 @@ export function startProgressiveTurn(args: {
           }
         : { activeTools };
     },
+    noteStep(toolCalls) {
+      for (const call of toolCalls) {
+        if (call.invalid && NoSuchToolError.isInstance(call.error)) {
+          refusedCallIds.add(call.toolCallId);
+        }
+      }
+    },
+    refusedCallIds,
   };
 }

@@ -3,12 +3,15 @@ import { dynamicTool, jsonSchema, type ToolSet } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { HostRunner } from "../src/HostRunner.js";
 import { Host } from "../src/host-config/host.js";
+import type { Tool } from "../src/mcp-client-manager/types.js";
 
 /**
  * `HostRunner` follows the host's Progressive tools setting the way hosted
- * runs do: On and Auto (at 30 tools) start the model on the search/load
- * meta-tools with a forced first search; Off and a runner without a host
- * send every tool. Before, the runner sent every tool whatever the setting.
+ * runs do: On, and Auto at 30 tools, start the model on the search/load
+ * meta-tools with a forced first search. Unset is Auto only where the caller
+ * says a saved client or template is behind it; a host built in code that
+ * leaves it unset, Off, and a runner without a host send every tool. Before,
+ * the runner sent every tool whatever the setting.
  */
 
 type Step =
@@ -77,8 +80,9 @@ function makeTools(count: number, ran: string[] = []): ToolSet {
 
 function runner(
   progressiveToolDiscovery: boolean | undefined,
-  tools: ToolSet,
-  model: MockLanguageModelV3
+  tools: ToolSet | Tool[],
+  model: MockLanguageModelV3,
+  progressiveToolDiscoveryWhenUnset?: "auto"
 ) {
   const host = new Host({
     style: "claude",
@@ -92,6 +96,9 @@ function runner(
     tools,
     apiKey: "test-key",
     createLanguageModel: () => model,
+    ...(progressiveToolDiscoveryWhenUnset
+      ? { progressiveToolDiscoveryWhenUnset }
+      : {}),
   });
 }
 
@@ -137,13 +144,21 @@ describe("HostRunner progressive tool discovery", () => {
     expect(recorded).toEqual(expect.arrayContaining(META));
   });
 
-  it("Auto (unset): turns on at 30 tools and sends every tool below that", async () => {
+  it("unset: a host built in code sends every tool", async () => {
+    const { model, seen } = scriptedModel([{ text: "ok" }]);
+    await runner(undefined, makeTools(30), model).run("hi");
+    expect(seen[0].tools).toHaveLength(30);
+  });
+
+  it("unset read as Auto (saved clients, templates): on at 30 tools, kept by clones", async () => {
     const large = scriptedModel([{ text: "ok" }]);
-    await runner(undefined, makeTools(30), large.model).run("hi");
+    await runner(undefined, makeTools(30), large.model, "auto")
+      .withOptions({})
+      .run("hi");
     expect(large.seen[0].tools).toEqual(META);
 
     const small = scriptedModel([{ text: "ok" }]);
-    await runner(undefined, makeTools(5), small.model).run("hi");
+    await runner(undefined, makeTools(5), small.model, "auto").run("hi");
     expect(small.seen[0].tools).toHaveLength(5);
     expect(small.seen[0].toolChoice).not.toEqual({
       type: "tool",
@@ -182,6 +197,60 @@ describe("HostRunner progressive tool discovery", () => {
       type: "tool",
       toolName: "search_mcp_tools",
     });
+  });
+
+  it("leaves a call to a tool that was not loaded out of the results; it never ran", async () => {
+    const ran: string[] = [];
+    const { model, seen } = scriptedModel([
+      { call: "search_mcp_tools", input: { query: "record kind 7" } },
+      { call: "ctrl_tool_7", input: { id: "x" } },
+      { call: "load_mcp_tools", input: { names: ["ctrl_tool_7"] } },
+      { call: "ctrl_tool_7", input: { id: "x" } },
+      { text: "Record found." },
+    ]);
+    const result = await runner(true, makeTools(30, ran), model).run(
+      "Look up record x"
+    );
+
+    expect(seen).toHaveLength(5);
+    expect(ran).toEqual(["ctrl_tool_7"]);
+    expect(result.toolsCalled()).toEqual([
+      "search_mcp_tools",
+      "load_mcp_tools",
+      "ctrl_tool_7",
+    ]);
+  });
+
+  it("runs discovery over Tool[] input, as from manager.getTools()", async () => {
+    const ran: string[] = [];
+    const tools = Array.from({ length: 30 }, (_, i) => ({
+      name: `ctrl_tool_${i}`,
+      description: `Looks up CTRL record kind ${i}.`,
+      inputSchema: { type: "object", properties: { id: { type: "string" } } },
+      execute: async () => {
+        ran.push(`ctrl_tool_${i}`);
+        return { content: [{ type: "text", text: "record" }] };
+      },
+    })) as Tool[];
+    const { model, seen } = scriptedModel(SEARCH_LOAD_CALL);
+    const result = await runner(true, tools, model).run("Look up record x");
+
+    expect(result.hasError()).toBe(false);
+    expect(seen[0].tools).toEqual(META);
+    expect(ran).toEqual(["ctrl_tool_7"]);
+  });
+
+  it("stopAfterToolCall stops on the loaded tool without running it", async () => {
+    const ran: string[] = [];
+    const { model, seen } = scriptedModel(SEARCH_LOAD_CALL);
+    const result = await runner(true, makeTools(30, ran), model).run(
+      "Look up record x",
+      { stopAfterToolCall: "ctrl_tool_7" }
+    );
+
+    expect(seen).toHaveLength(3);
+    expect(ran).toEqual([]);
+    expect(result.toolsCalled()).toContain("ctrl_tool_7");
   });
 
   it("returns an error result when a server tool uses a meta-tool's name", async () => {

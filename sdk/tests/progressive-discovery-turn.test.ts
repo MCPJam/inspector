@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { dynamicTool, jsonSchema, type ModelMessage, type ToolSet } from "ai";
+import {
+  NoSuchToolError,
+  dynamicTool,
+  jsonSchema,
+  type ModelMessage,
+  type ToolSet,
+} from "ai";
 import { startProgressiveTurn } from "../src/progressive-discovery/turn.js";
 import {
   META_TOOL_LOAD,
@@ -30,30 +36,31 @@ describe("startProgressiveTurn", () => {
   it("does nothing when the setting is off", () => {
     const tools = makeTools(40);
     expect(
-      startProgressiveTurn({ tools, executableTools: tools, mode: false })
+      startProgressiveTurn({ tools, mode: false })
     ).toBeUndefined();
   });
 
   it("on Auto, keeps a small tool set and turns on at 30 tools", () => {
     const few = makeTools(5);
     expect(
-      startProgressiveTurn({ tools: few, executableTools: few, mode: "auto" })
+      startProgressiveTurn({ tools: few, mode: "auto" })
     ).toBeUndefined();
 
     const many = makeTools(30);
     const turn = startProgressiveTurn({
       tools: many,
-      executableTools: many,
       mode: "auto",
     });
-    expect(turn?.plan.reasons).toEqual(["tool_count>=30"]);
+    expect(turn?.prepareStep(0).activeTools).toEqual([
+      META_TOOL_SEARCH,
+      META_TOOL_LOAD,
+    ]);
   });
 
   it("offers only the meta-tools at first and makes the first step a search", () => {
     const tools = makeTools(3);
     const turn = startProgressiveTurn({
       tools,
-      executableTools: tools,
       mode: true,
     });
     if (!turn) throw new Error("expected discovery to apply");
@@ -71,35 +78,33 @@ describe("startProgressiveTurn", () => {
     const tools = makeTools(3);
     const turn = startProgressiveTurn({
       tools,
-      executableTools: tools,
       mode: true,
     });
     if (!turn) throw new Error("expected discovery to apply");
     turn.prepareStep(0);
 
     await expect(
-      execute(turn.tools, META_TOOL_LOAD, { names: ["tool_1"] })
+      execute(turn.metaTools, META_TOOL_LOAD, { names: ["tool_1"] })
     ).resolves.toEqual({ loaded: [{ name: "tool_1" }], notFound: [] });
     const next = turn.prepareStep(1);
     expect(next.activeTools).toContain("tool_1");
     expect(next.toolChoice).toBeUndefined();
-    await expect(execute(turn.tools, "tool_1", {})).resolves.toEqual({
-      ran: 1,
-    });
   });
 
-  it("refuses to run a tool that was never loaded", async () => {
+  it("records the calls the AI SDK refused because the tool was not loaded", () => {
     const tools = makeTools(3);
-    const turn = startProgressiveTurn({
-      tools,
-      executableTools: tools,
-      mode: true,
-    });
+    const turn = startProgressiveTurn({ tools, mode: true });
     if (!turn) throw new Error("expected discovery to apply");
-    turn.prepareStep(0);
-    await expect(execute(turn.tools, "tool_2", {})).rejects.toThrow(
-      "Tool 'tool_2' is not loaded in this step"
-    );
+    turn.noteStep([
+      {
+        toolCallId: "unloaded",
+        invalid: true,
+        error: new NoSuchToolError({ toolName: "tool_2" }),
+      },
+      { toolCallId: "bad-input", invalid: true, error: new Error("bad input") },
+      { toolCallId: "ran" },
+    ]);
+    expect([...turn.refusedCallIds]).toEqual(["unloaded"]);
   });
 
   it("keeps a tool an earlier turn loaded, without forcing another search", () => {
@@ -119,7 +124,6 @@ describe("startProgressiveTurn", () => {
     ];
     const turn = startProgressiveTurn({
       tools,
-      executableTools: tools,
       mode: true,
       priorMessages,
     });
@@ -132,7 +136,7 @@ describe("startProgressiveTurn", () => {
   it("refuses a server tool that uses a meta-tool's name", () => {
     const tools = { ...makeTools(2), [META_TOOL_SEARCH]: makeTools(1).tool_0 };
     expect(() =>
-      startProgressiveTurn({ tools, executableTools: tools, mode: true })
+      startProgressiveTurn({ tools, mode: true })
     ).toThrow(/collides with the progressive-discovery meta-tool/);
   });
 });

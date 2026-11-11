@@ -252,6 +252,9 @@ export async function createSavedClientRunner(
         ? { reasoningEffort: savedSettings.reasoningEffort }
         : { temperature: savedSettings?.temperature ?? host.temperature }),
       tools,
+      // A saved client left on Auto stores no value, and hosted runs of it
+      // apply the Auto thresholds; read it the same way here.
+      progressiveToolDiscoveryWhenUnset: "auto",
       apiKey: input.apiKey,
       mcpClientManager: input.manager,
       mcpjamProject: input.projectId,
