@@ -86,6 +86,7 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
         reportCaught(new Error("Convex authentication recovery failed"), {
           source: "convex_auth_recovery",
           level: "warning",
+          fingerprint: ["convex_auth_recovery_failed"],
           extra,
         });
       } else {
