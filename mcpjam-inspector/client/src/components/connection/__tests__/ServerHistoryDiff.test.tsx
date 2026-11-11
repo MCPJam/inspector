@@ -132,4 +132,18 @@ describe("RevisionDiffView", () => {
     expect(screen.getByText("instructions")).toBeInTheDocument();
     expect(screen.queryByText("Removed:")).not.toBeInTheDocument();
   });
+
+  it("says so when a revision is missing", () => {
+    render(
+      <RevisionDiffView
+        diff={diffWith([], { changed: true, changedFields: ["instructions"] })}
+        from={null}
+        to={to}
+      />,
+    );
+
+    expect(
+      screen.getByText("Revision not found, so these values can't be shown."),
+    ).toBeInTheDocument();
+  });
 });
