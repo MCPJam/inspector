@@ -70,9 +70,17 @@ export function GatewayDialog({
   );
   /** The admin's name for a new provider; null keeps the one from the host. */
   const [renamed, setRenamed] = useState<string | null>(null);
+  // Once a Test passes, its settings stay on screen while the admin edits the
+  // URL or key. The edit clears the stale result, not the settings it filled.
+  const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    if (open) setRenamed(null);
+    if (!open) return;
+    setRenamed(null);
+    setRevealed(false);
   }, [open]);
+  useEffect(() => {
+    if (draft.passed) setRevealed(true);
+  }, [draft.passed]);
 
   const { baseUrl, runtime, apis, models, keyProblem, outcome } = draft;
   const trimmedName = (
@@ -81,7 +89,7 @@ export function GatewayDialog({
         editProvider.providerKey.replace(/^custom:/, "")
       : (renamed ?? suggestedGatewayName(baseUrl))
   ).trim();
-  const showDetails = !!editProvider || draft.passed;
+  const showDetails = !!editProvider || draft.passed || revealed;
   const nameProblem = /[/:]/.test(trimmedName)
     ? "Use a name without slashes or colons."
     : !editProvider &&
