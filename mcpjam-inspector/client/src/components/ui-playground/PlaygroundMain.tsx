@@ -303,6 +303,7 @@ import {
 } from "@/lib/compare-panes";
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
 import { useComparePaneControls } from "./use-compare-pane-controls";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -866,6 +867,7 @@ export function PlaygroundMain({
   const compareSeedSourceRef = useRef<Record<string, string>>({});
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const paneDisplays = useComparePaneDisplayStore((s) => s.byPane);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
@@ -1402,6 +1404,7 @@ export function PlaygroundMain({
     seedReasoningEffort,
     reasoningEffortLevelsFor,
     setReasoningEffortForModel,
+    hasPickedModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1455,6 +1458,7 @@ export function PlaygroundMain({
     hostedOrgModelConfig,
     inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
     selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
+    rememberPickedTarget: true,
     hostedContext: {
       ...(shouldUseOwnedExtensionModelRoute({
         flag: extensionsFlag,
@@ -1630,11 +1634,11 @@ export function PlaygroundMain({
     if (ids.length > 0 && serversById.size === 0) return;
 
     // The first seed of this mount (a page reload, or coming back to a host
-    // after it was unavailable) re-applies the host to the single chat, as it
-    // always has, but leaves the compare panes alone: pane 1 is a model and
-    // effort the user saved, and a reload must not swap it for the host's.
-    // Only a host SWITCH (or an edit of the host's config) moves the host's
-    // model into pane 1.
+    // after it was unavailable) leaves the compare panes alone: pane 1 is a
+    // model and effort the user saved, and a reload must not swap it for the
+    // host's. The single chat keeps a model the user picked for this host the
+    // same way. Only a host SWITCH (or an edit of the host's config) moves
+    // the host's model in.
     const isFirstSeedThisMount = last === null;
     lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
@@ -1670,7 +1674,7 @@ export function PlaygroundMain({
         availableModels,
         undefined,
       );
-      if (match) {
+      if (match && !(isFirstSeedThisMount && hasPickedModel)) {
         setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
@@ -1736,6 +1740,7 @@ export function PlaygroundMain({
     setRequireToolApproval,
     setSelectedModel,
     seedReasoningEffort,
+    hasPickedModel,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -7140,7 +7145,8 @@ export function PlaygroundMain({
                           </div>
                         );
                         const column = resolution.column;
-                        const columnTheme = extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        const columnDisplay = paneDisplays[column.compareId];
+                        const columnTheme = columnDisplay?.theme ?? extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
@@ -7228,7 +7234,8 @@ export function PlaygroundMain({
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={columnTheme}
-                          deviceType={storeDeviceType}
+                          deviceType={columnDisplay?.deviceType ?? storeDeviceType}
+                          displayOverrides={columnDisplay}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}
