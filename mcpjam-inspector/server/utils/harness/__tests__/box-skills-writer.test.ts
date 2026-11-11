@@ -324,15 +324,20 @@ describe("a box that runs more than one runtime", () => {
     expect(adapter.changed).toBe(false);
   });
 
-  it("leaves every folder alone on a runtime that takes no skills and reads none of them", async () => {
+  it("leaves every other client's folder alone on a runtime that reads only its own", async () => {
     const box = fakeSkillBox();
     await runTurn("claude-code", box, artifact("alpha"));
     await runTurn("codex", box, artifact("gamma"));
-    const before = new Map(box.files);
+    const others = () =>
+      [...box.files].filter(
+        ([path]) =>
+          path.startsWith(`${CLAUDE}/`) || path.startsWith(`${AGENTS}/`),
+      );
+    const before = others();
     for (const harnessId of ["cursor", "copilot-cli"]) {
       await runTurn(harnessId, box, artifact("delta"));
     }
-    expect(box.files).toEqual(before);
+    expect(others()).toEqual(before);
   });
 
   it("writes nothing to a folder the turn neither delivers to nor finds MCPJam's skills in", async () => {

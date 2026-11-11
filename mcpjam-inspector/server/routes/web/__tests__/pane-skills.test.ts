@@ -93,7 +93,8 @@ describe("per-pane Skills preview", () => {
   it.each([
     ["claude-code", 2, "server-skill-unsupported"],
     ["codex", 2, "server-skill-unsupported"],
-    ["cursor", 0, "unsupported-harness"],
+    ["cursor", 2, "server-skill-unsupported"],
+    ["not-a-harness", 0, "unsupported-harness"],
     [undefined, 3, null],
   ])(
     "predicts delivered count and capture support for %s",
@@ -258,7 +259,7 @@ describe("suite Skills preview", () => {
   };
   const loops: Record<string, string> = {
     env1: "claude-code",
-    env2: "cursor",
+    env2: "not-a-harness",
   };
 
   beforeEach(() => {

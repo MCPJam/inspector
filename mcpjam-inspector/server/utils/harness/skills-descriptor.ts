@@ -10,8 +10,7 @@
  *
  * Claude Code and Codex are checked against their installed adapters
  * (`codex-skill-parity.test.ts`). OpenCode, Cursor and Copilot CLI come from
- * their pinned binaries and SDKs, read without a live run, which is why their
- * adapters keep `supportsSkills: false`.
+ * their pinned binaries and SDKs, read without a live run.
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { isValidSkillName } from "../../../shared/skill-types.js";
@@ -111,8 +110,12 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     serverSkills: "box-files",
   },
   // A private home inside the installed recipe: Cursor reads only its folders
-  // (and its working directory, with no walk-up). The folder name is the
-  // skill's identity, and the ACP adapter throws on a non-kebab name.
+  // (and its working directory, with no walk-up), once, when its `agent acp`
+  // process starts; a changed skill set gives the turn a fresh session. The
+  // folder name is the skill's identity, and the ACP adapter throws on a
+  // non-kebab name or a second skill with one name. A top-level
+  // `alwaysApply: true` would make a skill an always-on rule; the writer's
+  // SKILL.md has no such key (`cursor-skill-parity.test.ts`).
   cursor: {
     writeFolder: `${CURSOR_HOME}/.agents/skills`,
     trailingNewline: false,

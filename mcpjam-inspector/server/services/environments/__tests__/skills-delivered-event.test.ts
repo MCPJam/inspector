@@ -122,7 +122,9 @@ describe("an eval iteration", () => {
         outcome: "ok",
         runtime: "harness",
         harness_id: "cursor",
-        excluded_unsupported_harness_count: 3,
+        delivered_library_count: 1,
+        delivered_plugin_count: 1,
+        delivered_mcp_server_count: 1,
       },
       {
         ...NONE,

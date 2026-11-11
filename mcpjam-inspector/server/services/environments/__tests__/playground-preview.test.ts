@@ -28,6 +28,7 @@ describe("the Playground environment preview's skill delivery", () => {
   it("follows the engine the turn runs on", () => {
     expect(delivery({ modelId: "openai/gpt-5-mini" })).toBe("emulated");
     expect(delivery({ harness: "claude-code" })).toBe("harness");
+    expect(delivery({ harness: "cursor" })).toBe("harness");
     // A client on the Codex loop sets `agentLoop`, not `harness`; the turn
     // runs Codex, so the preview must not say "emulated" for it.
     expect(delivery({ modelId: "openai/gpt-5.5", agentLoop: "codex" })).toBe(
@@ -36,7 +37,8 @@ describe("the Playground environment preview's skill delivery", () => {
   });
 
   it("says a harness without a skill channel takes none of the skills", () => {
-    // Saying "harness" here would claim a delivery that never happens.
-    expect(delivery({ harness: "cursor" })).toBe("unsupported");
+    // Saying "harness" here would claim a delivery that never happens. A
+    // harness id this Inspector doesn't know has no channel it can name.
+    expect(delivery({ harness: "not-a-harness" })).toBe("unsupported");
   });
 });

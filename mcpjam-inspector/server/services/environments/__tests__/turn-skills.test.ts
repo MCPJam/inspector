@@ -200,10 +200,11 @@ describe("resolveTurnSkills", () => {
   });
 
   it("reports every skill on a harness that takes none", async () => {
+    // A harness id this Inspector doesn't know, from a newer one's config.
     const run = await preparedRunSkills();
     const skills = resolveTurnSkills({
       source: run.pinnedSkillSource,
-      runtime: harness("cursor"),
+      runtime: harness("not-a-harness"),
     });
     expect(skills.delivered).toEqual([]);
     expect(skills.serverSkillsVia).toBe("none");

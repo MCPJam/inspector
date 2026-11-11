@@ -1170,10 +1170,9 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     nativeVersionNegotiation: "legacy-first",
     refresh: (runtime) => runtime,
   },
-  // Off: no live turn has shown the headless CLI loading the folder. ACP
-  // supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this is an unchecked
-  // path rather than a capability wall.
-  supportsSkills: false,
+  // The ACP adapter writes each turn's skills to the CLI's private home
+  // (`cursor-skill-parity.test.ts`).
+  supportsSkills: true,
   skills: HARNESS_SKILLS.cursor,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
