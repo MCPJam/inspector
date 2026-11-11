@@ -5,13 +5,15 @@
  * worktrees (or several instances of one) run side by side.
  *
  * Usage:
- *   npm run dev:worktree -- <instance> [local|staging|preview <viteConvexUrl> <convexHttpUrl>]
+ *   npm run dev:worktree -- [<instance>|auto] [local|staging|preview <viteConvexUrl> <convexHttpUrl>]
  *                           [--env-file <profile>] [--client-port N] [--server-port N]
  *                           [--worker-port N] [--debugger-port N] [--no-worker]
  *                           [--skip-prepare] [--print-config]
  *
  * Ports (instance N, each overridable):
  *   client 5173+N   server 6274+N   worker 8787+N   worker debugger 9229+N
+ * With no instance (or `auto`), the first instance whose ports are all free
+ * is used. `npm run dev:hosted` is this launcher in hosted mode.
  *
  * The configuration is resolved ONCE, here (`bin/runtime-profile.mjs`), and
  * handed to the server, Vite and the platform MCP worker in their environment
@@ -47,6 +49,8 @@ import {
 
 const TARGETS = new Set(["local", "staging", "preview"]);
 const LOCAL_DEV_SERVICE_TOKEN = "mcpjam-local-dev-service-token";
+const AUTO_INSTANCE = "auto";
+const AUTO_INSTANCE_TRIES = 20;
 
 export function parseLauncherArgs(argv) {
   const positional = [];
@@ -82,26 +86,30 @@ export function parseLauncherArgs(argv) {
     throw new RuntimeConfigError("--env-file needs a path to a profile.");
   }
 
-  const instance = Number(positional[0]);
-  if (
-    positional[0] === undefined ||
-    !/^\d+$/.test(positional[0]) ||
-    !Number.isInteger(instance)
-  ) {
-    throw new RuntimeConfigError(
-      "Usage: npm run dev:worktree -- <instance> [local|staging|preview <viteConvexUrl> <convexHttpUrl>] [--env-file <profile>]",
-    );
+  // The instance is optional: leaving it out (or "auto") takes the first
+  // instance whose ports are all free.
+  let instance = AUTO_INSTANCE;
+  let rest = positional;
+  if (positional[0] === AUTO_INSTANCE) rest = positional.slice(1);
+  else if (positional[0] !== undefined && !TARGETS.has(positional[0])) {
+    if (!/^\d+$/.test(positional[0])) {
+      throw new RuntimeConfigError(
+        "Usage: npm run dev:worktree -- [<instance>|auto] [local|staging|preview <viteConvexUrl> <convexHttpUrl>] [--env-file <profile>]",
+      );
+    }
+    instance = Number(positional[0]);
+    rest = positional.slice(1);
   }
-  const target = positional[1] ?? "local";
+  const target = rest[0] ?? "local";
   if (!TARGETS.has(target)) {
     throw new RuntimeConfigError(
       `Unknown target "${target}" (expected local, staging or preview).`,
     );
   }
-  const previewUrls = target === "preview" ? positional.slice(2, 4) : undefined;
-  if (target !== "preview" && positional.length > 2) {
+  const previewUrls = target === "preview" ? rest.slice(1, 3) : undefined;
+  if (target !== "preview" && rest.length > 1) {
     throw new RuntimeConfigError(
-      `Unexpected arguments: ${positional.slice(2).join(" ")}`,
+      `Unexpected arguments: ${rest.slice(1).join(" ")}`,
     );
   }
   return { instance, target, previewUrls, ...options };
@@ -186,6 +194,30 @@ export async function findPortConflicts(ports) {
     if (!free) conflicts.push({ role, port });
   }
   return conflicts;
+}
+
+/** The ports a launch listens on: the worker's pair only when it runs. */
+function listenedPorts(ports, withWorker) {
+  return withWorker ? ports : { client: ports.client, server: ports.server };
+}
+
+/**
+ * The first instance, from 0, whose ports are all free. Port overrides apply
+ * to every candidate. Exported for tests.
+ */
+export async function pickFreeInstance(
+  args,
+  { tries = AUTO_INSTANCE_TRIES, findConflicts = findPortConflicts } = {},
+) {
+  for (let instance = 0; instance < tries; instance += 1) {
+    const ports = computeInstancePorts(instance, args.portOverrides);
+    const conflicts = await findConflicts(listenedPorts(ports, args.worker));
+    if (conflicts.length === 0) return instance;
+  }
+  throw new RuntimeConfigError(
+    `Instances 0 to ${tries - 1} all have a port in use. ` +
+      "Stop another instance, or pass an instance number and --client-port/--server-port/--worker-port/--debugger-port.",
+  );
 }
 
 // ── supervision ───────────────────────────────────────────────────────────
@@ -394,6 +426,9 @@ async function main() {
   try {
     ({ command: npm, args: npmArgs } = npmInvocation());
     args = parseLauncherArgs(process.argv.slice(2));
+    if (args.instance === AUTO_INSTANCE) {
+      args = { ...args, instance: await pickFreeInstance(args) };
+    }
     const common = gitCommonDir(inspectorDir);
     plan = planLaunch({
       args,
@@ -450,7 +485,7 @@ async function main() {
   }
 
   const conflicts = await findPortConflicts(
-    workerVars ? ports : { client: ports.client, server: ports.server },
+    listenedPorts(ports, Boolean(workerVars)),
   );
   if (conflicts.length > 0) {
     process.stderr.write(
