@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { generateSessionToken } from "../session-token.js";
@@ -14,6 +14,8 @@ const calls = vi.hoisted(() => ({
   authorizeLocal: vi.fn(),
   prepare: vi.fn(),
   dispose: vi.fn(),
+  prepareHosted: vi.fn(),
+  releaseHosted: vi.fn(),
 }));
 const runtimeMode = vi.hoisted(() => ({ hosted: false }));
 vi.mock("../../config.js", async (importOriginal) => ({
@@ -22,6 +24,11 @@ vi.mock("../../config.js", async (importOriginal) => ({
 }));
 vi.mock("../sandbox-view-registry.js", () => ({
   sandboxViews: { prepare: calls.prepare, dispose: calls.dispose },
+}));
+vi.mock("../sandbox-view-hosted.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox-view-hosted.js")>()),
+  prepareHostedSandboxView: calls.prepareHosted,
+  releaseHostedSandboxView: calls.releaseHosted,
 }));
 vi.mock("../../routes/web/auth.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../routes/web/auth.js")>()),
@@ -315,5 +322,86 @@ describe("App document admission route authority", () => {
     );
     expect(response.status).toBe(204);
     expect(calls.dispose.mock.calls[0][1]).not.toBe(preparedOwner);
+  });
+});
+
+describe("App documents in hosted dev (npm run dev:hosted)", () => {
+  const url = "/api/web/apps/mcp-apps/view-admissions";
+  const admit = (instance: Hono, extra: Record<string, unknown> = {}) =>
+    instance.request(url, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        ...body(),
+        projectId: "project",
+        serverId: "server",
+        ...extra,
+      }),
+    });
+  const release = (instance: Hono) =>
+    instance.request(`${url}/${body().viewInstanceId}`, {
+      method: "DELETE",
+      headers: headers(),
+      body: JSON.stringify({ source: body().source, projectId: "project" }),
+    });
+
+  beforeEach(() => {
+    runtimeMode.hosted = true;
+    // What `dev:server` sets, with no sandbox origin configured.
+    vi.stubEnv("ENVIRONMENT", "dev");
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("MCPJAM_SANDBOX_ORIGIN", "");
+    vi.stubEnv("VITE_MCPJAM_SANDBOX_ORIGIN", "");
+    calls.prepareHosted.mockReset().mockResolvedValue({
+      admissionId: body().viewInstanceId,
+      proxyUrl:
+        "https://v-0123456789abcdef.sandbox.mcpjam.com/api/web/apps/mcp-apps/sandbox-proxy",
+      htmlSha256: "a".repeat(64),
+      expiresAt: Date.now() + 7200000,
+    });
+    calls.releaseHosted.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("serves the App from this machine's loopback sandbox", async () => {
+    const instance = app(true);
+    expect((await admit(instance)).status).toBe(200);
+    expect(calls.authorize).toHaveBeenCalledOnce();
+    expect(calls.prepare).toHaveBeenCalledOnce();
+    expect(calls.prepareHosted).not.toHaveBeenCalled();
+    expect((await release(instance)).status).toBe(204);
+    expect(calls.dispose).toHaveBeenCalledOnce();
+    expect(calls.releaseHosted).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a production build", { NODE_ENV: "production" }],
+    ["a server the dev script did not start", { ENVIRONMENT: "" }],
+    [
+      "a configured sandbox origin",
+      { MCPJAM_SANDBOX_ORIGIN: "https://sandbox.mcpjam.com" },
+    ],
+  ])("keeps the hosted sandbox for %s", async (_label, env) => {
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    const instance = app(true);
+    expect((await admit(instance)).status).toBe(200);
+    expect(calls.prepareHosted).toHaveBeenCalledOnce();
+    expect(calls.prepare).not.toHaveBeenCalled();
+    expect((await release(instance)).status).toBe(204);
+    expect(calls.releaseHosted).toHaveBeenCalledOnce();
+    expect(calls.dispose).not.toHaveBeenCalled();
+  });
+
+  it("refuses a page that is not on this machine", async () => {
+    vi.stubEnv("ALLOWED_ORIGINS", "https://app.example");
+    const response = await admit(app(true), {
+      hostOrigin: "https://app.example",
+    });
+    expect(response.status).toBe(403);
+    expect(calls.authorize).not.toHaveBeenCalled();
+    expect(calls.prepare).not.toHaveBeenCalled();
+    expect(calls.prepareHosted).not.toHaveBeenCalled();
   });
 });
