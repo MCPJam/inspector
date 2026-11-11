@@ -162,6 +162,36 @@ describe("Compare pane settings", () => {
     useComparePaneStore.setState({ panes: [], selectedPaneId: null });
   });
 
+  it("adds a saved server to a narrowed pane without changing other panes", () => {
+    const calls = spies();
+    render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{
+          [panes[0].paneId]: { serverIds: [] },
+        }}
+      />,
+    );
+    const pane = useComparePaneStore.getState().panes[0];
+    act(() => pane.onServerConnected?.("Docs"));
+    expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
+      panes[0].paneId,
+      {
+        serverIds: [serverIdByName.get("Docs")],
+      },
+    );
+  });
+
+  it("keeps a pane following the shared selection when a server connects", () => {
+    const calls = spies();
+    render(<Harness paneId={panes[0].paneId} spies={calls} />);
+    act(() =>
+      useComparePaneStore.getState().panes[0].onServerConnected?.("Docs"),
+    );
+    expect(calls.setPaneOverrides).not.toHaveBeenCalled();
+  });
+
   it.each([false, undefined])("offers only clients for a hidden saved pane (%s)", async (visible) => {
     const pane: RecoveryPane = {
       paneId: "restored",

@@ -98,6 +98,7 @@ interface PlaygroundTabProps {
   ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;

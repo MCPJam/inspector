@@ -391,6 +391,23 @@ describe("ToolList", () => {
     expect(navigate).toHaveBeenCalledWith("/servers");
   });
 
+  it("renders the provided server picker instead of the fallback action", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        connectServerControl={<button>Choose a saved server</button>}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Choose a saved server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Connect a server" }),
+    ).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("prefers the search-miss message when a search hides a harness's built-ins", () => {
     render(
       <ToolList

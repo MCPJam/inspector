@@ -16,6 +16,7 @@ export interface ComparePaneOption {
   environmentOverrides?: EnvironmentOverrides;
   /** The pane's own servers, or null when it follows the shared selection. */
   serverNames: string[] | null;
+  onServerConnected?: (serverName: string) => void;
 }
 
 interface ComparePaneState {

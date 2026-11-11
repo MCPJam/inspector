@@ -164,10 +164,32 @@ export function useComparePaneControls({
                   }
                 : { environmentId: null }),
               serverNames: paneServerNames(pane),
+              ...(pane.target.kind === "host" && pane.serverIds != null
+                ? {
+                    onServerConnected: (name: string) => {
+                      const id = serverIdByName.get(name);
+                      if (id) {
+                        setPaneOverrides(pane.paneId, {
+                          serverIds: [
+                            ...new Set([...(pane.serverIds ?? []), id]),
+                          ],
+                        });
+                      }
+                    },
+                  }
+                : {}),
             };
           })
         : [],
-    [active, panes, resolutions, paneServerNames, paneEnvironments],
+    [
+      active,
+      panes,
+      resolutions,
+      paneServerNames,
+      paneEnvironments,
+      serverIdByName,
+      setPaneOverrides,
+    ],
   );
   useEffect(() => publishPanes(options), [options, publishPanes]);
   useEffect(() => () => publishPanes([]), [publishPanes]);
