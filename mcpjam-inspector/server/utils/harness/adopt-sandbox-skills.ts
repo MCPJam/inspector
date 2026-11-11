@@ -194,8 +194,9 @@ export function shouldAdoptSandboxSkills(args: {
   aborted: boolean;
   pausedForApproval: boolean;
   supportsSkills: boolean;
-  /** `null` ⇒ the live skills fetch failed; adopting on top of an unknown set
-   *  could re-adopt something we simply failed to see as already-managed. */
+  /** False when the turn named no skill source, so its set is unknown;
+   *  adopting on top of an unknown set could re-adopt something we simply
+   *  failed to see as already-managed. */
   runtimeSkillsKnown: boolean;
   skillsArePinned: boolean;
   /** Guest / swarm scopes never adopt (v1). */
