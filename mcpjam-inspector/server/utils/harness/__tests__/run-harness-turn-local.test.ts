@@ -103,9 +103,7 @@ vi.mock("../registry.js", () => ({
     supportsMcpToolApproval: true,
     approvalPermissionMode: "allow-reads",
     supportsSkills: harnessState.supportsSkills,
-    skillsBaseDir: "/home/user/.claude/skills",
-    skillsWriteOptions: { trailingNewline: true },
-    prepareSkills: (skills: any[]) => ({ delivered: skills, payload: skills }),
+    skills: HARNESS_SKILLS["claude-code"],
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
@@ -130,7 +128,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   fetchRuntimeSkillFiles: vi.fn(async () => ({ ok: true, files: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
@@ -196,7 +193,7 @@ vi.mock("../local/local-turn.js", () => ({
       plan: { runtime: { runtimeId: "runtime-1" } },
       timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
       sandbox: {}, auth: {}, sandboxWorkDir: "project",
-      skillsBaseDir: "/private/local/home/.claude/skills",
+      homeDir: "/private/local/home",
       permissionMode: "allow-reads",
       sessionStateExists: harnessState.stateExists,
       teardown: harnessState.teardown,
@@ -215,11 +212,17 @@ vi.mock("../local/evidence.js", () => ({
 import { localHarnessEvidence } from "../local/evidence.js";
 
 vi.mock("../preseed-adapter-skills.js", () => ({
+  clearAdapterSkills: vi.fn(async () => {}),
   handOffLegacySkillDirs: vi.fn(async () => {}),
   preseedAdapterSkills: vi.fn(async () => {}),
 }));
-vi.mock("../materialize-skill-files.js", () => ({ materializeSkillFiles: vi.fn(async () => {}) }));
-vi.mock("../materialize-skill-frontmatter.js", () => ({ materializeSkillFrontmatter: vi.fn(async () => {}) }));
+vi.mock("../materialize-skill-files.js", () => ({
+  materializeSkillFiles: vi.fn(async () => ({ written: 0, skipped: 0, failed: new Map() })),
+}));
+vi.mock("../materialize-skill-frontmatter.js", async (original) => ({
+  ...await original<typeof import("../materialize-skill-frontmatter.js")>(),
+  materializeSkillFrontmatter: vi.fn(async () => ({ rewritten: 0, skipped: 0, removed: new Map() })),
+}));
 vi.mock("../pinned-harness-skills.js", async (original) => ({
   ...await original<typeof import("../pinned-harness-skills.js")>(),
   materializePinnedSkillFiles: vi.fn(async () => {}),
@@ -232,6 +235,7 @@ import { handOffLegacySkillDirs, preseedAdapterSkills } from "../preseed-adapter
 import { materializeSkillFiles } from "../materialize-skill-files.js";
 import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js";
 import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
+import { HARNESS_SKILLS } from "../skills-descriptor.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
@@ -344,17 +348,18 @@ describe("runHarnessTurn local continuity", () => {
     }));
   });
 
-  it.each(["environment", "pinned"])("uses the local skill root for every %s skill pass", async (mode) => {
+  it.each(["environment", "pinned"])("writes every %s skill under the session's own home", async (mode) => {
     harnessState.invokeSandboxCallback = true;
     harnessState.supportsSkills = true;
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
     await runHarnessTurn(baseOptions(mode === "pinned"
       ? { pinnedHarnessSkills: [skill] }
       : { runtimeSkillsOverride: [skill] }) as any, "none");
-    const common = [reconcileSkillDirs, handOffLegacySkillDirs, preseedAdapterSkills, materializeSkillFrontmatter];
+    const common = [reconcileSkillDirs, handOffLegacySkillDirs, preseedAdapterSkills, materializeSkillFrontmatter, materializeSkillFiles];
+    // A pinned turn writes its copies' own files, and never adopts.
     const passes = mode === "pinned"
       ? [...common, materializePinnedSkillFiles]
-      : [...common, materializeSkillFiles, adoptSandboxSkills, appendManagedSkills];
+      : [...common, adoptSandboxSkills, appendManagedSkills];
     for (const pass of passes) {
       expect(pass).toHaveBeenCalledWith(expect.objectContaining({
         skillsBase: "/private/local/home/.claude/skills",
@@ -362,9 +367,9 @@ describe("runHarnessTurn local continuity", () => {
     }
   });
 
-  it("fails the turn before the model runs when the frontmatter pass throws", async () => {
-    // The pass throws only when it can neither rewrite nor remove a skill that
-    // carries `allowedTools`. The turn must stop, not swallow it, and the
+  it("fails the turn before the model runs when the box writer's SKILL.md step throws", async () => {
+    // The step throws only when it can neither rewrite nor remove a SKILL.md
+    // that may grant tools. The turn must stop, not swallow it, and the
     // finalizer must still release the lane.
     harnessState.invokeSandboxCallback = true;
     harnessState.supportsSkills = true;
@@ -1020,7 +1025,7 @@ describe("runHarnessTurn local continuity", () => {
         prepared: {
           plan: { runtime: { runtimeId: "runtime-1" } },
           sandbox: {}, auth: {}, sandboxWorkDir: "project",
-          skillsBaseDir: "/private/local/home/.agents/skills",
+          homeDir: "/private/local/home",
           permissionMode:
             args?.scope !== "unattended" || args?.requireToolApproval ? "allow-reads" : args?.target?.permissionProfile === "unrestricted" ? "allow-all" : "allow-edits",
           sessionStateExists: harnessState.stateExists,
@@ -1138,7 +1143,7 @@ describe("runHarnessTurn local continuity", () => {
               sandbox: {},
               auth: {},
               sandboxWorkDir: "project",
-              skillsBaseDir: "/private/local/home/.claude/skills",
+              homeDir: "/private/local/home",
               permissionMode: "allow-reads",
               sessionStateExists: harnessState.stateExists,
               teardown: harnessState.teardown,

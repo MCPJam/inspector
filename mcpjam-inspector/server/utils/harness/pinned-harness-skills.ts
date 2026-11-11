@@ -25,7 +25,6 @@ import {
 } from "../../../shared/skill-types.js";
 import { isPathWithinDirectory } from "../skill-parser.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 import type {
   CloudSkillRuntimeItem,
@@ -166,13 +165,11 @@ async function pruneStalePinnedSkillFiles(
 export async function materializePinnedSkillFiles(args: {
   session: PinnedSkillFileSession;
   artifacts: PinnedSkillArtifact[];
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
+  /** The runtime's skills folder, absolute. */
+  skillsBase: string;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { session, artifacts, signal } = args;
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { session, artifacts, signal, skillsBase } = args;
 
   // Prune before write: build delivered dirs + the files each should keep from
   // the authoritative pinned artifacts, then remove anything else on box.

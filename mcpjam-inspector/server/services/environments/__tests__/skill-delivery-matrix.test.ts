@@ -7,8 +7,9 @@
  * hand-written answer: once for the surface's plan (`resolveTurnSkills`), and
  * once for what reaches the engine, read through the code the engine runs:
  * MCPJam's agent's prompt and tools from `prepareChatV2`, a harness's box from
- * its pinned skill path. Checking the plan against the engine alone would pass
- * if both were wrong the same way.
+ * the box writer, on a box earlier turns of other runtimes left skills on.
+ * Checking the plan against the engine alone would pass if both were wrong the
+ * same way.
  */
 import { describe, expect, it } from "vitest";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
@@ -22,7 +23,9 @@ import {
   agentReceives,
   boxReceives,
   preparedRunSkills,
+  writeTurnToBox,
 } from "../../../test/support/skill-delivery";
+import { fakeSkillBox } from "../../../test/support/fake-skill-box";
 
 const ENGINES = [
   "mcpjam-agent",
@@ -144,7 +147,9 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
       );
       expect(received.tools).toContain("loadSkill");
     } else {
-      expect(boxReceives(engine, box).sort()).toEqual(
+      // Every folder the runtime reads holds exactly these, whatever earlier
+      // turns of other runtimes left on the box.
+      expect((await boxReceives(engine, box)).sort()).toEqual(
         [...expected.delivered].sort(),
       );
       // A harness gets its skills on its box, never as agent tools too.
@@ -152,6 +157,20 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
         [],
       );
     }
+  });
+
+  it.skipIf(isAgent)("the box writer reports the delivery it made", async () => {
+    const { box } = await surface.plan(engine);
+    const written = await writeTurnToBox(
+      engine,
+      { pinnedHarnessSkills: box },
+      fakeSkillBox(),
+    );
+    expect(written.delivered.map((skill) => skill.name)).toEqual(
+      expected.delivered,
+    );
+    expect(written.notDelivered).toEqual([]);
+    expect(written.failed).toEqual([]);
   });
 
   it("records the skills the engine was handed", async () => {

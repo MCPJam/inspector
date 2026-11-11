@@ -45,6 +45,7 @@ describe("adoptSandboxSkills", () => {
       "pdf-tools": skillMd("pdf-tools"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -97,6 +98,7 @@ describe("adoptSandboxSkills", () => {
       "shared-skill": skillMd("shared-skill"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -111,6 +113,7 @@ describe("adoptSandboxSkills", () => {
       "on-disk-name": skillMd("frontmatter-name"),
     });
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -127,6 +130,7 @@ describe("adoptSandboxSkills", () => {
       "big-desc": skillMd("big-desc", longDesc),
     });
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -141,6 +145,7 @@ describe("adoptSandboxSkills", () => {
     const md = `---\nname: with-tools\ndescription: d\nallowed-tools: Bash, Read\nlicense: MIT\n---\n\nbody\n`;
     const session = fakeSession(["with-tools"], { "with-tools": md });
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -177,6 +182,7 @@ describe("adoptSandboxSkills", () => {
       ),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -208,6 +214,7 @@ describe("adoptSandboxSkills", () => {
       ),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -224,6 +231,7 @@ describe("adoptSandboxSkills", () => {
     for (const d of ["a", "b", "c", "d", "e", "f", "g"]) files[d] = skillMd(d);
     const session = fakeSession(dirs, files);
     await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",
@@ -239,6 +247,7 @@ describe("adoptSandboxSkills", () => {
       readTextFile: vi.fn(),
     };
     const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
       session,
       authHeader: "Bearer x",
       projectId: "proj_1",

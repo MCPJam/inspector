@@ -26,10 +26,23 @@
  * environment override is a real answer ("this environment delivers no skills")
  * and must skip the project-wide fetch: falling through would silently deliver
  * the whole project pool to a turn whose environment deliberately pinned none.
+ *
+ * `harnessTurnSkills` reads the chosen source into what the box writer
+ * (`box-skills-writer.ts`) takes: the skills in the turn's order, their
+ * supporting files, and the fingerprint that forks a resumable session.
  */
+import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import { logger } from "../logger.js";
+import type { BoxSkillFiles } from "./box-skills-writer.js";
 import { pinnedArtifactsToRuntimeSkills } from "./pinned-harness-skills.js";
-import type { RuntimeSkill } from "./runtime-skills.js";
+import { capabilitySkillFiles, skillsHashWithPlugins } from "./plugin-delivery.js";
+import {
+  skillsFingerprint,
+  type FetchRuntimeSkillFilesResult,
+  type FetchRuntimeSkillsResult,
+  type RuntimeSkill,
+} from "./runtime-skills.js";
 
 export type HarnessSkillSource =
   | { mode: "pinned"; skills: RuntimeSkill[] }
@@ -145,4 +158,116 @@ export function composeLivePlusSkills(
   for (const skill of environmentSkills) take(skill, environmentSkillIds);
   for (const skill of live) take(skill, projectSkillIds);
   return { skills, environmentSkillIds, projectSkillIds, problems };
+}
+
+/** A turn's skills for its box, read from the source that spoke. */
+export interface HarnessTurnSkills {
+  mode: HarnessSkillSource["mode"];
+  /** In the turn's order; `null` when the project's skills could not be read,
+   *  which leaves the box exactly as it is. */
+  skills: RuntimeSkill[] | null;
+  /** Folded into the session lane so a skill change forks the session;
+   *  `undefined` when the skills are unknown, so the stored hash stands. */
+  skillsHash: string | undefined;
+  /** The skills' supporting files, read when the writer needs them. */
+  readFiles(): Promise<BoxSkillFiles>;
+}
+
+const NO_FILES_KNOWN: BoxSkillFiles = { files: [], complete: () => false };
+
+/**
+ * Read a turn's skills from its source (`selectHarnessSkillSource`). Files come
+ * from the same place as the skills: an environment's capability set carries
+ * its skills' (the only source of a plugin skill's, which the project-wide
+ * file query leaves out), and the project's pool is read with the project-wide
+ * query, at write time and only when the box gets a skill. A run's frozen
+ * copies carry theirs, which `materializePinnedSkillFiles` writes.
+ */
+export async function harnessTurnSkills(args: {
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+  runtimeSkillsOverride?: RuntimeSkill[];
+  includeProjectSkills?: boolean;
+  effectiveCapabilities?: EffectiveCapabilitySet;
+  /** The project's live skills and files; absent when the turn has no project
+   *  to read, which delivers none from it. */
+  project?: {
+    skills(): Promise<FetchRuntimeSkillsResult>;
+    files(): Promise<FetchRuntimeSkillFilesResult>;
+  };
+}): Promise<HarnessTurnSkills> {
+  const source = selectHarnessSkillSource(args);
+  const own = args.effectiveCapabilities
+    ? capabilitySkillFiles(args.effectiveCapabilities)
+    : undefined;
+  const projectFiles = async (): Promise<BoxSkillFiles> => {
+    const listing = await args.project?.files();
+    return listing?.ok
+      ? { files: listing.files, complete: () => true }
+      : NO_FILES_KNOWN;
+  };
+  if (source.mode === "pinned" || source.mode === "environment") {
+    return {
+      mode: source.mode,
+      skills: source.skills,
+      skillsHash: skillsFingerprint(source.skills),
+      readFiles:
+        source.mode === "pinned"
+          ? async () => NO_FILES_KNOWN
+          : own
+            ? async () => ({ files: own, complete: () => true })
+            : projectFiles,
+    };
+  }
+  const fetched = args.project
+    ? await args.project.skills()
+    : { ok: true as const, skills: [] };
+  const live = fetched.ok ? fetched.skills : null;
+  if (source.mode === "live") {
+    return {
+      mode: "live",
+      skills: live,
+      skillsHash: live ? skillsFingerprint(live) : undefined,
+      readFiles: projectFiles,
+    };
+  }
+  const composed = composeLivePlusSkills(live, source.environmentSkills);
+  if (composed.problems.length > 0) {
+    // Ids and codes only: a skill name is user-authored content.
+    logger.warn("[harness] skills left out: box folder taken", {
+      problems: composed.problems.map(({ code, skillId }) => ({ code, skillId })),
+    });
+  }
+  return {
+    mode: "live_plus",
+    skills: composed.skills,
+    // The set mixes the project's pool with plugin skills, so the plugin
+    // versions that ran fold into its hash: a version change re-writes the
+    // box's skills even when their text reads the same.
+    skillsHash: composed.skills
+      ? skillsHashWithPlugins(
+          skillsFingerprint(composed.skills),
+          args.effectiveCapabilities?.pluginVersions ?? [],
+        )
+      : undefined,
+    // The environment's entries take their files from its capability set, the
+    // pool's from the project-wide query. If that query fails, only the
+    // environment's folders are touched: the pool's files stay as they are.
+    readFiles: async () => {
+      const pool =
+        composed.projectSkillIds.size > 0 ? await projectFiles() : NO_FILES_KNOWN;
+      return {
+        files: [
+          ...pool.files.filter((file) =>
+            composed.projectSkillIds.has(file.skillId),
+          ),
+          ...(own ?? []).filter((file) =>
+            composed.environmentSkillIds.has(file.skillId),
+          ),
+        ],
+        complete: (skillId) =>
+          composed.environmentSkillIds.has(skillId) ||
+          (composed.projectSkillIds.has(skillId) && pool.complete(skillId)),
+      };
+    },
+  };
 }

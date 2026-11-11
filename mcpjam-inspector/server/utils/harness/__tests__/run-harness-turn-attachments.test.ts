@@ -87,8 +87,7 @@ vi.mock("../registry.js", () => ({
     supportsMcpToolApproval: true,
     approvalPermissionMode: "allow-reads",
     supportsSkills: false,
-    skillsBaseDir: "/home/user/.claude/skills",
-    skillsWriteOptions: { trailingNewline: true },
+    skills: { writeFolder: ".claude/skills", readFolders: [".claude/skills"] },
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
@@ -110,7 +109,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   fetchRuntimeSkillFiles: vi.fn(async () => ({ ok: true, files: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
@@ -175,7 +173,7 @@ vi.mock("../local/local-turn.js", () => ({
       sandbox: {},
       auth: {},
       sandboxWorkDir: "project",
-      skillsBaseDir: `${LOCAL_STATE_DIR}/home/.claude/skills`,
+      homeDir: `${LOCAL_STATE_DIR}/home`,
       attachmentsDir: {
         writeDir: `${LOCAL_STATE_DIR}/attachments`,
         agentDir: `${LOCAL_STATE_DIR}/attachments`,

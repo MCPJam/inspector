@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   composeLivePlusSkills,
+  harnessTurnSkills,
   selectHarnessSkillSource,
 } from "../skill-delivery.js";
-import type { RuntimeSkill } from "../runtime-skills.js";
+import { skillsFingerprint, type RuntimeSkill } from "../runtime-skills.js";
 import type { PinnedSkillArtifact } from "../../../../shared/skill-types.js";
+import { buildLiveEffectiveCapabilities } from "../../../services/environments/effective-capabilities.js";
 
 const PINNED: PinnedSkillArtifact[] = [
   {
@@ -179,5 +181,112 @@ describe("composeLivePlusSkills", () => {
       },
     ]);
     expect(composed.projectSkillIds.has("sk_personal")).toBe(false);
+  });
+});
+
+describe("harnessTurnSkills", () => {
+  const LIVE = [
+    { skillId: "sk_notes", name: "notes", description: "n", content: "n", aggregateHash: "a" },
+  ];
+  const project = (
+    over: {
+      skills?: () => Promise<{ ok: true; skills: RuntimeSkill[] } | { ok: false }>;
+      files?: () => Promise<
+        | { ok: true; files: Array<{ skillId: string; path: string; size: number; url: string }> }
+        | { ok: false }
+      >;
+    } = {},
+  ) => ({
+    skills: vi.fn(over.skills ?? (async () => ({ ok: true as const, skills: LIVE }))),
+    files: vi.fn(
+      over.files ??
+        (async () => ({
+          ok: true as const,
+          files: [{ skillId: "sk_notes", path: "a.md", size: 1, url: "https://f/a" }],
+        })),
+    ),
+  });
+
+  it("takes a run's frozen copies and reads nothing live", async () => {
+    const live = project();
+    const turn = await harnessTurnSkills({
+      pinnedHarnessSkills: [
+        { ...PINNED[0]!, files: [{ path: "scripts/run.sh", content: "echo" }] },
+      ],
+      project: live,
+    });
+    expect(turn.mode).toBe("pinned");
+    expect(turn.skills?.map((entry) => entry.name)).toEqual(["pinned-skill"]);
+    expect(turn.skillsHash).toBe(skillsFingerprint(turn.skills!));
+    // The pinned file writer puts the copies' own files on the box.
+    expect((await turn.readFiles()).complete("sk_pinned")).toBe(false);
+    expect(live.skills).not.toHaveBeenCalled();
+    expect(live.files).not.toHaveBeenCalled();
+  });
+
+  it("takes an environment's files from its capability set, the only source of a plugin skill's", async () => {
+    const live = project();
+    const set = buildLiveEffectiveCapabilities({
+      standaloneSkills: [
+        {
+          ...RESOLVED[0]!,
+          ref: "env-skill",
+          channels: ["environment"],
+          files: [{ path: "ref.md", size: 3, url: "https://f/ref" }],
+        },
+      ],
+    });
+    const turn = await harnessTurnSkills({
+      runtimeSkillsOverride: RESOLVED,
+      effectiveCapabilities: set,
+      project: live,
+    });
+    expect(turn.mode).toBe("environment");
+    const files = await turn.readFiles();
+    expect(files.files).toEqual([
+      { skillId: "sk_env", path: "ref.md", size: 3, url: "https://f/ref" },
+    ]);
+    expect(live.files).not.toHaveBeenCalled();
+  });
+
+  it("leaves the set unknown when the live fetch fails, and reads the files only on demand", async () => {
+    const live = project({ skills: async () => ({ ok: false }) });
+    const turn = await harnessTurnSkills({ project: live });
+    expect(turn).toMatchObject({ mode: "live", skills: null, skillsHash: undefined });
+    expect(live.files).not.toHaveBeenCalled();
+  });
+
+  it("knows none of the pool's files when their list could not be read", async () => {
+    const turn = await harnessTurnSkills({
+      project: project({ files: async () => ({ ok: false }) }),
+    });
+    expect(turn.skills).toEqual(LIVE);
+    const files = await turn.readFiles();
+    expect(files.files).toEqual([]);
+    expect(files.complete("sk_notes")).toBe(false);
+  });
+
+  it("keeps a hidden environment's own files when the pool's list could not be read", async () => {
+    const set = buildLiveEffectiveCapabilities({
+      standaloneSkills: [
+        {
+          ...RESOLVED[0]!,
+          ref: "env-skill",
+          channels: ["host"],
+          files: [{ path: "ref.md", size: 3, url: "https://f/ref" }],
+        },
+      ],
+    });
+    const turn = await harnessTurnSkills({
+      runtimeSkillsOverride: RESOLVED,
+      includeProjectSkills: true,
+      effectiveCapabilities: set,
+      project: project({ files: async () => ({ ok: false }) }),
+    });
+    expect(turn.skills?.map((entry) => entry.skillId)).toEqual(["sk_env", "sk_notes"]);
+    const files = await turn.readFiles();
+    expect(files.files.map((file) => file.skillId)).toEqual(["sk_env"]);
+    expect(files.complete("sk_env")).toBe(true);
+    expect(files.complete("sk_notes")).toBe(false);
   });
 });

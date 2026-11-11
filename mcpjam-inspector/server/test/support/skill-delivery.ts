@@ -15,8 +15,15 @@ import type {
 } from "../../services/evals/run-plugin-snapshot.js";
 import type { TurnSkills } from "../../services/environments/turn-skills.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import {
+  boxSkillsFolder,
+  planBoxSkills,
+  writeBoxSkills,
+} from "../../utils/harness/box-skills-writer.js";
+import { materializePinnedSkillFiles } from "../../utils/harness/pinned-harness-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { selectHarnessSkillSource } from "../../utils/harness/skill-delivery.js";
+import { harnessTurnSkills } from "../../utils/harness/skill-delivery.js";
+import { BOX_HOME, fakeSkillBox, type FakeSkillBox } from "./fake-skill-box.js";
 
 /** A supporting file as a run snapshot serves it, readable without a network. */
 function dataUrl(text: string, mimeType: string): string {
@@ -186,19 +193,63 @@ export async function agentReceives(
 }
 
 /**
- * The skill folders a harness writes to its box from a run's frozen copies:
- * the names in its adapter's `skills` param, from the list the harness turn
- * builds in its pinned mode.
+ * One harness turn's box write, as `runHarnessTurn` makes it: the turn's
+ * skills read from their source, planned by the runtime's rules (none on a
+ * runtime that takes none), written to `box` by the box writer, then a run's
+ * own files by the pinned file writer.
  */
-export function boxReceives(
+export async function writeTurnToBox(
+  harnessId: string,
+  source: Parameters<typeof harnessTurnSkills>[0],
+  box: FakeSkillBox,
+) {
+  const adapter = getHarnessAdapter(harnessId);
+  const turn = await harnessTurnSkills(source);
+  const plan = planBoxSkills(
+    adapter.skills,
+    adapter.supportsSkills ? (turn.skills ?? []) : [],
+  );
+  const written = await writeBoxSkills({
+    session: box.session,
+    descriptor: adapter.skills,
+    home: BOX_HOME,
+    plan,
+    readFiles: turn.readFiles,
+  });
+  if (turn.mode === "pinned" && plan.deliver.length > 0) {
+    await materializePinnedSkillFiles({
+      session: box.session,
+      artifacts: source.pinnedHarnessSkills ?? [],
+      skillsBase: boxSkillsFolder(adapter.skills, BOX_HOME),
+    });
+  }
+  return written;
+}
+
+/**
+ * The skill folders a harness finds on its box after a run's turn: every
+ * folder in any skills folder the runtime reads. The box first ran Claude Code
+ * and Codex turns with a skill of their own, so a folder another runtime left
+ * behind shows up here unless the writer cleared it.
+ */
+export async function boxReceives(
   harnessId: string,
   pinnedHarnessSkills: PinnedSkillArtifact[],
-): string[] {
-  const adapter = getHarnessAdapter(harnessId);
-  if (!adapter.supportsSkills) return [];
-  const source = selectHarnessSkillSource({ pinnedHarnessSkills });
-  if (source.mode !== "pinned") throw new Error(`Got the ${source.mode} mode.`);
-  return adapter
-    .prepareSkills(source.skills)
-    .payload.map((skill) => skill.name);
+): Promise<string[]> {
+  const box = fakeSkillBox();
+  const leftBehind: PinnedSkillArtifact = {
+    skillId: "sk_left_behind",
+    name: "left-behind",
+    description: "A skill an earlier turn delivered.",
+    content: "# Left behind",
+    contentHash: "hash-left-behind",
+  };
+  for (const runtime of ["claude-code", "codex"]) {
+    await writeTurnToBox(runtime, { pinnedHarnessSkills: [leftBehind] }, box);
+  }
+  await writeTurnToBox(harnessId, { pinnedHarnessSkills }, box);
+  const { readFolders } = getHarnessAdapter(harnessId).skills;
+  return readFolders.flatMap((folder) =>
+    box.skillFolders(`${BOX_HOME}/${folder}`),
+  );
 }

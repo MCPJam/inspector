@@ -5,11 +5,11 @@
  * the start of EVERY prompt turn (`writeClaudeCodeSkills` in `doPromptTurn`,
  * same for Codex) through `writeSkills`, which tracks ownership in a
  * `.ai-sdk-harness-skills.json` manifest and REFUSES any pre-existing skill
- * dir that manifest does not list. That collides with MCPJam's own skill
- * passes, all of which run earlier (in `onSandboxSession`) and create or
- * rewrite exactly those dirs:
+ * dir that manifest does not list. That collides with the box writer's other
+ * steps (`box-skills-writer.ts`), all of which run earlier (in
+ * `onSandboxSession`) and create or rewrite exactly those dirs:
  *
- *   - `materializeSkillFiles` / `materializePinnedSkillFiles` write a skill's
+ *   - `materializeSkillFiles` writes a skill's
  *     supporting files (signed-URL blobs the `skills` param cannot carry),
  *     creating the dir before the adapter ever writes it → the adapter's
  *     "already exists and is not owned" refusal fails the whole turn;
@@ -64,6 +64,13 @@ export interface PreseedSession {
 const ADAPTER_MANIFEST_BASENAME = ".ai-sdk-harness-skills.json";
 /** MCPJam's managed-dirs manifest (see `reconcile-skill-dirs.ts`). */
 const MCPJAM_MANIFEST_BASENAME = ".mcpjam-skills.json";
+
+function adapterManifestNames(parsed: unknown): string[] {
+  const skills = (parsed as { skills?: Array<{ name?: unknown }> })?.skills;
+  return (Array.isArray(skills) ? skills : [])
+    .map((entry) => entry?.name)
+    .filter((name): name is string => typeof name === "string");
+}
 
 async function readManifestNames(
   session: PreseedSession,
@@ -121,12 +128,7 @@ export async function handOffLegacySkillDirs(args: {
   const adapterOwned = await readManifestNames(
     session,
     `${skillsBase}/${ADAPTER_MANIFEST_BASENAME}`,
-    (parsed) => {
-      const skills = (parsed as { skills?: Array<{ name?: unknown }> })?.skills;
-      return (Array.isArray(skills) ? skills : [])
-        .map((entry) => entry?.name)
-        .filter((name): name is string => typeof name === "string");
-    },
+    adapterManifestNames,
   );
   if (adapterOwned === null) return { removed: [] };
 
@@ -169,9 +171,9 @@ export async function handOffLegacySkillDirs(args: {
  * Run the adapter's skills write ahead of it. Options MUST mirror the
  * adapter's own `writeSkills` invocation exactly (the per-adapter divergence —
  * Claude Code passes `trailingNewline: true`, Codex the default — travels on
- * `HarnessRuntimeAdapter.skillsWriteOptions`); the payload is the same object
- * handed to `HarnessAgent`'s `skills` param, so the projected content hash is
- * identical and the adapter's turn-time write is a no-op.
+ * the runtime's skills descriptor); the payload is the same object handed to
+ * `HarnessAgent`'s `skills` param, so the projected content hash is identical
+ * and the adapter's turn-time write is a no-op.
  *
  * Throws on a genuinely foreign colliding dir — the same "already exists and
  * is not owned" refusal the adapter itself would raise a moment later, just
@@ -180,7 +182,7 @@ export async function handOffLegacySkillDirs(args: {
 export async function preseedAdapterSkills(args: {
   session: PreseedSession;
   skillsBase: string;
-  payload: HarnessSkillPayload[];
+  payload: readonly HarnessSkillPayload[];
   trailingNewline: boolean;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -199,4 +201,34 @@ export async function preseedAdapterSkills(args: {
     trailingNewline: args.trailingNewline,
     ...(args.signal ? { abortSignal: args.signal } : {}),
   });
+}
+
+/**
+ * Take every folder the adapter manifest in `skillsBase` lists off the box,
+ * through the adapter's own write, so the manifest stays true: a later write
+ * of any of those skills puts it back rather than finding it "unchanged". A
+ * folder whose manifest is missing, empty or unreadable is left exactly as it
+ * is: the adapter that owns it refuses that manifest on its own turn.
+ *
+ * Best-effort: a failed removal logs and never fails the turn.
+ */
+export async function clearAdapterSkills(args: {
+  session: PreseedSession;
+  skillsBase: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const owned = await readManifestNames(
+    args.session,
+    `${args.skillsBase}/${ADAPTER_MANIFEST_BASENAME}`,
+    adapterManifestNames,
+  );
+  if (!owned?.size) return;
+  try {
+    await preseedAdapterSkills({ ...args, payload: [], trailingNewline: false });
+  } catch (error) {
+    logger.warn("[preseed-adapter-skills] could not clear skills folder", {
+      skillsBase: args.skillsBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

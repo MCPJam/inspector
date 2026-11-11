@@ -98,6 +98,7 @@ describe("materializePinnedSkillFiles", () => {
     const { session, writes, commands } = makeSession();
     await materializePinnedSkillFiles({
       session,
+      skillsBase: "/home/user/.claude/skills",
       artifacts: [
         artifact({
           files: [{ path: "scripts/run.py", content: "print(1)" }],
@@ -117,6 +118,7 @@ describe("materializePinnedSkillFiles", () => {
     const { session, writes, commands } = makeSession();
     await materializePinnedSkillFiles({
       session,
+      skillsBase: "/home/user/.claude/skills",
       artifacts: [
         artifact({
           files: [{ path: "../../evil.sh", content: "rm -rf /" }],
@@ -132,7 +134,11 @@ describe("materializePinnedSkillFiles", () => {
 
   it("writes nothing for artifacts without files, but still runs the prune sweep", async () => {
     const { session, commands } = makeSession();
-    await materializePinnedSkillFiles({ session, artifacts: [artifact()] });
+    await materializePinnedSkillFiles({
+      session,
+      skillsBase: "/home/user/.claude/skills",
+      artifacts: [artifact()],
+    });
     expect(session.writeTextFile).not.toHaveBeenCalled();
     // Prune runs even with no files so a skill whose set became empty gets its
     // orphans removed; the sweep is a single find (empty stdout ⇒ no rm).
@@ -148,6 +154,7 @@ describe("materializePinnedSkillFiles", () => {
     );
     await materializePinnedSkillFiles({
       session,
+      skillsBase: "/home/user/.claude/skills",
       artifacts: [artifact({ files: [{ path: "a.md", content: "keep" }] })],
     });
     // b.md is not in the artifact ⇒ removed; a.md is kept (not rm'd) and rewritten.

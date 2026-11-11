@@ -158,12 +158,9 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import { projectSelectedMcpServersAsHostTools } from "./host-executed-mcp-tools.js";
 import {
-  capabilitySkillFiles,
-  deliveredPluginSkillOrigins,
-  pluginSkillDeliverySummary,
+  logPluginSkillDelivery,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
-  skillsHashWithPlugins,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import { participantSafeStudyError } from "../scenario-runtime-config.js";
@@ -219,7 +216,6 @@ import type {
 import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
-  skillsFingerprint,
 } from "./runtime-skills.js";
 import { deliveredSecretsFingerprint, toSecretEnv } from "./runtime-secrets.js";
 import {
@@ -231,7 +227,6 @@ import {
   orgKeyHarnessSurfaceRefusal,
   orgKeyRefusedSurfaceFor,
 } from "./org-key-surfaces.js";
-import { materializeSkillFiles } from "./materialize-skill-files.js";
 import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
@@ -250,20 +245,14 @@ import {
   withHarnessPromptImages,
   type HarnessPromptImage,
 } from "./harness-prompt-images.js";
+import { harnessTurnSkills } from "./skill-delivery.js";
+import {
+  boxSkillsFolder,
+  planBoxSkills,
+  writeBoxSkills,
+} from "./box-skills-writer.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
-import {
-  composeLivePlusSkills,
-  selectHarnessSkillSource,
-} from "./skill-delivery.js";
-import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
-import {
-  handOffLegacySkillDirs,
-  preseedAdapterSkills,
-} from "./preseed-adapter-skills.js";
-import {
-  reconcileSkillDirs,
-  appendManagedSkills,
-} from "./reconcile-skill-dirs.js";
+import { appendManagedSkills } from "./reconcile-skill-dirs.js";
 import {
   adoptSandboxSkills,
   shouldAdoptSandboxSkills,
@@ -1836,71 +1825,32 @@ export async function runHarnessTurn(
       // Continuity needs a chat owner (chatSessionId + auth + a supported
       // ownerType); eval/synthetic harness turns (streamSink "none", no
       // chatSessionId, or eval/sandbox sourceType) run fresh with no lane.
-      // Runtime skills (Convex source of truth) feed BOTH the harness `skills`
-      // param (the adapter writes them in-sandbox) and resume invalidation (a
-      // skill change must force a fresh session so the adapter re-writes them).
-      // TRI-STATE: a fetch FAILURE must never read as "zero skills" — `skillsHash`
-      // stays `undefined` so it is OMITTED from claim/commit, and the backend
-      // reuses the stored hash (no resume churn, no empty-hash commit). The skills
-      // fingerprint is tracked SEPARATELY from `runtimeFingerprint` precisely so
-      // "unknown" (failure) is distinguishable from "" (empty project).
-      // OVERRIDING MODES (see `selectHarnessSkillSource` for the precedence):
-      // `pinned` (eval/swarm frozen artifacts) and `environment` (a Project
-      // Environment's resolved artifacts) each supply the authoritative set —
-      // even EMPTY — so the live skills query is SKIPPED entirely and
-      // `skillsHash` derives from the supplied artifacts. Legacy callers
-      // (neither present) keep the live tri-state fetch unchanged.
-      //
-      // `live_plus` (the Playground's hidden environment) fetches like `live`
-      // and adds the environment's own skills — but ONLY when that fetch
-      // succeeded: a failed fetch leaves the whole set unknown, so nothing new
-      // is delivered and nothing is reconciled (`runtimeSkills === null`
-      // below), exactly as a plain client turn behaves on the same failure.
-      const skillSource = selectHarnessSkillSource({
+      // The turn's skills, read from the one source that speaks for it
+      // (`harnessTurnSkills`), feed BOTH the box (the writer and the adapter's
+      // `skills` param) and resume invalidation (a skill change must force a
+      // fresh session). TRI-STATE: a failed fetch leaves the set unknown
+      // (`null`) and `skillsHash` undefined, so it is OMITTED from claim/commit
+      // and the backend reuses the stored hash (no resume churn, no empty-hash
+      // commit), and the box is left exactly as it is.
+      const turnSkills = await harnessTurnSkills({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
         ...(includeProjectSkills ? { includeProjectSkills } : {}),
+        ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+        ...(projectId && authHeader
+          ? {
+              project: {
+                skills: () =>
+                  fetchRuntimeSkills(authHeader, projectId, executionScope),
+                files: () =>
+                  fetchRuntimeSkillFiles(authHeader, projectId, executionScope),
+              },
+            }
+          : {}),
       });
-      const skillsArePinned = skillSource.mode === "pinned";
-      const skillsFetch =
-        skillSource.mode === "pinned" || skillSource.mode === "environment"
-          ? { ok: true as const, skills: skillSource.skills }
-          : projectId && authHeader
-          ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
-          : { ok: true as const, skills: [] };
-      const livePlusSkills =
-        skillSource.mode === "live_plus"
-          ? composeLivePlusSkills(
-              skillsFetch.ok ? skillsFetch.skills : null,
-              skillSource.environmentSkills,
-            )
-          : undefined;
-      if (livePlusSkills && livePlusSkills.problems.length > 0) {
-        // Ids and codes only: a skill name is user-authored content.
-        logger.warn("[harness] skills left out: box folder taken", {
-          problems: livePlusSkills.problems.map((problem) => ({
-            code: problem.code,
-            skillId: problem.skillId,
-          })),
-        });
-      }
-      const runtimeSkills = livePlusSkills
-        ? livePlusSkills.skills
-        : skillsFetch.ok
-          ? skillsFetch.skills
-          : null;
-      // A `live_plus` set mixes the project's pool with plugin skills, so the
-      // plugin versions that ran fold into its hash: a version change re-writes
-      // the box's skills even when their text reads the same.
-      const skillsHash =
-        runtimeSkills === null
-          ? undefined
-          : skillSource.mode === "live_plus"
-            ? skillsHashWithPlugins(
-                skillsFingerprint(runtimeSkills),
-                effectiveCapabilities?.pluginVersions ?? [],
-              )
-            : skillsFingerprint(runtimeSkills);
+      const skillsArePinned = turnSkills.mode === "pinned";
+      const runtimeSkills = turnSkills.skills;
+      const skillsHash = turnSkills.skillsHash;
 
       // MATERIALIZED PROJECT SECRETS, taken from the CALLER — never fetched
       // here, and the difference is load-bearing rather than a wiring detail.
@@ -1994,19 +1944,13 @@ export async function runHarnessTurn(
             ),
           )
         : secretEnv;
-      // What the ADAPTER will actually write, per its own rules (Codex rejects
-      // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
-      // it filters rather than throws). Every MCPJam-side skill pass below is
-      // driven off `delivered`, so none of them ever targets a dir the runtime
-      // will not create.
-      const preparedSkills =
-        harnessAdapter.supportsSkills && runtimeSkills !== null
-          ? harnessAdapter.prepareSkills(runtimeSkills)
-          : undefined;
-      const deliveredSkills = preparedSkills?.delivered ?? [];
-      const deliveredSkillNamesById = new Map(
-        deliveredSkills.map((s) => [s.skillId, s.name]),
-      );
+      // What the box gets, by the runtime's own rules (`planBoxSkills`). A
+      // runtime that takes no skills gets none, and its turn still clears
+      // MCPJam's skill folders from what it reads. An unknown set gets no plan,
+      // which leaves the box as it is.
+      const boxSkills = !harnessAdapter.supportsSkills
+        ? planBoxSkills(harnessAdapter.skills, [])
+        : runtimeSkills && planBoxSkills(harnessAdapter.skills, runtimeSkills);
 
       // Local attended turns always keep the runtime's ask mode. Off answers
       // native requests in MCPJam, so toggle changes preserve the fingerprint
@@ -2988,8 +2932,7 @@ export async function runHarnessTurn(
               })
               .map(([name]) => name)
           : [];
-      const skillsBaseDir =
-        localPrepared?.skillsBaseDir ?? harnessAdapter.skillsBaseDir;
+      const skillsHome = localPrepared?.homeDir ?? HOME_ROOT;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
         sandbox,
@@ -2997,14 +2940,12 @@ export async function runHarnessTurn(
         ...(localPrepared
           ? { sandboxConfig: { workDir: localPrepared.sandboxWorkDir } }
           : {}),
-        // Deliver skills via the adapter's own param (host-agnostic: it writes
-        // them natively at the real $HOME — Claude Code under `.claude/skills`,
-        // Codex under `.agents/skills`). The per-adapter `prepareSkills` owns the
-        // payload shaping (both runtimes interpolate `description` into YAML
-        // frontmatter RAW, so it is pre-encoded).
-        ...(preparedSkills && preparedSkills.payload.length
+        // The adapter's own param, which it writes at every prompt turn; the
+        // box writer has already written the same payload, so that write is a
+        // no-op and keeps what the writer added around it.
+        ...(boxSkills?.payload.length
           ? {
-              skills: preparedSkills.payload as NonNullable<
+              skills: boxSkills.payload as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
               >,
             }
@@ -3103,242 +3044,39 @@ export async function runHarnessTurn(
               // Deliberately silent: see above.
             }
           }
-          // The adapter writes skill CONTENT (via the `skills` param above); this
-          // pass only removes managed dirs deleted/renamed in Convex (the adapter
-          // has no deletion semantics and the box persists). Skipped on a fetch
-          // failure (`runtimeSkills === null`) so a transient blip never deletes,
-          // and only for skills-capable adapters.
-          if (harnessAdapter.supportsSkills && runtimeSkills !== null) {
-            await reconcileSkillDirs({
+          // Every box write of the turn's skills (`box-skills-writer.ts`).
+          // No plan, no write: a failed fetch never deletes anything.
+          if (boxSkills) {
+            const written = await writeBoxSkills({
               session,
-              skills: deliveredSkills,
-              skillsHash: skillsHash ?? "",
-              skillsBase: skillsBaseDir!,
+              descriptor: harnessAdapter.skills,
+              home: skillsHome,
+              plan: boxSkills,
+              readFiles: turnSkills.readFiles,
+              ...(uploadQuotaComputerId
+                ? { computerId: uploadQuotaComputerId }
+                : {}),
               ...(abortSignal ? { signal: abortSignal } : {}),
-            }).catch(() => {});
-            // OWNERSHIP PRE-SEED (stable adapter line). The adapter re-writes
-            // its skills at the start of EVERY prompt turn via `writeSkills`,
-            // which refuses any pre-existing dir absent from its own
-            // `.ai-sdk-harness-skills.json` — and the materialize passes below
-            // create exactly those dirs. Running the SAME write here first
-            // (same payload, same options ⇒ same content hash) makes the
-            // adapter's turn-time call a hash-unchanged no-op: dirs become
-            // adapter-owned BEFORE supporting files/frontmatter land in them,
-            // and stay untouched after. Legacy dirs MCPJam managed before the
-            // adapter manifest existed are handed off (removed) first; the
-            // pre-seed re-writes them in the same breath. A genuinely foreign
-            // colliding dir still throws the adapter's own "not owned" error —
-            // just here, before any MCPJam pass has touched the box.
-            if (preparedSkills && preparedSkills.payload.length > 0) {
-              await handOffLegacySkillDirs({
-                session,
-                skillsBase: skillsBaseDir!,
-                deliveredNames: deliveredSkills.map((s) => s.name),
-                ...(abortSignal ? { signal: abortSignal } : {}),
-              });
-              await preseedAdapterSkills({
-                session,
-                skillsBase: skillsBaseDir!,
-                payload: preparedSkills.payload,
-                trailingNewline:
-                  harnessAdapter.skillsWriteOptions.trailingNewline,
-                ...(abortSignal ? { signal: abortSignal } : {}),
+            });
+            if (effectiveCapabilities) {
+              logPluginSkillDelivery({
+                set: effectiveCapabilities,
+                delivered: written.delivered,
+                skillsBaseDir: boxSkillsFolder(harnessAdapter.skills, skillsHome),
+                harness: harnessAdapter.id,
+                boxKind: box?.kind ?? "local-native",
+                boxId: computerId,
               });
             }
-            // PINNED MODE: supporting files ride INLINE on the pinned
-            // artifacts (P0.2 host-channel plugin skills) — never the live
-            // file query. Env-channel entries are SKILL.md-only under P0.3.
-            // Always invoked (not gated on `some(files)`): the writer also
-            // PRUNES stale files so a reused box matches the pinned snapshot
-            // exactly — a skill whose file set became empty must still have its
-            // prior-run orphans removed.
-            if (skillsArePinned) {
+            // A run's frozen copies carry their files' bytes, which the
+            // pinned writer puts beside each SKILL.md.
+            if (skillsArePinned && boxSkills.deliver.length > 0) {
               await materializePinnedSkillFiles({
                 session,
                 artifacts: pinnedHarnessSkills!,
-                skillsBase: skillsBaseDir!,
+                skillsBase: boxSkillsFolder(harnessAdapter.skills, skillsHome),
                 ...(abortSignal ? { signal: abortSignal } : {}),
-              }).catch(() => {});
-            }
-            // LIVE_PLUS (the Playground's hidden environment): the project's
-            // pool AND the environment's own skills, in ONE materialize pass —
-            // the writer prunes every delivered folder it is given no files
-            // for, so two passes would each delete the other's files. The
-            // environment's entries take their files from its capability set
-            // (the only source of a plugin skill's), the pool's from the
-            // project-wide query. If that query FAILS, only the environment's
-            // folders are touched: the pool's files are left exactly as they
-            // are.
-            else if (
-              skillSource.mode === "live_plus" &&
-              livePlusSkills &&
-              deliveredSkills.length > 0
-            ) {
-              const environmentNamesById = new Map(
-                [...deliveredSkillNamesById].filter(([skillId]) =>
-                  livePlusSkills.environmentSkillIds.has(skillId),
-                ),
-              );
-              const environmentFiles = effectiveCapabilities
-                ? capabilitySkillFiles(effectiveCapabilities).filter((file) =>
-                    environmentNamesById.has(file.skillId),
-                  )
-                : [];
-              const projectFileResult =
-                projectId &&
-                authHeader &&
-                livePlusSkills.projectSkillIds.size > 0
-                  ? await fetchRuntimeSkillFiles(
-                      authHeader,
-                      projectId,
-                      executionScope,
-                    ).catch(() => ({ ok: false } as const))
-                  : ({ ok: true, files: [] } as const);
-              await materializeSkillFiles({
-                session,
-                files: projectFileResult.ok
-                  ? [
-                      ...projectFileResult.files.filter((file) =>
-                        livePlusSkills.projectSkillIds.has(file.skillId),
-                      ),
-                      ...environmentFiles,
-                    ]
-                  : environmentFiles,
-                skillNamesById: projectFileResult.ok
-                  ? deliveredSkillNamesById
-                  : environmentNamesById,
-                skillsBase: skillsBaseDir!,
-                ...(uploadQuotaComputerId
-                  ? { computerId: uploadQuotaComputerId }
-                  : {}),
-                ...(abortSignal ? { signal: abortSignal } : {}),
-              }).catch(() => {});
-              if (effectiveCapabilities) {
-                const deliveredPluginSet = {
-                  ...effectiveCapabilities,
-                  pluginSkills: effectiveCapabilities.pluginSkills.filter(
-                    (skill) => environmentNamesById.has(skill.skillId),
-                  ),
-                };
-                const pluginSkills =
-                  pluginSkillDeliverySummary(deliveredPluginSet);
-                if (pluginSkills.length > 0) {
-                  logger.info("[harness] delivered plugin skills", {
-                    boxKind: box?.kind ?? "local-native",
-                    boxId: computerId,
-                    skills: pluginSkills,
-                  });
-                }
-                const skillOrigins = deliveredPluginSkillOrigins({
-                  set: deliveredPluginSet,
-                  skillsBaseDir: skillsBaseDir!,
-                  deliveredNameBySkillId: deliveredSkillNamesById,
-                });
-                if (skillOrigins.length > 0) {
-                  logger.info("[harness] plugin skill origins", {
-                    harness: harnessAdapter.id,
-                    origins: skillOrigins,
-                  });
-                }
-              }
-            }
-            // Materialize supporting files AFTER the pre-seed (each SKILL.md is
-            // written and adapter-owned; reconcile removed stale managed dirs),
-            // so the files land in dirs the adapter's turn-time write will not
-            // refuse or clobber. Fetched here rather
-            // than at turn start to keep the zero-file fast path free. Fully
-            // fail-soft; guest/swarm scope uses the execution-scoped file query.
-            //
-            // ENVIRONMENT MODE (INS-7): files come from the SAME resolution
-            // that produced the skills, not from a second query.
-            //
-            // This is not just an efficiency: the project-wide file query
-            // (`projectSkills:listSkillFilesForRuntime`) filters rows through
-            // `isStandaloneSkill`, which excludes `plugin_component` rows by
-            // construction — so a plugin skill delivered to a Computer reached
-            // the box as a bare SKILL.md, with its `scripts/` and `references/`
-            // silently absent. The resolved spec carries those files with signed
-            // URLs minted in the same atomic read, so delivery consumes them.
-            //
-            // Presence of the capability set is authoritative (an empty file
-            // list is a real "no supporting files" and still runs, so orphans
-            // from a previous turn get pruned) — the tri-state fetch-failure
-            // concern below does not apply, because there is no second fetch to
-            // fail.
-            else if (
-              effectiveCapabilities !== undefined &&
-              deliveredSkills.length > 0
-            ) {
-              await materializeSkillFiles({
-                session,
-                files: capabilitySkillFiles(effectiveCapabilities),
-                skillNamesById: deliveredSkillNamesById,
-                skillsBase: skillsBaseDir!,
-                ...(uploadQuotaComputerId
-                  ? { computerId: uploadQuotaComputerId }
-                  : {}),
-                ...(abortSignal ? { signal: abortSignal } : {}),
-              }).catch(() => {});
-              const pluginSkills = pluginSkillDeliverySummary(
-                effectiveCapabilities,
-              );
-              if (pluginSkills.length > 0) {
-                // Provenance, not a pin: which plugin material this sandbox was
-                // given. Never re-read to restore anything.
-                logger.info("[harness] delivered plugin skills", {
-                  // The BOX this material went to — a computer row id or an
-                  // ephemeral sandbox row id. Provenance, not a pin.
-                  boxKind: box?.kind ?? "local-native",
-                  boxId: computerId,
-                  skills: pluginSkills,
-                });
-              }
-              // INS-8 ORIGIN MAPPING: the same delivery, keyed by the identity
-              // the RUNTIME exposes (the on-box dir it reads the skill from), so
-              // a skill operation observed on the box is attributable to the
-              // exact immutable plugin revision that produced it — per runtime,
-              // since the root differs (Codex `.agents/skills`).
-              const skillOrigins = deliveredPluginSkillOrigins({
-                set: effectiveCapabilities,
-                skillsBaseDir: skillsBaseDir!,
-                deliveredNameBySkillId: deliveredSkillNamesById,
               });
-              if (skillOrigins.length > 0) {
-                logger.info("[harness] plugin skill origins", {
-                  harness: harnessAdapter.id,
-                  origins: skillOrigins,
-                });
-              }
-            }
-            // LEGACY / non-environment mode. The file query stays PROJECT-WIDE
-            // while the delivered skill set may be narrower:
-            // `materializeSkillFiles` filters every file through
-            // `skillNamesById`, which is built from `runtimeSkills` alone, so a
-            // file belonging to a project skill this turn did NOT deliver is
-            // skipped and its dir is never created.
-            else if (projectId && authHeader && deliveredSkills.length > 0) {
-              // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
-              // materialization then — an empty file set would otherwise prune
-              // every delivered skill's on-box files. `{ ok: true, files: [] }`
-              // is a successful "no files" and still runs, so a skill whose last
-              // file was removed gets pruned.
-              const fileResult = await fetchRuntimeSkillFiles(
-                authHeader,
-                projectId,
-                executionScope,
-              ).catch(() => ({ ok: false } as const));
-              if (fileResult.ok) {
-                await materializeSkillFiles({
-                  session,
-                  files: fileResult.files,
-                  skillNamesById: deliveredSkillNamesById,
-                  skillsBase: skillsBaseDir!,
-                  ...(uploadQuotaComputerId
-                    ? { computerId: uploadQuotaComputerId }
-                    : {}),
-                  ...(abortSignal ? { signal: abortSignal } : {}),
-                }).catch(() => {});
-              }
             }
           }
           // Composer attachments onto the disk the runtime is about to start
@@ -3533,26 +3271,6 @@ export async function runHarnessTurn(
         onLost: (error) => livenessAbort.abort(error),
       }) : undefined;
       try {
-        // Re-write SKILL.md WITH preserved extra frontmatter (license /
-        // compatibility / metadata) for skills that carry it. The adapter's
-        // `skills` param structurally can't deliver those fields. The
-        // `onSandboxSession` pre-seed wrote each (extras-less) SKILL.md and made
-        // the adapter's own per-prompt write a hash-unchanged no-op, so this
-        // rewrite survives the turn; it runs post-createSession only to keep it
-        // off the session-start critical path. Zero session calls when no skill
-        // has extras; same gating as the onSandboxSession skill passes.
-        // Fail-soft, except that it throws when a failed rewrite leaves a
-        // SKILL.md it can't read, or one listing `allowed-tools` that it can't
-        // remove. It runs inside this `try` so that throw fails the turn and
-        // the `finally` releases the box.
-        if (deliveredSkills.length > 0 && sandboxFileSession) {
-          await materializeSkillFrontmatter({
-            session: sandboxFileSession,
-            skills: deliveredSkills,
-            skillsBase: skillsBaseDir!,
-            ...(abortSignal ? { signal: abortSignal } : {}),
-          });
-        }
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         // `session` is REQUIRED — agent.stream() reads options.session in
         // _startTurn (session.promptTurn); omitting it throws "Cannot read
@@ -4752,8 +4470,8 @@ export async function runHarnessTurn(
               projectId,
               // Names already delivered as cloud skills this turn are the adapter's
               // own dirs — not adoptions.
-              managedNames: new Set(deliveredSkills.map((s) => s.name)),
-              skillsBase: skillsBaseDir!,
+              managedNames: new Set(boxSkills?.deliver.map((s) => s.name)),
+              skillsBase: boxSkillsFolder(harnessAdapter.skills, skillsHome),
               // The turn's `abortSignal` bounded nothing here: this branch only
               // runs on a CLEAN success, where that signal is by definition not
               // aborted. Compose it with a deadline so a stalled adoption can't
@@ -4773,7 +4491,7 @@ export async function runHarnessTurn(
               await appendManagedSkills({
                 session: fileSession,
                 skills: adopted,
-                skillsBase: skillsBaseDir!,
+                skillsBase: boxSkillsFolder(harnessAdapter.skills, skillsHome),
               }).catch(() => {});
             }
           }

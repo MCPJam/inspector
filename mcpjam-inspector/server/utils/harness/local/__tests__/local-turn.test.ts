@@ -1,4 +1,5 @@
 import { readLocalHarnessAuthorization } from "../authorization.js";
+import { HARNESS_SKILLS } from "../../skills-descriptor.js";
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: vi.fn(async () => ({ autoApproveAcknowledgedAt: "2026-10-04T00:00:00.000Z" })) }));
 import { toAdapterPath } from "../adapter-path.js";
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -499,7 +500,7 @@ describe("local lane state lifetime", () => {
       ...turnArgs(), scopedEnv: { SERVICE_KEY: "test-value" }, onSecretEnvDelivered: delivered,
     });
     if (!result.ok) throw new Error(result.message);
-    expect(result.prepared.skillsBaseDir).toBe(toAdapterPath(join(`${stateRoot}-sessions`, turnArgs().sessionId, "home", ".claude", "skills")));
+    expect(result.prepared.homeDir).toBe(toAdapterPath(join(`${stateRoot}-sessions`, turnArgs().sessionId, "home")));
     const providerArgs = (createSupervisedLocalHarnessProvider.mock.calls as unknown[][])[0][0] as any;
     expect(providerArgs.scopedEnv).toEqual({ SERVICE_KEY: "test-value" });
     expect(delivered).not.toHaveBeenCalled();
@@ -617,7 +618,7 @@ describe("local Codex", () => {
       CODEX_API_KEY: "cap",
       OPENAI_BASE_URL: "http://127.0.0.1:1",
     });
-    expect(result.prepared.skillsBaseDir).toMatch(/[/\\]\.agents[/\\]skills$/);
+    expect(`${result.prepared.homeDir}/${HARNESS_SKILLS.codex.writeFolder}`).toMatch(/[/\\]\.agents[/\\]skills$/);
     expect(createSupervisedLocalHarnessProvider).toHaveBeenCalledWith(
       expect.objectContaining({ harnessId: "codex" }),
     );

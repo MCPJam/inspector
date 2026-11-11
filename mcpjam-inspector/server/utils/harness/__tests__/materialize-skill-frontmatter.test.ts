@@ -1,12 +1,17 @@
 import { describe, it, expect } from "vitest";
 import matter from "gray-matter";
+import { parse as parseYaml } from "yaml";
+import { writeSkills } from "@ai-sdk/harness/utils";
+import { planBoxSkills } from "../box-skills-writer";
 import {
   generateSkillMdWithExtras,
   hasAllowedToolsGrant,
   materializeSkillFrontmatter,
+  renderSkillMd,
   type FrontmatterSession,
 } from "../materialize-skill-frontmatter";
 import type { RuntimeSkill } from "../runtime-skills";
+import { HARNESS_SKILLS } from "../skills-descriptor";
 
 const SKILLS_BASE = "/home/user/.claude/skills";
 
@@ -15,18 +20,6 @@ const STALE_GRANT_MD =
   '---\nname: git-helper\ndescription: "Git"\nlicense: "MIT"\nallowed-tools: ["Bash(*)"]\n---\n\nUse git.\n';
 /** What the adapter writes: no extras, so no grant. */
 const ADAPTER_MD = "---\nname: git-helper\ndescription: Git\n---\n\nUse git.\n";
-
-function fakeSession() {
-  const writes: { path: string; content: string }[] = [];
-  const session: FrontmatterSession = {
-    writeTextFile: async (args) => {
-      writes.push(args);
-    },
-    readTextFile: async () => null,
-    run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-  };
-  return { session, writes };
-}
 
 /**
  * A box whose SKILL.md writes all fail. A read returns `onBox` unless
@@ -245,201 +238,128 @@ describe("hasAllowedToolsGrant", () => {
   });
 });
 
+const RULES = HARNESS_SKILLS["claude-code"].frontmatter;
+
+/** A box holding `files`, whose writes land in the same map. */
+function boxSession(files: Record<string, string> = {}) {
+  const box = new Map(Object.entries(files));
+  const writes: string[] = [];
+  const session: FrontmatterSession = {
+    writeTextFile: async ({ path, content }) => {
+      writes.push(path);
+      box.set(path, content);
+    },
+    readTextFile: async ({ path }) => box.get(path) ?? null,
+    run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+  };
+  return { session, box, writes };
+}
+
 describe("materializeSkillFrontmatter", () => {
-  it("rewrites SKILL.md only for skills WITH extras (zero calls otherwise)", async () => {
-    const { session, writes } = fakeSession();
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({ skillId: "sk_1", name: "plain" }),
-        skill({
-          skillId: "sk_2",
-          name: "with-extras",
-          extraFrontmatter: { license: "MIT", allowedTools: ["Read"] },
-        }),
-        // An empty extras object counts as "no extras" (backend never emits it).
-        skill({ skillId: "sk_3", name: "empty-extras", extraFrontmatter: {} }),
-      ],
+  const settle = (
+    session: FrontmatterSession,
+    skills: RuntimeSkill[],
+    skillsBase = SKILLS_BASE,
+  ) => materializeSkillFrontmatter({ session, skills, skillsBase, rules: RULES });
+
+  it("writes each SKILL.md that differs from what MCPJam renders, and no other", async () => {
+    const plain = skill({ skillId: "sk_1", name: "plain" });
+    const { session, box, writes } = boxSession({
+      [`${SKILLS_BASE}/plain/SKILL.md`]: renderSkillMd(plain, RULES),
     });
-    expect(res).toEqual({ rewritten: 1, skipped: 0 });
-    expect(writes).toHaveLength(1);
-    expect(writes[0].path).toBe(`${SKILLS_BASE}/with-extras/SKILL.md`);
-    expect(writes[0].content).toContain('license: "MIT"');
-    expect(writes[0].content).not.toContain("allowed-tools");
+    const res = await settle(session, [
+      plain,
+      skill({
+        skillId: "sk_2",
+        name: "with-extras",
+        extraFrontmatter: { license: "MIT", allowedTools: ["Read"] },
+      }),
+    ]);
+    expect(res).toEqual({ rewritten: 1, skipped: 0, removed: new Map() });
+    expect(writes).toEqual([`${SKILLS_BASE}/with-extras/SKILL.md`]);
+    const written = box.get(`${SKILLS_BASE}/with-extras/SKILL.md`)!;
+    expect(written).toContain('license: "MIT"');
+    expect(written).not.toContain("allowed-tools");
   });
 
-  it("rewrites a skill whose only extra is allowedTools, so a reused box drops the line", async () => {
-    // A box reused across turns can still hold a SKILL.md an earlier rewrite
-    // wrote WITH `allowed-tools`. The adapter leaves a hash-unchanged skill
-    // alone, so only this pass can take the line out.
+  it("takes out a grant an earlier write left on a skill whose extras are now gone", async () => {
+    // The stored skill has no extras left, so the adapter's hash is the same
+    // as when the box got the file and the adapter leaves it alone.
     const path = `${SKILLS_BASE}/git-helper/SKILL.md`;
-    const box = new Map([
-      [
-        path,
-        '---\nname: git-helper\ndescription: "Git"\nallowed-tools: ["Bash(*)"]\n---\n\nUse git.\n',
-      ],
-    ]);
-    const session: FrontmatterSession = {
-      writeTextFile: async (args) => {
-        box.set(args.path, args.content);
-      },
-      readTextFile: async (args) => box.get(args.path) ?? null,
-      run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    };
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({
-          name: "git-helper",
-          description: "Git",
-          content: "Use git.",
-          extraFrontmatter: { allowedTools: ["Bash(*)"] },
-        }),
-      ],
+    const { session, box } = boxSession({ [path]: STALE_GRANT_MD });
+    const gitHelper = skill({
+      name: "git-helper",
+      description: "Git",
+      content: "Use git.",
     });
-    expect(res).toEqual({ rewritten: 1, skipped: 0 });
+    const res = await settle(session, [gitHelper]);
+    expect(res.rewritten).toBe(1);
     expect(box.get(path)).toBe(
       '---\nname: git-helper\ndescription: "Git"\n---\n\nUse git.\n',
     );
   });
 
-  it("rewrites under the runtime's own root when given one (codex)", async () => {
-    // The rewrite REPLACES the SKILL.md the adapter just wrote. Aiming it at
-    // the Claude root during a Codex turn would leave codex's file (without
-    // extras) in place and drop a stray file the CLI never reads.
-    const { session, writes } = fakeSession();
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({
-          skillId: "sk_1",
-          name: "with-extras",
-          extraFrontmatter: { allowedTools: ["Read"] },
-        }),
-      ],
-      skillsBase: "/home/user/.agents/skills",
-    });
-    expect(res).toEqual({ rewritten: 1, skipped: 0 });
-    expect(writes[0].path).toBe(
-      "/home/user/.agents/skills/with-extras/SKILL.md"
+  it("takes out a grant something on the box added since the last turn", async () => {
+    const gitHelper = skill({ name: "git-helper", content: "Use git." });
+    const path = `${SKILLS_BASE}/git-helper/SKILL.md`;
+    const tampered = renderSkillMd(gitHelper, RULES).replace(
+      "\n---\n",
+      '\nallowed-tools: ["Bash(*)"]\n---\n',
     );
+    const { session, box } = boxSession({ [path]: tampered });
+    await settle(session, [gitHelper]);
+    expect(hasAllowedToolsGrant(box.get(path)!)).toBe(false);
   });
 
-  it("makes no session call when no skill has extras", async () => {
-    const { session, writes } = fakeSession();
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [skill({}), skill({ skillId: "sk_2", name: "other" })],
-    });
-    expect(res).toEqual({ rewritten: 0, skipped: 0 });
-    expect(writes).toHaveLength(0);
+  it("writes under the runtime's own folder (codex)", async () => {
+    const { session, writes } = boxSession();
+    await settle(session, [skill({ name: "pdf-tools" })], "/home/user/.agents/skills");
+    expect(writes).toEqual(["/home/user/.agents/skills/pdf-tools/SKILL.md"]);
   });
 
-  it("is fail-soft: a write error skips that skill, never throws", async () => {
-    // The SKILL.md left on the box grants nothing, so the failed write needs
-    // no removal and no thrown error.
-    const writes: string[] = [];
-    const commands: string[] = [];
-    const session: FrontmatterSession = {
-      writeTextFile: async ({ path }) => {
-        if (path.includes("/boom/")) throw new Error("box unreachable");
-        writes.push(path);
-      },
-      readTextFile: async () => ADAPTER_MD,
-      run: async ({ command }) => {
-        commands.push(command);
-        return { exitCode: 0, stdout: "", stderr: "" };
-      },
-    };
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({
-          skillId: "sk_1",
-          name: "boom",
-          extraFrontmatter: { license: "MIT" },
-        }),
-        skill({
-          skillId: "sk_2",
-          name: "fine",
-          extraFrontmatter: { license: "MIT" },
-        }),
-      ],
-    });
-    expect(res).toEqual({ rewritten: 1, skipped: 1 });
-    expect(writes).toEqual([`${SKILLS_BASE}/fine/SKILL.md`]);
+  it("is fail-soft: a failed write that leaves a file with no grant keeps the skill", async () => {
+    const { session, commands } = failingWriteSession({ onBox: ADAPTER_MD });
+    const res = await settle(session, [
+      skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
+    ]);
+    expect(res).toEqual({ rewritten: 0, skipped: 1, removed: new Map() });
     expect(commands).toEqual([]);
   });
 
-  it("removes the skill when its rewrite fails and the box's SKILL.md still lists allowed-tools", async () => {
-    // The stored extras no longer have `allowedTools`, but only the extras
-    // changed, so the adapter left the file an earlier write put there. The
-    // file on the box decides, and the skill comes off the box.
-    const { session, commands } = failingWriteSession({
-      onBox: STALE_GRANT_MD,
-    });
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
-      ],
-    });
-    expect(res).toEqual({ rewritten: 0, skipped: 1 });
-    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
-  });
-
-  it("removes the skill when its rewrite fails and the box's SKILL.md frontmatter doesn't parse", async () => {
-    // A grant can't be ruled out, so the file counts as one.
-    const { session, commands } = failingWriteSession({
-      onBox:
-        '---\nname: git-helper\nallowed-tools: ["Bash(*)"\n---\n\nUse git.\n',
-    });
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
-      ],
-    });
-    expect(res).toEqual({ rewritten: 0, skipped: 1 });
-    expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
-  });
-
   it.each([
-    ["the adapter's SKILL.md", ADAPTER_MD],
-    ["no SKILL.md", null],
+    ["still lists allowed-tools", STALE_GRANT_MD],
+    // A grant can't be ruled out, so the file counts as one.
+    [
+      "has frontmatter that doesn't parse",
+      '---\nname: git-helper\nallowed-tools: ["Bash(*)"\n---\n\nUse git.\n',
+    ],
   ])(
-    "leaves the skill alone when its rewrite fails and the box holds %s",
+    "takes the skill off the box when its write fails and the box's SKILL.md %s",
     async (_, onBox) => {
-      // Stored `allowedTools` alone doesn't remove anything: the box grants
-      // nothing, so the turn keeps the skill.
       const { session, commands } = failingWriteSession({ onBox });
-      const res = await materializeSkillFrontmatter({
-        session,
-        skills: [
-          skill({
-            name: "git-helper",
-            extraFrontmatter: { allowedTools: ["Bash(*)"] },
-          }),
-        ],
-      });
-      expect(res).toEqual({ rewritten: 0, skipped: 1 });
-      expect(commands).toEqual([]);
+      const res = await settle(session, [
+        skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
+      ]);
+      expect([...res.removed.keys()]).toEqual(["git-helper"]);
+      expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
     },
   );
 
-  it("stops the turn when its rewrite fails and the box's SKILL.md can't be read", async () => {
+  it("leaves the skill alone when its write fails and the box holds no SKILL.md", async () => {
+    const { session, commands } = failingWriteSession({ onBox: null });
+    const res = await settle(session, [skill({ name: "git-helper" })]);
+    expect(res.removed).toEqual(new Map());
+    expect(commands).toEqual([]);
+  });
+
+  it("stops the turn when its write fails and the box's SKILL.md can't be read", async () => {
     const { session, commands } = failingWriteSession({
       readTextFile: async () => {
         throw new Error("box unreachable");
       },
     });
     await expect(
-      materializeSkillFrontmatter({
-        session,
-        skills: [
-          skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
-        ],
-      }),
+      settle(session, [skill({ name: "git-helper" })]),
     ).rejects.toThrow('Could not update or read the skill "git-helper"');
     expect(commands).toEqual([]);
   });
@@ -463,29 +383,86 @@ describe("materializeSkillFrontmatter", () => {
         run,
       });
       await expect(
-        materializeSkillFrontmatter({
-          session,
-          skills: [
-            skill({ name: "git-helper", extraFrontmatter: { license: "MIT" } }),
-          ],
-        }),
+        settle(session, [skill({ name: "git-helper" })]),
       ).rejects.toThrow('Could not update or remove the skill "git-helper"');
       expect(commands).toEqual([`rm -rf -- '${SKILLS_BASE}/git-helper'`]);
     },
   );
 
   it("never interpolates an invalid skill name into a box path", async () => {
-    const { session, writes } = fakeSession();
-    const res = await materializeSkillFrontmatter({
-      session,
-      skills: [
-        skill({
-          name: "../escape",
-          extraFrontmatter: { license: "MIT" },
-        }),
-      ],
-    });
-    expect(res).toEqual({ rewritten: 0, skipped: 1 });
+    const { session, writes } = boxSession();
+    const res = await settle(session, [skill({ name: "../escape" })]);
+    expect(res.rewritten).toBe(0);
     expect(writes).toHaveLength(0);
+  });
+});
+
+describe("renderSkillMd, by the runtime's frontmatter rules", () => {
+  it("renders exactly what Claude Code's adapter writes for a skill with no extras", async () => {
+    // The adapter writes its `skills` param; the box writer's SKILL.md step
+    // then has nothing to rewrite for such a skill.
+    const pdf = skill({ description: 'Process "PDFs"\nsafely' });
+    const { session, box } = boxSession();
+    const claude = HARNESS_SKILLS["claude-code"];
+    await writeSkills({
+      sandbox: session as never,
+      homePath: "/home/user",
+      skillsDir: claude.writeFolder,
+      skills: planBoxSkills(claude, [pdf]).payload,
+      trailingNewline: claude.trailingNewline,
+    });
+    expect(box.get(`${SKILLS_BASE}/pdf-tools/SKILL.md`)).toBe(
+      renderSkillMd(pdf, claude.frontmatter),
+    );
+  });
+
+  it("cuts the description to the runtime's limit", () => {
+    const text = renderSkillMd(skill({ description: "x".repeat(2000) }), {
+      ...RULES,
+      descriptionMaxLength: 1024,
+    });
+    expect(matter(text).data.description).toHaveLength(1024);
+  });
+
+  it("adds Cursor's surface to a skill that lists surfaces without it", () => {
+    const rules = HARNESS_SKILLS.cursor.frontmatter;
+    const render = (surfaces: string) =>
+      matter(
+        renderSkillMd(
+          skill({ extraFrontmatter: { metadata: { surfaces, team: "docs" } } }),
+          rules,
+        ),
+      ).data.metadata;
+    expect(render("ide")).toEqual({ surfaces: "ide,cli", team: "docs" });
+    expect(render("cli, ide")).toEqual({ surfaces: "cli, ide", team: "docs" });
+    // No surfaces: Cursor loads the skill everywhere already.
+    expect(
+      matter(renderSkillMd(skill({ extraFrontmatter: { license: "MIT" } }), rules))
+        .data.metadata,
+    ).toBeUndefined();
+  });
+
+  it.each(
+    Object.entries(HARNESS_SKILLS).filter(
+      ([, descriptor]) => descriptor.frontmatter.strictYaml,
+    ),
+  )("writes frontmatter %s's strict YAML parser accepts", (_, descriptor) => {
+    const text = renderSkillMd(
+      skill({
+        description: 'Use when: "quoted"\n\ttabbed \\ and a # not a comment',
+        extraFrontmatter: {
+          license: "MIT: see LICENSE",
+          compatibility: "node >= 20, - not a list",
+          metadata: { "key: with colon": "value, with [brackets] {and braces}" },
+        },
+      }),
+      descriptor.frontmatter,
+    );
+    const block = /^---\n([\s\S]*?)\n---\n/.exec(text)![1]!;
+    expect(() => parseYaml(block, { strict: true, uniqueKeys: true })).not.toThrow();
+    expect(parseYaml(block)).toMatchObject({
+      description: 'Use when: "quoted"\n\ttabbed \\ and a # not a comment',
+      metadata: { "key: with colon": "value, with [brackets] {and braces}" },
+    });
   });
 });

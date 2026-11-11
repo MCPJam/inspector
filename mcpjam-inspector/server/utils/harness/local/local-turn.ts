@@ -132,8 +132,9 @@ export interface PreparedLocalHarnessTurn {
    * directly is what put bridge state inside the user's checkout.
    */
   sandboxWorkDir: string;
-  /** Adapter-facing path under the session's synthetic HOME. */
-  skillsBaseDir: string;
+  /** Adapter-facing path of the session's synthetic HOME, where its runtime
+   *  keeps skills (the folder is the runtime's skills descriptor's). */
+  homeDir: string;
   /**
    * Where this session's composer attachments land: the session's own state
    * directory, never the workspace (the user's real checkout, reached through
@@ -290,11 +291,6 @@ function localChildAuth(
 }
 
 /** Where each harness reads skills, under the session's synthetic HOME. */
-const LOCAL_SKILLS_SUBDIR: Readonly<Record<SupportedLocalHarnessId, readonly string[]>> = {
-  "claude-code": [".claude", "skills"],
-  codex: [".agents", "skills"],
-};
-
 export async function prepareLocalHarnessTurn(
   args: PrepareLocalHarnessTurnArgs,
 ): Promise<LocalHarnessTurnPreparation> {
@@ -752,9 +748,7 @@ async function prepareWithReservedRuntime(outer: {
       sandbox,
       auth: localChildAuth(harnessId, started),
       sandboxWorkDir: "project",
-      skillsBaseDir: toAdapterPath(
-        join(sessionStateDir, "home", ...LOCAL_SKILLS_SUBDIR[harnessId]),
-      ),
+      homeDir: toAdapterPath(join(sessionStateDir, "home")),
       attachmentsDir: {
         writeDir: toAdapterPath(join(sessionStateDir, "attachments")),
         agentDir: join(sessionStateDir, "attachments"),

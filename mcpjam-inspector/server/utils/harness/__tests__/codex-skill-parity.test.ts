@@ -10,9 +10,9 @@
  * apart from their root.
  *
  * They pin the three facts MCPJam's own skill passes depend on:
- *   1. WHERE the skills land — `skillsBaseDir` must equal the adapter's real
- *      target, or the supporting-file / frontmatter / reconcile passes would
- *      operate on directories the runtime never reads.
+ *   1. WHERE the skills land — the descriptor's write folder must equal the
+ *      adapter's real target, or the box writer's supporting-file, SKILL.md
+ *      and reconcile steps would operate on folders the runtime never reads.
  *   2. That the delivered SKILL.md is valid frontmatter for our descriptions
  *      (both runtimes interpolate `description: ${value}` raw, hence
  *      `frontmatterSafeSkills`).
@@ -34,6 +34,7 @@ import matter from "gray-matter";
 import { WebSocketServer } from "ws";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
+import { boxSkillsFolder } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
 import {
   prepareCodexSkills,
@@ -189,7 +190,7 @@ function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
 }
 
 describe("codex skill parity (real adapter)", () => {
-  it("writes each delivered skill under the adapter's advertised skillsBaseDir", async () => {
+  it("writes each delivered skill under the descriptor's write folder", async () => {
     const adapter = getHarnessAdapter("codex");
     const prepared = prepareCodexSkills([
       skill({ skillId: "s1", name: "pdf-tools" }),
@@ -205,13 +206,13 @@ describe("codex skill parity (real adapter)", () => {
     // The load-bearing assertion: the registry's root IS where codex writes.
     // If the adapter ever moves its root, every MCPJam skill pass would silently
     // target a directory the CLI does not read — this fails first.
-    expect(adapter.skillsBaseDir).toBe(`${BOX_HOME}/.agents/skills`);
+    expect(boxSkillsFolder(adapter.skills, BOX_HOME)).toBe(`${BOX_HOME}/.agents/skills`);
     // (The stable writer syncs skills sorted by name, so csv-tools lands first.)
     expect(
-      skillWrites(writes, adapter.skillsBaseDir).map((w) => w.path)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME)).map((w) => w.path)
     ).toEqual([
-      `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/csv-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
     ]);
     // Nothing lands anywhere else under $HOME's skill roots — in particular not
     // Claude Code's, which MCPJam's passes would then also have to reconcile.
@@ -236,12 +237,12 @@ describe("codex skill parity (real adapter)", () => {
     expectReachedPrompt(error);
     // Within a skill the writer orders files by locale, so compare as a set.
     expect(
-      skillWrites(writes, adapter.skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME))
         .map((w) => w.path)
         .sort()
     ).toEqual([
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/scripts/run.py`,
     ]);
   });
 
@@ -260,7 +261,7 @@ describe("codex skill parity (real adapter)", () => {
 
     expectReachedPrompt(error);
     const parsed = matter(
-      skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)[0]!.content
+      skillWrites(writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))[0]!.content
     );
     expect(parsed.data.name).toBe("pdf-tools");
     expect(parsed.data.description).toBe('Process: PDFs "safely"');
@@ -281,7 +282,7 @@ describe("codex skill parity (real adapter)", () => {
     expectReachedPrompt(error);
     const written = skillWrites(
       writes,
-      getHarnessAdapter("codex").skillsBaseDir
+      boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME)
     )[0]!;
     let parsedDescription: unknown;
     try {
@@ -316,7 +317,7 @@ describe("codex skill parity (real adapter)", () => {
 
     expectReachedPrompt(error);
     expect(
-      skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))
     ).toHaveLength(names.length);
   });
 
@@ -356,12 +357,12 @@ describe("codex skill parity (real adapter)", () => {
       w.path.endsWith("/SKILL.md")
     )!;
     expect(codexWrite.path).toBe(
-      `${codexAdapter.skillsBaseDir}/pdf-tools/SKILL.md`
+      `${boxSkillsFolder(codexAdapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`
     );
     expect(claudeWrite.path).toBe(
-      `${claudeAdapter.skillsBaseDir}/pdf-tools/SKILL.md`
+      `${boxSkillsFolder(claudeAdapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`
     );
-    expect(claudeAdapter.skillsBaseDir).toBe(`${BOX_HOME}/.claude/skills`);
+    expect(boxSkillsFolder(claudeAdapter.skills, BOX_HOME)).toBe(`${BOX_HOME}/.claude/skills`);
     // Same frontmatter + body (claude-code appends a trailing newline).
     const codexParsed = matter(codexWrite.content);
     const claudeParsed = matter(claudeWrite.content);
@@ -372,7 +373,7 @@ describe("codex skill parity (real adapter)", () => {
 
 /** Supporting files, the absence of a Claude Code root, and the name rule. */
 describe("codex skill delivery details", () => {
-  it("writes delivered skills and supporting files under the advertised skillsBaseDir", async () => {
+  it("writes delivered skills and supporting files under the descriptor's write folder", async () => {
     const adapter = getHarnessAdapter("codex");
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
@@ -390,13 +391,13 @@ describe("codex skill delivery details", () => {
 
     expectReachedPrompt(error);
     expect(
-      skillWrites(writes, adapter.skillsBaseDir)
+      skillWrites(writes, boxSkillsFolder(adapter.skills, BOX_HOME))
         .map((w) => w.path)
         .sort()
     ).toEqual([
-      `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
-      `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/csv-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/SKILL.md`,
+      `${boxSkillsFolder(adapter.skills, BOX_HOME)}/pdf-tools/scripts/run.py`,
     ]);
     expect(writes.filter((w) => w.path.includes("/.claude/skills/"))).toEqual(
       []
@@ -414,7 +415,7 @@ describe("codex skill delivery details", () => {
     );
     expectReachedPrompt(ok.error);
     expect(
-      skillWrites(ok.writes, getHarnessAdapter("codex").skillsBaseDir)
+      skillWrites(ok.writes, boxSkillsFolder(getHarnessAdapter("codex").skills, BOX_HOME))
     ).toHaveLength(names.length);
 
     const bad = await promptWithSkills(createCodexAppServer() as never, [

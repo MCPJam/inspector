@@ -88,7 +88,7 @@ describe("harness registry", () => {
     expect(a.transport).toBe("app-server");
     expect(a.mcpDelivery).toBe("mcpjam");
     expect(a.supportsSkills).toBe(true);
-    expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
+    expect(a.skills.writeFolder).toBe(".agents/skills");
     expect(a.supportsPluginBundles).toBe(false);
     expect(a.supportsNativeToolApproval).toBe(true);
     expect(a.requiresComputer).toBe(true);
@@ -144,9 +144,18 @@ describe("harness registry", () => {
       if (adapter.supportsPluginBundles) {
         expect(adapter.deliverPluginBundles).toBeTypeOf("function");
       }
+      // A runtime takes skills only where its headless mode loads them on
+      // its own; turning one on with its bridge still off would deliver
+      // folders nobody reads.
       if (adapter.supportsSkills) {
-        expect(adapter.skillsBaseDir.startsWith("/")).toBe(true);
+        expect(adapter.skills.headlessLoading).toBe("native");
       }
+      // The writer cleans what a runtime reads and writes where its adapter
+      // does, so both must be relative to the box's home.
+      for (const folder of [adapter.skills.writeFolder, ...adapter.skills.readFolders]) {
+        expect(folder.startsWith("/")).toBe(false);
+      }
+      expect(adapter.skills.readFolders).toContain(adapter.skills.writeFolder);
     }
   });
 

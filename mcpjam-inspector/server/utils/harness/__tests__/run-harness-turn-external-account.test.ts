@@ -86,6 +86,7 @@ vi.mock("../registry.js", () => ({
     supportsMcpToolApproval: false,
     supportsHostExecutedToolApproval: false,
     supportsSkills: false,
+    skills: { writeFolder: ".claude/skills", readFolders: [".claude/skills"] },
     supportsPluginBundles: false,
     requiresComputer: true,
     modelAccess: "external-account",
@@ -135,7 +136,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));

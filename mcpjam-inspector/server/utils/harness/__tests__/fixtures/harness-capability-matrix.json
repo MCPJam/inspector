@@ -17,9 +17,18 @@
       "pinnedRuntimeVersion": "2.1.290",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.claude/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": true
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".claude/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": true,
+        "writeFolder": ".claude/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -77,9 +86,18 @@
       "pinnedRuntimeVersion": "0.163.0",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
       },
       "supportedReasoningEfforts": [
         "low",
@@ -144,9 +162,18 @@
       "pinnedRuntimeVersion": "1.0.92",
       "promptImageInput": false,
       "requiresComputer": true,
-      "skillsBaseDir": "",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "bridge-opt-in",
+        "readFolders": [
+          ".copilot/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".copilot/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -210,9 +237,24 @@
       "promptImageInput": true,
       "requiresComputer": true,
       "sessionStableMcpConfig": true,
-      "skillsBaseDir": "/home/user/.ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false,
+          "surface": "cli"
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.claude/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.codex/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.grok/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills-cursor"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -273,9 +315,21 @@
       "pinnedRuntimeVersion": "1.18.34",
       "promptImageInput": false,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills",
+          ".claude/skills",
+          ".config/opencode/skills",
+          ".config/opencode/skill"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,

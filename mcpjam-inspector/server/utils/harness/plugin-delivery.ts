@@ -29,6 +29,7 @@ import type {
   RuntimePluginVersion,
 } from "../../services/environments/effective-capabilities.js";
 import { allEffectiveSkills } from "../../services/environments/effective-capabilities.js";
+import { logger } from "../logger.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
 
 /**
@@ -178,7 +179,7 @@ export interface DeliveredPluginSkillOrigin {
  */
 export function deliveredPluginSkillOrigins(args: {
   set: EffectiveCapabilitySet;
-  /** The runtime's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). */
+  /** The runtime's skills folder on the box, absolute. */
   skillsBaseDir: string;
   /** skillId → on-box dir name, for the skills the adapter was given. */
   deliveredNameBySkillId: Map<string, string>;
@@ -216,4 +217,49 @@ export function pluginSkillDeliverySummary(
     fileCount: skill.files.length,
     pluginVersionId: skill.plugin?.pluginVersionId ?? null,
   }));
+}
+
+/**
+ * Log the plugin skills a turn put on its box, with the immutable plugin
+ * revision behind each folder the runtime reads. Provenance, not a pin: never
+ * read back to restore anything.
+ */
+export function logPluginSkillDelivery(args: {
+  set: EffectiveCapabilitySet;
+  /** The skills on the box this turn (`writeBoxSkills`'s `delivered`). */
+  delivered: ReadonlyArray<{ skillId: string; name: string }>;
+  skillsBaseDir: string;
+  harness: string;
+  /** The box the material went to: a computer or ephemeral sandbox row. */
+  boxKind: string;
+  boxId: string | undefined;
+}): void {
+  const deliveredNameBySkillId = new Map(
+    args.delivered.map((skill) => [skill.skillId, skill.name]),
+  );
+  const set = {
+    ...args.set,
+    pluginSkills: args.set.pluginSkills.filter((skill) =>
+      deliveredNameBySkillId.has(skill.skillId),
+    ),
+  };
+  const skills = pluginSkillDeliverySummary(set);
+  if (skills.length > 0) {
+    logger.info("[harness] delivered plugin skills", {
+      boxKind: args.boxKind,
+      boxId: args.boxId,
+      skills,
+    });
+  }
+  const origins = deliveredPluginSkillOrigins({
+    set,
+    skillsBaseDir: args.skillsBaseDir,
+    deliveredNameBySkillId,
+  });
+  if (origins.length > 0) {
+    logger.info("[harness] plugin skill origins", {
+      harness: args.harness,
+      origins,
+    });
+  }
 }
