@@ -215,9 +215,19 @@ export function ElicitationDialog({
     await onResponse(action, buildElicitationContent(fields, values));
   };
 
+  const actionsDisabled = loading || pluginPending || pluginAnswered;
+
   return (
-    <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
+    <Dialog
+      open={!!elicitationRequest}
+      // × and Escape answer like Cancel; while Cancel is disabled they do nothing.
+      onOpenChange={(open) => {
+        if (!open && !actionsDisabled) void handleResponse("cancel");
+      }}
+    >
       <DialogContent
+        // A stray click outside must not discard what the user typed.
+        onInteractOutside={(event) => event.preventDefault()}
         onCloseAutoFocus={returnFocus}
         data-plugin-form-request-id={requestId}
         className="flex max-h-[80dvh] flex-col overflow-hidden sm:max-w-2xl"
