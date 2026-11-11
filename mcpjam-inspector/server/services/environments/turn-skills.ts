@@ -226,11 +226,11 @@ function planSource(
   runtime: TurnRuntime,
   modelContextTokens: number | undefined,
 ): TurnSkills {
-  const { set, refs, agent, box, disabled } = sourcePlan(source);
+  const { set, refs, agentOnly, agent, box, disabled } = sourcePlan(source);
   const plan =
     runtime.kind === "harness"
       ? planBox(runtime, set, refs, box)
-      : planAgentSet(set, refs, agent, modelContextTokens);
+      : planAgentSet(set, [...refs, ...agentOnly], agent, modelContextTokens);
   return { ...plan, excluded: [...disabled, ...plan.excluded] };
 }
 

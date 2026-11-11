@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveTurnSkills, type TurnSkills } from "../turn-skills";
 import type { ResolvedEnvironmentRuntime } from "../runtime";
+import type { RuntimeLocalSkill } from "../effective-capabilities";
 import {
   agentReceives,
   evalEnvironment,
@@ -15,6 +16,20 @@ const refs = (skills: TurnSkills) => skills.delivered.map((ref) => ref.ref);
 const names = (skills: TurnSkills) => skills.delivered.map((ref) => ref.name);
 const reasons = (skills: TurnSkills) =>
   skills.excluded.map(({ ref, reason }) => [ref.ref, reason]);
+
+/** A skill on the machine the local app runs on. */
+function machineSkill(name: string): RuntimeLocalSkill {
+  return {
+    skillId: `local:${name}`,
+    ref: `local/${name}`,
+    name,
+    description: `The ${name} skill.`,
+    content: `# ${name}`,
+    aggregateHash: `agg-${name}`,
+    files: [],
+    directory: `/machine/${name}`,
+  };
+}
 
 /** An environment whose only skill is `docs`. */
 function docsEnvironment(): ResolvedEnvironmentRuntime {
@@ -63,43 +78,37 @@ describe("resolveTurnSkills for an environment", () => {
     }
   });
 
-  it("keeps the environment's skill when a client's own one wants its name", () => {
-    const pool = [
-      {
-        ...personalSkill(),
-        skillId: "sk_other_docs",
-        name: "docs",
-        ref: "docs",
-      },
-    ];
+  it("hands this machine's skills to MCPJam's agent alone on a client's turn", async () => {
     const source = {
       kind: "environment",
       spec: docsEnvironment(),
       attribution: null,
-      liveExtras: { projectSkills: pool },
+      liveExtras: { localSkills: [machineSkill("review")] },
     } as const;
-    for (const runtime of [AGENT, harness("claude-code")]) {
-      const skills = resolveTurnSkills({ source, runtime });
-      expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_docs"]);
-      expect(reasons(skills)).toEqual([["docs", "name-collision"]]);
-    }
+    const agent = resolveTurnSkills({ source, runtime: AGENT });
+    expect(refs(agent)).toEqual(["docs", "local/review"]);
+    expect((await agentReceives(agent)).listed.sort()).toEqual([
+      "docs",
+      "local/review",
+    ]);
+    // A harness running on this machine reads its skill folders itself.
+    const box = resolveTurnSkills({ source, runtime: harness("claude-code") });
+    expect(names(box)).toEqual(["docs"]);
+    expect(box.excluded).toEqual([]);
   });
 
-  it("does not count a client's own skill twice when its environment carries it", () => {
-    const pool = [
-      { ...personalSkill(), skillId: "sk_docs", name: "docs", ref: "docs" },
-    ];
+  it("keeps the environment's skill when a local skill wants its ref", () => {
     const skills = resolveTurnSkills({
       source: {
         kind: "environment",
         spec: docsEnvironment(),
         attribution: null,
-        liveExtras: { projectSkills: pool },
+        liveExtras: { localSkills: [{ ...machineSkill("docs"), ref: "docs" }] },
       },
-      runtime: harness("codex"),
+      runtime: AGENT,
     });
-    expect(names(skills)).toEqual(["docs"]);
-    expect(skills.excluded).toEqual([]);
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_docs"]);
+    expect(reasons(skills)).toEqual([["docs", "name-collision"]]);
   });
 
   it("names a skill a harness's adapter refuses", () => {
@@ -130,7 +139,7 @@ describe("resolveTurnSkills for an environment", () => {
         spec,
         attribution,
         frozen: true,
-        liveExtras: { projectSkills: [personalSkill()] },
+        liveExtras: { localSkills: [machineSkill("review")] },
       },
       runtime: AGENT,
     });
@@ -159,7 +168,7 @@ describe("resolveTurnSkills for an environment", () => {
         kind: "environment",
         spec,
         attribution,
-        liveExtras: { projectSkills: [] },
+        liveExtras: {},
       },
       runtime: AGENT,
     });
@@ -172,10 +181,7 @@ describe("resolveTurnSkills for an environment", () => {
 
 describe("resolveTurnSkills for a client with no environment", () => {
   it("plans the client's own skills alone, on either engine", async () => {
-    const source = {
-      kind: "live",
-      liveExtras: { projectSkills: [personalSkill()] },
-    } as const;
+    const source = { kind: "live", projectSkills: [personalSkill()] } as const;
     const agent = resolveTurnSkills({ source, runtime: AGENT });
     expect(agent.agent).toEqual({ kind: "live" });
     expect(refs(agent)).toEqual(["my-notes"]);

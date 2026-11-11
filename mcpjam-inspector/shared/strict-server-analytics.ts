@@ -8,7 +8,7 @@ import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api", "eval"],
+  surface: ["api", "eval", "playground", "scenario"],
   outcome: [
     "ok",
     "partial",

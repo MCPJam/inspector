@@ -3,9 +3,10 @@
  * which skills the turn's engine is handed, and why it leaves the others out.
  *
  * The Compare pane previews its own next turn ({@link previewPaneSkills}): a
- * named environment, or a client with the caller's live project skills. The
- * Evaluate page previews an eval run of each of a suite's environments
- * ({@link previewSuiteSkills}), which freezes their skills at start.
+ * named environment, or a client in its hidden environment, resolved in the
+ * client's skill selection as its turn resolves it. The Evaluate page previews
+ * an eval run of each of a suite's environments ({@link previewSuiteSkills}),
+ * which freezes their skills at start.
  *
  * A read of the inputs to a turn. Do not compose an environment, start a box,
  * fetch supporting files, or return an artifact from the runtime spec.
@@ -52,6 +53,7 @@ export async function previewPaneSkills(
         projectId,
         environmentId,
         overrides: { serverIds },
+        ...(target.kind === "client" ? { skillScope: "visible" as const } : {}),
       })
     : undefined;
   let runtime: TurnRuntime = { kind: "agent" };
@@ -100,8 +102,11 @@ export async function previewPaneSkills(
           retainedVersionIds: pluginVersionIds,
         })
       : undefined;
+  // A client whose hidden environment is not composed yet has no spec to
+  // resolve, so its preview reads the caller's skills: what that selection
+  // resolves to once the turn composes it, up to the backend's cap.
   const pool =
-    target.kind === "client"
+    target.kind === "client" && !spec
       ? await readProjectSkills(runtime, { projectId, bearer, signal })
       : undefined;
   const dropped = new Set(narrowed?.droppedSkillIds);
@@ -114,9 +119,9 @@ export async function previewPaneSkills(
           pluginDisabled: (spec.skills ?? []).filter((skill) =>
             dropped.has(skill.skillId),
           ),
-          ...(pool ? { liveExtras: { projectSkills: pool } } : {}),
+          ...(target.kind === "client" ? { liveExtras: {} } : {}),
         }
-      : { kind: "live", liveExtras: { projectSkills: pool ?? [] } },
+      : { kind: "live", projectSkills: pool ?? [] },
     runtime,
   });
   return previewOf(skills, rowsOf(spec, attribution, pool));

@@ -18,7 +18,10 @@ import {
   applyPluginVersionOverride,
   withoutGuestPlugins,
 } from "../environments/plugin-override.js";
-import type { ResolvedEnvironmentRuntime } from "../environments/runtime.js";
+import type {
+  ResolvedEnvironmentRuntime,
+  ResolvedEnvironmentSkill,
+} from "../environments/runtime.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { logger } from "../../utils/logger.js";
 
@@ -42,8 +45,16 @@ export async function resolveHostedChatSetup(args: {
   getClient: () => Promise<ConvexHttpClient>;
   prepareChatTurn?: boolean;
   preparedChatTurn?: unknown;
+  /** An environment target that is a Playground client's hidden environment
+   *  (the request's `includeProjectSkills`). */
+  hiddenEnvironment?: boolean;
 }) {
   const { target, access } = args;
+  // A Playground client's turn runs in the client's skill selection, all
+  // visible by default; a named environment keeps exactly its own.
+  const clientSkills =
+    access.kind === "project" &&
+    (target.kind !== "environment" || args.hiddenEnvironment === true);
   if (
     (target.kind === "scenario") !== (access.kind === "scenario") ||
     (target.kind === "adhoc" && target.projectId !== args.projectId) ||
@@ -62,6 +73,7 @@ export async function resolveHostedChatSetup(args: {
   let environmentSpec: ResolvedEnvironmentRuntime | null = null;
   let scenarioEnvironment: ScenarioEnvironmentRuntime | null = null;
   let attribution: PluginRuntimeAttribution | null = null;
+  let pluginDisabled: ResolvedEnvironmentSkill[] = [];
   if (access.kind === "scenario") {
     // Keep the scenario's grant and accessVersion resolver. Testers are not
     // project members and must never be sent through member composition.
@@ -165,6 +177,7 @@ export async function resolveHostedChatSetup(args: {
           : { kind: "explicit", serverIds: args.selectedServerIds ?? [] },
       bearer: args.bearer,
       signal: args.signal,
+      ...(clientSkills ? { skillScope: "visible" as const } : {}),
     });
     environmentSpec = access.guest
       ? withoutGuestPlugins(turn.environment)
@@ -188,6 +201,10 @@ export async function resolveHostedChatSetup(args: {
         attribution,
         retainedVersionIds,
       });
+      const dropped = new Set(narrowed.droppedSkillIds);
+      pluginDisabled = (environmentSpec.skills ?? []).filter((skill) =>
+        dropped.has(skill.skillId),
+      );
       environmentSpec = narrowed.spec;
       if (narrowed.droppedVersionIds.length)
         logger.info("[chat-v2] playground plugin override applied", {
@@ -210,9 +227,12 @@ export async function resolveHostedChatSetup(args: {
         "skillId" in p ? [p.skillId] : [],
       ),
     });
-  // Plain chat uses the project's live skill pool and default tool bounds.
-  // An explicit environment retains its own selections, even when it is ad hoc.
-  const usesLiveSkills = target.kind !== "environment";
+  // A client's turn, its servers connected now: their own skills join the
+  // turn. A hidden environment is one only if the backend says it is ad hoc.
+  const clientTurn =
+    clientSkills &&
+    (target.kind !== "environment" ||
+      environmentSpec?.environmentOrigin === "adhoc");
   let toolConfiguration: ProjectDefaultToolConfig | null = null;
   let toolConfigurationUnavailable = false;
   if (target.kind === "adhoc" && access.kind === "project" && !access.guest) {
@@ -255,7 +275,9 @@ export async function resolveHostedChatSetup(args: {
       access.kind === "scenario"
         ? ("recorded" as const)
         : ("interactive" as const),
-    usesLiveSkills,
+    clientTurn,
+    attribution,
+    pluginDisabled,
     authoritativeConnectionPolicy: target.kind !== "adhoc",
     pinsEnvironment: target.kind === "environment",
     authoritativeCapabilities:

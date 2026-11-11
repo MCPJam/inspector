@@ -17,6 +17,10 @@
 import { describe, expect, it } from "vitest";
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
 import {
+  environmentTurnSkills,
+  type LiveTurnSkills,
+} from "../live-turn-skills";
+import {
   resolveTurnSkills,
   type ServerSkillsVia,
   type SkillExclusionReason,
@@ -28,9 +32,8 @@ import {
   boxReceives,
   evalEnvironment,
   liveTurnSource,
-  personalRuntimeSkill,
-  personalSkill,
   preparedRunSkills,
+  visibleScopeEnvironment,
 } from "../../../test/support/skill-delivery";
 
 const ENGINES = [
@@ -165,24 +168,34 @@ const EVALUATE_PREVIEW: Surface = {
   expected: previewing(EVAL.expected),
 };
 
-/** A live turn on the fixture environment, and the same with a client's own
- *  skills beside it. */
-const liveRows = (extra: string[]): Record<Engine, Expected> => {
-  const refs = ["release-notes", "acme/summarize", "docs/search", ...extra];
+/**
+ * A live turn on the fixture environment, and the same with a client's own
+ * skill beside it, which the backend's visible scope adds to the client's
+ * hidden environment. `recorded` is false for a preview, which runs no turn.
+ */
+const liveRows = (
+  extra: string[],
+  recorded: boolean,
+): Record<Engine, Expected> => {
+  // The scope's skills are the environment's own, ahead of its captures.
+  const refs = ["release-notes", "acme/summarize", ...extra, "docs/search"];
   // Until server skills reach a harness as tools, a live harness turn
   // leaves a captured server skill off its box.
+  const boxed = ["release-notes", "summarize", ...extra];
   const harness: Expected = {
-    delivered: ["release-notes", "summarize", ...extra],
+    delivered: boxed,
     excluded: [["docs/search", "server-skill-unsupported"]],
     serverSkillsVia: "none",
-    recorded: [],
+    recorded: recorded ? boxed : [],
   };
   return {
     "mcpjam-agent": {
       delivered: refs,
       excluded: [],
       serverSkillsVia: "agent-tools",
-      recorded: [],
+      recorded: recorded
+        ? ["release-notes", "summarize", ...extra, "search"]
+        : [],
     },
     "claude-code": harness,
     codex: harness,
@@ -205,34 +218,79 @@ const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
       box: await harnessBox(engine, liveTurnSource(spec)),
     };
   },
-  expected: liveRows([]),
+  expected: liveRows([], false),
 };
 
-/** The Compare pane's preview of a client turn: its hidden environment plus
- *  the caller's own pool, personal skills included. */
+/** The Compare pane's preview of a client turn: its hidden environment,
+ *  resolved in the client's all-visible selection. */
 const COMPARE_CLIENT_PREVIEW: Surface = {
   name: "compare preview, client with its own skills",
   async plan(engine) {
-    const { spec, attribution } = evalEnvironment();
-    const pool = [personalSkill()];
+    const { spec, attribution } = visibleScopeEnvironment();
     return {
       skills: resolveTurnSkills({
-        source: {
-          kind: "environment",
-          spec,
-          attribution,
-          liveExtras: { projectSkills: pool },
-        },
+        source: { kind: "environment", spec, attribution, liveExtras: {} },
         runtime: runtimeOf(engine),
       }),
-      box: await harnessBox(
-        engine,
-        liveTurnSource(spec, [personalRuntimeSkill()]),
-      ),
+      box: await harnessBox(engine, liveTurnSource(spec)),
     };
   },
-  expected: liveRows(["my-notes"]),
+  expected: liveRows(["my-notes"], false),
 };
+
+/** A live surface's turn, planned by the module the surface calls, with the
+ *  box it hands the harness and the record it writes. */
+async function plannedLiveTurn(
+  engine: Engine,
+  turn: LiveTurnSkills,
+): Promise<PlannedTurn> {
+  return {
+    skills: turn.skills,
+    ...(turn.turnProvenance
+      ? { skillsAtTurn: turn.turnProvenance.skillsAtTurn }
+      : {}),
+    box: await harnessBox(engine, {
+      ...(turn.box
+        ? {
+            runtimeSkillsOverride: turn.box.skills,
+            effectiveCapabilities: turn.box.set,
+          }
+        : {}),
+    }),
+  };
+}
+
+/** A client's turn on the Playground or over the API: its hidden
+ *  environment, resolved in the client's all-visible selection. */
+const clientTurn = (name: string): Surface => ({
+  name,
+  async plan(engine) {
+    const { spec, attribution } = visibleScopeEnvironment();
+    return plannedLiveTurn(
+      engine,
+      environmentTurnSkills({
+        spec,
+        attribution,
+        liveExtras: {},
+        runtime: runtimeOf(engine),
+      }),
+    );
+  },
+  expected: liveRows(["my-notes"], true),
+});
+
+/** A turn on a named environment, on the Playground or over the API. */
+const namedEnvironmentTurn = (name: string): Surface => ({
+  name,
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    return plannedLiveTurn(
+      engine,
+      environmentTurnSkills({ spec, attribution, runtime: runtimeOf(engine) }),
+    );
+  },
+  expected: liveRows([], true),
+});
 
 /** Each surface joins as one entry here, with its own plan and rows. */
 const SURFACES: Surface[] = [
@@ -240,6 +298,10 @@ const SURFACES: Surface[] = [
   EVALUATE_PREVIEW,
   COMPARE_ENVIRONMENT_PREVIEW,
   COMPARE_CLIENT_PREVIEW,
+  clientTurn("playground, client turn"),
+  namedEnvironmentTurn("playground, named environment"),
+  clientTurn("chat over the API, client turn"),
+  namedEnvironmentTurn("chat over the API, named environment"),
 ];
 
 const ROWS = SURFACES.flatMap((surface) =>

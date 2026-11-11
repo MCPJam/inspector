@@ -4,6 +4,11 @@
  * Each becomes one capability set, a ref for every skill it names, and the
  * copies a harness turn would hand its box writer; `boxVerdicts` says which of
  * them the writer delivers, for a run's pins as well.
+ *
+ * A Playground client's own skills arrive inside its environment: the backend
+ * resolves the client's selection, all visible by default, into the spec's
+ * skills (`skillScope: 'visible'`). Nothing here reads a project's pool beside
+ * an environment.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { planBoxSkills } from "../../utils/harness/box-skills-writer.js";
@@ -12,17 +17,15 @@ import {
   harnessSupportsSkills,
 } from "../../utils/harness/registry.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
-import {
-  composeLivePlusSkills,
-  pinnedArtifactsToRuntimeSkills,
-} from "../../utils/harness/skill-delivery.js";
+import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/skill-delivery.js";
 import {
   allEffectiveSkills,
   buildLiveEffectiveCapabilities,
   resolveEffectiveCapabilities,
-  withLiveProjectSkills,
+  withLocalSkills,
   type EffectiveCapabilityInput,
   type EffectiveCapabilitySet,
+  type RuntimeLocalSkill,
   type RuntimeStandaloneSkill,
 } from "./effective-capabilities.js";
 import type { PluginRuntimeAttribution } from "./plugin-attribution.js";
@@ -35,14 +38,13 @@ import type {
   SkillRef,
 } from "./turn-skills.js";
 
-/** What a live turn reads at turn time, beside its environment. */
+/** What a client's turn reads at turn time, beside its environment. */
 export interface LiveSkillExtras {
   /**
-   * The project's skills as the caller sees them now, personal ones included:
-   * a Playground client's pool, which its environment does not carry. Present
-   * means the turn reads the pool, even when it is empty.
+   * This machine's skills, in the local app. MCPJam's agent alone is handed
+   * them: a harness running here reads the machine's skill folders itself.
    */
-  projectSkills?: readonly RuntimeStandaloneSkill[];
+  localSkills?: readonly RuntimeLocalSkill[];
 }
 
 /** A resolved environment (`resolveEnvironmentForRuntime`). */
@@ -61,14 +63,22 @@ export interface EnvironmentSkillSource {
    * A run plans its own turns from its pins; this previews one.
    */
   frozen?: boolean;
-  /** Read by a live turn only; a run's frozen skills take nothing live. */
+  /**
+   * Present, even empty, on a client's turn: its servers are connected now,
+   * so their own skills join when the prompt is built. A named environment's
+   * turn has none, since its server skills were captured with it, and a run's
+   * frozen skills take nothing live.
+   */
   liveExtras?: LiveSkillExtras;
 }
 
 /** A client turn with no environment behind it. */
 export interface LiveSkillSource {
   kind: "live";
-  liveExtras: LiveSkillExtras;
+  /** The project's skills as the caller sees them now, personal ones
+   *  included; none for a turn outside a project. */
+  projectSkills: readonly RuntimeStandaloneSkill[];
+  liveExtras?: LiveSkillExtras;
 }
 
 /** What a harness turn writes to its box. */
@@ -85,6 +95,8 @@ export interface SourcePlan {
   set: EffectiveCapabilitySet;
   /** Every skill the source names, once each, in source order. */
   refs: SkillRef[];
+  /** This machine's skills, which MCPJam's agent is handed after `refs`. */
+  agentOnly: SkillRef[];
   /** How MCPJam's agent would serve the set. */
   agent: AgentSkillTools;
   box: BoxInput;
@@ -97,16 +109,17 @@ export function sourcePlan(
 ): SourcePlan {
   const environment = source.kind === "environment" ? source : undefined;
   const frozen = environment?.frozen === true;
-  const pool = frozen ? undefined : source.liveExtras?.projectSkills;
-  const live = buildLiveEffectiveCapabilities({
-    standaloneSkills: [...(pool ?? [])],
-  });
+  const pool = source.kind === "live" ? source.projectSkills : [];
+  const local = frozen ? [] : (source.liveExtras?.localSkills ?? []);
   const set = environment
-    ? withLiveProjectSkills(
+    ? withLocalSkills(
         resolveEffectiveCapabilities(environment.spec, environment.attribution),
-        live,
+        local,
       )
-    : live;
+    : buildLiveEffectiveCapabilities({
+        standaloneSkills: [...pool],
+        localSkills: [...local],
+      });
   const listedAs = new Map(
     allEffectiveSkills(set).map((skill) => [skill.skillId, skill.ref]),
   );
@@ -171,7 +184,7 @@ export function sourcePlan(
     serverCopies.push(copy);
     add(ref, copy);
   }
-  const poolCopies = (pool ?? []).map((skill): RuntimeSkill => ({
+  const poolCopies = pool.map((skill): RuntimeSkill => ({
     skillId: skill.skillId,
     name: skill.name,
     description: skill.description,
@@ -180,24 +193,32 @@ export function sourcePlan(
     content: typeof skill.content === "string" ? skill.content : "",
     aggregateHash: skill.aggregateHash,
   }));
-  (pool ?? []).forEach((skill, index) => add(refOf(skill), poolCopies[index]!));
-  // Only a client's turn merges its pool beside its environment by box
-  // folder; with no environment, the adapter gets the pool as read.
-  const copies = !environment
-    ? poolCopies
-    : pool
-      ? (composeLivePlusSkills(poolCopies, ownCopies).skills ?? [])
-      : [...ownCopies, ...serverCopies];
+  pool.forEach((skill, index) => add(refOf(skill), poolCopies[index]!));
+  // This machine's skills have no copy for a box.
+  const agentOnly = local.flatMap((skill) => {
+    if (seen.has(skill.skillId)) return [];
+    seen.add(skill.skillId);
+    return [refOf(skill, skill.ref)];
+  });
 
   return {
     set,
     refs,
+    agentOnly,
     // A client's turn is live even beside an environment: its servers are
     // connected now, so their own skills join when the prompt is built.
     agent: {
-      kind: frozen ? "frozen" : environment && !pool ? "environment" : "live",
+      kind: frozen
+        ? "frozen"
+        : environment && !environment.liveExtras
+          ? "environment"
+          : "live",
     },
-    box: { copies, copyOf, serverSkillsVia: frozen ? "box-files" : "none" },
+    box: {
+      copies: environment ? [...ownCopies, ...serverCopies] : poolCopies,
+      copyOf,
+      serverSkillsVia: frozen ? "box-files" : "none",
+    },
     disabled,
   };
 }

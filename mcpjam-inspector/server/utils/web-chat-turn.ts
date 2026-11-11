@@ -110,13 +110,22 @@ import {
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
 } from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
-import { turnSkillsFromLegacySource } from "../services/environments/turn-skills.js";
+import {
+  resolveTurnSkills,
+  type TurnSkills,
+} from "../services/environments/turn-skills.js";
+import {
+  reportBoxSkillsDelivered,
+  reportSkillsDelivered,
+  type SkillsDeliveredSurface,
+} from "../services/environments/skills-delivered-event.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
@@ -333,21 +342,16 @@ export interface WebChatTurnPersistContext {
    */
   captureToolSnapshot?: boolean;
   /**
-   * Resolved Project-Environment skills for this turn (Phase 1.4), HARNESS
-   * side. Forwarded verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`,
-   * where presence (even empty) skips the live project-wide skills fetch.
+   * This turn's skills, HARNESS side: what its box writer writes. Forwarded
+   * verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`, where presence
+   * (even empty) is authoritative; absent, the harness reads the project's
+   * skills itself (`harness/skill-delivery.ts`).
    *
    * It lives on the persist context rather than the prepare inputs because the
    * harness path is reached through the persist/stream half of this helper —
    * the same place `harness` and `executionScope` already travel.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The Playground's HIDDEN environment, HARNESS side: the turn delivers the
-   * project's live skill pool beside `runtimeSkillsOverride` (the harness's
-   * `live_plus` source). Forwarded verbatim; never inferred downstream.
-   */
-  includeProjectSkills?: boolean;
   /**
    * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
    * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
@@ -357,6 +361,9 @@ export interface WebChatTurnPersistContext {
    * resumed sandbox with stale plugin material ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /** Those skills are a client's live turn, whose connected servers may offer
+   *  their own (`MCPJamHandlerOptions.liveTurn`). */
+  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
    * project secrets.
@@ -409,7 +416,7 @@ export interface WebChatTurnPersistContext {
   /**
    * What this turn should RECORD about the configuration it ran with —
    * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
-   * from the POST-narrowing spec so it reflects what actually ran.
+   * from the turn's skill plan so it reflects what actually ran.
    *
    * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
    * purpose: those decide what reaches the model, this only decides what gets
@@ -542,39 +549,17 @@ export interface WebChatTurnPrepareInputs {
   computerWorkdir?: string;
   widgetModelContext?: WidgetModelContextEntry[];
   /**
-   * Whether this turn's `effectiveCapabilities` describe a LIVE surface rather
-   * than a captured environment.
-   *
-   * A live turn also composes SEP-2640 skills from its connected servers; an
-   * environment turn does not, because its server skills were captured and
-   * fetching more would falsify the snapshot. Set by the hosted chat route for
-   * its host/adhoc targets, which resolve no environment at all.
+   * The turn's skill plan (`resolveTurnSkills`), made for the engine that runs
+   * it. MCPJam's agent gets the tools it describes; a harness plan gives the
+   * agent none, since the box gets the skills
+   * (`WebChatTurnPersistContext.runtimeSkillsOverride`). Absent: a live plan
+   * with none of its own, so MCPJam's agent gets only the connected servers'
+   * own skills, as MCPJam's docs agent does.
    */
-  liveSkillSurface?: boolean;
-  /**
-   * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
-   * side. When set (even empty) they are the only skills the emulated engine
-   * advertises: `prepareChatV2` receives them as the turn's `skills` plan.
-   *
-   * Ignored when `harness` is set: a harness turn delivers skills natively
-   * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
-   * and advertising emulated skill tools there is a prompt/tool mismatch.
-   *
-   * INS-3: this stays the HARNESS-shaped list (name/description/content, which
-   * is all an adapter writes to disk). The emulated side takes
-   * {@link WebChatTurnPrepareInput.effectiveCapabilities} instead, because its
-   * tools address skills by ref and need the plugin origin this list drops.
-   */
-  runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The turn's resolved `EffectiveCapabilitySet` (INS-3). Set alongside
-   * `runtimeSkillsOverride` for an environment turn; drives the EMULATED skill
-   * tools (ref-addressed, plugin-origin-aware, supporting-file capable).
-   *
-   * Presence is what makes it authoritative — a set that resolves zero skills
-   * advertises zero, and never falls back to the project-wide pool.
-   */
-  effectiveCapabilities?: EffectiveCapabilitySet;
+  skills?: TurnSkills;
+  /** Where the turn ran, for the skills-delivered event. Without it the turn
+   *  reports nothing. */
+  skillsSurface?: SkillsDeliveredSurface;
   /** Plugin servers whose failure leaves the turn running without them. */
   isolatedServers?: import("./plugin-server-isolation.js").IsolatedServers;
 }
@@ -930,26 +915,20 @@ export async function streamChatTurn(
       // BEFORE a navigation adds them; the refresher's presence is the fact.
       pageToolsMayGrow: Boolean(prepare.refreshTools),
 
-      // Skills for the EMULATED engine only. On a harness turn the adapter
-      // delivers them natively, so advertising emulated `loadSkill` (+ file
-      // tools) on top would describe a second, different delivery of the same
-      // set to the same model. Without a resolved set the turn is still live:
-      // it gets the connected servers' skills.
+      // Skills for the EMULATED engine only. On a harness turn the box gets
+      // them, so advertising emulated `loadSkill` (+ file tools) on top would
+      // describe a second, different delivery of the same set to the same
+      // model. A turn with no plan is still live: it gets the connected
+      // servers' own skills.
       ...(prepare.harness
         ? {}
         : {
-            skills: turnSkillsFromLegacySource(
-              prepare.effectiveCapabilities !== undefined
-                ? {
-                    kind: "resolved",
-                    capabilities: prepare.effectiveCapabilities,
-                    ...(prepare.liveSkillSurface
-                      ? { composeLiveServerSkills: true }
-                      : {}),
-                  }
-                : undefined,
-              prepare.modelDefinition.contextLength,
-            ),
+            skills:
+              prepare.skills ??
+              resolveTurnSkills({
+                source: { kind: "live", projectSkills: [] },
+                runtime: { kind: "agent" },
+              }),
             // So a supporting-file read stops when the client disconnects
             // instead of holding a worker for its full fetch timeout.
             ...(runtime.abortSignal
@@ -963,6 +942,12 @@ export async function streamChatTurn(
       throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, msg);
     }
     throw error;
+  }
+  // MCPJam's agent holds its skill tools once the turn is prepared. A harness
+  // turn reports from its box writer instead (`onBoxSkillsWritten` below).
+  const { skills: plannedSkills, skillsSurface } = prepare;
+  if (!prepare.harness && plannedSkills && skillsSurface) {
+    reportSkillsDelivered(skillsSurface, plannedSkills);
   }
 
   const {
@@ -1966,6 +1951,12 @@ export async function streamChatTurn(
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
     failureReporter,
+    ...(persist.harness && plannedSkills && skillsSurface
+      ? {
+          onBoxSkillsWritten: (written: BoxSkillsResult) =>
+            reportBoxSkillsDelivered(skillsSurface, plannedSkills, written),
+        }
+      : {}),
     // Ask MCPJam's platform-billing claim. Rides `extraBodyFields`, which the
     // step loop already merges into every per-step Convex body — the same
     // channel org BYOK uses for its providerKey.
@@ -2052,15 +2043,15 @@ export async function streamChatTurn(
       ? { harnessSandboxBinding: persist.scenarioBox.binding }
       : {}),
     ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
-    // Presence is semantic (even an empty array): the harness turn then skips
-    // the live project-wide skills fetch entirely.
+    // Presence is semantic (even an empty array): it is the turn's whole set,
+    // and the harness then reads no project skills of its own.
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
-    ...(persist.includeProjectSkills ? { includeProjectSkills: true } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
+    ...(persist.liveTurn ? { liveTurn: true } : {}),
     ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
     // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
     // (even empty) means "this turn's secrets are already resolved".

@@ -29,6 +29,7 @@ import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import { logger } from "../../utils/logger.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
 import { ORG_KEY_MISSING_MESSAGE } from "../../../shared/org-key-surfaces.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
@@ -391,13 +392,19 @@ export async function resolveEnvironmentForRuntime(
     environmentId: string;
     overrides?: EnvironmentOverrides;
     serverSelectionSource?: "client-default";
+    /**
+     * A Playground client's turn: the backend adds the client's selection,
+     * all visible by default, to the spec's skills, and echoes the scope. It
+     * applies only to an ad-hoc row whose client selects all visible skills,
+     * so a named environment resolves exactly as it would without it.
+     */
+    skillScope?: "visible";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
   const runtimeVenue = resolveRuntimeVenue();
-  let raw: unknown;
-  try {
-    raw = await convexClient.query(
+  const query = (skillScope: "visible" | undefined) =>
+    convexClient.query(
       RUNTIME_FUNCTION_REF as any,
       {
         projectId: args.projectId,
@@ -407,8 +414,26 @@ export async function resolveEnvironmentForRuntime(
           : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
+        ...(skillScope ? { skillScope } : {}),
       } as any
     );
+  const skillScope =
+    args.skillScope && Date.now() >= skillScopeRefusedUntil
+      ? args.skillScope
+      : undefined;
+  let raw: unknown;
+  try {
+    raw = await query(skillScope).catch((error: unknown) => {
+      // DEPLOY SKEW: a backend that predates the scope refuses the argument
+      // instead of ignoring it. The turn then resolves the environment as
+      // that backend always did, with the client's own selection only.
+      if (!skillScope || !SKILL_SCOPE_REFUSED.test(String(error))) throw error;
+      skillScopeRefusedUntil = Date.now() + SKILL_SCOPE_RETRY_MS;
+      logger.warn(
+        "[environments] Backend does not accept skillScope yet; client turns get the client's own skill selection until it deploys.",
+      );
+      return query(undefined);
+    });
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);
   }
@@ -416,6 +441,11 @@ export async function resolveEnvironmentForRuntime(
   markOnboardingPhase("admission");
   return spec;
 }
+
+const SKILL_SCOPE_REFUSED = /extra field [`'"]?skillScope(?:[`'"]|\b)/i;
+/** How long a refusal stops this process from sending the scope. */
+const SKILL_SCOPE_RETRY_MS = 10 * 60_000;
+let skillScopeRefusedUntil = 0;
 
 // ── Projections used by the executing caller ────────────────────────────────
 //
@@ -478,97 +508,6 @@ export function runtimeSkills(
       ? { extraFrontmatter: skill.extraFrontmatter as never }
       : {}),
   }));
-}
-
-/**
- * What this turn should RECORD about the configuration it ran with.
- *
- * Deliberately NOT part of `runtimeSkills` and not in the effective-capability
- * set: skill DELIVERY stays byte-identical, and provenance is a separate
- * outbound field on the turn trace. A recording change that also changed what
- * reaches the model would be impossible to review.
- *
- * Call this AFTER any narrowing (plugin overrides filter `spec.skills`), so the
- * record reflects what actually ran rather than what the environment would
- * resolve on its own.
- *
- * DELIVERY DECIDES WHAT IS RECORDED. `skillsAtTurn` asserts "this turn ran with
- * exactly these", so it must describe what the model RECEIVED, not what the
- * environment resolved — the two differ per channel, and recording the resolved
- * set would make the trace claim a skill the model never saw:
- *
- *   - `emulated` — every channel is delivered. `getEffectiveSkillToolsAndPrompt`
- *     mints a tool per entry of `allEffectiveSkills`, captures included and
- *     addressed by their namespaced `ref`. Record everything.
- *   - `harness` — only `runtimeSkills(spec)` reaches the adapter, and that is
- *     `spec.skills` alone. Captured MCP-server skills are NOT delivered: their
- *     runtime address is `<serverSlug>/<name>`, and `isValidSkillName` rejects
- *     a name containing `/`, so an adapter would skip every one as
- *     `invalid-skill-name`. Record authored + plugin only.
- *   - `unsupported` — the resolved harness has no skill channel at all (Codex
- *     today). Nothing is delivered, so record an empty list.
- *
- * Wiring captures into the harness channel is a DELIVERY change blocked on that
- * addressing question — see the P2 skill-delivery work. Until it lands, the
- * honest record is the narrower one.
- *
- * `undefined` when there is no environment — a plain Playground chat has
- * nothing to record. An empty `skillsAtTurn` when nothing was delivered,
- * because "ran with none" is a real answer and a different one from "unknown".
- * Entries whose `provenance` the backend did not supply are skipped: on an
- * older deployment that yields an empty array, which is honest about what this
- * side can prove.
- */
-export function turnSkillProvenance(
-  spec:
-    | Pick<
-        ResolvedEnvironmentRuntime,
-        "environmentRef" | "skills" | "serverSkills"
-      >
-    | null
-    | undefined,
-  options: { delivery: EnvironmentSkillDelivery }
-): TurnSkillProvenance | undefined {
-  const ref = spec?.environmentRef;
-  if (
-    !ref ||
-    typeof ref.environmentId !== "string" ||
-    typeof ref.name !== "string" ||
-    // An EMPTY name is rejected, not tolerated. `readScenarioEnvironment`
-    // normalizes a missing `environmentRef.name` to `""`, and recording that
-    // would put a blank `mcpjam.environment.name` into an exported trace —
-    // which reads as a real environment called nothing, rather than as absent
-    // provenance. Costs nothing in practice: a payload old enough to omit the
-    // name is old enough that its skills carry no `provenance` rows either, so
-    // `skillsAtTurn` would have been empty anyway.
-    ref.name.length === 0 ||
-    typeof ref.revision !== "number"
-  ) {
-    return undefined;
-  }
-  const isProvenanceRow = (
-    provenance: unknown
-  ): provenance is Record<string, unknown> =>
-    !!provenance && typeof provenance === "object" && !Array.isArray(provenance);
-  return {
-    environmentAtTurn: {
-      environmentId: ref.environmentId,
-      name: ref.name,
-      revision: ref.revision,
-    },
-    // Exactly the channels this delivery mode hands to the model — see the
-    // header. Captures are appended after authored entries, the order the
-    // backend's own run snapshots pin them in.
-    skillsAtTurn:
-      options.delivery === "unsupported"
-        ? []
-        : [
-            ...(spec?.skills ?? []).map((skill) => skill.provenance),
-            ...(options.delivery === "emulated"
-              ? (spec?.serverSkills ?? []).map((skill) => skill.provenance)
-              : []),
-          ].filter(isProvenanceRow),
-  };
 }
 
 // ── Browser preview projection ──────────────────────────────────────────────

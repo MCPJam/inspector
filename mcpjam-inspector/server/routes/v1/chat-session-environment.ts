@@ -4,26 +4,29 @@ import { resolveChatTurn } from "../../services/chat-turn/resolve-chat-turn.js";
 import {
   runtimeServerIds,
   runtimeServerNames,
-  runtimeSkills,
 } from "../../services/environments/runtime.js";
-import { resolveEffectiveCapabilities } from "../../services/environments/effective-capabilities.js";
-import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  fetchPluginRuntimeAttribution,
+  type PluginRuntimeAttribution,
+} from "../../services/environments/plugin-attribution.js";
 import { assertHostPointerAgreement } from "./chat-session-host-target.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import type { ResolvedEnvironmentRuntime } from "../../services/environments/runtime.js";
-import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
-import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import type { ChatSessionHostTarget } from "./chat-session-host-target.js";
 
 export interface ResolvedTarget {
   serverIds: string[];
   serverNames?: string[];
   environmentId?: string;
-  resolvedEnvironment?: ResolvedEnvironmentRuntime;
-  /** Named environments own their capability set; bare server lists use the live pool. */
-  environmentCapabilities?: EffectiveCapabilitySet;
-  /** Absence permits the live skill fallback; an explicit empty array does not. */
-  environmentSkills?: RuntimeSkill[];
+  resolvedEnvironment: ResolvedEnvironmentRuntime;
+  /** Plugin origins for the environment's skills. */
+  attribution: PluginRuntimeAttribution | null;
+  /**
+   * A client's turn (a host or a bare server list), resolved in the client's
+   * skill selection, all visible by default. A named environment keeps
+   * exactly its own skills.
+   */
+  clientTurn: boolean;
   /** Bare server lists retain the emulated rail and carry no host. */
   host?: ChatSessionHostTarget;
   unappliedCapabilities?: string[];
@@ -79,6 +82,7 @@ export async function resolveChatSessionEnvironment(
     client,
     bearer: context.authHeader,
     signal: context.signal,
+    ...(input.environmentId ? {} : { skillScope: "visible" as const }),
     selection: input.environmentId
       ? { kind: "environment-default" }
       : input.serverIds !== undefined
@@ -155,19 +159,10 @@ export async function resolveChatSessionEnvironment(
     ...(serverNames.length === serverIds.length ? { serverNames } : {}),
     environmentId: input.environmentId,
     resolvedEnvironment: spec,
+    attribution,
+    clientTurn: !input.environmentId,
     ...(unavailableServerIds.length ? { unavailableServerIds } : {}),
     ...(unappliedCapabilities.length ? { unappliedCapabilities } : {}),
-    ...(input.environmentId
-      ? {
-          environmentCapabilities: resolveEffectiveCapabilities(
-            spec,
-            attribution,
-          ),
-        }
-      : {}),
-    ...(input.environmentId && Array.isArray(spec.skills)
-      ? { environmentSkills: runtimeSkills(spec) }
-      : {}),
     // Bare server lists retain the emulated API rail and the caller's model policy.
     ...(input.environmentId || input.hostId
       ? {
