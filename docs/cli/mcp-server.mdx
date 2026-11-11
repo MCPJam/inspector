@@ -96,6 +96,9 @@ Agents with shell access can already run `mcpjam` commands directly, and for one
 | `list_prompts` | List prompts |
 | `get_prompt` | Fetch a named prompt with optional string arguments |
 | `get_notifications` | Notifications buffered since connect: log messages, progress, `list_changed` events, resource updates. Filter by `server`/`method`, optionally `clear` |
+| `list_skills` | List the Agent Skills the target serves over the skills extension, including ones it advertises that can't be verified, each with the reason |
+| `get_skill` | Fetch one skill by URI, verified against the target's manifest before its content is returned |
+| `read_skill_file` | Read one supporting file of a skill, checked against that skill's manifest |
 
 ### Stateless diagnostics
 
