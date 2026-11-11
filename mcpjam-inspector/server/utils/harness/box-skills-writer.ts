@@ -86,7 +86,10 @@ export function planBoxSkills(
     skipped,
     payload: deliver.map((skill) => ({
       name: skill.name,
-      description: payloadDescription(skill.description, descriptor.frontmatter),
+      description: payloadDescription(
+        skill.description,
+        descriptor.frontmatter,
+      ),
       content: skill.content,
     })),
   };
@@ -213,7 +216,8 @@ export async function writeBoxSkills(args: {
     skillNamesById: new Map(
       plan.deliver
         .filter(
-          (skill) => !removed.has(skill.name) && listing.complete(skill.skillId),
+          (skill) =>
+            !removed.has(skill.name) && listing.complete(skill.skillId),
         )
         .map((skill) => [skill.skillId, skill.name]),
     ),

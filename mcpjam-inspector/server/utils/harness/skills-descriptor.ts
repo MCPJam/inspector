@@ -57,7 +57,8 @@ export interface HarnessSkillsDescriptor {
 /** The Agent Skills limit; every runtime here loads descriptions this long. */
 const DESCRIPTION_MAX_LENGTH = 1024;
 
-const CURSOR_HOME = ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home";
+const CURSOR_HOME =
+  ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home";
 
 export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
   // Reads `~/.claude/skills` and `.claude/skills` up to the repository root,
@@ -67,7 +68,10 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     trailingNewline: true,
     readFolders: [".claude/skills"],
     acceptsName: isValidSkillName,
-    frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: false },
+    frontmatter: {
+      descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
+      strictYaml: false,
+    },
     headlessLoading: "native",
     serverSkills: "box-files",
   },
@@ -78,7 +82,10 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     trailingNewline: false,
     readFolders: [".agents/skills"],
     acceptsName: isValidSkillName,
-    frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: false },
+    frontmatter: {
+      descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
+      strictYaml: false,
+    },
     headlessLoading: "native",
     serverSkills: "box-files",
   },
@@ -94,7 +101,10 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       ".config/opencode/skill",
     ],
     acceptsName: isValidSkillName,
-    frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: false },
+    frontmatter: {
+      descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
+      strictYaml: false,
+    },
     headlessLoading: "native",
     serverSkills: "box-files",
   },
@@ -131,7 +141,10 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     trailingNewline: false,
     readFolders: [".copilot/skills"],
     acceptsName: isValidSkillName,
-    frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: true },
+    frontmatter: {
+      descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
+      strictYaml: true,
+    },
     headlessLoading: "bridge-opt-in",
     serverSkills: "box-files",
   },

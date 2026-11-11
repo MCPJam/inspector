@@ -3062,7 +3062,10 @@ export async function runHarnessTurn(
               logPluginSkillDelivery({
                 set: effectiveCapabilities,
                 delivered: written.delivered,
-                skillsBaseDir: boxSkillsFolder(harnessAdapter.skills, skillsHome),
+                skillsBaseDir: boxSkillsFolder(
+                  harnessAdapter.skills,
+                  skillsHome,
+                ),
                 harness: harnessAdapter.id,
                 boxKind: box?.kind ?? "local-native",
                 boxId: computerId,

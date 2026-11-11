@@ -111,7 +111,10 @@ export function payloadDescription(
  * strict YAML for every runtime: double-quoted scalars and JSON-flow mappings.
  */
 export function renderSkillMd(
-  skill: Pick<RuntimeSkill, "name" | "description" | "content" | "extraFrontmatter">,
+  skill: Pick<
+    RuntimeSkill,
+    "name" | "description" | "content" | "extraFrontmatter"
+  >,
   rules: FrontmatterRules,
 ): string {
   return generateSkillMdWithExtras({
@@ -130,7 +133,12 @@ function withSurface(
     ?.split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-  if (!surface || !extra?.metadata || !listed?.length || listed.includes(surface)) {
+  if (
+    !surface ||
+    !extra?.metadata ||
+    !listed?.length ||
+    listed.includes(surface)
+  ) {
     return extra;
   }
   return {
@@ -246,7 +254,11 @@ export async function materializeSkillFrontmatter(args: {
   skillsBase: string;
   rules: FrontmatterRules;
   signal?: AbortSignal;
-}): Promise<{ rewritten: number; skipped: number; removed: Map<string, string> }> {
+}): Promise<{
+  rewritten: number;
+  skipped: number;
+  removed: Map<string, string>;
+}> {
   const { skillsBase } = args;
   let rewritten = 0;
   let skipped = 0;
@@ -268,7 +280,9 @@ export async function materializeSkillFrontmatter(args: {
   const onBox: Array<string | null> = [];
   for (let start = 0; start < args.skills.length; start += READ_BATCH) {
     onBox.push(
-      ...(await Promise.all(args.skills.slice(start, start + READ_BATCH).map(read))),
+      ...(await Promise.all(
+        args.skills.slice(start, start + READ_BATCH).map(read),
+      )),
     );
   }
   for (const [index, skill] of args.skills.entries()) {
@@ -295,7 +309,9 @@ export async function materializeSkillFrontmatter(args: {
         error: error instanceof Error ? error.message : String(error),
       });
       skipped += 1;
-      if (await clearGrantAfterFailedRewrite(args.session, skillsBase, skill.name)) {
+      if (
+        await clearGrantAfterFailedRewrite(args.session, skillsBase, skill.name)
+      ) {
         removed.set(
           skill.name,
           "SKILL.md could not be rewritten and may grant tools, so the skill was removed",

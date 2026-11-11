@@ -186,23 +186,43 @@ describe("composeLivePlusSkills", () => {
 
 describe("harnessTurnSkills", () => {
   const LIVE = [
-    { skillId: "sk_notes", name: "notes", description: "n", content: "n", aggregateHash: "a" },
+    {
+      skillId: "sk_notes",
+      name: "notes",
+      description: "n",
+      content: "n",
+      aggregateHash: "a",
+    },
   ];
   const project = (
     over: {
-      skills?: () => Promise<{ ok: true; skills: RuntimeSkill[] } | { ok: false }>;
+      skills?: () => Promise<
+        { ok: true; skills: RuntimeSkill[] } | { ok: false }
+      >;
       files?: () => Promise<
-        | { ok: true; files: Array<{ skillId: string; path: string; size: number; url: string }> }
+        | {
+            ok: true;
+            files: Array<{
+              skillId: string;
+              path: string;
+              size: number;
+              url: string;
+            }>;
+          }
         | { ok: false }
       >;
     } = {},
   ) => ({
-    skills: vi.fn(over.skills ?? (async () => ({ ok: true as const, skills: LIVE }))),
+    skills: vi.fn(
+      over.skills ?? (async () => ({ ok: true as const, skills: LIVE })),
+    ),
     files: vi.fn(
       over.files ??
         (async () => ({
           ok: true as const,
-          files: [{ skillId: "sk_notes", path: "a.md", size: 1, url: "https://f/a" }],
+          files: [
+            { skillId: "sk_notes", path: "a.md", size: 1, url: "https://f/a" },
+          ],
         })),
     ),
   });
@@ -252,7 +272,11 @@ describe("harnessTurnSkills", () => {
   it("leaves the set unknown when the live fetch fails, and reads the files only on demand", async () => {
     const live = project({ skills: async () => ({ ok: false }) });
     const turn = await harnessTurnSkills({ project: live });
-    expect(turn).toMatchObject({ mode: "live", skills: null, skillsHash: undefined });
+    expect(turn).toMatchObject({
+      mode: "live",
+      skills: null,
+      skillsHash: undefined,
+    });
     expect(live.files).not.toHaveBeenCalled();
   });
 
@@ -283,7 +307,10 @@ describe("harnessTurnSkills", () => {
       effectiveCapabilities: set,
       project: project({ files: async () => ({ ok: false }) }),
     });
-    expect(turn.skills?.map((entry) => entry.skillId)).toEqual(["sk_env", "sk_notes"]);
+    expect(turn.skills?.map((entry) => entry.skillId)).toEqual([
+      "sk_env",
+      "sk_notes",
+    ]);
     const files = await turn.readFiles();
     expect(files.files.map((file) => file.skillId)).toEqual(["sk_env"]);
     expect(files.complete("sk_env")).toBe(true);

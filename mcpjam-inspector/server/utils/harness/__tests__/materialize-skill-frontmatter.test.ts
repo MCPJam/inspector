@@ -260,7 +260,8 @@ describe("materializeSkillFrontmatter", () => {
     session: FrontmatterSession,
     skills: RuntimeSkill[],
     skillsBase = SKILLS_BASE,
-  ) => materializeSkillFrontmatter({ session, skills, skillsBase, rules: RULES });
+  ) =>
+    materializeSkillFrontmatter({ session, skills, skillsBase, rules: RULES });
 
   it("writes each SKILL.md that differs from what MCPJam renders, and no other", async () => {
     const plain = skill({ skillId: "sk_1", name: "plain" });
@@ -313,7 +314,11 @@ describe("materializeSkillFrontmatter", () => {
 
   it("writes under the runtime's own folder (codex)", async () => {
     const { session, writes } = boxSession();
-    await settle(session, [skill({ name: "pdf-tools" })], "/home/user/.agents/skills");
+    await settle(
+      session,
+      [skill({ name: "pdf-tools" })],
+      "/home/user/.agents/skills",
+    );
     expect(writes).toEqual(["/home/user/.agents/skills/pdf-tools/SKILL.md"]);
   });
 
@@ -437,8 +442,9 @@ describe("renderSkillMd, by the runtime's frontmatter rules", () => {
     expect(render("cli, ide")).toEqual({ surfaces: "cli, ide", team: "docs" });
     // No surfaces: Cursor loads the skill everywhere already.
     expect(
-      matter(renderSkillMd(skill({ extraFrontmatter: { license: "MIT" } }), rules))
-        .data.metadata,
+      matter(
+        renderSkillMd(skill({ extraFrontmatter: { license: "MIT" } }), rules),
+      ).data.metadata,
     ).toBeUndefined();
   });
 
@@ -453,13 +459,17 @@ describe("renderSkillMd, by the runtime's frontmatter rules", () => {
         extraFrontmatter: {
           license: "MIT: see LICENSE",
           compatibility: "node >= 20, - not a list",
-          metadata: { "key: with colon": "value, with [brackets] {and braces}" },
+          metadata: {
+            "key: with colon": "value, with [brackets] {and braces}",
+          },
         },
       }),
       descriptor.frontmatter,
     );
     const block = /^---\n([\s\S]*?)\n---\n/.exec(text)![1]!;
-    expect(() => parseYaml(block, { strict: true, uniqueKeys: true })).not.toThrow();
+    expect(() =>
+      parseYaml(block, { strict: true, uniqueKeys: true }),
+    ).not.toThrow();
     expect(parseYaml(block)).toMatchObject({
       description: 'Use when: "quoted"\n\ttabbed \\ and a # not a comment',
       metadata: { "key: with colon": "value, with [brackets] {and braces}" },
