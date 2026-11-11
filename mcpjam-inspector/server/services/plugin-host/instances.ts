@@ -354,6 +354,8 @@ export class PluginInstanceRegistry {
           ),
           expiresAt: control.expiresAt,
           ...(control.instance.contextEnabled ? { contextToken: token } : {}),
+          // Any replica that restores a Settings App reads its document here.
+          ...(activation.selector.kind === "settings" ? { settings: true } : {}),
         },
         signal,
       );
