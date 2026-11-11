@@ -894,7 +894,10 @@ async function executeCase(args: {
   const baseFactory = args.runtime.createLanguageModel ?? createModelFromString;
   const connection = args.credentials.mcpjam;
   const root = new HostRunner({
-    ...(plan.host ? { host: plan.host.json } : {}),
+    // A template that leaves Progressive tools unset means Auto by it.
+    ...(plan.host
+      ? { host: plan.host.json, progressiveToolDiscoveryWhenUnset: "auto" }
+      : {}),
     model: model.effectiveModel,
     tools: args.tools,
     apiKey:

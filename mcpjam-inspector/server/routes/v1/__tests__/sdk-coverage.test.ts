@@ -134,6 +134,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/server-groups": "listServerGroups",
   "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
+  "get /projects/{projectId}/servers/{serverId}/revisions":
+    "listServerRevisions",
+  "get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}":
+    "getServerRevision",
+  "get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff":
+    "diffServerRevisions",
   "patch /projects/{projectId}/servers/{serverId}": "updateProjectServer",
   "delete /projects/{projectId}/servers/{serverId}": "deleteProjectServer",
 
