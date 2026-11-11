@@ -12,10 +12,11 @@ import {
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { openEvalChat } from "@/lib/mcpjam-agent/eval-scope";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
 import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
+import { SuiteRunsAsLine } from "../suite-runs-as";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -39,9 +40,20 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
+// The suite pills pick a client logo for the theme.
+vi.mock("@/stores/preferences/preferences-provider", async (original) => ({
+  ...(await original<object>()),
+  usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
+    select({ themeMode: "light" }),
+}));
 // Off unless a test turns the new Suite page on.
 vi.mock("@/hooks/use-suite-results-page-enabled", () => ({
   useSuiteResultsPageEnabled: vi.fn(() => undefined),
+}));
+// The accounts line has its own tests; here it only has to land in the header.
+vi.mock("../suite-runs-as", async (original) => ({
+  ...(await original<object>()),
+  SuiteRunsAsLine: vi.fn(() => null),
 }));
 // An imported draft opens in the step editor, which renders the model picker.
 vi.mock("@/hooks/use-available-models", () => ({
@@ -1441,6 +1453,7 @@ describe("SuiteDetailOverview run delete", () => {
 });
 
 describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () => {
+  afterEach(() => vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined));
   const run = makeRun({ _id: "run-1", runNumber: 1 });
   const rows = [
     makeIteration({ _id: "it-1", suiteRunId: "run-1", resultSource: "reported" }),
@@ -1490,7 +1503,6 @@ describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () 
         }),
       );
     expect(onRunClick).toHaveBeenCalledWith("run-1");
-    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
   });
 
   it.each([undefined, false])(
@@ -1501,7 +1513,164 @@ describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () 
       expect(screen.queryByTestId("nav-suite-health")).toBeNull();
       expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
-      vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
     },
   );
+});
+
+describe("SuiteDetailOverview — header and results only behind eval-suite-results-page", () => {
+  afterEach(() => {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
+    vi.mocked(SuiteRunsAsLine).mockImplementation(() => null);
+  });
+  const run = makeRun({
+    _id: "run-1",
+    runNumber: 1,
+    effectiveModelId: "openai/gpt-5-nano",
+  });
+  const rows = [
+    makeIteration({
+      _id: "it-1",
+      suiteRunId: "run-1",
+      resultSource: "reported",
+    }),
+  ];
+  function renderSuitePage(
+    overrides: Partial<Parameters<typeof SuiteDetailOverview>[0]> = {},
+    flag: boolean | undefined = true,
+  ) {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(flag);
+    const props = {
+      onEditSuite: vi.fn(),
+      onDescribeCases: vi.fn(),
+      ...overrides,
+    };
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[run]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations(rows)}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onSetupSdk={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onImportCases={vi.fn()}
+        onDeleteTestCasesBatch={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        {...props}
+      />,
+    );
+    return props;
+  }
+  const headerButtons = () =>
+    within(screen.getByTestId("suite-page-header"))
+      .getAllByRole("button")
+      .map((button) => button.textContent?.trim());
+
+  it("shows Export as SDK, Suite settings and Run, in that order, and the pills", () => {
+    renderSuitePage();
+    expect(headerButtons()).toEqual(["Export as SDK", "Suite settings", "Run"]);
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
+      "title",
+      "Pick clients, models and iterations, then run",
+    );
+    const header = screen.getByTestId("suite-page-header");
+    expect(within(header).getByTitle("Model")).toHaveTextContent("GPT-5 Nano");
+    expect(within(header).getByTitle("Client")).toHaveTextContent("Claude");
+  });
+
+  it("renders none of today's case authoring", () => {
+    renderSuitePage();
+    for (const text of [
+      "Test Cases",
+      "Add case",
+      "Configure suite evaluators",
+      "Setup SDK",
+      "Setup Run",
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    expect(screen.queryByTestId("suite-detail-test-cases")).toBeNull();
+    expect(screen.queryByTestId("suite-detail-empty-cases")).toBeNull();
+  });
+
+  it("opens today's settings page from Suite settings, and hides it when the reader cannot edit", async () => {
+    const { onEditSuite } = renderSuitePage();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Suite settings" }));
+    expect(onEditSuite).toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ readOnlyConfig: true }, ["Export as SDK", "Run"]],
+    [{ onSetupSdk: undefined }, ["Suite settings", "Run"]],
+    [
+      { configLocked: true, onDuplicateSuite: vi.fn() },
+      ["Duplicate to edit", "Export as SDK", "Run"],
+    ],
+  ])("drops what the reader cannot use (%#)", (overrides, buttons) => {
+    renderSuitePage(overrides);
+    expect(headerButtons()).toEqual(buttons);
+  });
+
+  it("offers Build a test case and Suite settings on a suite with no cases", async () => {
+    const { onDescribeCases, onEditSuite } = renderSuitePage({
+      cases: [],
+      runs: [],
+    });
+    expect(screen.getByText("No test cases yet")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Build a test case" }));
+    await user.click(
+      screen.getByRole("button", { name: "or open Suite settings" }),
+    );
+    expect(onDescribeCases).toHaveBeenCalled();
+    expect(onEditSuite).toHaveBeenCalled();
+  });
+
+  it("offers neither action on a CI-locked suite with no cases", () => {
+    renderSuitePage({ cases: [], runs: [], configLocked: true });
+    expect(screen.getByText("No test cases yet")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Build a test case" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "or open Suite settings" }),
+    ).toBeNull();
+  });
+
+  it("shows the no-runs panel in place of the Runs card", () => {
+    renderSuitePage({ runs: [] });
+    expect(screen.getByText("No runs yet")).toBeVisible();
+    expect(
+      screen.getByText("Run the suite once to start a trend."),
+    ).toBeVisible();
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+  });
+
+  it("keeps the Runs as you line under the name", () => {
+    vi.mocked(SuiteRunsAsLine).mockImplementation(() => (
+      <p data-testid="suite-runs-as">Runs as you · Asana Dummy</p>
+    ));
+    renderSuitePage();
+    expect(
+      within(screen.getByTestId("suite-page-header")).getByTestId(
+        "suite-runs-as",
+      ),
+    ).toHaveTextContent("Runs as you · Asana Dummy");
+  });
+
+  it("keeps today's header and Test Cases card with the flag off", () => {
+    renderSuitePage({}, false);
+    expect(screen.queryByTestId("suite-page-header")).toBeNull();
+    expect(screen.getByText("Configure suite evaluators")).toBeVisible();
+    expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+  });
 });
