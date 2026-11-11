@@ -5,7 +5,9 @@ import { useAppToolPresentation } from "./app-tool-presentation";
 import { useInitialRenderOutcome } from "./use-initial-render-outcome";
 import { useSandboxProxyGeneration } from "./use-sandbox-proxy-generation";
 import { WidgetFullscreenPlacementContext } from "./widget-fullscreen-placement";
+import { useInlineThenMove } from "./use-inline-then-move";
 import {
+  inlineThenMoveModes,
   negotiateResourceDisplayModes,
   openAIDisplayModes,
   pickOpenAIDisplayMode,
@@ -1163,7 +1165,10 @@ export function MCPAppsRendererSurface({
   const fixedDisplayMode = host.surface.fixedDisplayMode;
   const fixedDisplayModeRef = useRef(fixedDisplayMode);
   fixedDisplayModeRef.current = fixedDisplayMode;
-  const openAIRules = host.surface.openAIDisplayModes === true;
+  const displayBehavior = host.surface.displayBehavior;
+  const displayBehaviorRef = useRef(displayBehavior);
+  displayBehaviorRef.current = displayBehavior;
+  const openAIRules = displayBehavior?.start === "hint-first";
   const openAIRulesRef = useRef(openAIRules);
   openAIRulesRef.current = openAIRules;
   const displayModesFor = useCallback(
@@ -1175,6 +1180,8 @@ export function MCPAppsRendererSurface({
       const fixed = fixedDisplayModeRef.current;
       if (openAIRulesRef.current)
         return openAIDisplayModes(hostModes, hints, appModes, fixed);
+      if (displayBehaviorRef.current?.start === "inline-then-move" && !fixed)
+        return inlineThenMoveModes(hostModes, appModes);
       return fixed && hostModes.includes(fixed)
         ? [fixed]
         : negotiateResourceDisplayModes([...hostModes], hints, appModes);
@@ -1377,14 +1384,17 @@ export function MCPAppsRendererSurface({
   // A host-given fullscreen rectangle (e.g. a side-panel tab) instead of the
   // window. Contained device previews keep their own fullscreen.
   const fullscreenPlacement = useContext(WidgetFullscreenPlacementContext);
-  const placedFullscreen =
+  const panelAvailable =
     !hostManagedPresentation &&
-    effectiveDisplayMode === "fullscreen" &&
-    !fullscreenDismissal.collapsed &&
     !(
       isPlaygroundActive &&
       (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet")
     ) &&
+    !!fullscreenPlacement;
+  const placedFullscreen =
+    panelAvailable &&
+    effectiveDisplayMode === "fullscreen" &&
+    !fullscreenDismissal.collapsed &&
     !!fullscreenPlacement?.rect;
   const fullscreenPlacementRef = useRef(fullscreenPlacement);
   fullscreenPlacementRef.current = fullscreenPlacement;
@@ -1421,6 +1431,21 @@ export function MCPAppsRendererSurface({
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   useInitialRenderOutcome(isReady, loadError !== null, onInitialRenderOutcome);
+  // Claude's rule: start inline, then move once to the side panel.
+  const inlineThenMove = useInlineThenMove({
+    behavior: displayBehavior,
+    ready: isReady,
+    toolState,
+    toolOutput,
+    modes: effectiveAvailableDisplayModes,
+    preferred: resourceDisplayHints?.preferredDisplayMode,
+    panelAvailable,
+    fullscreen: effectiveDisplayMode === "fullscreen",
+    placed: placedFullscreen,
+    preferInline: () => userPreferInlineRef.current,
+    moveToPanel: () => setDisplayModeRef.current("fullscreen"),
+    revealPanel: fullscreenPlacement?.reveal,
+  });
   // First CSP violation reported by the sandbox proxy for the current bytes.
   // Kept locally (the debug sink is write-only) so a View that never boots
   // because its own resources were blocked can say so instead of rendering
@@ -2001,7 +2026,8 @@ export function MCPAppsRendererSurface({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
-        resourceDisplayHints: resourceHints,
+        resourceDisplayHints: openAIHints,
+        uiDisplayHints,
         declaredDomain: serverDeclaredDomain,
         viewOriginLabel: serverViewOriginLabel,
         sourceReceipt: serverSourceReceipt,
@@ -2080,6 +2106,10 @@ export function MCPAppsRendererSurface({
       // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
       hasRenderedLiveRef.current = true;
       liveRenderIdentityRef.current = liveRenderIdentityKey;
+      const resourceHints =
+        displayBehaviorRef.current?.hints === "ui"
+          ? uiDisplayHints
+          : openAIHints;
       const allowed = displayModesFor(
         hostAvailableDisplayModesRef.current as DisplayMode[],
         resourceHints
@@ -2089,11 +2119,13 @@ export function MCPAppsRendererSurface({
         return false;
       }
       setResourceDisplayHints(resourceHints);
-      // OpenAI rules always pick a starting mode; otherwise only an explicit
-      // preference moves the App off the host's mode.
+      // OpenAI rules always pick a starting mode; Claude's starts inline;
+      // otherwise only an explicit preference moves the App off the host's.
       const initialMode = openAIRulesRef.current
         ? pickOpenAIDisplayMode(allowed, resourceHints)
-        : resourceHints?.preferredDisplayMode;
+        : displayBehaviorRef.current?.start === "inline-then-move"
+          ? undefined
+          : resourceHints?.preferredDisplayMode;
       if (
         initialMode &&
         allowed.includes(initialMode) &&
@@ -3400,16 +3432,16 @@ export function MCPAppsRendererSurface({
               void b.close();
               return;
             }
-            // OpenAI rules: an App that can't stay in its starting mode moves
-            // to the mode it would have started in among what it allows.
-            if (
-              openAIRulesRef.current &&
-              !negotiated.includes(effectiveDisplayModeRef.current)
-            ) {
-              const next = pickOpenAIDisplayMode(
-                negotiated,
-                resourceDisplayHintsRef.current
-              );
+            // OpenAI's and Claude's rules: an App that can't stay in its
+            // starting mode moves to the mode it would have started in among
+            // what it allows (Claude's: full screen only into a side panel).
+            if (!negotiated.includes(effectiveDisplayModeRef.current)) {
+              const next = openAIRulesRef.current
+                ? pickOpenAIDisplayMode(
+                    negotiated,
+                    resourceDisplayHintsRef.current
+                  )
+                : inlineThenMove.startMode(negotiated);
               if (next) setDisplayModeRef.current(next);
             }
             // If the guest re-initialized (e.g. an SDK-based app completing
@@ -4650,8 +4682,16 @@ export function MCPAppsRendererSurface({
 
   return (
     <>
-    {fullscreenDismissal.collapsed && (
-      <button className="rounded-md border border-border px-3 py-2 text-sm text-foreground" disabled={fullscreenDismissal.pending} onClick={fullscreenDismissal.open}>
+    {(fullscreenDismissal.collapsed || inlineThenMove.panelCard) && (
+      <button
+        className="rounded-md border border-border px-3 py-2 text-sm text-foreground"
+        disabled={fullscreenDismissal.pending}
+        onClick={
+          fullscreenDismissal.collapsed
+            ? fullscreenDismissal.open
+            : inlineThenMove.showPanel
+        }
+      >
         {fullscreenDismissal.pending ? "App is waiting for input" : "Open App"}
       </button>
     )}

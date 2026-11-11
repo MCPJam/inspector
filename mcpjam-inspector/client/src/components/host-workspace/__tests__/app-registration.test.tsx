@@ -126,7 +126,11 @@ describe("retained App registration", () => {
 });
 
 describe("an entrypoint App's display modes", () => {
-  const props = (capabilities?: Record<string, boolean>) =>
+  const OPENAI_RULES = { hints: "openai/ui", start: "hint-first" } as const;
+  const props = (
+    capabilities?: Record<string, boolean>,
+    displayBehavior: unknown = OPENAI_RULES,
+  ) =>
     ({
       scope: {
         projectId: "p",
@@ -159,6 +163,7 @@ describe("an entrypoint App's display modes", () => {
       onDisplayModeChange: vi.fn(),
       onAppSupportedDisplayModesChange: vi.fn(),
       ...(capabilities ? { capabilities } : {}),
+      ...(displayBehavior ? { displayBehavior } : {}),
     }) as unknown as Parameters<typeof AppRegistration>[0];
 
   it("follows OpenAI's rules and logs an App that can't show fullscreen", () => {
@@ -166,7 +171,7 @@ describe("an entrypoint App's display modes", () => {
     fixture.log.mockClear();
     render(<AppRegistration {...props()} />);
     const [, , registered, host] = fixture.upsert.mock.calls[0];
-    expect(host.surface.openAIDisplayModes).toBe(true);
+    expect(host.surface.displayBehavior).toEqual(OPENAI_RULES);
     registered.onAppSupportedDisplayModesChange(["inline", "fullscreen"]);
     expect(fixture.log).not.toHaveBeenCalled();
     registered.onAppSupportedDisplayModesChange(["inline"]);
@@ -187,10 +192,23 @@ describe("an entrypoint App's display modes", () => {
       Object.keys(ALL_EXTENSION_CAPABILITIES).map((key) => [key, true]),
     );
     render(
-      <AppRegistration {...props({ ...capabilities, displayModes: false })} />,
+      <AppRegistration
+        {...props({ ...capabilities, displayModes: false }, null)}
+      />,
     );
     const [, , registered, host] = fixture.upsert.mock.calls[0];
-    expect(host.surface.openAIDisplayModes).toBeUndefined();
+    expect(host.surface.displayBehavior).toBeUndefined();
+    registered.onAppSupportedDisplayModesChange(["inline"]);
+    expect(fixture.log).not.toHaveBeenCalled();
+  });
+
+  it("doesn't refuse an App without full screen under Claude's rules", () => {
+    fixture.upsert.mockClear();
+    fixture.log.mockClear();
+    const claude = { hints: "ui", start: "inline-then-move" };
+    render(<AppRegistration {...props(undefined, claude)} />);
+    const [, , registered, host] = fixture.upsert.mock.calls[0];
+    expect(host.surface.displayBehavior).toEqual(claude);
     registered.onAppSupportedDisplayModesChange(["inline"]);
     expect(fixture.log).not.toHaveBeenCalled();
   });

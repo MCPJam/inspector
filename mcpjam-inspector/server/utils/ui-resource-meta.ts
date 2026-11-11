@@ -60,11 +60,20 @@ export interface ResolvedUiResourceMeta {
    * allowlist here.
    */
   domain?: string;
+  /**
+   * `_meta.ui.preferredDisplayMode`, an extension Claude reads (not part of
+   * SEP-1865): `"fullscreen"` asks to move the App to the side panel once.
+   */
+  preferredDisplayMode?: UiPreferredDisplayMode;
+  /** A declared preference that isn't a mode, as JSON. It is ignored. */
+  ignoredPreferredDisplayMode?: string;
   /** Per-field breakdown of which source won. */
   metadataSources: UiResourceMetaSources;
   /** Summary of `metadataSources` — `"mixed"` when they disagree. */
   metadataSource: MetadataSource;
 }
+
+export type UiPreferredDisplayMode = "inline" | "fullscreen";
 
 export interface ResolveUiResourceMetaArgs {
   /** `_meta` from the `resources/read` content item. */
@@ -283,6 +292,14 @@ interface NormalizedUiMeta {
   permissions?: McpUiResourcePermissions;
   prefersBorder?: boolean;
   domain?: string;
+  preferredDisplayMode?: UiPreferredDisplayMode;
+  ignoredPreferredDisplayMode?: string;
+}
+
+/** A declared value as short JSON, for a diagnostic. */
+function declaredValueText(value: unknown): string {
+  const text = JSON.stringify(value) ?? String(value);
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
 }
 
 function readUiMeta(
@@ -290,7 +307,14 @@ function readUiMeta(
 ): NormalizedUiMeta {
   const ui = (meta as { ui?: McpUiResourceMeta } | undefined)?.ui;
   if (!ui || typeof ui !== "object" || Array.isArray(ui)) return {};
+  const preferred =
+    "preferredDisplayMode" in ui ? ui.preferredDisplayMode : undefined;
+  const preferredValid = preferred === "inline" || preferred === "fullscreen";
   return {
+    ...(preferredValid ? { preferredDisplayMode: preferred } : {}),
+    ...(preferred !== undefined && !preferredValid
+      ? { ignoredPreferredDisplayMode: declaredValueText(preferred) }
+      : {}),
     csp: normalizeCsp(ui.csp),
     permissions: normalizePermissions(ui.permissions),
     // Anything non-boolean is a malformed declaration, not a `false`.
@@ -385,6 +409,17 @@ export function resolveUiResourceMeta(
     metadataSources.domain = "listing";
   }
 
+  // ── preferredDisplayMode ─────────────────────────────────────────────
+  // Two-source chain like `domain`. A malformed content value is ignored and
+  // reported, and the listing still gets its turn, as for `prefersBorder`.
+  const preferredDisplayMode =
+    contentUiMeta.preferredDisplayMode ?? listingUiMeta.preferredDisplayMode;
+  const ignoredPreferredDisplayMode =
+    contentUiMeta.preferredDisplayMode === undefined
+      ? (contentUiMeta.ignoredPreferredDisplayMode ??
+        listingUiMeta.ignoredPreferredDisplayMode)
+      : undefined;
+
   const usedMetadataSources = new Set(
     Object.values(metadataSources).filter((source) => source !== "none")
   );
@@ -400,8 +435,34 @@ export function resolveUiResourceMeta(
     permissions,
     prefersBorder,
     domain,
+    ...(preferredDisplayMode ? { preferredDisplayMode } : {}),
+    ...(ignoredPreferredDisplayMode ? { ignoredPreferredDisplayMode } : {}),
     metadataSources,
     metadataSource,
+  };
+}
+
+/**
+ * The `_meta.ui` display hints a widget-content response carries, beside the
+ * `openai/ui` `resourceDisplayHints`. Clients that read `_meta.ui` (Claude's
+ * rules) use these instead.
+ */
+export function uiDisplayHintFields(
+  meta: Pick<
+    ResolvedUiResourceMeta,
+    "preferredDisplayMode" | "ignoredPreferredDisplayMode"
+  >,
+): {
+  uiDisplayHints?: { preferredDisplayMode: UiPreferredDisplayMode };
+  ignoredPreferredDisplayMode?: string;
+} {
+  return {
+    ...(meta.preferredDisplayMode
+      ? { uiDisplayHints: { preferredDisplayMode: meta.preferredDisplayMode } }
+      : {}),
+    ...(meta.ignoredPreferredDisplayMode
+      ? { ignoredPreferredDisplayMode: meta.ignoredPreferredDisplayMode }
+      : {}),
   };
 }
 
@@ -448,7 +509,8 @@ export function canSkipListingLookup(
   // of a resource that declares csp/permissions/prefersBorder but no domain
   // pay a `resources/list` round-trip forever. The cost of leaving it out is
   // narrow and worth naming: a listing-only `domain` is not seen when the
-  // content item already supplies the other three.
+  // content item already supplies the other three. `preferredDisplayMode` is
+  // left out for the same reason; Claude reads it from the content item only.
   return (
     ui.csp !== undefined &&
     ui.permissions !== undefined &&

@@ -84,7 +84,7 @@ describe("mcpProfile.apps.pluginExtensions canonicalization", () => {
 });
 
 describe("resolvePluginExtensions", () => {
-  it("defaults on for ChatGPT, Codex and the Codex harness only", () => {
+  it("defaults on for ChatGPT, Codex, the Codex harness and Claude only", () => {
     expect(resolvePluginExtensions({ hostStyle: "chatgpt" }).enabled).toBe(
       true
     );
@@ -93,6 +93,16 @@ describe("resolvePluginExtensions", () => {
       resolvePluginExtensions({ hostStyle: "mcpjam", harness: "codex" })
         .enabled
     ).toBe(true);
+    // Claude clients get only the extension Claude documents.
+    for (const hostStyle of ["claude", "claude-desktop"]) {
+      const resolved = resolvePluginExtensions({ hostStyle });
+      expect(resolved.enabled, hostStyle).toBe(true);
+      expect(
+        PLUGIN_EXTENSION_CAPABILITY_KEYS.filter(
+          (key) => resolved.capabilities[key]
+        )
+      ).toEqual(["displayModes"]);
+    }
     for (const hostStyle of [
       "cursor",
       "cursor-cli",
@@ -105,7 +115,7 @@ describe("resolvePluginExtensions", () => {
       "perplexity",
       "cline",
       "notion",
-      "claude",
+      "claude-code",
       "mcpjam",
     ]) {
       const resolved = resolvePluginExtensions({ hostStyle });
@@ -220,9 +230,12 @@ describe("seed templates", () => {
     for (const template of HOST_TEMPLATES) {
       const seeded = template.seed() as unknown as Parameters<typeof resolvePluginExtensions>[0] & HostConfigInputV2;
       const resolved = resolvePluginExtensions(seeded);
-      const expected = template.id === "codex" || template.id === "chatgpt";
-      expect(resolved.enabled, template.id).toBe(expected);
-      if (expected) expect(resolved.explicit, template.id).toBe(true);
+      const seededOn = template.id === "codex" || template.id === "chatgpt";
+      // Claude's templates save nothing; the style default turns them on.
+      const claude =
+        template.id === "claude" || template.id === "claude-desktop";
+      expect(resolved.enabled, template.id).toBe(seededOn || claude);
+      expect(resolved.explicit, template.id).toBe(seededOn);
     }
   });
 

@@ -7,6 +7,7 @@ import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import { OwnedModelAppPortsProvider } from "@/components/host-workspace/OwnedModelApp";
 import { useCompareLaneModelApps } from "@/components/host-workspace/use-compare-lane-model-apps";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   useThreadAppWorkspace,
   type WorkspaceServer,
@@ -170,6 +171,7 @@ interface MultiModelPlaygroundCardProps {
     identity: ExtensionOwnerIdentity;
     servers: WorkspaceServer[];
     capabilities: ExtensionCapabilities;
+    displayBehavior?: DisplayBehavior;
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -681,6 +683,7 @@ export function MultiModelPlaygroundCard({
   const canInvoke = useCallback(() => !readinessRef.current, []);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
+    displayBehavior: extensionBinding?.displayBehavior,
     launchProfile: extensionBinding?.profile,
     canInvoke,
   });
@@ -689,6 +692,7 @@ export function MultiModelPlaygroundCard({
     extensionBinding?.capabilities,
     extensionBinding?.profile,
     canInvoke,
+    extensionBinding?.displayBehavior,
   );
   laneContextRefs.current = laneScope
     ? {
