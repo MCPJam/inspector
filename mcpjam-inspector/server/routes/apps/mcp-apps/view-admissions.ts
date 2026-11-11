@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import {
+  configuredSandboxOrigin,
   prepareHostedSandboxView,
   releaseHostedSandboxView,
 } from "../../../services/sandbox-view-hosted.js";
@@ -37,6 +38,40 @@ import { SANDBOX_VIEW_REQUEST_MAX_BYTES } from "../../../../shared/sandbox-view-
 const admissionProjectSchema = projectServerSchema.extend({
   connectionId: z.string().min(1).optional(),
 });
+
+/**
+ * Whether App documents come from this process's own loopback listeners
+ * (`http://<id>.localhost:<port>`, see sandbox-view-registry.ts) rather than
+ * hosted leases under the sandbox domain.
+ *
+ * Always in local mode. In hosted mode only for `npm run dev:hosted` on a
+ * developer machine, which has no sandbox domain to mint App addresses under:
+ * the same two guards as `localDevServiceTokenAllowed` in
+ * routes/web/guest-token.ts. `ENVIRONMENT=dev` is set only by the
+ * `dev:server` script, and every deployed image runs with
+ * NODE_ENV=production. A configured sandbox origin keeps the hosted path even
+ * in dev. Read per call so both the admission and its release agree.
+ */
+function servesLocalSandboxViews(): boolean {
+  if (!HOSTED_MODE) return true;
+  return (
+    process.env.NODE_ENV !== "production" &&
+    process.env.ENVIRONMENT === "dev" &&
+    !configuredSandboxOrigin()
+  );
+}
+
+/** Hosted dev serves loopback App documents only to a page on this machine. */
+function assertLoopbackHostOrigin(hostOrigin: string): void {
+  if (
+    !["localhost", "127.0.0.1", "[::1]"].includes(new URL(hostOrigin).hostname)
+  )
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "This page cannot prepare an App document.",
+    );
+}
 
 async function authorizePreparation(
   c: Context,
@@ -164,11 +199,13 @@ export function sandboxViewAdmissionRoutes(): Hono {
       const raw = await c.req.json<Record<string, unknown>>();
       const input = prepareSandboxViewSchema.parse(raw);
       validateSandboxHostOrigin(c, input.hostOrigin);
+      const local = servesLocalSandboxViews();
+      if (HOSTED_MODE && local) assertLoopbackHostOrigin(input.hostOrigin);
       const owner = await authorizePreparation(c, input, raw);
       return c.json(
-        HOSTED_MODE
-          ? await prepareHostedSandboxView(input, owner)
-          : await sandboxViews.prepare(input, owner, c.req.raw.signal),
+        local
+          ? await sandboxViews.prepare(input, owner, c.req.raw.signal)
+          : await prepareHostedSandboxView(input, owner),
       );
     } catch (error) {
       if (error instanceof WebRouteError) return webErrorFromRoute(c, error);
@@ -194,9 +231,9 @@ export function sandboxViewAdmissionRoutes(): Hono {
           ? String(raw.projectId ?? "") || undefined
           : undefined,
       );
-      if (HOSTED_MODE)
-        await releaseHostedSandboxView(c.req.param("admissionId"), owner);
-      else sandboxViews.dispose(c.req.param("admissionId"), owner);
+      if (servesLocalSandboxViews())
+        sandboxViews.dispose(c.req.param("admissionId"), owner);
+      else await releaseHostedSandboxView(c.req.param("admissionId"), owner);
       return c.body(null, 204);
     } catch (error) {
       if (error instanceof WebRouteError) return webErrorFromRoute(c, error);
