@@ -4,8 +4,8 @@
  * `resolveTurnSkills` takes where a turn's skills come from and the engine that
  * runs it, and returns the plan: the skills as one set, what that engine is
  * handed, and every other skill with the reason it is left out. MCPJam's agent
- * builds its skill tools from the plan (`prepareChatV2`), and an eval turn
- * records `skillsAtTurn` from it.
+ * builds its skill tools from the plan (`prepareChatV2`), and eval and swarm
+ * turns record `skillsAtTurn` from it.
  *
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
@@ -18,11 +18,7 @@
  */
 import type { PaneSkillReason } from "../../../shared/pane-skills-preview.js";
 import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
-import type {
-  PinnableSkill,
-  PinnedSkillArtifact,
-} from "../../../shared/skill-types.js";
-import { pinnedCatalogOmissions } from "../../utils/computers/cloud-skill-tools.js";
+import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { skillCatalogOmissions } from "../../utils/computers/effective-skill-tools.js";
 import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/pinned-harness-skills.js";
 import {
@@ -32,7 +28,6 @@ import {
 import {
   pinnedSkillId,
   pinnedSkillMeta,
-  runNeedsEffectiveSkillSurface,
   type RunPinnedSkill,
 } from "../evals/run-plugin-snapshot.js";
 import {
@@ -89,12 +84,11 @@ export type ServerSkillsVia =
 
 /**
  * How MCPJam's agent serves the plan, as its skill tools behave today:
- *  - `frozen`: a run's pinned skills, addressed by ref. The approval switch
- *    does not apply: they are content frozen at run start, and an eval run
- *    denies every approval. A captured server skill's load still asks on its
- *    own (`effective-skill-tools.ts`), which an eval denies.
- *  - `frozen-names`: the same for runs pinned before plugins, through the
- *    bare-name `loadSkill` over `skills`, with no file tools.
+ *  - `frozen`: a run's pinned skills, addressed by ref, whatever the run
+ *    pinned. The approval switch does not apply: they are content frozen at
+ *    run start, and an eval run denies every approval. A captured server
+ *    skill's load still asks on its own (`effective-skill-tools.ts`), which an
+ *    eval denies.
  *  - `environment`: an environment's skills, by ref. Loads follow the switch,
  *    so a person watching their own turn gets the prompt they configured.
  *  - `live`: the skills a person has right now, by ref, under the switch, plus
@@ -104,7 +98,6 @@ export type ServerSkillsVia =
  */
 export type AgentSkillTools =
   | { kind: "frozen" }
-  | { kind: "frozen-names"; skills: PinnableSkill[] }
   | { kind: "environment" }
   | { kind: "live" };
 
@@ -131,7 +124,8 @@ export interface TurnSkillsResult {
 }
 
 /**
- * A run's frozen skills, prepared once before its first model call
+ * A run's frozen skills, prepared once before its first model call, or a
+ * swarm target's, prepared once before its first session
  * (`buildPinnedSkillSource`).
  */
 export interface PinnedSkillSource {
@@ -145,13 +139,23 @@ export interface PinnedSkillSource {
   harnessSkills: readonly PinnedSkillArtifact[];
 }
 
+/**
+ * The skills a surface reads at turn time rather than from pins: an older
+ * swarm target's project skills, which it pinned none of.
+ */
+export interface LiveSkillSource {
+  kind: "live";
+  set: EffectiveCapabilitySet;
+}
+
 export interface TurnSkillsInput {
   /**
    * `none`: the turn gets no skills from MCPJam. A harness turn handed no
    * frozen skills still fetches the project's own (`selectHarnessSkillSource`),
-   * which a plan made here cannot see.
+   * which a plan made here cannot see; that is also why a harness is handed
+   * nothing from a `live` source.
    */
-  source: PinnedSkillSource | { kind: "none" };
+  source: PinnedSkillSource | LiveSkillSource | { kind: "none" };
   runtime: TurnRuntime;
   /** The model's context window in tokens, which sizes the skill list MCPJam's
    *  agent puts in its prompt. */
@@ -175,13 +179,21 @@ export function resolveTurnSkills({
   runtime,
   modelContextTokens,
 }: TurnSkillsInput): TurnSkills {
-  if (source.kind === "none" || source.pins.length === 0) {
+  if (source.kind === "live" && runtime.kind === "agent") {
+    return planAgentSet(
+      source.set,
+      setRefs(source.set),
+      { kind: "live" },
+      modelContextTokens,
+    );
+  }
+  if (source.kind !== "pins" || source.pins.length === 0) {
     return {
       runtime,
       set:
-        source.kind === "pins"
-          ? source.set
-          : buildLiveEffectiveCapabilities({}),
+        source.kind === "none"
+          ? buildLiveEffectiveCapabilities({})
+          : source.set,
       delivered: [],
       excluded: [],
       serverSkillsVia: "none",
@@ -200,10 +212,7 @@ export function resolveTurnSkills({
     };
   });
   if (runtime.kind === "harness") return planBox(runtime, source, refs);
-  // Decided by what the run pinned, so every turn of a run gets one surface.
-  return runNeedsEffectiveSkillSurface(source.pins)
-    ? planAgentSet(source.set, refs, { kind: "frozen" }, modelContextTokens)
-    : planNames(source.set, [...source.pins], refs, modelContextTokens);
+  return planAgentSet(source.set, refs, { kind: "frozen" }, modelContextTokens);
 }
 
 /**
@@ -219,10 +228,9 @@ export function toSkillsAtTurn(
   );
 }
 
-/** A skill source as swarms and the chat surfaces build it until they plan
- *  with `resolveTurnSkills`. */
+/** A skill source as the chat surfaces build it until they plan with
+ *  `resolveTurnSkills`. */
 export type LegacySkillsSource =
-  | { kind: "pinned"; skills: PinnableSkill[] }
   | {
       kind: "resolved";
       capabilities: EffectiveCapabilitySet;
@@ -244,40 +252,23 @@ export function turnSkillsFromLegacySource(
   modelContextTokens?: number,
 ): TurnSkills | undefined {
   if (source?.kind === "none") return undefined;
-  if (source?.kind === "pinned") {
-    const standaloneSkills = source.skills.map((skill) => ({
-      skillId: `pin:${skill.name}`,
-      ref: skill.name,
-      name: skill.name,
-      description: skill.description,
-      content: skill.content,
-      aggregateHash: skill.contentHash,
-      files: [],
-      channels: [],
-    }));
-    return planNames(
-      buildLiveEffectiveCapabilities({ standaloneSkills }),
-      source.skills,
-      standaloneSkills.map(({ skillId, ref, name }) => ({
-        skillId,
-        ref,
-        name,
-      })),
-      modelContextTokens,
-    );
-  }
   const set = source?.capabilities ?? buildLiveEffectiveCapabilities({});
   const live = source === undefined || source.composeLiveServerSkills === true;
   return planAgentSet(
     set,
-    allEffectiveSkills(set).map(({ skillId, ref, name }) => ({
-      skillId,
-      ref,
-      name,
-    })),
+    setRefs(set),
     { kind: live ? "live" : "environment" },
     modelContextTokens,
   );
+}
+
+/** Every skill of a set a surface built itself, as the refs a plan names. */
+function setRefs(set: EffectiveCapabilitySet): SkillRef[] {
+  return allEffectiveSkills(set).map(({ skillId, ref, name }) => ({
+    skillId,
+    ref,
+    name,
+  }));
 }
 
 /** MCPJam's agent's ref-addressed tools over `set`. */
@@ -300,26 +291,6 @@ function planAgentSet(
     }),
     serverSkillsVia: "agent-tools",
     agent,
-  };
-}
-
-/** The bare-name tools, which list and load `skills` by name. A server skill
- *  pin always takes the ref-addressed tools, so none arrives here. */
-function planNames(
-  set: EffectiveCapabilitySet,
-  skills: PinnableSkill[],
-  refs: SkillRef[],
-  modelContextTokens: number | undefined,
-): TurnSkills {
-  const omitted = new Set(pinnedCatalogOmissions(skills, modelContextTokens));
-  return {
-    runtime: { kind: "agent" },
-    set,
-    ...partition(refs, (ref) =>
-      omitted.has(ref.name) ? "omitted-from-catalog" : null,
-    ),
-    serverSkillsVia: "none",
-    agent: { kind: "frozen-names", skills },
   };
 }
 

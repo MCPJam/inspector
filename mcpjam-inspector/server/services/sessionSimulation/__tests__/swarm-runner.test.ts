@@ -1705,7 +1705,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
   });
 
-  it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {
+  it("delivers pinned skill BODIES to the session runtime (authoritative set), and an empty pin set as an empty one", async () => {
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
@@ -1718,12 +1718,24 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const a = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envA_0",
     );
-    expect(a.runtime.pinnedSkills).toHaveLength(1);
-    expect(a.runtime.pinnedSkills[0]).toMatchObject({
+    // The copy a harness writes to its box, and the pin every turn plans from:
+    // the snapshot's row joined with the fetched body.
+    expect(a.runtime.pinnedSkillSource.harnessSkills).toHaveLength(1);
+    expect(a.runtime.pinnedSkillSource.harnessSkills[0]).toMatchObject({
       name: "sk-one",
       contentHash: "hash-1",
       content: "# body",
     });
+    expect(a.runtime.pinnedSkillSource.pins).toEqual([
+      {
+        skillId: "sk1",
+        name: "sk-one",
+        description: "d",
+        contentHash: "hash-1",
+        sharing: "project",
+        content: "# body",
+      },
+    ]);
     // Persist attribution carries the targetId (chat-ingestion echo).
     expect(a.persist.targetId).toBe("target-a");
 
@@ -1744,9 +1756,47 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const b = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envB_0",
     );
-    // Skill-less env target: authoritative EMPTY array — NEVER undefined
+    // Skill-less env target: an authoritative EMPTY set — NEVER undefined
     // (undefined would fall back to the live pool).
-    expect(b.runtime.pinnedSkills).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.pins).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.harnessSkills).toEqual([]);
+  });
+
+  it("addresses a plugin's skill by the target's pinned plugin version", async () => {
+    fetchPinnedSkillMock.mockResolvedValue({
+      name: "summarize",
+      description: "d",
+      content: "# summarize",
+      contentHash: "hash-plugin",
+    });
+    const pluginTarget = {
+      ...ENV_TARGET_A,
+      pluginVersions: [
+        { pluginId: "plg_acme", pluginVersionId: "plv_acme_1", name: "acme" },
+      ],
+      pinnedSkills: [
+        {
+          skillId: "sk_summarize",
+          name: "summarize",
+          description: "d",
+          contentHash: "hash-plugin",
+          modelRef: "acme/summarize",
+          sharing: "project" as const,
+          channels: ["plugin" as const],
+        },
+      ],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [pluginTarget], sessionsPerTarget: 1 }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(
+      adapter.runtime.pinnedSkillSource.set.pluginSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["acme/summarize"]);
   });
 
   it("caches pinned bodies by (projectId, contentHash): one fetch even across two targets pinning the same hash", async () => {
@@ -1796,11 +1846,11 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(executed.filter((id) => id.includes("env_envB"))).toHaveLength(2);
   });
 
-  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
+  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkillSource undefined", async () => {
     await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 1 }));
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
-    expect(adapter.runtime.pinnedSkills).toBeUndefined();
+    expect(adapter.runtime.pinnedSkillSource).toBeUndefined();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
   });
 

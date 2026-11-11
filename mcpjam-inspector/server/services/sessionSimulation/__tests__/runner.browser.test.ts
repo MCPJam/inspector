@@ -131,6 +131,7 @@ import {
   runSyntheticHostSession,
 } from "../runner.js";
 import { SPONSORED_CAPACITY_MESSAGE } from "../../../../shared/swarm-sponsorship.js";
+import { preparedTargetSkills } from "../../../test/support/skill-delivery.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -610,7 +611,11 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skills).toBeUndefined();
+    expect(prepareOpts.skills).toMatchObject({
+      runtime: { kind: "harness", harnessId: "claude-code" },
+      agent: null,
+      delivered: [],
+    });
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
@@ -627,8 +632,92 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skills).toBeUndefined();
+    expect(prepareOpts.skills).toMatchObject({ agent: null, delivered: [] });
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+  });
+
+  it("plans a pinned target's turns from its frozen skills and records them on each turn", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: { pinnedSkillSource: await preparedTargetSkills() },
+      }) as never,
+    );
+
+    // Addressed by ref, as an eval run's are, and never the live catalog.
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skills.agent).toEqual({ kind: "frozen" });
+    expect(prepareOpts.skills.delivered.map((ref: any) => ref.ref)).toEqual([
+      "release-notes",
+      "acme/summarize",
+      "docs/search",
+    ]);
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
+  });
+
+  it("hands a pinned harness target the copies its box writes, and records them", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+    const target = await preparedTargetSkills();
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: { harness: "claude-code", pinnedSkillSource: target },
+      }) as never,
+    );
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skills).toMatchObject({
+      runtime: { kind: "harness", harnessId: "claude-code" },
+      agent: null,
+      serverSkillsVia: "box-files",
+    });
+    expect(
+      (runAssistantTurnMock.mock.calls[0]![0] as any).pinnedHarnessSkills,
+    ).toEqual(target.harnessSkills);
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(
+      persisted.turnTrace.skillsAtTurn.map((row: any) => row.name),
+    ).toEqual(["release-notes", "summarize", "search"]);
+  });
+
+  it("withholds a pinned target's skills from MCPJam's agent under tool approval, and records none", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: {
+          requireToolApproval: true,
+          pinnedSkillSource: await preparedTargetSkills(),
+        },
+      }) as never,
+    );
+
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skills).toMatchObject({ agent: null, delivered: [] });
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(persisted.turnTrace.skillsAtTurn).toEqual([]);
+  });
+
+  it("records no skills on a turn of an older target, which reads them live", async () => {
+    createBrowserSessionContextMock.mockReturnValue(
+      buildFakeBrowserContext({ computerUse: false }),
+    );
+
+    await runSyntheticHostSession(baseAdapter() as never);
+
+    const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;
+    expect(persisted.turnTrace).not.toHaveProperty("skillsAtTurn");
   });
 
   it("reports a catalog fetch failure, and still composes live server skills", async () => {

@@ -447,28 +447,6 @@ export function buildRunCapabilitySet(args: {
 }
 
 /**
- * Does this run's pinned set need the ref-addressed skill surface?
- *
- * Body-only, bare-name pins — every eval run that existed before plugins — keep
- * the legacy pinned tool set byte for byte: same tool names, same prompt
- * stanza, no supporting-file tools to advertise for files that cannot exist.
- * Changing that surface for every eval user in order to serve plugin runs would
- * be a behaviour change nobody asked for, measured by suites that have been
- * running against the old one.
- *
- * A pin with a plugin ref or a supporting file cannot be served by that surface
- * at all, so those runs get INS-3's.
- */
-export function runNeedsEffectiveSkillSurface(
-  pins: readonly RunPinnedSkill[]
-): boolean {
-  return pins.some(
-    (pin) =>
-      isPluginPin(pin) || isServerSkillPin(pin) || (pin.files ?? []).length > 0
-  );
-}
-
-/**
  * The versions a run actually executed with, for provenance display and the
  * submission report. Straight from the snapshot, in pin order.
  */

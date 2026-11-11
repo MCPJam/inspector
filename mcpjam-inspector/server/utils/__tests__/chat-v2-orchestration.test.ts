@@ -35,6 +35,10 @@ import {
   turnSkillsFromLegacySource,
 } from "../../services/environments/turn-skills";
 import {
+  namePin,
+  preparedRunSkills,
+} from "../../test/support/skill-delivery";
+import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
 } from "../built-in-tools/exa-web-search";
@@ -1665,7 +1669,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
   // a claim that a harness cannot take pinned skills — it can, and does, as
   // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and plan
   // the turn for the harness; `iterationTurnSkills` is the eval side of that,
-  // and `sessionSimulation/runner.ts` the swarm side.
+  // and `sessionTurnSkills` the swarm side.
   it("THROWS on a harness turn handed MCPJam's agent's pinned tools (they ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
@@ -1675,11 +1679,9 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
         systemPrompt: "Base prompt.",
         harness: "claude-code" as any,
-        skills: turnSkillsFromLegacySource({
-          kind: "pinned",
-          skills: [
-            { name: "s", description: "d", content: "c", contentHash: "h" },
-          ],
+        skills: resolveTurnSkills({
+          source: (await preparedRunSkills([namePin("s")])).pinnedSkillSource,
+          runtime: { kind: "agent" },
         }),
       })
     ).rejects.toThrow(/deliberately disjoint/);

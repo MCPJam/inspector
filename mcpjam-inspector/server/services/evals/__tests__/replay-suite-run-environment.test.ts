@@ -65,6 +65,8 @@ vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
 
 import { prepareSuiteReplayFromRun, executeSuiteReplayFromRun } from "../replay-suite-run.js";
 import { buildReplayManager, storeReplayConfig } from "../route-helpers.js";
+import { namePin } from "../../../test/support/skill-delivery.js";
+import type { RunPinnedSkill } from "../run-plugin-snapshot.js";
 
 /** A source run that WAS environment-backed, replayed by an ordinary caller. */
 function convexClient() {
@@ -214,6 +216,81 @@ describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () =
     // Nothing was created or reserved, so there is no run to fail.
     expect(startSuiteRunWithRecorderMock).not.toHaveBeenCalled();
     expect(admission.failed).not.toHaveBeenCalled();
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("prepareSuiteReplayFromRun — the source run's skills", () => {
+  /** A backend that copied the source run's pins onto the replay run. */
+  function clientWithPins(pinnedSkills: RunPinnedSkill[]) {
+    const query = vi.fn(async (name: string) =>
+      name === "testSuites:getRunPinnedSkills"
+        ? { pinnedSkills }
+        : {
+            suiteId: "suite-1",
+            projectId: "project-1",
+            hasServerReplayConfig: true,
+            environment: { servers: ["srv"] },
+          },
+    );
+    return { client: { query } as never, query };
+  }
+
+  it("hands the runner the skills the replay run froze from its source run", async () => {
+    const { client, query } = clientWithPins([namePin("deploy")]);
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: client,
+      convexAuthToken: "token",
+      sourceRunId: "source-run-1",
+    });
+    await prepared.execute();
+
+    expect(query).toHaveBeenCalledWith("testSuites:getRunPinnedSkills", {
+      runId: "replay-run-1",
+    });
+    const options = runEvalSuiteWithAiSdkMock.mock.calls[0]![0] as any;
+    expect(
+      options.pinnedSkillSource.pins.map((pin: RunPinnedSkill) => pin.name),
+    ).toEqual(["deploy"]);
+    expect(
+      options.pinnedHarnessSkills.map((skill: { name: string }) => skill.name),
+    ).toEqual(["deploy"]);
+  });
+
+  it("hands a replay of a run without skills an empty set, never the project's", async () => {
+    const prepared = await prepareSuiteReplayFromRun({
+      convexClient: convexClient(),
+      convexAuthToken: "token",
+      sourceRunId: "source-run-1",
+    });
+    await prepared.execute();
+
+    const options = runEvalSuiteWithAiSdkMock.mock.calls[0]![0] as any;
+    expect(options.pinnedSkillSource.pins).toEqual([]);
+    expect(options.pinnedHarnessSkills).toEqual([]);
+  });
+
+  it("stops before any model call when a frozen skill's file can't be read", async () => {
+    admission.failed.mockClear();
+    const { client } = clientWithPins([
+      namePin("deploy", {
+        files: [{ path: "scripts/run.sh", contentHash: "f", size: 1, url: null }],
+      }),
+    ]);
+
+    await expect(
+      prepareSuiteReplayFromRun({
+        convexClient: client,
+        convexAuthToken: "token",
+        sourceRunId: "source-run-1",
+      }),
+    ).rejects.toThrow(/scripts\/run\.sh/);
+    expect(admission.failed).toHaveBeenCalledWith(
+      client,
+      expect.anything(),
+      "replay-run-1",
+      { reason: expect.stringMatching(/"deploy"/) },
+    );
     expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
   });
 });

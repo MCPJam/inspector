@@ -9,6 +9,10 @@ import type {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { HostComputerResource } from "../utils/built-in-tools/registry.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type {
+  RunPinnedPluginVersion,
+  RunPinnedSkill,
+} from "./evals/run-plugin-snapshot.js";
 import {
   localHarnessCapabilities,
   runnerCapabilities,
@@ -53,18 +57,15 @@ export interface JourneyEnvironmentRef {
 /**
  * Per-skill metadata pinned onto a snapshot target (bodies are NOT inline —
  * the runner fetches them via {@link fetchPinnedSkill}). Mirrors the backend
- * `PinnedSkillMeta`; `channels` is the P0.2 host/environment provenance and is
- * absent on pre-P0.2 snapshots.
+ * `PinnedSkillMeta`, which one writer produces for swarm targets and suite runs
+ * alike, so it is a suite run's pin without its body: a captured server skill
+ * carries its capture's identity, a plugin skill its `<plugin>/<skill>` ref.
+ * `channels` is the P0.2 provenance and is absent on pre-P0.2 snapshots.
  */
-export interface PinnedSkillMeta {
-  skillId?: string;
-  name: string;
-  description: string;
-  contentHash: string;
-  sharing?: "user" | "project";
-  /** Stable `host` → `environment` → `plugin` order; see PinnedSkillArtifact. */
-  channels?: Array<"host" | "environment" | "plugin">;
-}
+export type PinnedSkillMeta = Omit<
+  RunPinnedSkill,
+  "content" | "files" | "extraFrontmatter"
+>;
 
 export interface PinnedHostExecutionSpec {
   hostId: string;
@@ -188,6 +189,12 @@ export interface PinnedHostExecutionSpec {
    * pinned no server-bearing plugin (or the run predates the field).
    */
   pluginServerIds?: string[];
+  /**
+   * The plugin versions the target's environment pinned, in pin order: the
+   * record a plugin skill's `<plugin>/<skill>` ref is attributed from.
+   * Provenance, like `pluginServerIds`. Absent ⇒ none pinned.
+   */
+  pluginVersions?: RunPinnedPluginVersion[];
   /**
    * Host-carried skill selection snapshotted from the host config (#767 —
    * inline, no skill-group ref). Provenance only on this side: the runner

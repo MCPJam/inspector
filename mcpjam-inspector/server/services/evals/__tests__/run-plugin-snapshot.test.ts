@@ -9,7 +9,6 @@ import {
   RunPluginSnapshotError,
   assertPinnedSkillFilesReachable,
   buildRunCapabilitySet,
-  runNeedsEffectiveSkillSurface,
   runPluginVersions,
   type RunPinnedSkill,
 } from "../run-plugin-snapshot.js";
@@ -124,47 +123,6 @@ describe("assertPinnedSkillFilesReachable", () => {
         }),
       ])
     ).toThrow(RunPluginSnapshotError);
-  });
-});
-
-describe("runNeedsEffectiveSkillSurface", () => {
-  it("switches surfaces for a captured MCP-server skill", () => {
-    expect(
-      runNeedsEffectiveSkillSurface([
-        pin({ serverSkillId: "server_skill_1", channels: ["mcp-server"] }),
-      ])
-    ).toBe(true);
-  });
-
-  it("keeps the legacy bare-name surface for body-only pins", () => {
-    expect(runNeedsEffectiveSkillSurface([pin(), pin({ skillId: "sk2" })])).toBe(
-      false
-    );
-  });
-
-  it("switches surfaces for a plugin ref (a bare name cannot identify one)", () => {
-    expect(
-      runNeedsEffectiveSkillSurface([pin({ modelRef: "acme/summarize" })])
-    ).toBe(true);
-  });
-
-  it("switches surfaces for supporting files (no bare-name tool reads them)", () => {
-    expect(
-      runNeedsEffectiveSkillSurface([
-        pin({
-          files: [
-            { path: "scripts/run.py", contentHash: "f1", size: 1, url: "u" },
-          ],
-        }),
-      ])
-    ).toBe(true);
-  });
-
-  // Deploy skew: a plugin-channel pin from a backend that predates `modelRef`.
-  it("switches surfaces on the plugin channel alone", () => {
-    expect(runNeedsEffectiveSkillSurface([pin({ channels: ["plugin"] })])).toBe(
-      true
-    );
   });
 });
 

@@ -23,9 +23,14 @@ vi.mock("../skill-tools.js", () => ({
 import { prepareChatV2 } from "../chat-v2-orchestration.js";
 import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
 import {
+  resolveTurnSkills,
   turnSkillsFromLegacySource,
   type LegacySkillsSource,
 } from "../../services/environments/turn-skills.js";
+import {
+  namePin,
+  preparedRunSkills,
+} from "../../test/support/skill-delivery.js";
 
 function mockManager(tools: Record<string, unknown> = {}) {
   return {
@@ -198,16 +203,16 @@ describe("the origin matrix", () => {
       ...base,
       mcpClientManager: mockManager(),
       requireToolApproval: true,
-      skills: turnSkillsFromLegacySource({
-        kind: "pinned",
-        skills: [
-          {
-            name: "frozen",
-            description: "Frozen for this run.",
-            content: "# Frozen",
-            contentHash: "h",
-          },
-        ],
+      skills: resolveTurnSkills({
+        source: (
+          await preparedRunSkills([
+            namePin("frozen", {
+              description: "Frozen for this run.",
+              content: "# Frozen",
+            }),
+          ])
+        ).pinnedSkillSource,
+        runtime: { kind: "agent" },
       }),
     } as never);
     expect(result.enhancedSystemPrompt).toContain("frozen");

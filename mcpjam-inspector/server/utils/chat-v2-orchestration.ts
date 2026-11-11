@@ -52,7 +52,6 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
   type CustomProviderConfig,
 } from "./chat-helpers.js";
-import { getPinnedSkillToolsAndPrompt } from "./computers/cloud-skill-tools.js";
 import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
 import { withServerSkills } from "./server-skill-tools.js";
 import { applyActingServerSkillGate } from "./server-skill-acting-gate.js";
@@ -1457,8 +1456,7 @@ export async function prepareChatV2(
   // property of the skill inside the plan's set, not a mode the orchestrator
   // picks between. Every surface inlines its catalog in the prompt; there is no
   // `listSkills` discovery tool on any of them.
-  const skillsArePinned =
-    skills?.agent?.kind === "frozen" || skills?.agent?.kind === "frozen-names";
+  const skillsArePinned = skills?.agent?.kind === "frozen";
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
   // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
@@ -1483,17 +1481,15 @@ export async function prepareChatV2(
   };
   const skillPrep: SkillPrep = !skills?.agent
     ? { tools: {}, systemPromptSection: "" }
-    : skills.agent.kind === "frozen-names"
-      ? getPinnedSkillToolsAndPrompt(skills.agent.skills, modelContextTokens)
-      : getEffectiveSkillToolsAndPrompt(skills.set, {
-          ...(abortSignal ? { signal: abortSignal } : {}),
-          // The discovery listing is budgeted against THIS model's context
-          // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
-          // model definition; the budget helper falls back to 8,000 chars.
-          // `resolveTurnSkills` plans the same listing, so the plan and this
-          // prompt agree on which skills the model can see.
-          ...modelContextTokens,
-        });
+    : getEffectiveSkillToolsAndPrompt(skills.set, {
+        ...(abortSignal ? { signal: abortSignal } : {}),
+        // The discovery listing is budgeted against THIS model's context
+        // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+        // model definition; the budget helper falls back to 8,000 chars.
+        // `resolveTurnSkills` plans the same listing, so the plan and this
+        // prompt agree on which skills the model can see.
+        ...modelContextTokens,
+      });
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
