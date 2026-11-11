@@ -1163,7 +1163,10 @@ export function MCPAppsRendererSurface({
   const fixedDisplayMode = host.surface.fixedDisplayMode;
   const fixedDisplayModeRef = useRef(fixedDisplayMode);
   fixedDisplayModeRef.current = fixedDisplayMode;
-  const openAIRules = host.surface.openAIDisplayModes === true;
+  const displayBehavior = host.surface.displayBehavior;
+  const displayBehaviorRef = useRef(displayBehavior);
+  displayBehaviorRef.current = displayBehavior;
+  const openAIRules = displayBehavior?.start === "hint-first";
   const openAIRulesRef = useRef(openAIRules);
   openAIRulesRef.current = openAIRules;
   const displayModesFor = useCallback(
@@ -2001,7 +2004,8 @@ export function MCPAppsRendererSurface({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
-        resourceDisplayHints: resourceHints,
+        resourceDisplayHints: openAIHints,
+        uiDisplayHints,
         declaredDomain: serverDeclaredDomain,
         viewOriginLabel: serverViewOriginLabel,
         sourceReceipt: serverSourceReceipt,
@@ -2080,6 +2084,10 @@ export function MCPAppsRendererSurface({
       // doesn't reload (and wipe) this iframe — see the fetch-effect guard.
       hasRenderedLiveRef.current = true;
       liveRenderIdentityRef.current = liveRenderIdentityKey;
+      const resourceHints =
+        displayBehaviorRef.current?.hints === "ui"
+          ? uiDisplayHints
+          : openAIHints;
       const allowed = displayModesFor(
         hostAvailableDisplayModesRef.current as DisplayMode[],
         resourceHints

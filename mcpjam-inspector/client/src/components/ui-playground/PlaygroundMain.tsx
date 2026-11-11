@@ -49,6 +49,7 @@ import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
+  displayBehaviorForHost,
   pluginExtensionsForHost,
   pluginExtensionProfileForHost,
   type PluginExtensionsHostConfig,
@@ -1296,7 +1297,7 @@ export function PlaygroundMain({
     projectId: convexProjectId,
   });
   // Per-client "OpenAI plugin extensions" setting (C1): on by default only
-  // for the ChatGPT and Codex styles, never by visual family.
+  // for the ChatGPT, Codex and Claude styles, never by visual family.
   const pluginExtensions = useMemo(
     () =>
       pluginExtensionsForHost({
@@ -1308,6 +1309,12 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // ChatGPT's or Claude's display-mode rules for this client's Apps.
+  const displayBehavior = displayBehaviorForHost({
+    hostStyle,
+    harness: previewedHost?.config?.harness,
+    mcpProfile: previewedHost?.config?.mcpProfile,
+  });
   // Who owns extension state for this client. Null turns every extension off.
   const extensionIdentity = useMemo<ExtensionOwnerIdentity | null>(
     () =>
@@ -1856,6 +1863,9 @@ export function PlaygroundMain({
         },
         servers,
         capabilities: resolved.capabilities,
+        displayBehavior: hostConfig
+          ? displayBehaviorForHost(hostConfig)
+          : displayBehavior,
         profile: pluginExtensionProfileForHost(hostConfig),
       };
     },
@@ -1865,6 +1875,7 @@ export function PlaygroundMain({
       currentUserForSender?._id,
       convexProjectId,
       pluginExtensions,
+      displayBehavior,
       compareExtensionServers,
     ],
   );
@@ -1931,6 +1942,7 @@ export function PlaygroundMain({
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
+          displayBehavior,
           profile: pluginExtensionProfileForHost(previewedHost?.config),
           // A save re-checks open Apps; it never reloads them by itself.
           hostRevision: previewedHost?.config?.id,
@@ -1947,6 +1959,7 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: (...args) => runPluginOnboardingRef.current(...args),
       capabilities: pluginExtensions.capabilities,
+      displayBehavior,
       launchProfile: pluginExtensionProfileForHost(previewedHost?.config),
       hostRevision: previewedHost?.config?.id,
     },
@@ -2028,7 +2041,7 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
-    pluginExtensions.capabilities.displayModes,
+    displayBehavior,
     pluginExtensionProfileForHost(previewedHost?.config),
   );
   usePublishPluginIcons(pluginIconsById, pluginNamesById);

@@ -299,6 +299,12 @@ import {
   createThreadAppHost,
   type ThreadAppPresentation,
 } from "@/components/host-workspace/thread-app-host";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
+
+const OPENAI_RULES: DisplayBehavior = {
+  hints: "openai/ui",
+  start: "hint-first",
+};
 import type { ThreadAppHandle } from "@/components/host-workspace/thread-app-api";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { toast } from "sonner";
@@ -1381,20 +1387,20 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as unknown as ThreadAppHandle;
     function OwnedHost({
       presentation,
-      openAIDisplayModes,
+      displayBehavior,
       children,
     }: {
       presentation: ThreadAppPresentation;
-      openAIDisplayModes: boolean;
+      displayBehavior: DisplayBehavior | undefined;
       children: React.ReactNode;
     }) {
       const base = useWidgetHost();
       const host = React.useMemo(
         () =>
           createThreadAppHost(base, handle, baseProps.serverId, presentation, {
-            openAIDisplayModes,
+            displayBehavior,
           }),
-        [base, presentation, openAIDisplayModes],
+        [base, presentation, displayBehavior],
       );
       return <WidgetHostProvider value={host}>{children}</WidgetHostProvider>;
     }
@@ -1405,7 +1411,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
      */
     function mountChat(
       presentation: ThreadAppPresentation = "model",
-      openAIDisplayModes = false,
+      displayBehavior?: DisplayBehavior,
       showControls = false,
     ) {
       const entered: { current: { label: string; exit: () => void } | null } =
@@ -1437,7 +1443,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
             <InspectorWidgetHostProvider>
               <OwnedHost
                 presentation={presentation}
-                openAIDisplayModes={openAIDisplayModes}
+                displayBehavior={displayBehavior}
               >
                 {showControls && (
                   <ToolPart
@@ -1607,26 +1613,26 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("starts a model App fullscreen when its resource declares both modes", async () => {
         declare({ availableDisplayModes: ["inline", "fullscreen"] });
-        const { state } = mountChat("model", true);
+        const { state } = mountChat("model", OPENAI_RULES);
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
       });
 
       it("keeps the same model App inline for clients without the rules", async () => {
         declare({ availableDisplayModes: ["inline", "fullscreen"] });
-        const { state } = mountChat("model", false);
+        const { state } = mountChat("model", undefined);
         await initialize();
         expect(state.mode).toBe("inline");
       });
 
       it("starts fullscreen-only resources fullscreen without a preference", async () => {
         declare({ availableDisplayModes: ["fullscreen"] });
-        const { state } = mountChat("model", true);
+        const { state } = mountChat("model", OPENAI_RULES);
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
       });
 
       it("disables Inline for a fullscreen-only resource even when its App supports both modes", async () => {
         declare({ availableDisplayModes: ["fullscreen"] });
-        const { state } = mountChat("model", true, true);
+        const { state } = mountChat("model", OPENAI_RULES, true);
         await initialize(["inline", "fullscreen"]);
         const inline = screen.getByRole("button", { name: "Inline" });
         expect(inline).toBeDisabled();
@@ -1640,7 +1646,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("updates controls when initialization narrows an inline-capable resource", async () => {
         declare({ availableDisplayModes: ["inline", "fullscreen"] });
-        const { state } = mountChat("model", true, true);
+        const { state } = mountChat("model", OPENAI_RULES, true);
         await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
         const inline = screen.getByRole("button", { name: "Inline" });
         expect(inline).toBeEnabled();
@@ -1653,7 +1659,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("disables all controls when initialization refuses an entrypoint", async () => {
         declare({ availableDisplayModes: ["fullscreen"] });
-        mountChat("global", true, true);
+        mountChat("global", OPENAI_RULES, true);
         await initialize(["inline"]);
         expect(screen.getByText(/This App can't open here/)).toBeInTheDocument();
         for (const name of ["Inline", "PiP", "Fullscreen"])
@@ -1663,7 +1669,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("offers every mode when the resource only states a preference", async () => {
         declare({ preferredDisplayMode: "inline" });
-        mountChat("model", true);
+        mountChat("model", OPENAI_RULES);
         await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
         expect(appBridgeArgsRef.current?.options?.hostContext).toEqual(
           expect.objectContaining({
@@ -1675,7 +1681,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("moves to the App's declared mode when initialization rules out the start", async () => {
         declare({ availableDisplayModes: ["inline", "fullscreen"] });
-        const { state } = mountChat("model", true);
+        const { state } = mountChat("model", OPENAI_RULES);
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
         await initialize(["inline"]);
         await vi.waitFor(() => expect(state.mode).toBe("inline"));
@@ -1686,7 +1692,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           preferredDisplayMode: "inline",
           availableDisplayModes: ["inline"],
         });
-        const { state } = mountChat("global", true);
+        const { state } = mountChat("global", OPENAI_RULES);
         await initialize();
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
         expect(screen.queryByText(/can't open here/)).toBeNull();
@@ -1694,7 +1700,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
       it("refuses an entrypoint whose initialized App says it can't show fullscreen", async () => {
         declare();
-        mountChat("global", true);
+        mountChat("global", OPENAI_RULES);
         await initialize(["inline"]);
         expect(
           await screen.findByText(/doesn't support full screen/),
