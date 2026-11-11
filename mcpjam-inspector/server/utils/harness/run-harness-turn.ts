@@ -2916,10 +2916,9 @@ export async function runHarnessTurn(
       // this map in that shape today and the branch is defence, not policy:
       // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
       // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
-      // output, every member of which declares a boolean too. The two
-      // function-form families (`server-skill-tools`, `effective-skill-tools`)
-      // reach the emulated engine through `allTools`, which this path does not
-      // consume.
+      // output, every member of which declares a boolean too. The
+      // function-form skill tools (`effective-skill-tools`) reach the
+      // emulated engine through `allTools`, which this path does not consume.
       //
       // The adapter capability still gates the whole map — advertise =
       // enforce, and an adapter that cannot pause on a host tool must not be
@@ -3071,7 +3070,10 @@ export async function runHarnessTurn(
               logPluginSkillDelivery({
                 set: effectiveCapabilities,
                 delivered: written.delivered,
-                skillsBaseDir: boxSkillsFolder(harnessAdapter.skills, skillsHome),
+                skillsBaseDir: boxSkillsFolder(
+                  harnessAdapter.skills,
+                  skillsHome,
+                ),
                 harness: harnessAdapter.id,
                 boxKind: box?.kind ?? "local-native",
                 boxId: computerId,

@@ -27,7 +27,10 @@ import { HARNESS_SKILLS } from "../skills-descriptor";
 const CLAUDE = `${BOX_HOME}/.claude/skills`;
 const AGENTS = `${BOX_HOME}/.agents/skills`;
 
-const skill = (name: string, over: Partial<RuntimeSkill> = {}): RuntimeSkill => ({
+const skill = (
+  name: string,
+  over: Partial<RuntimeSkill> = {},
+): RuntimeSkill => ({
   skillId: `sk_${name}`,
   name,
   description: `The ${name} skill.`,
@@ -58,7 +61,11 @@ const runTurn = (
 ) => writeTurnToBox(harnessId, { pinnedHarnessSkills: artifacts }, box);
 
 /** The adapter's own turn-time write, as `harnessId`'s adapter makes it. */
-async function adapterWrite(harnessId: string, box: FakeSkillBox, skills: RuntimeSkill[]) {
+async function adapterWrite(
+  harnessId: string,
+  box: FakeSkillBox,
+  skills: RuntimeSkill[],
+) {
   const descriptor = getHarnessAdapter(harnessId).skills;
   return writeSkills({
     sandbox: box.session as never,
@@ -89,7 +96,10 @@ describe("planBoxSkills", () => {
       { skill: skill("Bad_Name"), reason: "invalid-skill-name" },
       { skill: plugin, reason: "name-collision" },
     ]);
-    expect(plan.payload.map((entry) => entry.name)).toEqual(["summarize", "notes"]);
+    expect(plan.payload.map((entry) => entry.name)).toEqual([
+      "summarize",
+      "notes",
+    ]);
   });
 
   it("YAML-quotes each description for the adapter, which interpolates it raw", () => {
@@ -121,7 +131,9 @@ describe("writeBoxSkills", () => {
     const skillMd = box.files.get(`${CLAUDE}/release-notes/SKILL.md`)!;
     expect(skillMd).toContain('license: "MIT"');
     expect(hasAllowedToolsGrant(skillMd)).toBe(false);
-    expect(box.files.get(`${CLAUDE}/release-notes/scripts/check.sh`)).toBe("echo ok");
+    expect(box.files.get(`${CLAUDE}/release-notes/scripts/check.sh`)).toBe(
+      "echo ok",
+    );
     const adapter = await adapterWrite("claude-code", box, [
       skill("release-notes", {
         aggregateHash: "hash-release-notes",
@@ -138,13 +150,24 @@ describe("writeBoxSkills", () => {
       "codex",
       box,
       artifact("summarize"),
-      artifact("summarize", { skillId: "sk_acme_summarize", content: "# acme" }),
+      artifact("summarize", {
+        skillId: "sk_acme_summarize",
+        content: "# acme",
+      }),
     );
-    expect(result.delivered).toEqual([{ skillId: "sk_summarize", name: "summarize" }]);
-    expect(result.notDelivered).toEqual([
-      { skillId: "sk_acme_summarize", name: "summarize", reason: "name-collision" },
+    expect(result.delivered).toEqual([
+      { skillId: "sk_summarize", name: "summarize" },
     ]);
-    expect(box.files.get(`${AGENTS}/summarize/SKILL.md`)).toContain("# summarize");
+    expect(result.notDelivered).toEqual([
+      {
+        skillId: "sk_acme_summarize",
+        name: "summarize",
+        reason: "name-collision",
+      },
+    ]);
+    expect(box.files.get(`${AGENTS}/summarize/SKILL.md`)).toContain(
+      "# summarize",
+    );
   });
 
   it("takes out a grant a box written before the strip still holds", async () => {
@@ -156,7 +179,9 @@ describe("writeBoxSkills", () => {
     const path = `${CLAUDE}/git-helper/SKILL.md`;
     box.files.set(
       path,
-      box.files.get(path)!.replace("\n---\n", '\nallowed-tools: ["Bash(*)"]\n---\n'),
+      box.files
+        .get(path)!
+        .replace("\n---\n", '\nallowed-tools: ["Bash(*)"]\n---\n'),
     );
     await runTurn("claude-code", box, artifact("git-helper"));
     expect(hasAllowedToolsGrant(box.files.get(path)!)).toBe(false);
@@ -171,23 +196,34 @@ describe("writeBoxSkills", () => {
     // rewrite that SKILL.md.
     box.files.set(
       granted,
-      box.files.get(granted)!.replace("\n---\n", '\nallowed-tools: ["Bash"]\n---\n'),
+      box.files
+        .get(granted)!
+        .replace("\n---\n", '\nallowed-tools: ["Bash"]\n---\n'),
     );
     refused.add(granted);
-    const result = await runTurn("claude-code", box, artifact("granted"), artifact("plain"));
+    const result = await runTurn(
+      "claude-code",
+      box,
+      artifact("granted"),
+      artifact("plain"),
+    );
     expect(result.delivered).toEqual([{ skillId: "sk_plain", name: "plain" }]);
     expect(result.failed).toEqual([
       {
         skillId: "sk_granted",
         name: "granted",
-        error: "SKILL.md could not be rewritten and may grant tools, so the skill was removed",
+        error:
+          "SKILL.md could not be rewritten and may grant tools, so the skill was removed",
       },
     ]);
     expect(box.skillFolders(CLAUDE)).toEqual(["plain"]);
   });
 
   it("reports a skill missing a supporting file as failed", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 403 })),
+    );
     const box = fakeSkillBox();
     const descriptor = HARNESS_SKILLS.codex;
     const result = await writeBoxSkills({
@@ -196,7 +232,14 @@ describe("writeBoxSkills", () => {
       home: BOX_HOME,
       plan: planBoxSkills(descriptor, [skill("notes")]),
       readFiles: async () => ({
-        files: [{ skillId: "sk_notes", path: "ref.md", size: 3, url: "https://f/ref" }],
+        files: [
+          {
+            skillId: "sk_notes",
+            path: "ref.md",
+            size: 3,
+            url: "https://f/ref",
+          },
+        ],
         complete: () => true,
       }),
     });
@@ -235,7 +278,9 @@ describe("a box that runs more than one runtime", () => {
   const HAND_PLACED = `${CLAUDE}/hand-placed/SKILL.md`;
 
   it("holds exactly each turn's skills in every folder that turn's runtime reads", async () => {
-    const box = fakeSkillBox({ files: { [HAND_PLACED]: "a person's own skill" } });
+    const box = fakeSkillBox({
+      files: { [HAND_PLACED]: "a person's own skill" },
+    });
     await runTurn("claude-code", box, artifact("alpha"), artifact("beta"));
     await runTurn("codex", box, artifact("gamma"));
     // Codex reads only its own folder; Claude Code's turn is untouched.
@@ -271,7 +316,10 @@ describe("a box that runs more than one runtime", () => {
     expect(box.files.get(`${AGENTS}/notes/SKILL.md`)).toBe(written);
     expect(box.files.get(`${AGENTS}/notes/ref.md`)).toBe("reference");
     const adapter = await adapterWrite("codex", box, [
-      skill("notes", { aggregateHash: "hash-notes", extraFrontmatter: { license: "MIT" } }),
+      skill("notes", {
+        aggregateHash: "hash-notes",
+        extraFrontmatter: { license: "MIT" },
+      }),
     ]);
     expect(adapter.changed).toBe(false);
   });

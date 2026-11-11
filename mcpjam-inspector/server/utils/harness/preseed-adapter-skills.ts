@@ -224,7 +224,11 @@ export async function clearAdapterSkills(args: {
   );
   if (!owned?.size) return;
   try {
-    await preseedAdapterSkills({ ...args, payload: [], trailingNewline: false });
+    await preseedAdapterSkills({
+      ...args,
+      payload: [],
+      trailingNewline: false,
+    });
   } catch (error) {
     logger.warn("[preseed-adapter-skills] could not clear skills folder", {
       skillsBase: args.skillsBase,

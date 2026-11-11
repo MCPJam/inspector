@@ -33,11 +33,11 @@ export function fakeSkillBox(
     [...command.matchAll(/'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2]!);
   const under = (path: string) => (entry: string) =>
     entry === path || entry.startsWith(`${path}/`);
-  const exists = (path: string) =>
-    [...files.keys(), ...dirs].some(under(path));
+  const exists = (path: string) => [...files.keys(), ...dirs].some(under(path));
   const removeTree = (path: string) => {
     for (const dir of [...dirs]) if (under(path)(dir)) dirs.delete(dir);
-    for (const file of [...files.keys()]) if (under(path)(file)) files.delete(file);
+    for (const file of [...files.keys()])
+      if (under(path)(file)) files.delete(file);
   };
   const write = (path: string, content: string) => {
     if (options.failWrite?.(path)) throw new Error(`write refused: ${path}`);

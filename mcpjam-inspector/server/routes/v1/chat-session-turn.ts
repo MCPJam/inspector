@@ -668,7 +668,7 @@ function narrowTarget(
  * that matters (a server must never get to choose the namespace its own skills
  * are addressed under, so `serverInfo.name` is never a candidate) — it just
  * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
- * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * in the prompt's skill list and in the origin banner on loaded skill content,
  * both of which the model and the user see.
  *
  * Returns `undefined` when nothing is labelled, so the call site can keep to
@@ -1493,12 +1493,12 @@ async function handleTurn(c: Context): Promise<Response> {
         timeoutMs: CONNECT_TIMEOUT_MS,
         tolerateServerRefusals: true,
         // This surface emulates no host persona — it is MCPJam's own agent —
-        // and it ships the fulfiller, since `prepareChatV2` merges
-        // `withServerSkills`, which loads only through the verified read path
-        // in `server-skills.ts`. Without the declaration the extension can
-        // never be active: the model is handed no `listSkills` / `loadSkill`
-        // at all, so a server that serves skills is indistinguishable from one
-        // that does not.
+        // and it ships the fulfiller, since `prepareChatV2` adds the
+        // servers' skills to the turn's set, whose tools load only through the
+        // verified read path in `server-skills.ts`. Without the declaration
+        // the extension can never be active: the model is handed none of a
+        // server's skills, so a server that serves skills is
+        // indistinguishable from one that does not.
         advertiseSkillsExtension: true,
       },
     );
@@ -1614,8 +1614,8 @@ async function handleTurn(c: Context): Promise<Response> {
       // turn instead of running to its own fetch timeout.
       abortSignal: abortController.signal,
       // Without this every server-skill ref is namespaced by the raw server
-      // id, in the `listSkills` catalog the model reads AND in the origin
-      // banner prepended to loaded skill content.
+      // id, in the skill list the model reads AND in the origin banner
+      // prepended to loaded skill content.
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
@@ -1643,9 +1643,9 @@ async function handleTurn(c: Context): Promise<Response> {
     //
     // The ZERO case clears the FINAL set rather than trusting the name
     // exclusion above. `prepareChatV2` applies `excludeMcpToolNames` and THEN
-    // merges skill/meta tools (`withServerSkills`), so a server advertising
-    // the skills extension would still hand the model executable `listSkills`
-    // / `loadSkill` entries on a turn that asked for no tools at all. Excluding
+    // merges skill/meta tools, so a server advertising the skills extension
+    // would still hand the model an executable `loadSkill` and its file
+    // tools on a turn that asked for no tools at all. Excluding
     // names bounds what is LOADED; clearing the set is what makes "zero" true.
     const tools = noTools
       ? ({} as ToolSet)

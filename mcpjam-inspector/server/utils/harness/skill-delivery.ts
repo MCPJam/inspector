@@ -39,7 +39,10 @@ import type {
 } from "../computers/convex-skills-client.js";
 import { logger } from "../logger.js";
 import type { BoxSkillFiles } from "./box-skills-writer.js";
-import { capabilitySkillFiles, skillsHashWithPlugins } from "./plugin-delivery.js";
+import {
+  capabilitySkillFiles,
+  skillsHashWithPlugins,
+} from "./plugin-delivery.js";
 import {
   skillsFingerprint,
   type FetchRuntimeSkillFilesResult,
@@ -243,7 +246,10 @@ export async function harnessTurnSkills(args: {
   if (composed.problems.length > 0) {
     // Ids and codes only: a skill name is user-authored content.
     logger.warn("[harness] skills left out: box folder taken", {
-      problems: composed.problems.map(({ code, skillId }) => ({ code, skillId })),
+      problems: composed.problems.map(({ code, skillId }) => ({
+        code,
+        skillId,
+      })),
     });
   }
   return {
@@ -263,7 +269,9 @@ export async function harnessTurnSkills(args: {
     // environment's folders are touched: the pool's files stay as they are.
     readFiles: async () => {
       const pool =
-        composed.projectSkillIds.size > 0 ? await projectFiles() : NO_FILES_KNOWN;
+        composed.projectSkillIds.size > 0
+          ? await projectFiles()
+          : NO_FILES_KNOWN;
       return {
         files: [
           ...pool.files.filter((file) =>

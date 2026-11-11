@@ -152,7 +152,10 @@ describe("harness registry", () => {
       }
       // The writer cleans what a runtime reads and writes where its adapter
       // does, so both must be relative to the box's home.
-      for (const folder of [adapter.skills.writeFolder, ...adapter.skills.readFolders]) {
+      for (const folder of [
+        adapter.skills.writeFolder,
+        ...adapter.skills.readFolders,
+      ]) {
         expect(folder.startsWith("/")).toBe(false);
       }
       expect(adapter.skills.readFolders).toContain(adapter.skills.writeFolder);

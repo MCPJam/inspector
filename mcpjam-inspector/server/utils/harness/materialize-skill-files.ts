@@ -329,7 +329,11 @@ export async function materializeSkillFiles(args: {
         path: file.path,
         error: error instanceof Error ? error.message : String(error),
       });
-      fail(skillName, file.path, error instanceof Error ? error.message : String(error));
+      fail(
+        skillName,
+        file.path,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
   if (written > 0) {

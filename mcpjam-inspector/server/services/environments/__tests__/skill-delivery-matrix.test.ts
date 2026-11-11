@@ -280,14 +280,17 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
     }
   });
 
-  it.skipIf(isAgent)("the box writer reports the delivery it made", async () => {
-    const { written } = (await surface.plan(engine)).box!;
-    expect(written.delivered.map((skill) => skill.name)).toEqual(
-      expected.delivered,
-    );
-    expect(written.notDelivered).toEqual([]);
-    expect(written.failed).toEqual([]);
-  });
+  it.skipIf(isAgent)(
+    "the box writer reports the delivery it made",
+    async () => {
+      const { written } = (await surface.plan(engine)).box!;
+      expect(written.delivered.map((skill) => skill.name)).toEqual(
+        expected.delivered,
+      );
+      expect(written.notDelivered).toEqual([]);
+      expect(written.failed).toEqual([]);
+    },
+  );
 
   it("records the skills the engine was handed", async () => {
     const { skillsAtTurn } = await surface.plan(engine);
