@@ -570,9 +570,8 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
  * minting a new guest. Prefers the in-memory cache (the common same-tab
  * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
- * null only when the server confirms there is no guest cookie, and throws on
- * a failed lookup, so a caller can tell a stale activation marker from a
- * transient failure.
+ * null when the server answers that there is no guest (its 204 also covers an
+ * upstream 404), and throws on a failed lookup.
  *
  * Used by the promotion path to look up the activation marker for the cookie
  * actually present, so an incidental document-bootstrap cookie (never

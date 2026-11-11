@@ -357,12 +357,18 @@ export function useEnsureDbUser() {
             if (cancelled || activeEnsureIdentityRef.current !== identityKey) {
               return;
             }
-            // The cookie is gone or belongs to another guest, so the marked
-            // guest can never be promoted from this browser; drop its marker
-            // so later sign-ins skip the lookup. A failed lookup throws
-            // instead and keeps the marker.
-            if (guestId !== markedGuestId) clearGuestActivation(markedGuestId);
-          } catch {
+            // The cookie belongs to another guest, so the marked guest can
+            // never be promoted from this browser; drop its marker so later
+            // sign-ins skip the lookup. A null is not proof the guest is gone
+            // (the server turns an upstream 404 into a miss), and a failed
+            // lookup throws, so both keep the marker.
+            if (guestId !== null && guestId !== markedGuestId) {
+              clearGuestActivation(markedGuestId);
+            }
+          } catch (err) {
+            // Promotion is skipped this sign-in and the marker kept, so every
+            // sign-in waits on this lookup until it succeeds.
+            console.warn("[auth] guest lookup for promotion failed", err);
             guestId = null;
           }
 
@@ -423,6 +429,14 @@ export function useEnsureDbUser() {
           // between attempts, for a session that goes on to recover.
           if (!scheduleRecovery()) {
             setIsEnsuringUser(false);
+            // Setup failed for good, so the cleanup after ready never runs;
+            // an incidental cookie left here is what sign-out falls back to.
+            if (isWorkOsAuth && !guestProofJwt) {
+              void revokeIncidentalGuestCookie(
+                () =>
+                  !cancelled && activeEnsureIdentityRef.current === identityKey,
+              );
+            }
           }
         }
         return;

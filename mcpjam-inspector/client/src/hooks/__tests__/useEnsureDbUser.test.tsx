@@ -525,17 +525,18 @@ describe("useEnsureDbUser", () => {
     expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
   });
 
-  it("drops a marker once the lookup confirms there is no guest cookie", async () => {
+  // The server answers an upstream 404 on lookup_only with the same 204 as
+  // a real miss, so a null cannot prove the marked guest is gone.
+  it("keeps the marker when the lookup finds no guest cookie", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
-    mockState.getActivatedGuestId.mockReturnValue("guest-gone");
+    mockState.getActivatedGuestId.mockReturnValue("guest-marked");
     mockState.getExistingGuestId.mockResolvedValue(null);
 
     const { result } = renderHook(() => useEnsureDbUser());
 
     await waitFor(() => expect(result.current.isUserReady).toBe(true));
-    // Only the marker read before the lookup: one set meanwhile survives.
-    expect(mockState.clearGuestActivation).toHaveBeenCalledWith("guest-gone");
+    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
   });
 
@@ -544,6 +545,7 @@ describe("useEnsureDbUser", () => {
     mockState.actorKey = "workos-user-1";
     mockState.getActivatedGuestId.mockReturnValue("guest-activated");
     mockState.getExistingGuestId.mockRejectedValue(new Error("lookup failed"));
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -554,6 +556,11 @@ describe("useEnsureDbUser", () => {
     expect(mockState.ensureUser).toHaveBeenCalledExactlyOnceWith({});
     expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+    expect(consoleWarn).toHaveBeenCalledWith(
+      "[auth] guest lookup for promotion failed",
+      expect.any(Error),
+    );
+    consoleWarn.mockRestore();
     consoleError.mockRestore();
   });
 
@@ -594,7 +601,7 @@ describe("useEnsureDbUser", () => {
 
     unmount();
     await act(async () => {
-      resolveLookup?.(null);
+      resolveLookup?.("guest-other-cookie");
     });
 
     expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
@@ -619,7 +626,7 @@ describe("useEnsureDbUser", () => {
     // Another tab activates a new guest while the lookup is in flight.
     mockState.getActivatedGuestId.mockReturnValue("guest-new");
     await act(async () => {
-      resolveLookup?.(null);
+      resolveLookup?.("guest-other-cookie");
     });
 
     await waitFor(() => expect(result.current.isUserReady).toBe(true));
@@ -874,6 +881,29 @@ describe("useEnsureDbUser", () => {
       await Promise.resolve();
     });
     expect(result.current.isUserReady).toBe(true);
+  });
+
+  it("revokes an incidental cookie when ensureUser fails for good", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.getExistingGuestId.mockResolvedValue("guest-incidental");
+    mockState.ensureUser.mockRejectedValue(new Error("boom"));
+
+    renderHook(() => useEnsureDbUser());
+
+    for (const delayMs of [0, 1_000, 5_000, 15_000]) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delayMs);
+      });
+      // Retries are still pending, so the cleanup waits for the outcome.
+      if (delayMs < 15_000) {
+        expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+      }
+    }
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(4);
+    expect(mockState.revokeGuestSessionAndCookie).toHaveBeenCalledTimes(1);
   });
 
   it("gives up after the spaced retries are exhausted", async () => {
