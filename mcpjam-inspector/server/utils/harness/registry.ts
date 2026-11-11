@@ -1243,12 +1243,13 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   defaultPermissionMode: "allow-all",
   approvalPermissionMode: "allow-reads",
   liveApprovalRuntime: true,
-  // Only registered host tools are exposed. The CLI denies any other request.
+  // Only registered host tools and the built-in `skill` tool are exposed.
+  // The CLI denies any other request.
   supportsNativeToolApproval: true,
   supportsHostExecutedToolApproval: true,
   supportsMcpToolApproval: false,
   mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],

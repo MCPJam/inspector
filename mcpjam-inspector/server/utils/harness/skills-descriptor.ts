@@ -10,11 +10,14 @@
  *
  * Claude Code and Codex are checked against their installed adapters
  * (`codex-skill-parity.test.ts`). OpenCode, Cursor and Copilot CLI come from
- * their pinned binaries and SDKs, read without a live run, which is why their
- * adapters keep `supportsSkills: false`.
+ * their pinned binaries and SDKs, read without a live run.
  */
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { isValidSkillName } from "../../../shared/skill-types.js";
+import {
+  COPILOT_BUILTIN_SKILLS,
+  COPILOT_SKILLS_FOLDER,
+} from "./copilot-cli/bridge/session-skills.js";
 
 export interface HarnessSkillsDescriptor {
   /**
@@ -61,6 +64,8 @@ const DESCRIPTION_MAX_LENGTH = 1024;
 
 const CURSOR_HOME =
   ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home";
+
+const COPILOT_BUILTIN_SKILL_NAMES = new Set<string>(COPILOT_BUILTIN_SKILLS);
 
 export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
   // Reads `~/.claude/skills` and `.claude/skills` up to the repository root,
@@ -135,14 +140,17 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
   },
   // A per-session home, and the SDK's empty mode keeps skills off until the
   // bridge sets `enableSkills` and passes this folder as a skill directory,
-  // which no adapter writes. With config discovery on, Copilot would also read
-  // the `.claude`, `.agents` and `.github` skill folders above its working
-  // directory; the bridge turns discovery off.
+  // which no adapter writes (`copilot-cli/bridge/session-skills.ts`). With
+  // config discovery on, Copilot would also read the `.claude`, `.agents` and
+  // `.github` skill folders above its working directory; the bridge turns
+  // discovery off. It hides the CLI's built-in skills by name, which would
+  // hide a skill of the same name too.
   "copilot-cli": {
-    writeFolder: ".copilot/skills",
+    writeFolder: COPILOT_SKILLS_FOLDER,
     trailingNewline: false,
-    readFolders: [".copilot/skills"],
-    acceptsName: isValidSkillName,
+    readFolders: [COPILOT_SKILLS_FOLDER],
+    acceptsName: (name) =>
+      isValidSkillName(name) && !COPILOT_BUILTIN_SKILL_NAMES.has(name),
     frontmatter: {
       descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
       strictYaml: true,

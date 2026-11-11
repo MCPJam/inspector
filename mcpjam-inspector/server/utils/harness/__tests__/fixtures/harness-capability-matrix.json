@@ -180,7 +180,7 @@
       "supportsMcpToolApproval": false,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
-      "supportsSkills": false
+      "supportsSkills": true
     },
     "descriptor": {
       "controls": {

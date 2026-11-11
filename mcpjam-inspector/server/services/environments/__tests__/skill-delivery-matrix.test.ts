@@ -135,11 +135,12 @@ const EVAL: Surface = {
     },
     cursor: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
     opencode: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
-    "copilot-cli": noSkillsOn([
-      "release-notes",
-      "acme/summarize",
-      "docs/search",
-    ]),
+    "copilot-cli": {
+      delivered: RUN_SKILLS,
+      excluded: [],
+      serverSkillsVia: "box-files",
+      recorded: RUN_SKILLS,
+    },
   },
 };
 
@@ -188,7 +189,7 @@ const liveRows = (extra: string[]): Record<Engine, Expected> => {
     codex: harness,
     cursor: noSkillsOn(refs),
     opencode: noSkillsOn(refs),
-    "copilot-cli": noSkillsOn(refs),
+    "copilot-cli": harness,
   };
 };
 

@@ -1,5 +1,6 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { runBridge } from "@ai-sdk/harness/bridge";
@@ -11,6 +12,7 @@ import {
 import { buildHostToolCatalog } from "../../codex-appserver/bridge/host-tool-catalog.js";
 import { callHostTool } from "../../codex-appserver/bridge/host-tool-call.js";
 import { toMcpToolResult } from "../../codex-appserver/bridge/host-tool-result.js";
+import { sessionSkillsAndTools } from "./session-skills.js";
 
 const { values } = parseArgs({
   options: {
@@ -72,7 +74,7 @@ await runBridge<Start>({
       parameters: inputSchema,
       defer: "never" as const,
       // The host's needsApproval gate owns dispatch. All other CLI permission
-      // requests are denied and no built-in or user-configured tools are exposed.
+      // requests are denied, and the only built-in tool exposed is `skill`.
       skipPermission: true,
       handler: async (input: unknown) => {
         turn.abortSignal.throwIfAborted();
@@ -88,9 +90,11 @@ await runBridge<Start>({
       streaming: true,
       model: start.model,
       tools,
-      availableTools: tools.map(({ name }) => "custom:" + name),
-      excludedTools: ["builtin:*", "mcp:*"],
-      enableConfigDiscovery: false,
+      // This process keeps the box's home; the runtime's is `copilot-home`.
+      ...sessionSkillsAndTools(
+        homedir(),
+        tools.map(({ name }) => name),
+      ),
       ...(start.instructions
         ? {
             systemMessage: {
