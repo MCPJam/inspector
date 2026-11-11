@@ -356,7 +356,9 @@ describe("SuiteAccountsRow", () => {
       renderRow();
       const mine = screen.getByTestId("suite-accounts-mine");
       expect(
-        within(mine).getByText("No project account connected."),
+        within(mine).getByText(
+          "No project account yet. A project admin can connect one on the server's page.",
+        ),
       ).toBeInTheDocument();
       expect(
         within(mine).getByRole("button", { name: "Open server" }),

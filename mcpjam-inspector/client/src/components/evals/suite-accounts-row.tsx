@@ -241,7 +241,9 @@ function AccountChoices({
     const shared = server.mode === "shared";
     return (
       <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
-        {shared ? "No project account connected." : "No account connected."}
+        {shared
+          ? "No project account yet. A project admin can connect one on the server's page."
+          : "No account connected."}
         <Button
           type="button"
           variant="link"
