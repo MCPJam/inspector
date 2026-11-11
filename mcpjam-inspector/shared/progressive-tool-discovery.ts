@@ -735,6 +735,37 @@ export function resolveLoadTarget(
 }
 
 /**
+ * Catalog id of `modelName` when a `load_mcp_tools` call among `priorParts`
+ * (the calls the model already made earlier in the SAME step) asks for it.
+ *
+ * A model may load a tool and call it in one step, though the load says the
+ * tool is callable only from the next step. That call is refused because the
+ * step never advertised the tool; with this, the caller can stage the load
+ * first and run the call instead of failing it.
+ */
+export function toolIdLoadedEarlierInStep(
+  catalog: ReadonlyArray<ToolCatalogEntry>,
+  modelName: string,
+  priorParts: ReadonlyArray<unknown>,
+): string | undefined {
+  const toolId = lookupToolIdByModelName([...catalog], modelName);
+  if (!toolId) return undefined;
+  for (const part of priorParts) {
+    if (!part || typeof part !== "object") continue;
+    const { type, toolName, input } = part as {
+      type?: unknown;
+      toolName?: unknown;
+      input?: unknown;
+    };
+    if (type !== "tool-call" || toolName !== META_TOOL_LOAD) continue;
+    for (const requested of readLoadRequest(input)) {
+      if (resolveLoadTarget(catalog, requested) === toolId) return toolId;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Move newly-loaded tool ids into the persistent loaded set after a step has
  * been built. Returns the count of ids promoted.
  */

@@ -4,6 +4,7 @@ import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
 import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
@@ -136,6 +137,7 @@ import {
   resolveActiveToolNames,
   META_TOOL_NAMES,
   shouldForceInitialToolSearch,
+  toolIdLoadedEarlierInStep,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
@@ -1697,6 +1699,27 @@ function historyNameForRejectedToolCall(toolName: string): string {
 }
 
 /**
+ * Whether `input` is an object its tool's JSON Schema accepts. The check for a
+ * call the model made before it saw that schema: such a call runs only when
+ * its guess is right.
+ */
+function inputMatchesSchema(
+  schema: Record<string, unknown>,
+  input: unknown,
+): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  try {
+    return new DialectAwareJsonSchemaValidator().getValidator(
+      schema as Parameters<DialectAwareJsonSchemaValidator["getValidator"]>[0],
+    )(input).valid;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Names of rejected tool calls in `messages`. Their tools are by definition
  * not in the tool set, so the unavailable-tool scrub would drop the call and
  * its error result — and with them the only thing telling the model why its
@@ -2538,6 +2561,14 @@ async function processStream(
   // The backend path this stream came from, so an error chunk's code can be
   // read per route (`credential_missing` on `/stream/org`).
   dispatchPath?: string,
+  // Whether a call refused as unavailable may run anyway, because an earlier
+  // `load_mcp_tools` in the same step loads its tool.
+  admitSameStepLoadedCall?: (call: {
+    toolName: string;
+    input: unknown;
+    errorText: string;
+    priorParts: ReadonlyArray<PersistedAssistantPart>;
+  }) => boolean,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2587,6 +2618,115 @@ async function processStream(
     }
     pendingReasoningId = null;
     pendingReasoningMetadata = undefined;
+  };
+
+  // A tool call the step will run: recorded, forwarded, traced, and offered
+  // for approval. Shared by `tool-input-available` and by a refused call
+  // that `admitSameStepLoadedCall` lets through.
+  const acceptToolCall = async (
+    chunk: Extract<UIMessageChunk, { type: "tool-input-available" }>,
+  ) => {
+    flushText();
+    flushReasoning();
+    unfinishedTools.delete(String(chunk.toolCallId));
+    const toolCallId = normalizeToolCallId(chunk.toolCallId);
+    const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
+    // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
+    // tool-call part to the client and back, so an approval resumed in a
+    // later request can tell whether the page moved under it — see
+    // `mergePageToolBindingMetadata`.
+    const providerMetadata = mergePageToolBindingMetadata(
+      mergeMcpToolOriginMetadata(
+        withPageToolAttributionMetadata(
+          mergeMcpToolConnectionMetadata(
+            chunk.providerMetadata,
+            toolConnectionAttribution(
+              tools[chunk.toolName],
+              chunk.input,
+              toolCallId,
+            ),
+          ),
+          tools[chunk.toolName],
+        ),
+        serverIdForToolCall,
+      ),
+      pageToolBindingOf(tools[chunk.toolName]),
+    );
+    contentParts.push({
+      type: "tool-call",
+      toolCallId,
+      toolName: chunk.toolName,
+      input: chunk.input ?? {},
+      ...(providerMetadata ? { providerOptions: providerMetadata } : {}),
+    });
+    hasToolCalls = true;
+    writer.write({
+      ...chunk,
+      toolCallId,
+      ...(providerMetadata ? { providerMetadata } : {}),
+    });
+    writeTraceEvent(writer, {
+      type: "tool_call",
+      turnId: traceTurn.turnId,
+      promptIndex: traceTurn.promptIndex,
+      stepIndex,
+      toolCallId,
+      toolName: chunk.toolName,
+      input: toTraceRecord(chunk.input),
+      serverId: serverIdForToolCall,
+    });
+    // PR 5b-pre: fire chunk-level callback so eval's backend
+    // stream runner (PR 5b) can emit the `tool_call` SSE event.
+    // Chat / synthetic don't supply this callback.
+    if (onToolCall) {
+      try {
+        onToolCall({
+          toolCallId,
+          toolName: chunk.toolName,
+          input: chunk.input,
+          stepIndex,
+          promptIndex: traceTurn.promptIndex,
+          serverId: serverIdForToolCall,
+        });
+      } catch (error) {
+        logger.warn(
+          "[mcpjam-stream-handler] onToolCall callback failed",
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      }
+    }
+
+    if (
+      await toolCallNeedsApproval({
+        name: chunk.toolName,
+        input: chunk.input ?? {},
+        toolCallId,
+        tools,
+        messages: messageHistory,
+        decisions: approvalDecisions,
+      })
+    ) {
+      // THE APPROVAL ID IS THE PROOF (MJ-008): an HMAC over this exact
+      // call, verified when the answer comes back in the next request.
+      // Unsignable only on a hosted deployment with no key, where the
+      // tools that must verify were already built to refuse (see
+      // `built-in-tools/mcpjam.ts`); everything else keeps the legacy
+      // random id and the legacy trust in the answer.
+      emitToolApprovalRequest(writer, {
+        approvalId:
+          mintToolApprovalId({
+            call: {
+              toolCallId,
+              toolName: chunk.toolName,
+              input: chunk.input ?? {},
+            },
+            binding: approvalBinding,
+          }) ?? generateToolCallId(),
+        toolCallId,
+      });
+    }
   };
 
   const parsedStream = parseJsonEventStream({
@@ -2753,6 +2893,29 @@ async function processStream(
           } else if (chunk.type === "tool-input-error") {
             unfinishedTools.delete(String(chunk.toolCallId));
           }
+          // Loaded and called in the same step: run the call after the load
+          // instead of refusing it, once the caller has checked its input.
+          if (
+            chunk.type === "tool-input-error" &&
+            admitSameStepLoadedCall?.({
+              toolName: chunk.toolName,
+              input: chunk.input,
+              errorText: chunk.errorText,
+              priorParts: contentParts,
+            })
+          ) {
+            await acceptToolCall({
+              type: "tool-input-available",
+              toolCallId: chunk.toolCallId,
+              toolName: chunk.toolName,
+              input: chunk.input,
+              ...(chunk.providerMetadata
+                ? { providerMetadata: chunk.providerMetadata }
+                : {}),
+              ...(chunk.dynamic !== undefined ? { dynamic: chunk.dynamic } : {}),
+            });
+            break;
+          }
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           if (chunk.type === "tool-input-error") {
             const toolInputErrorText = (chunk as { errorText?: unknown })
@@ -2802,107 +2965,7 @@ async function processStream(
         }
 
         case "tool-input-available": {
-          flushText();
-          flushReasoning();
-          unfinishedTools.delete(String(chunk.toolCallId));
-          const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          const serverIdForToolCall = readToolServerId(tools, chunk.toolName);
-          // AND THE PAGE TOOL'S BINDING, on the same channel. It rides the
-          // tool-call part to the client and back, so an approval resumed in a
-          // later request can tell whether the page moved under it — see
-          // `mergePageToolBindingMetadata`.
-          const providerMetadata = mergePageToolBindingMetadata(
-            mergeMcpToolOriginMetadata(
-              withPageToolAttributionMetadata(
-                mergeMcpToolConnectionMetadata(
-                  chunk.providerMetadata,
-                  toolConnectionAttribution(
-                    tools[chunk.toolName],
-                    chunk.input,
-                    toolCallId,
-                  ),
-                ),
-                tools[chunk.toolName],
-              ),
-              serverIdForToolCall,
-            ),
-            pageToolBindingOf(tools[chunk.toolName]),
-          );
-          contentParts.push({
-            type: "tool-call",
-            toolCallId,
-            toolName: chunk.toolName,
-            input: chunk.input ?? {},
-            ...(providerMetadata ? { providerOptions: providerMetadata } : {}),
-          });
-          hasToolCalls = true;
-          writer.write({
-            ...chunk,
-            toolCallId,
-            ...(providerMetadata ? { providerMetadata } : {}),
-          });
-          writeTraceEvent(writer, {
-            type: "tool_call",
-            turnId: traceTurn.turnId,
-            promptIndex: traceTurn.promptIndex,
-            stepIndex,
-            toolCallId,
-            toolName: chunk.toolName,
-            input: toTraceRecord(chunk.input),
-            serverId: serverIdForToolCall,
-          });
-          // PR 5b-pre: fire chunk-level callback so eval's backend
-          // stream runner (PR 5b) can emit the `tool_call` SSE event.
-          // Chat / synthetic don't supply this callback.
-          if (onToolCall) {
-            try {
-              onToolCall({
-                toolCallId,
-                toolName: chunk.toolName,
-                input: chunk.input,
-                stepIndex,
-                promptIndex: traceTurn.promptIndex,
-                serverId: serverIdForToolCall,
-              });
-            } catch (error) {
-              logger.warn(
-                "[mcpjam-stream-handler] onToolCall callback failed",
-                {
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              );
-            }
-          }
-
-          if (
-            await toolCallNeedsApproval({
-              name: chunk.toolName,
-              input: chunk.input ?? {},
-              toolCallId,
-              tools,
-              messages: messageHistory,
-              decisions: approvalDecisions,
-            })
-          ) {
-            // THE APPROVAL ID IS THE PROOF (MJ-008): an HMAC over this exact
-            // call, verified when the answer comes back in the next request.
-            // Unsignable only on a hosted deployment with no key, where the
-            // tools that must verify were already built to refuse (see
-            // `built-in-tools/mcpjam.ts`); everything else keeps the legacy
-            // random id and the legacy trust in the answer.
-            emitToolApprovalRequest(writer, {
-              approvalId:
-                mintToolApprovalId({
-                  call: {
-                    toolCallId,
-                    toolName: chunk.toolName,
-                    input: chunk.input ?? {},
-                  },
-                  binding: approvalBinding,
-                }) ?? generateToolCallId(),
-              toolCallId,
-            });
-          }
+          await acceptToolCall(chunk);
           break;
         }
 
@@ -4443,6 +4506,30 @@ async function processOneStep(ctx: StepContext): Promise<{
     abortSignal,
     onToolCall,
     dispatchPath,
+    progressivePlan?.enabled && discoveryState && !prepareAdvertisedTools
+      ? ({ toolName, input, errorText, priorParts }) => {
+          if (
+            !parseStreamErrorChunkText(errorText).message.startsWith(
+              "Model tried to call unavailable tool",
+            )
+          ) {
+            return false;
+          }
+          const toolId = toolIdLoadedEarlierInStep(
+            progressivePlan.catalog,
+            toolName,
+            priorParts,
+          );
+          const def = toolDefsByName.get(toolName);
+          if (!toolId || !def || !inputMatchesSchema(def.inputSchema, input)) {
+            return false;
+          }
+          // Stage the load now, so the call passes the loaded-tools gate
+          // whichever of the two runs first.
+          discoveryState.newlyLoadedToolIds.add(toolId);
+          return true;
+        }
+      : undefined,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(

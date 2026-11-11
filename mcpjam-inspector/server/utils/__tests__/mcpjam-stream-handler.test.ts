@@ -401,6 +401,116 @@ describe("mcpjam-stream-handler", () => {
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
   });
 
+  describe("a tool loaded and called in the same step", () => {
+    const squadSchema = {
+      type: "object",
+      properties: { team: { type: "string" } },
+      required: ["team"],
+    };
+    const runLoadAndCall = async (input: unknown) => {
+      vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+        { name: "search_mcp_tools", inputSchema: { type: "object" } },
+        { name: "load_mcp_tools", inputSchema: { type: "object" } },
+        { name: "show_squad", inputSchema: squadSchema },
+      ]);
+      // What Haiku sent: the load and the call in one step. The step offered
+      // only the meta-tools, so the backend refused the call.
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "tool-input-available",
+            toolCallId: "load-1",
+            toolName: "load_mcp_tools",
+            input: { names: ["show_squad"] },
+          },
+          {
+            type: "tool-input-start",
+            toolCallId: "call-1",
+            toolName: "show_squad",
+          },
+          {
+            type: "tool-input-error",
+            toolCallId: "call-1",
+            toolName: "show_squad",
+            input,
+            errorText: JSON.stringify({
+              code: "unknown_error",
+              message:
+                "Model tried to call unavailable tool 'show_squad'. Available tools: search_mcp_tools, load_mcp_tools.",
+            }),
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ]),
+      );
+      const discoveryState = {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      };
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "show me barca" }] as any,
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "You are helpful",
+        tools: {
+          search_mcp_tools: { description: "Search", inputSchema: {} },
+          load_mcp_tools: { description: "Load", inputSchema: {} },
+          show_squad: { description: "Show squad", inputSchema: {} },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        progressivePlan: {
+          enabled: true,
+          reasons: ["test"],
+          policy: {
+            thresholdPct: 0.03,
+            maxToolTokens: 10_000,
+            maxToolCount: 30,
+            searchLimit: 8,
+          },
+          catalog: [
+            {
+              toolId: "sports::show_squad",
+              modelName: "show_squad",
+              serverId: "sports",
+              description: "Show squad",
+              fieldSummary: "",
+              tokenEstimate: 10,
+            },
+          ],
+          totalTokenEstimate: 10,
+        } as any,
+        discoveryState: discoveryState as any,
+      });
+      await lastExecution;
+      const callChunks = writtenChunks
+        .filter((chunk) => chunk?.toolCallId === "call-1")
+        .map((chunk) => chunk.type);
+      return { callChunks, discoveryState };
+    };
+
+    it("runs the call after the load instead of failing it", async () => {
+      const { callChunks, discoveryState } = await runLoadAndCall({
+        team: "Barcelona",
+      });
+
+      expect(callChunks).toEqual(["tool-input-start", "tool-input-available"]);
+      // Loaded now, so the call passes the loaded-tools gate when it runs.
+      expect([
+        ...discoveryState.newlyLoadedToolIds,
+        ...discoveryState.loadedToolIds,
+      ]).toContain("sports::show_squad");
+    });
+
+    it("still fails the call when its input does not fit the tool", async () => {
+      const { callChunks, discoveryState } = await runLoadAndCall({});
+
+      expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
+      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
+      expect(discoveryState.loadedToolIds.size).toBe(0);
+    });
+  });
+
   it("sends the backend provider-safe tool names and restores them in its reply", async () => {
     const toolDef = {
       description: "Add",
