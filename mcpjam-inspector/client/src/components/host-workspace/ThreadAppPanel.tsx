@@ -72,6 +72,7 @@ import {
 import { ResultsPanel } from "@/components/tools/ResultsPanel";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { createThreadAppHost, rowPresentation } from "./thread-app-host";
+import { RetainedAppErrorAction } from "./RetainedAppErrorAction";
 import {
   capabilityRefusal,
   guardRetainedAppRequests,
@@ -1775,19 +1776,12 @@ function RetainedAppsBody({
       {current?.status === "error" && (
         <div role="alert" className="p-4 text-sm">
           <p>{current.error}</p>
-          {(current.retryable !== false || current.closing) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                current.closing
-                  ? void close(current)
-                  : void retry(current.server, current.declaration)
-              }
-            >
-              {current.closing ? "Retry close" : "Retry"}
-            </Button>
-          )}
+          <RetainedAppErrorAction
+            row={current}
+            inline={inline}
+            close={close}
+            retry={retry}
+          />
         </div>
       )}
       {rendered.map((row) => (
