@@ -342,6 +342,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         (outcome) => outcome.creditsExhausted,
       ),
     ).toEqual([false, false, false]);
+    const persisted = convexClient.action.mock.calls.find(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.errorDetails,
+    );
+    expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
   });
 
   describe("environment quick runs (committed iterations)", () => {
