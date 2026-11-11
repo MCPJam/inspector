@@ -747,7 +747,7 @@ export function toMCPServerConfig(
       : baseClientCapabilities;
   // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
   // client, and it ships the fulfiller: the verified read path in
-  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
+  // `server-skills.ts` plus the agent's skill tools that load through it. So
   // advertise = enforce is satisfied unconditionally here, and the declaration
   // is not gated on the `skills-enabled` product flag — that flag controls UI
   // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would

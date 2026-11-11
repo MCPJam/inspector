@@ -40,8 +40,12 @@ function mockManager(tools: Record<string, unknown> = {}) {
   } as never;
 }
 
-/** A manager whose one connection has the skills extension mutually active. */
+/**
+ * A manager whose one connection has the skills extension mutually active,
+ * and which lists one skill.
+ */
 function liveSkillsManager() {
+  const uri = "skill://srv/refunds/SKILL.md";
   return {
     getToolsForAiSdk: vi.fn(async () => ({})),
     listTools: vi.fn(async () => ({ tools: [] })),
@@ -52,7 +56,16 @@ function liveSkillsManager() {
       directoryRead: false,
       active: true,
     })),
-  } as never;
+    listServerSkills: vi.fn(async () => ({
+      skills: [
+        {
+          uri,
+          frontmatter: { name: "refunds", description: "Handle refunds." },
+          resources: [{ uri, digest: `sha256:${"a".repeat(64)}` }],
+        },
+      ],
+    })),
+  };
 }
 
 function capabilities(
@@ -159,10 +172,11 @@ describe("the origin matrix", () => {
     // turn — the exact thing `composeLiveServerSkills` is opt-in to prevent.
     // Asserted here because the flag's absence is invisible: a set that quietly
     // gained live skills would still look like a working environment turn.
+    const manager = liveSkillsManager();
     const result = await prepareChatV2({
       ...base,
       selectedServers: ["srv"],
-      mcpClientManager: liveSkillsManager(),
+      mcpClientManager: manager,
       skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: capabilities({ standaloneSkills: [PROJECT_SKILL] }),
@@ -170,13 +184,15 @@ describe("the origin matrix", () => {
     } as never);
 
     expect(result.enhancedSystemPrompt).toContain("**code-review**");
-    expect(Object.keys(result.allTools)).not.toContain("listSkills");
+    expect(result.enhancedSystemPrompt).not.toContain("**srv/refunds**");
+    expect(manager.listServerSkills).not.toHaveBeenCalled();
+    expect(result.liveServerSkills).toBe(false);
   });
 
   it("a live turn against the same server DOES compose it", async () => {
     // The control for the case above: same manager, same selection, and the
     // only difference is the flag. Without this pair, the assertion above
-    // would also pass if `withServerSkills` had simply stopped working.
+    // would also pass if live server skills had simply stopped working.
     const result = await prepareChatV2({
       ...base,
       selectedServers: ["srv"],
@@ -188,7 +204,13 @@ describe("the origin matrix", () => {
       }),
     } as never);
 
-    expect(Object.keys(result.allTools)).toContain("listSkills");
+    // One skill list: the project's skill, then the server's.
+    expect(result.enhancedSystemPrompt).toContain("**code-review**");
+    expect(result.enhancedSystemPrompt).toContain(
+      '**srv/refunds** (MCP server "srv"): Handle refunds.',
+    );
+    expect(Object.keys(result.allTools)).not.toContain("listSkills");
+    expect(result.liveServerSkills).toBe(true);
   });
 
   it("an eval run: pinned content only, and never under approval", async () => {
