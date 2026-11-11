@@ -28,13 +28,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
+import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 
 const images = new Hono();
@@ -98,20 +98,6 @@ function toEnvironmentDto(row: EnvironmentRow) {
   };
 }
 
-function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
-}
-
 function translateConvexWriteError(error: unknown): WebRouteError {
   return translateConvexError(error, {
     resource: "Environment",
@@ -138,7 +124,7 @@ async function readEnvironmentInProject(
   projectId: string,
   environmentId: string,
 ): Promise<EnvironmentRow> {
-  const readClient = createConvexReadClient(convexAuthToken);
+  const readClient = createConvexClient(convexAuthToken);
   let env: EnvironmentRow | null;
   try {
     env = (await readClient.query(
@@ -263,7 +249,7 @@ const validateBlueprintSchema = z.strictObject({
 // GET /v1/projects/:projectId/images — list a project's environments.
 images.get("/projects/:projectId/images", async (c) => {
   const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.images");
-  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: EnvironmentRow[] | null | undefined;
   try {
     rows = (await readClient.query(
@@ -312,7 +298,7 @@ images.post("/projects/:projectId/images/validate", async (c) => {
     validateBlueprintSchema,
     await readJsonObjectBody(c),
   );
-  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let result:
     | { ok: true; baseImageDigest: string }
     | { ok: false; errors: { path: string; message: string }[] };
@@ -395,7 +381,7 @@ images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
   const environmentId = c.req.param("imageId");
   const token = await getConvexBearerForRequest(c);
   await readEnvironmentInProject(token, projectId, environmentId);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let rows: BuildRow[] | null | undefined;
   try {
     rows = (await readClient.query(
