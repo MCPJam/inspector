@@ -46,6 +46,8 @@ import type {
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
+import { RunAccountFacts } from "./run-account-facts";
+import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   Tooltip,
@@ -161,6 +163,7 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
+  const accountsEnabled = useEvalAccountSelectionEnabled();
 
   return (
     <HeaderActionsContext.Provider value={setHeaderActions}>
@@ -199,6 +202,7 @@ export function EvaluateRunPage({
                 targets={targets}
                 hostNamesById={hostNamesById}
               />
+              {accountsEnabled ? <RunAccountFacts runs={targets} /> : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
