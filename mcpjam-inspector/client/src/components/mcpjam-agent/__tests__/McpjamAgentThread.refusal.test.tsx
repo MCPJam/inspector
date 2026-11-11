@@ -17,6 +17,8 @@ const sessionState = vi.hoisted(() => ({
   error: undefined as Error | undefined,
   autoResumeNotice: null as string | null,
   editRejectedMessage: vi.fn(() => "Debug this failure"),
+  submit: vi.fn(),
+  onNewChat: vi.fn(),
   messages: [] as UIMessage[],
 }));
 
@@ -32,7 +34,7 @@ vi.mock("@/hooks/use-mcpjam-agent-session", () => ({
       return sessionState.autoResumeNotice;
     },
     status: "ready",
-    model: undefined,
+    model: { id: "agent-model", provider: "mcpjam" },
     hydrating: false,
     sendMessage: vi.fn(),
     stop: vi.fn(),
@@ -41,8 +43,12 @@ vi.mock("@/hooks/use-mcpjam-agent-session", () => ({
     handleToolApprovalResponse: vi.fn(),
     chatSessionId: "agent-refusal-session",
     editRejectedMessage: sessionState.editRejectedMessage,
+    submit: sessionState.submit,
   }),
 }));
+
+// The transcript isn't under test, and its tool parts need app state.
+vi.mock("@/components/chat-v2/thread", () => ({ Thread: () => null }));
 
 import { McpjamAgentThread } from "../McpjamAgentThread";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
@@ -60,6 +66,7 @@ function renderThread() {
         projectId="project-1"
         organizationId="org-1"
         surface="test"
+        onNewChat={sessionState.onNewChat}
       />
     </PreferencesStoreProvider>,
   );
@@ -71,6 +78,8 @@ describe("McpjamAgentThread refusal copy", () => {
     sessionState.error = undefined;
     sessionState.autoResumeNotice = null;
     sessionState.editRejectedMessage.mockClear();
+    sessionState.submit.mockClear();
+    sessionState.onNewChat.mockClear();
     sessionState.messages = [];
   });
 
@@ -100,7 +109,7 @@ describe("McpjamAgentThread refusal copy", () => {
     renderWithError(body);
     expect(
       screen.getByText(
-        "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.",
+        "This conversation is too large to send. Shorten your message or start a new chat.",
       ),
     ).toBeTruthy();
     expect(screen.queryByText(JSON.stringify(body))).toBeNull();
@@ -110,7 +119,7 @@ describe("McpjamAgentThread refusal copy", () => {
     expect(screen.getByRole("textbox")).toHaveFocus();
   });
 
-  it("does not offer to erase a turn with completed tool activity", () => {
+  it("keeps the text and offers a new chat once tools ran before the refusal", () => {
     sessionState.messages = [
       {
         id: "request",
@@ -132,7 +141,30 @@ describe("McpjamAgentThread refusal copy", () => {
       },
     ];
     renderWithError({ code: "guest_input_too_large" });
+    expect(
+      screen.getByText(
+        "This conversation is too large to continue. Start a new chat to keep going.",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Edit message" })).toBeNull();
+    const composer = screen.getByRole("textbox");
+    fireEvent.change(composer, { target: { value: "What already happened?" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(sessionState.submit).not.toHaveBeenCalled();
+    expect(composer).toHaveValue("What already happened?");
+    fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
+    expect(sessionState.onNewChat).toHaveBeenCalledOnce();
+  });
+
+  it("still sends a replacement when no tool ran before the refusal", () => {
+    sessionState.messages = [{ id: "rejected", role: "user", parts: [] }];
+    renderWithError({ code: "guest_input_too_large" });
+    const composer = screen.getByRole("textbox");
+    fireEvent.change(composer, { target: { value: "Shorter" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(sessionState.submit).toHaveBeenCalledWith("Shorter");
+    expect(composer).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Start new chat" })).toBeNull();
   });
 
   it("shows the same line for the per-user turn cap", () => {

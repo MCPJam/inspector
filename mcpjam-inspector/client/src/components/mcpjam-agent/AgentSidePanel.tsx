@@ -136,8 +136,9 @@ export function AgentSidePanel({
 
   const handleNewChat = useCallback(() => {
     abandonCurrentEvalTurn();
-    if (evalScope) newEvalChat(evalScope);
-    else setActiveSession(null, null);
+    // Off the case's Describe editor no eval chat opens; a general one does.
+    if (evalScope && newEvalChat(evalScope)) return;
+    setActiveSession(null, null);
   }, [setActiveSession, evalScope, abandonCurrentEvalTurn]);
 
   const handleSessionStart = useCallback(
@@ -174,6 +175,7 @@ export function AgentSidePanel({
           surface={SURFACE}
           variant="sidebar"
           className="flex-1 min-h-0"
+          onNewChat={handleNewChat}
         />
       );
     }
@@ -191,6 +193,7 @@ export function AgentSidePanel({
     );
   }, [
     activeSessionId,
+    handleNewChat,
     handleResumeSession,
     handleSessionStart,
     organizationId,

@@ -446,6 +446,10 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
+/** For a size refusal the next message can't fix, because its turn must stay. */
+export const CONVERSATION_TOO_LARGE_MESSAGE =
+  "This conversation is too large to continue. Start a new chat to keep going.";
+
 export function isGuestInputTooLargeMessage(
   message: string | null | undefined,
 ): boolean {
@@ -461,7 +465,7 @@ export function describeAgentRefusalMessage(
 ): string | null {
   if (!message) return null;
   if (isGuestInputTooLargeMessage(message)) {
-    return "This conversation is too large to send. Shorten your message, start a new chat, or disconnect servers and try again.";
+    return "This conversation is too large to send. Shorten your message or start a new chat.";
   }
   const codes = new Set<string>();
   collectCodes(message, codes);

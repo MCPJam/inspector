@@ -1,7 +1,7 @@
 import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
 import { isGuestInputTooLargeMessage } from "@/lib/mcpjam-limit";
-import { rejectedInputTurn } from "../rejected-input";
+import { conversationTooLarge, rejectedInputTurn } from "../rejected-input";
 
 const refusal = JSON.stringify({ code: "guest_input_too_large", limit: 32000 });
 const history: UIMessage[] = [
@@ -14,6 +14,20 @@ const rejected: UIMessage = {
   parts: [
     { type: "data-ui-context", data: { path: "/testing" } },
     { type: "text", text: "Debug this failure" },
+  ],
+};
+
+const toolReply: UIMessage = {
+  id: "tool-reply",
+  role: "assistant",
+  parts: [
+    {
+      type: "tool-ui_create_server",
+      toolCallId: "create-server",
+      state: "output-available",
+      input: { name: "My server" },
+      output: { serverId: "created-server" },
+    },
   ],
 };
 
@@ -56,19 +70,6 @@ describe("oversized agent input recovery", () => {
   });
 
   it("preserves a turn whose tool already ran before a later size refusal", () => {
-    const toolReply: UIMessage = {
-      id: "tool-reply",
-      role: "assistant",
-      parts: [
-        {
-          type: "tool-ui_create_server",
-          toolCallId: "create-server",
-          state: "output-available",
-          input: { name: "My server" },
-          output: { serverId: "created-server" },
-        },
-      ],
-    };
     expect(
       rejectedInputTurn([...history, rejected, toolReply], refusal),
     ).toBeNull();
@@ -78,4 +79,23 @@ describe("oversized agent input recovery", () => {
     expect(rejectedInputTurn([], refusal)).toBeNull();
     expect(rejectedInputTurn([history[1]], refusal)).toBeNull();
   });
+
+  it("blocks the conversation when tools ran after the refused turn", () => {
+    expect(
+      conversationTooLarge([...history, rejected, toolReply], refusal),
+    ).toBe(true);
+  });
+
+  it("lets a droppable refused turn be replaced", () => {
+    expect(conversationTooLarge([...history, rejected], refusal)).toBe(false);
+  });
+
+  it.each([undefined, "Network error", '{"code":"platform_capacity"}'])(
+    "never blocks on an unrelated error: %s",
+    (message) => {
+      expect(
+        conversationTooLarge([...history, rejected, toolReply], message),
+      ).toBe(false);
+    },
+  );
 });

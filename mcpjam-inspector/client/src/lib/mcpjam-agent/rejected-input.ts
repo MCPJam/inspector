@@ -30,3 +30,14 @@ export function rejectedInputTurn(
       .join("\n"),
   };
 }
+
+/** A size refusal whose turn has to stay, so any next request is refused too. */
+export function conversationTooLarge(
+  messages: UIMessage[],
+  errorMessage: string | undefined,
+): boolean {
+  return (
+    isGuestInputTooLargeMessage(errorMessage) &&
+    rejectedInputTurn(messages, errorMessage) === null
+  );
+}

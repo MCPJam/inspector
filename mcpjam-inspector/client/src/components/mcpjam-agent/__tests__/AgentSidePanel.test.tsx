@@ -24,14 +24,19 @@ vi.mock("@/lib/mcpjam-agent/agent-chat-instances", () => ({
   }),
 }));
 vi.mock("../McpjamAgentThread", () => ({
-  McpjamAgentThread: () => {
+  McpjamAgentThread: ({ onNewChat }: { onNewChat: () => void }) => {
     const [text, setText] = useState("");
     return (
-      <textarea
-        aria-label="Agent composer"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
+      <>
+        <textarea
+          aria-label="Agent composer"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button type="button" onClick={onNewChat}>
+          Start new chat
+        </button>
+      </>
     );
   },
 }));
@@ -137,6 +142,15 @@ describe("shared agent docking", () => {
       screen.getByRole("button", { name: "Close MCPJam Agent" }),
     ).toBeVisible();
   });
+});
+
+it("opens a general chat when an eval chat is away from its case editor", () => {
+  render(
+    <AgentSidePanel projectId="p" organizationId={null} activeTab="evaluate" />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Start new chat" }));
+  expect(useAgentPanelStore.getState().activeSessionId).toBeNull();
+  expect(screen.getByText("General composer")).toBeVisible();
 });
 
 it("pauses an active generation on close and does not resume automatically on reopen", () => {
