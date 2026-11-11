@@ -14,10 +14,13 @@
  * A preview plans a turn it does not run, so its engine check reads the turn
  * it previews: the eval run for the Evaluate page, a live turn for Compare.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { readScenarioEnvironment } from "../../../utils/scenario-runtime-config";
+import { readScenarioServerSkills } from "../../../utils/scenario-server-skills";
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
 import {
   environmentTurnSkills,
+  studyLibraryTurnSkills,
   type LiveTurnSkills,
 } from "../live-turn-skills";
 import {
@@ -35,6 +38,37 @@ import {
   preparedRunSkills,
   visibleScopeEnvironment,
 } from "../../../test/support/skill-delivery";
+
+// An older study's turn reads its shared Library through the study's scope:
+// here, the fixture's authored skill and its supporting file.
+vi.mock("../../../utils/harness/runtime-skills", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../utils/harness/runtime-skills")
+  >()),
+  fetchRuntimeSkills: async () => ({
+    ok: true,
+    skills: [
+      {
+        skillId: "sk_release_notes",
+        name: "release-notes",
+        description: "Write release notes from merged changes.",
+        content: "# Release notes\n\nRun scripts/check.sh first.",
+        aggregateHash: "agg-release-notes",
+      },
+    ],
+  }),
+  fetchRuntimeSkillFiles: async () => ({
+    ok: true,
+    files: [
+      {
+        skillId: "sk_release_notes",
+        path: "scripts/check.sh",
+        size: 23,
+        url: `data:text/x-shellscript;base64,${Buffer.from("#!/bin/sh\necho checked\n").toString("base64")}`,
+      },
+    ],
+  }),
+}));
 
 const ENGINES = [
   "mcpjam-agent",
@@ -253,7 +287,7 @@ async function plannedLiveTurn(
       ...(turn.box
         ? {
             runtimeSkillsOverride: turn.box.skills,
-            effectiveCapabilities: turn.box.set,
+            ...(turn.box.set ? { effectiveCapabilities: turn.box.set } : {}),
           }
         : {}),
     }),
@@ -292,6 +326,70 @@ const namedEnvironmentTurn = (name: string): Surface => ({
   expected: liveRows([], true),
 });
 
+/** A User Testing session in an environment-backed study, read off the
+ *  study's runtime config as a guest tester's turn reads it. */
+const STUDY_TURN: Surface = {
+  name: "user testing, environment-backed study",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    const config = { environment: spec };
+    const read = readScenarioEnvironment(config as never);
+    if (read.kind !== "present") throw new Error("no study environment");
+    return plannedLiveTurn(
+      engine,
+      environmentTurnSkills({
+        spec: {
+          ...read.environment,
+          serverSkills: readScenarioServerSkills(config),
+        },
+        attribution,
+        runtime: runtimeOf(engine),
+      }),
+    );
+  },
+  expected: liveRows([], true),
+};
+
+/** A User Testing session in a study that predates environments: the study's
+ *  shared Library, read through the study's scope. It names no environment,
+ *  so it records nothing. */
+const OLDER_STUDY_TURN: Surface = {
+  name: "user testing, older study",
+  async plan(engine) {
+    return plannedLiveTurn(
+      engine,
+      await studyLibraryTurnSkills({
+        bearer: "Bearer tester",
+        projectId: "project_1",
+        runtime: runtimeOf(engine),
+      }),
+    );
+  },
+  expected: {
+    "mcpjam-agent": {
+      delivered: ["release-notes"],
+      excluded: [],
+      serverSkillsVia: "agent-tools",
+      recorded: [],
+    },
+    "claude-code": {
+      delivered: ["release-notes"],
+      excluded: [],
+      serverSkillsVia: "none",
+      recorded: [],
+    },
+    codex: {
+      delivered: ["release-notes"],
+      excluded: [],
+      serverSkillsVia: "none",
+      recorded: [],
+    },
+    cursor: noSkillsOn(["release-notes"]),
+    opencode: noSkillsOn(["release-notes"]),
+    "copilot-cli": noSkillsOn(["release-notes"]),
+  },
+};
+
 /** Each surface joins as one entry here, with its own plan and rows. */
 const SURFACES: Surface[] = [
   EVAL,
@@ -302,6 +400,8 @@ const SURFACES: Surface[] = [
   namedEnvironmentTurn("playground, named environment"),
   clientTurn("chat over the API, client turn"),
   namedEnvironmentTurn("chat over the API, named environment"),
+  STUDY_TURN,
+  OLDER_STUDY_TURN,
 ];
 
 const ROWS = SURFACES.flatMap((surface) =>

@@ -301,6 +301,53 @@ describe("hosted setup normalization", () => {
     ]);
     expect(result.pluginDisabled.map((s) => s.skillId)).toEqual(["sk_plugin"]);
   });
+  it("reads an environment-backed study's captured server skills", async () => {
+    vi.mocked(fetchScenarioRuntimeConfig).mockResolvedValue({
+      ok: true,
+      config: {
+        ...runtimeConfig,
+        scenarioId: "s",
+        accessVersion: 4,
+        environment: {
+          environmentRef: { environmentId: "e", name: "Study", revision: 2 },
+          servers: { effectiveServerIds: ["srv_1"] },
+          serverSkills: [
+            {
+              serverSkillId: "ss_1",
+              versionId: "ssv_1",
+              serverId: "srv_1",
+              serverSlug: "acme",
+              serverLabel: "Acme",
+              ref: "acme/refunds",
+              skillUri: "skill://acme/refunds",
+              name: "refunds",
+              description: "Handle refunds",
+              content: "# Refunds",
+              contentSha256: "sha",
+              versionHash: "vh",
+              versionNumber: 1,
+              capturedAt: 1,
+              files: [],
+            },
+            { serverSkillId: "ss_torn" },
+          ],
+        },
+      } as never,
+    });
+    const result = await resolveHostedChatSetup({
+      ...common,
+      target: { kind: "scenario", scenarioId: "s" },
+      access: { kind: "scenario", scenarioId: "s", accessVersion: 4 },
+    });
+    // A torn entry is dropped, not the study's turn.
+    expect(result.scenarioEnvironment?.serverSkills.map((s) => s.ref)).toEqual([
+      "acme/refunds",
+    ]);
+    expect(
+      result.effectiveCapabilities?.serverSkills.map((s) => s.ref),
+    ).toEqual(["acme/refunds"]);
+    expect(result.clientTurn).toBe(false);
+  });
   it("does not read private project defaults for guests", async () => {
     const query = vi.spyOn(client, "query");
     const result = await resolveHostedChatSetup({

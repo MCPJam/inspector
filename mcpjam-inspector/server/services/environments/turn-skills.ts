@@ -152,9 +152,7 @@ export interface PinnedSkillSource {
 
 export interface TurnSkillsInput {
   /**
-   * `none`: the turn gets no skills from MCPJam. A harness turn handed no
-   * frozen skills still fetches the project's own (`selectHarnessSkillSource`),
-   * which a plan made here cannot see. The live sources, a resolved
+   * `none`: the turn gets no skills from MCPJam. The live sources, a resolved
    * environment and a client's own skills, are in `turn-skill-sources.ts`.
    */
   source:

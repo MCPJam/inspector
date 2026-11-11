@@ -213,10 +213,6 @@ import type {
   InfraFailureEvidence,
   ModelEndpointOwnership,
 } from "../infra-failure-evidence.js";
-import {
-  fetchRuntimeSkills,
-  fetchRuntimeSkillFiles,
-} from "./runtime-skills.js";
 import { deliveredSecretsFingerprint, toSecretEnv } from "./runtime-secrets.js";
 import {
   externalAccountPlanWallError,
@@ -1833,25 +1829,15 @@ export async function runHarnessTurn(
       // The turn's skills, read from the one source that speaks for it
       // (`harnessTurnSkills`), feed BOTH the box (the writer and the adapter's
       // `skills` param) and resume invalidation (a skill change must force a
-      // fresh session). TRI-STATE: a failed fetch leaves the set unknown
-      // (`null`) and `skillsHash` undefined, so it is OMITTED from claim/commit
-      // and the backend reuses the stored hash (no resume churn, no empty-hash
-      // commit), and the box is left exactly as it is.
+      // fresh session). TRI-STATE: a turn that names no source leaves the set
+      // unknown (`null`) and `skillsHash` undefined, so it is OMITTED from
+      // claim/commit and the backend reuses the stored hash (no resume churn,
+      // no empty-hash commit), and the box is left exactly as it is.
       const turnSkills = await harnessTurnSkills({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
         ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         liveTurn,
-        ...(projectId && authHeader
-          ? {
-              project: {
-                skills: () =>
-                  fetchRuntimeSkills(authHeader, projectId, executionScope),
-                files: () =>
-                  fetchRuntimeSkillFiles(authHeader, projectId, executionScope),
-              },
-            }
-          : {}),
       });
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;

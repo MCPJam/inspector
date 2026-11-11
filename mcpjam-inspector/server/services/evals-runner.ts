@@ -514,9 +514,9 @@ export type EvalTestCase = {
  *
  * They are bundled here because forwarding one without the other is a silent
  * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
- * does not error, it falls through to the harness's LIVE project-wide fetch —
- * so a frozen run quietly stops being frozen, and the
- * `skillsOverride: "exclude"` arm quietly runs with the whole project pool.
+ * does not error, it leaves the harness's box with whatever skills it already
+ * holds — so a frozen run quietly stops being frozen, and the
+ * `skillsOverride: "exclude"` arm quietly runs with an earlier turn's skills.
  * That is exactly the bug this helper exists to make structurally impossible:
  * one place decides, and both channels leave together or not at all.
  *
@@ -723,9 +723,9 @@ export type RunEvalSuiteOptions = {
    * bodies) rather than the body-only projection that path takes.
    *
    * Presence, not length, is what selects the pinned source in the harness. An
-   * empty list says "this run delivers no skills"; ABSENT falls through to a
-   * live project-wide fetch, which would unfreeze the run. So the boundary sets
-   * this for every runId-bearing run, empty included.
+   * empty list says "this run delivers no skills"; ABSENT leaves the box with
+   * whatever skills it already holds, which would unfreeze the run. So the
+   * boundary sets this for every runId-bearing run, empty included.
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -4449,8 +4449,8 @@ export const runEvalSuiteWithAiSdk = async ({
           : {}),
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
         // BOTH frozen-skill channels, from one place — see
-        // `runFrozenSkillOptions`. Forwarding only the emulated one used to
-        // leave the harness path falling through to a live project-wide fetch.
+        // `runFrozenSkillOptions`: forwarding only the emulated one would
+        // leave the harness's box with whatever skills it already holds.
         ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
         // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
         // built the emulated tool set with, so the harness (which rebuilds its
@@ -6756,8 +6756,8 @@ const runHostedIterationWithBrowser = async (
   //
   // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
   // delivers no skills", which is what `skillsOverride: "exclude"` means), and
-  // dropping it would fall through to the live project-wide fetch and hand the
-  // without-skills arm every skill in the project.
+  // dropping it would leave the without-skills arm with whatever skills its box
+  // already holds.
 
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
@@ -7375,9 +7375,8 @@ const runHostedIterationWithBrowser = async (
       : {}),
     // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
     // not when truthy: `[]` says "this run delivers no skills" (the
-    // `skillsOverride: "exclude"` arm), while absent falls through to the
-    // harness's live project-wide fetch — which would let a project skill
-    // edited mid-run change what a running iteration sees.
+    // `skillsOverride: "exclude"` arm), while absent leaves the box with
+    // whatever skills it already holds, an earlier turn's included.
     ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     // Each harness turn's skills event, from what its box writer wrote.
     ...(turnSkills.skills.runtime.kind === "harness"

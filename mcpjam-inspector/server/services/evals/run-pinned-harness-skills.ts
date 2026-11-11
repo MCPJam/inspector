@@ -7,20 +7,18 @@
  * runtime's skills root. It picks its source through `selectHarnessSkillSource`,
  * which is a strict precedence:
  *
- *   pinned  →  environment  →  live
+ *   pinned  →  environment
  *
  * and the top of that list is the only one a frozen run may use. `pinned` is
  * selected by PRESENCE, not length: passing `[]` means "this run delivers no
- * skills", while passing nothing at all falls through to the live project-wide
- * fetch — the whole current project pool, resolved at turn time.
+ * skills", while passing nothing at all leaves the box with whatever skills it
+ * already holds.
  *
- * That fall-through is the failure this module removes. An eval run pins its
- * skills at run start precisely so a re-run is byte-identical; a harness turn
- * that re-fetched the live pool would see whatever the project happens to hold
- * NOW, so editing a project skill mid-run would change what a running iteration
- * sees. The `skillsOverride: "exclude"` A/B arm has the same problem in a
- * sharper form: its whole point is to be deliberately skill-free, and a live
- * fetch would hand it every skill in the project.
+ * That gap is the failure this module removes. An eval run pins its skills at
+ * run start precisely so a re-run is byte-identical; a harness turn that kept
+ * an earlier turn's skills would not be running the run's. The
+ * `skillsOverride: "exclude"` A/B arm has the same problem in a sharper form:
+ * its whole point is to be deliberately skill-free.
  *
  * So: every runId-bearing eval run passes an explicit artifact list, empty
  * included.

@@ -272,11 +272,8 @@ export interface RunAssistantTurnOptions {
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
 
-  /**
-   * Pinned harness skills for env-based swarm targets (Project Environments).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * skips the live skills fetch and delivers exactly these pinned artifacts.
-   */
+  /** Pinned harness skills (eval runs, swarm targets). Pass-through to
+   *  `runHarnessTurn`: when set (even empty) it delivers exactly these. */
   pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
 
   /**
@@ -299,12 +296,11 @@ export interface RunAssistantTurnOptions {
    */
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
-  /**
-   * This turn's environment skills, and whether they are a client's live turn.
-   * Pass-through to `runHarnessTurn`: set (even empty), the box gets exactly
-   * these. Ranks below `pinnedHarnessSkills`; see `harness/skill-delivery.ts`.
-   */
+  /** The skills this turn's environment resolved to, the set carrying their
+   *  supporting files, and whether the turn is live. Pass-through to
+   *  `runHarnessTurn`; see `harness/skill-delivery.ts`. */
   runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  effectiveCapabilities?: MCPJamHandlerOptions["effectiveCapabilities"];
   liveTurn?: MCPJamHandlerOptions["liveTurn"];
 
   /**
@@ -540,7 +536,7 @@ function buildHandlerOptions(
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     // Pinned harness skills: presence (even an EMPTY array) is semantic — an
-    // empty authoritative set means "run skill-less", never "fall back live".
+    // empty authoritative set means "run skill-less", never "keep the box's".
     ...(opts.pinnedHarnessSkills !== undefined
       ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
       : {}),
@@ -556,6 +552,9 @@ function buildHandlerOptions(
     // means "this environment delivers no skills", never "use the project's".
     ...(opts.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
+      : {}),
+    ...(opts.effectiveCapabilities
+      ? { effectiveCapabilities: opts.effectiveCapabilities }
       : {}),
     ...(opts.liveTurn ? { liveTurn: true } : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   harnessTurnSkills,
   pinnedArtifactsToRuntimeSkills,
@@ -70,61 +70,19 @@ describe("selectHarnessSkillSource", () => {
     expect("skills" in source && source.skills).toEqual([]);
   });
 
-  it("falls back to the live project-wide fetch only when neither is present", () => {
-    expect(selectHarnessSkillSource({})).toEqual({ mode: "live" });
+  it("names no source when neither is present", () => {
+    // The harness never reads a project's skills on its own: a turn that
+    // names no source leaves its box as it is.
+    expect(selectHarnessSkillSource({})).toEqual({ mode: "none" });
   });
 });
 
 describe("harnessTurnSkills", () => {
-  const LIVE = [
-    {
-      skillId: "sk_notes",
-      name: "notes",
-      description: "n",
-      content: "n",
-      aggregateHash: "a",
-    },
-  ];
-  const project = (
-    over: {
-      skills?: () => Promise<
-        { ok: true; skills: RuntimeSkill[] } | { ok: false }
-      >;
-      files?: () => Promise<
-        | {
-            ok: true;
-            files: Array<{
-              skillId: string;
-              path: string;
-              size: number;
-              url: string;
-            }>;
-          }
-        | { ok: false }
-      >;
-    } = {},
-  ) => ({
-    skills: vi.fn(
-      over.skills ?? (async () => ({ ok: true as const, skills: LIVE })),
-    ),
-    files: vi.fn(
-      over.files ??
-        (async () => ({
-          ok: true as const,
-          files: [
-            { skillId: "sk_notes", path: "a.md", size: 1, url: "https://f/a" },
-          ],
-        })),
-    ),
-  });
-
-  it("takes a run's frozen copies and reads nothing live", async () => {
-    const live = project();
+  it("takes a run's frozen copies, files included", async () => {
     const turn = await harnessTurnSkills({
       pinnedHarnessSkills: [
         { ...PINNED[0]!, files: [{ path: "scripts/run.sh", content: "echo" }] },
       ],
-      project: live,
     });
     expect(turn.mode).toBe("pinned");
     expect(turn.skills?.map((entry) => entry.name)).toEqual(["pinned-skill"]);
@@ -135,12 +93,9 @@ describe("harnessTurnSkills", () => {
       { path: "scripts/run.sh", content: "echo", skillId: "sk_pinned" },
     ]);
     expect(listing.complete("sk_pinned")).toBe(true);
-    expect(live.skills).not.toHaveBeenCalled();
-    expect(live.files).not.toHaveBeenCalled();
   });
 
   it("takes an environment's files from its capability set, the only source of a plugin skill's", async () => {
-    const live = project();
     const set = buildLiveEffectiveCapabilities({
       standaloneSkills: [
         {
@@ -154,47 +109,47 @@ describe("harnessTurnSkills", () => {
     const turn = await harnessTurnSkills({
       runtimeSkillsOverride: RESOLVED,
       effectiveCapabilities: set,
-      project: live,
     });
     expect(turn.mode).toBe("environment");
+    expect(turn.skills).toEqual(RESOLVED);
     const files = await turn.readFiles();
     expect(files.files).toEqual([
       { skillId: "sk_env", path: "ref.md", size: 3, url: "https://f/ref" },
     ]);
-    expect(live.files).not.toHaveBeenCalled();
+    expect(files.complete("sk_env")).toBe(true);
   });
 
-  it("leaves the set unknown when the live fetch fails, and reads the files only on demand", async () => {
-    const live = project({ skills: async () => ({ ok: false }) });
-    const turn = await harnessTurnSkills({ project: live });
+  it("knows none of an environment's files without its capability set", async () => {
+    const turn = await harnessTurnSkills({ runtimeSkillsOverride: RESOLVED });
+    expect(turn.skills).toEqual(RESOLVED);
+    const files = await turn.readFiles();
+    expect(files.files).toEqual([]);
+    // Unknown, so the writer keeps each skill's other files as they are.
+    expect(files.complete("sk_env")).toBe(false);
+  });
+
+  it("leaves the box as it is when the turn names no source", async () => {
+    const turn = await harnessTurnSkills({});
     expect(turn).toMatchObject({
-      mode: "live",
+      mode: "none",
       skills: null,
       skillsHash: undefined,
     });
-    expect(live.files).not.toHaveBeenCalled();
+    expect((await turn.readFiles()).files).toEqual([]);
   });
 
-  it("calls a turn live when its servers are connected now: a client's environment or the project's pool", async () => {
+  it("calls a client's or a study's turn live, with or without skills of its own", async () => {
     const live = async (args: Parameters<typeof harnessTurnSkills>[0]) =>
       (await harnessTurnSkills(args)).live;
     expect(await live({ runtimeSkillsOverride: [], liveTurn: true })).toBe(
       true,
     );
-    expect(await live({ project: project() })).toBe(true);
+    // A study whose Library could not be read still has its servers.
+    expect(await live({ liveTurn: true })).toBe(true);
     // A named environment captured its server skills, and a run froze its own.
     expect(await live({ runtimeSkillsOverride: [] })).toBe(false);
     expect(await live({ pinnedHarnessSkills: [], liveTurn: true })).toBe(false);
-  });
-
-  it("knows none of the pool's files when their list could not be read", async () => {
-    const turn = await harnessTurnSkills({
-      project: project({ files: async () => ({ ok: false }) }),
-    });
-    expect(turn.skills).toEqual(LIVE);
-    const files = await turn.readFiles();
-    expect(files.files).toEqual([]);
-    expect(files.complete("sk_notes")).toBe(false);
+    expect(await live({})).toBe(false);
   });
 });
 

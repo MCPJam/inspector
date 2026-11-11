@@ -1062,23 +1062,20 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (Project Environments — env-based swarm targets
-   * only). When set — even EMPTY — the harness turn delivers exactly these
-   * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
-   * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
-   * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skills` plan instead (which it refuses
-   * on a harness turn — the two paths are deliberately disjoint).
+   * Pinned harness skills (eval runs and swarm targets). When set — even
+   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
+   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
+   * the emulated engine receives pinned skills via prepareChatV2's `skills`
+   * plan instead (which it refuses on a harness turn — the two paths are
+   * deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
-   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
-   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
-   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution) and
-   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
-   * place that precedence is written down. An empty override is semantic: the
-   * environment delivers no skills, which is not the same as "ask the project".
+   * The skills THIS turn's environment resolved to. When set — even EMPTY —
+   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution);
+   * see `harness/skill-delivery.ts` for the single place that precedence is
+   * written down. With neither, the turn leaves the box's skills as they are.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
@@ -1095,8 +1092,8 @@ export interface MCPJamHandlerOptions {
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
   /**
-   * `runtimeSkillsOverride` is a client's live turn: its servers are connected
-   * now, so their own MCP-server skills may be offered too. Unset for a named
+   * A client's or a study's turn: its servers are connected now, so their own
+   * MCP-server skills may be offered beside its skills. Unset for a named
    * environment, whose server skills were captured with it.
    */
   liveTurn?: boolean;

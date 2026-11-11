@@ -14,7 +14,7 @@
  *
  * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
  * `[]` (the harness selects its pinned source by presence, and `undefined`
- * would fall through to a live project-wide fetch), and `pinnedSkillSource`
+ * would leave the box's skills as they are), and `pinnedSkillSource`
  * holds no pins, which plans every iteration with no skills.
  */
 import type { PinnedSkillArtifact } from "@/shared/skill-types";

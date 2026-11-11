@@ -24,10 +24,6 @@ import {
   resolveChatSelection,
   withSelectionRouting,
 } from "../../utils/selection-rail.js";
-import {
-  listCloudRuntimeSkills,
-  shouldEnableCloudSkillTools,
-} from "../../utils/computers/cloud-skill-tools.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
@@ -74,7 +70,10 @@ import {
   runtimeServerNames,
 } from "../environments/runtime.js";
 import { pluginOriginByServerId } from "../environments/effective-capabilities.js";
-import { environmentTurnSkills } from "../environments/live-turn-skills.js";
+import {
+  environmentTurnSkills,
+  studyLibraryTurnSkills,
+} from "../environments/live-turn-skills.js";
 import { resolveTurnSkills, turnRuntime } from "../environments/turn-skills.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
@@ -639,41 +638,10 @@ export async function resolveManagedTurnSetup(args: {
     typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
   // One skill plan for this turn's engine, from the environment the turn
   // resolved. A client's turn in the local app hands MCPJam's agent this
-  // machine's skills too. Every project turn resolves an environment; a study
-  // whose scenario predates environments has none, so a member's turn on
-  // MCPJam's agent reads the project's pool and a harness reads its own.
+  // machine's skills too; a study whose scenario predates environments reads
+  // its shared Library. Every project turn resolves an environment; a turn
+  // with neither still gets its connected servers' own skills.
   const runtime = turnRuntime({ harness: resolvedExecution.harness });
-  let projectSkillReadFailed = false;
-  const memberPool = async () => {
-    if (
-      !hostedBody.projectId ||
-      !shouldEnableCloudSkillTools({
-        isGuest: Boolean(c.get("guestId")),
-        harness: resolvedExecution.harness,
-        modelId: String(modelDefinition.id),
-        provider: modelDefinition.provider,
-        hosted: modelDefinition.hosted,
-        ...(routingSelection ? { selection: routingSelection } : {}),
-        hasProjectId: true,
-      })
-    ) {
-      return [];
-    }
-    return listCloudRuntimeSkills({
-      authHeader: `Bearer ${bearerToken}`,
-      projectId: hostedBody.projectId,
-    }).catch((error) => {
-      projectSkillReadFailed = true;
-      logger.warn(
-        "[chat-v2] project skill catalog fetch failed; turn proceeds without them",
-        {
-          projectId: hostedBody.projectId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return [];
-    });
-  };
   const environment = environmentSpec ?? scenarioEnvironment;
   const turnSkills = environment
     ? environmentTurnSkills({
@@ -701,17 +669,22 @@ export async function resolveManagedTurnSetup(args: {
         runtime,
         modelContextTokens: modelDefinition.contextLength,
       })
-    : {
-        skills: resolveTurnSkills({
-          source: {
-            kind: "live",
-            projectSkills: turnMode === "recorded" ? await memberPool() : [],
-          },
+    : turnMode === "recorded"
+      ? await studyLibraryTurnSkills({
+          bearer: bearerToken,
+          projectId: hostedBody.projectId,
+          ...(executionScope ? { executionScope } : {}),
           runtime,
           modelContextTokens: modelDefinition.contextLength,
-        }),
-        live: true,
-      };
+        })
+      : {
+          skills: resolveTurnSkills({
+            source: { kind: "live", projectSkills: [] },
+            runtime,
+            modelContextTokens: modelDefinition.contextLength,
+          }),
+          live: true,
+        };
   return {
     value: {
       authorizedOrganizationId: authorized?.organizationId,
@@ -773,7 +746,6 @@ export async function resolveManagedTurnSetup(args: {
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      projectSkillReadFailed,
     },
   };
 }

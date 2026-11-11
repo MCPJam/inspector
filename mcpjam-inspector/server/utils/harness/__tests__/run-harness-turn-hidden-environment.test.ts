@@ -344,4 +344,13 @@ describe("runHarnessTurn — the Playground's hidden environment", () => {
     expect(second.skillsHash).toBe(first.skillsHash);
     expect(second.runtimeFingerprint).not.toBe(first.runtimeFingerprint);
   });
+
+  it("leaves the box as it is when the turn names no skills", async () => {
+    await runHarnessTurn(baseOptions() as never, "none");
+    expect(deliveredSkillNames()).toEqual([]);
+    expect(passes.reconcileSkillDirs).not.toHaveBeenCalled();
+    expect(passes.materializeSkillFiles).not.toHaveBeenCalled();
+    // Unknown, so the stored hash stands (no resume churn).
+    expect(claimArgs().skillsHash).toBeUndefined();
+  });
 });

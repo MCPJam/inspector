@@ -144,7 +144,6 @@ export async function handleManagedChatTurn(
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      projectSkillReadFailed,
       executionBound,
     } = setup.value;
 
@@ -537,15 +536,21 @@ export async function handleManagedChatTurn(
           ...(turnSkills.box
             ? {
                 runtimeSkillsOverride: turnSkills.box.skills,
-                effectiveCapabilities: turnSkills.box.set,
-                ...(turnSkills.live ? { liveTurn: true } : {}),
+                ...(turnSkills.box.set
+                  ? { effectiveCapabilities: turnSkills.box.set }
+                  : {}),
               }
             : {}),
+          // Its servers are connected now: a harness may offer their own
+          // skills, as MCPJam's agent does.
+          ...(turnSkills.live ? { liveTurn: true } : {}),
           ...(turnSkills.turnProvenance
             ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
-          setupSkillProvenanceIncomplete: projectSkillReadFailed,
+          // A study whose Library could not be read ran with unknown skills.
+          setupSkillProvenanceIncomplete:
+            turnMode === "recorded" && !turnSkills.box,
           // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
             !authoritativeConnectionPolicy &&

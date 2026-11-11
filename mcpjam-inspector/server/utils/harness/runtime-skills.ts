@@ -52,6 +52,10 @@ export async function fetchRuntimeSkills(
     const skills = executionScope
       ? await convexListSkillsForRuntimeExecution(bearer, executionScope)
       : await convexListSkillsForRuntime(bearer, projectId);
+    // An answer that is not a list says nothing about the skills.
+    if (!Array.isArray(skills)) {
+      throw new Error("Runtime skills are not a list");
+    }
     return { ok: true, skills };
   } catch (error) {
     logger.warn("[runtime-skills] fetch failed; preserving prior skill state", {
@@ -85,6 +89,9 @@ export async function fetchRuntimeSkillFiles(
     const files = executionScope
       ? await convexListSkillFilesForRuntimeExecution(bearer, executionScope)
       : await convexListSkillFilesForRuntime(bearer, projectId);
+    if (!Array.isArray(files)) {
+      throw new Error("Runtime skill files are not a list");
+    }
     return { ok: true, files };
   } catch (error) {
     logger.warn(
