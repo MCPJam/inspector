@@ -57,8 +57,7 @@ const onKeys = (input: PluginExtensionsHostInput | undefined) => {
 function previousResolution(input: PluginExtensionsHostInput) {
   const apps = (input.mcpProfile as { apps?: Record<string, unknown> })?.apps;
   const setting = apps?.pluginExtensions as
-    | { enabled?: unknown; capabilities?: Record<string, unknown> }
-    | undefined;
+    { enabled?: unknown; capabilities?: Record<string, unknown> } | undefined;
   const saved = typeof setting?.enabled === "boolean" ? setting : undefined;
   const enabled = saved
     ? saved.enabled === true

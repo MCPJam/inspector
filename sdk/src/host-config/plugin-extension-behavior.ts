@@ -45,7 +45,9 @@ export type PluginExtensionBehaviorKey =
   keyof typeof PLUGIN_EXTENSION_BEHAVIOR_VALUES;
 
 export type HostConfigPluginExtensionBehaviorV1 = {
-  [K in PluginExtensionBehaviorKey]?: (typeof PLUGIN_EXTENSION_BEHAVIOR_VALUES)[K][number];
+  [
+    K in PluginExtensionBehaviorKey
+  ]?: (typeof PLUGIN_EXTENSION_BEHAVIOR_VALUES)[K][number];
 };
 
 /** Every behavior field, after the client style's defaults. */
@@ -268,10 +270,7 @@ export function pluginExtensionStyleDefaults(
 /** The saved `behavior`, read only from a well-formed setting. */
 function savedBehavior(
   mcpProfile:
-    | HostConfigMcpProfileV1
-    | Record<string, unknown>
-    | null
-    | undefined
+    HostConfigMcpProfileV1 | Record<string, unknown> | null | undefined
 ): HostConfigPluginExtensionBehaviorV1 {
   if (!isPlainObject(mcpProfile) || !isPlainObject(mcpProfile.apps)) return {};
   const setting = mcpProfile.apps.pluginExtensions;
