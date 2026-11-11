@@ -8134,6 +8134,204 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/revisions": {
+      "get": {
+        "operationId": "listServerRevisions",
+        "tags": ["Servers"],
+        "summary": "List a server's revisions",
+        "description": "A saved server's stored revisions, newest first. A revision is a capture of the server's tools and server info, recorded whenever they change on a connect, an eval run or a chat session. Reads stored data and never connects to the server, so it works for stdio servers too. A server the caller cannot see reads as `404`, the same as a missing one.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum revisions to return, 1-200. Defaults to 50; larger values are clamped.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "`nextCursor` from the previous page, for older revisions.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server's revisions, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevisionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}": {
+      "get": {
+        "operationId": "getServerRevision",
+        "tags": ["Servers"],
+        "summary": "Get one server revision",
+        "description": "One stored revision: every tool's definition and the server info the server reported. `droppedFields` lists paths storage dropped for size; their values are unknown, not absent.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "revisionNumber",
+            "in": "path",
+            "required": true,
+            "description": "The revision, as numbered by the revision list.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}/diff": {
+      "get": {
+        "operationId": "diffServerRevisions",
+        "tags": ["Servers"],
+        "summary": "Diff two server revisions",
+        "description": "Compares `from` (default: the revision before) with `revisionNumber`: tools added and removed with their definitions, tools changed with the fields that moved and both definitions, and each changed server info field with both values. Revision 1 has nothing before it, so diffing it needs `from`. A field in `droppedFields` was not stored on that side, so a change to it is not established.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          },
+          {
+            "name": "revisionNumber",
+            "in": "path",
+            "required": true,
+            "description": "The revision, as numbered by the revision list.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "The revision to compare against. Defaults to `revisionNumber - 1`.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The differences between the two revisions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerRevisionDiff"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}": {
       "get": {
         "operationId": "getProjectServer",
@@ -24288,6 +24486,239 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Project"
+            }
+          }
+        }
+      },
+      "ServerRevisionSummary": {
+        "type": "object",
+        "required": [
+          "revisionNumber",
+          "capturedAt",
+          "source",
+          "sourceId",
+          "counts"
+        ],
+        "properties": {
+          "revisionNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capturedAt": {
+            "type": "number",
+            "description": "When it was captured, in epoch milliseconds."
+          },
+          "source": {
+            "type": "string",
+            "enum": ["connect", "evalRun", "traceRepair", "chatSession"],
+            "description": "What captured it."
+          },
+          "sourceId": {
+            "type": ["string", "null"],
+            "description": "The eval run, repair job or chat session that captured it; null for a connect."
+          },
+          "counts": {
+            "type": "object",
+            "required": ["tools"],
+            "properties": {
+              "tools": {
+                "type": "integer"
+              },
+              "prompts": {
+                "type": "integer"
+              },
+              "resources": {
+                "type": "integer"
+              },
+              "resourceTemplates": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ServerRevisionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerRevisionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "ServerRevisionTool": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "description": "The tool's JSON Schema for its arguments, as stored."
+          },
+          "outputSchema": {
+            "description": "The tool's JSON Schema for structured output, as stored."
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The tool's `_meta`, stored without keys starting with `$` or `_`."
+          },
+          "icons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "annotations": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "execution": {
+            "type": "object",
+            "properties": {
+              "taskSupport": {
+                "type": "string",
+                "enum": ["forbidden", "optional", "required"]
+              }
+            }
+          }
+        }
+      },
+      "ServerRevision": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          {
+            "type": "object",
+            "required": ["tools", "discovery", "captureError", "droppedFields"],
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "discovery": {
+                "type": ["object", "null"],
+                "additionalProperties": true,
+                "description": "The server's initialize result: serverInfo, capabilities, instructions and protocol version."
+              },
+              "captureError": {
+                "type": ["string", "null"]
+              },
+              "droppedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Paths storage dropped for size, such as `discovery.instructions`."
+              }
+            }
+          }
+        ]
+      },
+      "ServerRevisionDiff": {
+        "type": "object",
+        "required": ["from", "to", "tools", "discovery", "droppedFields"],
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          "to": {
+            "$ref": "#/components/schemas/ServerRevisionSummary"
+          },
+          "tools": {
+            "type": "object",
+            "required": ["added", "removed", "changed"],
+            "properties": {
+              "added": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ServerRevisionTool"
+                }
+              },
+              "changed": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "changedFields", "before", "after"],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "changedFields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Which fields moved, e.g. `description` or `inputSchema`."
+                    },
+                    "before": {
+                      "$ref": "#/components/schemas/ServerRevisionTool"
+                    },
+                    "after": {
+                      "$ref": "#/components/schemas/ServerRevisionTool"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "discovery": {
+            "type": "array",
+            "description": "One entry per changed server info field.",
+            "items": {
+              "type": "object",
+              "required": ["field", "before", "after"],
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "description": "e.g. `serverInfo.version` or `instructions`."
+                },
+                "before": {},
+                "after": {}
+              }
+            }
+          },
+          "droppedFields": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "to": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

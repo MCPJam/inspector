@@ -38,6 +38,7 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import { resolvePageToolAttribution } from "@/lib/webmcp-page-tools/attribution";
+import { ToolCallAccountTag, useToolCallAccountName } from "../tool-call-account";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -195,6 +196,7 @@ export function ToolPart({
     pageToolAttribution?.rawName ?? appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
+  const accountName = useToolCallAccountName(toolCallId);
   const recoveryFailures = useChatAuthRecoveryFailures();
   const recoveryFailure =
     toolCallId !== undefined
@@ -1075,6 +1077,7 @@ export function ToolPart({
                 from {appToolAttribution.appName}
               </span>
             )}
+            <ToolCallAccountTag name={accountName} />
             {pageToolAttribution?.origin && (
               <span
                 data-testid="page-tool-origin"

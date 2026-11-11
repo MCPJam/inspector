@@ -613,6 +613,7 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  accountsAtRun,
   launcher,
   ciMetadata,
 }: EvalRunProvenance & {
@@ -772,6 +773,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
   /**
+   * The accounts each server was authorized with, by id only. The backend
+   * keeps the ids that belong to the person starting the run and names them
+   * itself, so nothing sent here can put an email on the run.
+   */
+  accountsAtRun?: Array<{ serverId: string; connectionIds: string[] }>;
+  /**
    * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
    * boundary. A LABEL, not an authorization input: `source` is still stamped
    * by the route and the verified attribution is still what the audit reads.
@@ -830,6 +837,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
       ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      ...(accountsAtRun?.length ? { accountsAtRun } : {}),
       // Forwarded only when present. An older backend's `startTestSuiteRun`
       // validator does not know these args and rejects the whole call for an
       // unknown field, so sending `launcher: undefined` would break every
@@ -842,12 +850,18 @@ export const startSuiteRunWithRecorder = async ({
         ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
       ],
     };
-    response = await retrySuiteStartOnConflict(() =>
-      convexClient.mutation(
-        "testSuites:startTestSuiteRun" as any,
-        mutationArgs,
-      ),
-    );
+    const start = (args: Record<string, unknown>) =>
+      retrySuiteStartOnConflict(() =>
+        convexClient.mutation("testSuites:startTestSuiteRun" as any, args),
+      );
+    response = await start(mutationArgs).catch((error: unknown) => {
+      // A backend that predates run accounts rejects the argument outright.
+      // Every run carries it, so start without it there rather than fail
+      // every launch; that backend has nowhere to keep it anyway.
+      if (!/extra field `?accountsAtRun/.test(String(error))) throw error;
+      const { accountsAtRun: _unsupported, ...older } = mutationArgs;
+      return start(older);
+    });
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here

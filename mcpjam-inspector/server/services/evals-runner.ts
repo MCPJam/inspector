@@ -33,6 +33,11 @@ import {
   mergeToolCalls,
 } from "../../shared/eval-tool-call-projection";
 import {
+  accountRoutingFromTools,
+  routeToolCalls,
+  type AccountRouting,
+} from "./evals/account-routing.js";
+import {
   copyUsageTotals,
   evaluateMultiTurnResults,
   type EvaluationResult,
@@ -189,7 +194,7 @@ import {
   resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
@@ -1815,14 +1820,18 @@ function appendPartialToolCallsToPrompt(params: {
   toolsCalledByPrompt: ToolCall[][];
   promptIndex: number;
   partialResponseMessages: ModelMessage[];
+  accountRouting: AccountRouting | undefined;
 }) {
   if (params.promptIndex < 0 || params.partialResponseMessages.length === 0) {
     return;
   }
 
-  const partialToolCalls = extractToolCallsFromConversation({
-    messages: params.partialResponseMessages,
-  });
+  const partialToolCalls = routeToolCalls(
+    extractToolCallsFromConversation({
+      messages: params.partialResponseMessages,
+    }),
+    params.accountRouting,
+  );
   if (partialToolCalls.length === 0) {
     return;
   }
@@ -5277,6 +5286,9 @@ const runLocalIteration = async ({
         discoveryState: PrepareChatV2Result["discoveryState"];
       }
     | undefined;
+  // Maps account-routed calls back to the server's tools. Declared out here
+  // because the catch below records a failed turn's calls too.
+  let accountRouting: AccountRouting | undefined;
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -5298,7 +5310,6 @@ const runLocalIteration = async ({
         null,
       );
       prepared = await prepareChatV2({
-        connectionsByServerId: {},
         mcpClientManager,
         selectedServers,
         modelDefinition,
@@ -5357,6 +5368,7 @@ const runLocalIteration = async ({
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
       };
+      accountRouting = accountRoutingFromTools(prepared.allTools);
 
       llmModel = createLlmModel(
         modelDefinition,
@@ -5520,9 +5532,10 @@ const runLocalIteration = async ({
                   snapshotKind: "step_finish",
                   messages: withSystemPrefix(messages),
                   spans,
-                  actualToolCalls: extractToolCallsFromConversation({
-                    messages,
-                  }),
+                  actualToolCalls: routeToolCalls(
+                    extractToolCallsFromConversation({ messages }),
+                    accountRouting,
+                  ),
                   usage,
                 }),
               );
@@ -5541,9 +5554,10 @@ const runLocalIteration = async ({
                   snapshotKind: "failure",
                   messages: withSystemPrefix(messages),
                   spans,
-                  actualToolCalls: extractToolCallsFromConversation({
-                    messages,
-                  }),
+                  actualToolCalls: routeToolCalls(
+                    extractToolCallsFromConversation({ messages }),
+                    accountRouting,
+                  ),
                   usage,
                 }),
               );
@@ -5563,9 +5577,10 @@ const runLocalIteration = async ({
                   snapshotKind: "turn_finish",
                   messages: withSystemPrefix(messages),
                   spans,
-                  actualToolCalls: extractToolCallsFromConversation({
-                    messages,
-                  }),
+                  actualToolCalls: routeToolCalls(
+                    extractToolCallsFromConversation({ messages }),
+                    accountRouting,
+                  ),
                   usage,
                 }),
               );
@@ -5694,9 +5709,12 @@ const runLocalIteration = async ({
         : {}),
       toolPolicyGate,
       extractToolCalls: (params) =>
-        extractToolCallsExcludingPolicyBlocks(
-          params,
-          toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+        routeToolCalls(
+          extractToolCallsExcludingPolicyBlocks(
+            params,
+            toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+          ),
+          accountRouting,
         ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
@@ -6113,6 +6131,7 @@ const runLocalIteration = async ({
       toolsCalledByPrompt: acc.toolsCalledByPrompt,
       promptIndex: acc.activePromptIndex,
       partialResponseMessages: acc.activePartialResponseMessages,
+      accountRouting,
     });
     const failMessages =
       acc.activePromptInputMessages.length > 0
@@ -6164,9 +6183,10 @@ const runLocalIteration = async ({
           snapshotKind: "failure",
           messages: withSystemPrefix(failMessages),
           spans: acc.capturedSpans,
-          actualToolCalls: extractToolCallsFromConversation({
-            messages: failMessages,
-          }),
+          actualToolCalls: routeToolCalls(
+            extractToolCallsFromConversation({ messages: failMessages }),
+            accountRouting,
+          ),
           usage: copyUsageTotals(acc.accumulatedUsage),
           prompts: promptTraceSummaries,
         }),
@@ -7014,7 +7034,6 @@ const runHostedIterationWithBrowser = async (
     );
 
     prepared = await prepareChatV2({
-      connectionsByServerId: {},
       mcpClientManager,
       selectedServers,
       modelDefinition,
@@ -7174,6 +7193,9 @@ const runHostedIterationWithBrowser = async (
         : {}),
     };
   }
+  // Maps account-routed calls back to the server's tools. A harness turn
+  // builds its own MCP tools, from the same account groups by the same merge.
+  const accountRouting = accountRoutingFromTools(prepared.allTools);
 
   // PR 5b: drive the per-turn loop through `runAssistantTurn` (the same
   // engine chat / playground / synthetic / non-stream eval already use).
@@ -7255,9 +7277,12 @@ const runHostedIterationWithBrowser = async (
         accumulatedUsage,
         withSystemPrefix,
         extractToolCalls: (messages) =>
-          extractToolCallsExcludingPolicyBlocks(
-            { messages },
-            toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+          routeToolCalls(
+            extractToolCallsExcludingPolicyBlocks(
+              { messages },
+              toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+            ),
+            accountRouting,
           ),
         buildTraceSnapshotEvent,
       })
@@ -7445,9 +7470,12 @@ const runHostedIterationWithBrowser = async (
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
-      extractToolCallsExcludingPolicyBlocks(
-        { messages },
-        toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+      routeToolCalls(
+        extractToolCallsExcludingPolicyBlocks(
+          { messages },
+          toolPolicyGate?.blockedToolCallIds() ?? new Set(),
+        ),
+        accountRouting,
       ),
     // The evidence reconciler's exclusion set, read fresh per turn — a
     // policy-refused call never reached a server, so its absence from the

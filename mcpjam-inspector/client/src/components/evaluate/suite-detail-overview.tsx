@@ -27,6 +27,8 @@ import {
   followAuthoringJob,
 } from "@/lib/mcpjam-agent/eval-workspace";
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
+import { SuiteRunsAsLine } from "./suite-runs-as";
+import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
@@ -265,6 +267,8 @@ export function SuiteDetailOverview({
     listedRuns,
   );
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // Recent runs gain "Ran as" and "Accounts" once a listed run recorded them.
+  const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
@@ -726,6 +730,7 @@ export function SuiteDetailOverview({
           <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
             {suite.name}
           </h2>
+          <SuiteRunsAsLine suite={suite} projectId={projectId} className="mt-1.5" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {importedDrafts.length && !reviewingImport ? (
@@ -860,7 +865,7 @@ export function SuiteDetailOverview({
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <EvaluateHistoryHeader showActions={showDeleteColumn} />
+                <EvaluateHistoryHeader showActions={showDeleteColumn} showAccounts={showAccounts} />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
@@ -876,6 +881,7 @@ export function SuiteDetailOverview({
                         historyRows={rowMap}
                         hostNamesById={hostNamesById}
                         showActions={showDeleteColumn}
+                        showAccounts={showAccounts}
                         onDelete={
                           showDeleteColumn &&
                           launch.runs.every((row) => {

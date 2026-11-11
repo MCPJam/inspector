@@ -102,6 +102,28 @@ export type ServerScopedInput = z.infer<typeof serverScopedInput>;
 export type ResolvedServerInfo = { id: string; name: string };
 
 /**
+ * Resolve a server selector (id or name) to a saved server. Reads of stored
+ * server data use this directly; they work for any transport.
+ */
+export async function resolveSavedServer(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformProjectServer> {
+  const page = await client.listProjectServers(
+    { projectId: project.id },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Server",
+    `project "${project.name}"`
+  );
+}
+
+/**
  * Resolve a server selector and require it to be hosted-operable: live ops
  * connect from the hosted runtime, which can never spawn stdio servers.
  * Failing here is deterministic and names the reason, instead of a
@@ -113,16 +135,7 @@ export async function resolveLiveServer(
   selector: string,
   signal: AbortSignal | undefined
 ): Promise<PlatformProjectServer> {
-  const page = await client.listProjectServers(
-    { projectId: project.id },
-    { signal }
-  );
-  const server = resolveByIdOrName(
-    page.items,
-    selector,
-    "Server",
-    `project "${project.name}"`
-  );
+  const server = await resolveSavedServer(client, project, selector, signal);
   if (server.transportType === "stdio" || !server.url) {
     throw resolutionError(
       `Server "${selector.trim()}" can't run hosted operations: ${

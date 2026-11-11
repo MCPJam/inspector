@@ -129,4 +129,40 @@ describe("AppsExtensionTab — OpenAI plugin extensions", () => {
     const removed = applyJsonToDraft({ hostContext: {} }, prev);
     expect(removed?.mcpProfile?.apps?.pluginExtensions).toBeUndefined();
   });
+
+  it("keeps a hand-written behavior and drops fields it doesn't know", () => {
+    const kept = applyJsonToDraft(
+      {
+        hostContext: {},
+        pluginExtensions: {
+          enabled: true,
+          behavior: { displayStart: "hint-first", displayHints: 3, bogus: "x" },
+        },
+      },
+      emptyHostConfigInputV2({ hostStyle: "claude" }),
+    );
+    expect(kept?.mcpProfile?.apps?.pluginExtensions).toEqual({
+      behavior: { displayStart: "hint-first" },
+      enabled: true,
+    });
+  });
+
+  it("starts a Claude client with only Display modes on", async () => {
+    const user = userEvent.setup();
+    const { draftRef } = renderTab({ hostStyle: "claude" });
+    const master = within(card()).getByRole("switch", {
+      name: "OpenAI plugin extensions",
+    });
+    expect(master).toBeChecked();
+    expect(within(card()).getByText(/1 of 13 on/)).toBeInTheDocument();
+    await user.click(
+      within(card()).getByRole("button", { name: /Extensions/ }),
+    );
+    await user.click(within(card()).getByRole("switch", { name: "Forms" }));
+    expect(draftRef.current.mcpProfile?.apps?.pluginExtensions).toEqual({
+      enabled: true,
+      capabilities: { forms: true },
+    });
+    expect(within(card()).getByText(/2 of 13 on/)).toBeInTheDocument();
+  });
 });

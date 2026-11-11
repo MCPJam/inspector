@@ -52,6 +52,8 @@ import {
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
+import { useSpanAccountName } from "./run-accounts-context";
+import { ToolCallAccountTag } from "@/components/chat-v2/thread/tool-call-account";
 import {
   RecordedTraceToolbar,
   type TimelineFilter,
@@ -1266,6 +1268,8 @@ function deriveSpanLabel(
   row: SpanRow,
   transcriptMessages: TranscriptMessage[],
   projectedMessages = false,
+  /** The account a tool call ran on, named after the tool. */
+  accountName?: string,
 ): {
   title: string;
   subtitle?: string;
@@ -1329,7 +1333,7 @@ function deriveSpanLabel(
 
   if (span.category === "tool") {
     const name = (span.toolName ?? span.name).trim() || "tool";
-    const title = `Tool · ${name}`;
+    const title = `Tool · ${name}${accountName ? ` · ${accountName}` : ""}`;
     const toolSub = toolSubtitleFromTranscript(transcriptMessages, span, projectedMessages);
     // Skip trivial subtitles like "{}" for empty tool inputs
     const isTrivialSub = !toolSub || toolSub === "{}" || toolSub === "None";
@@ -1522,6 +1526,7 @@ function TimelineDetailPane({
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
 }) {
+  const spanAccount = useSpanAccountName();
   if (!row) {
     return (
       <div
@@ -1562,7 +1567,7 @@ function TimelineDetailPane({
       : {};
   const { durationMs } = getRowTiming(row);
   const spanLabel =
-    row.kind === "span" ? deriveSpanLabel(row, transcriptMessages, projectedMessages) : null;
+    row.kind === "span" ? deriveSpanLabel(row, transcriptMessages, projectedMessages, spanAccount(row.span)) : null;
   const title = row.kind === "prompt" ? row.label : spanLabel!.title;
   const status =
     row.kind === "prompt"
@@ -1923,6 +1928,7 @@ export function TraceTimeline({
   );
   const recordedSpans = projected?.spans ?? sourceSpans;
   const shouldReduceMotion = useReducedMotion();
+  const spanAccount = useSpanAccountName();
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2324,7 +2330,7 @@ export function TraceTimeline({
       spanIndicatesTranscriptFailure(hoveredRow.span, transcriptMessages, projectedMessages);
     const derivedLabel =
       hoveredRow.kind === "span"
-        ? deriveSpanLabel(hoveredRow, transcriptMessages, projectedMessages)
+        ? deriveSpanLabel(hoveredRow, transcriptMessages, projectedMessages, spanAccount(hoveredRow.span))
         : null;
     const label =
       hoveredRow.kind === "prompt"
@@ -2351,7 +2357,7 @@ export function TraceTimeline({
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages]);
+  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2849,6 +2855,8 @@ export function TraceTimeline({
                               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                                 {label}
                               </span>
+                              {/* The tool's name truncates first: the account stays readable. */}
+                              <ToolCallAccountTag name={row.kind === "span" ? spanAccount(row.span) : undefined} />
                               {row.kind === "prompt" && row.hasAnyFailure ? (
                                 <span
                                   className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
