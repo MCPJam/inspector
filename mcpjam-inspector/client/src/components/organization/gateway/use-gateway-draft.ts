@@ -67,6 +67,11 @@ export function useGatewayDraft({
   const focusRequest = useRef<GatewayField | null>(null);
   // The latest Test run; a reset or a newer run makes an earlier answer stale.
   const testRun = useRef(0);
+  // The runtime, URL and key the latest Test ran with. A new provider's APIs
+  // and models come from its Test, so they start over only when the Test runs
+  // against something else; testing the same provider again keeps the
+  // admin's mappings and the models they added by hand.
+  const testedInputs = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -86,6 +91,7 @@ export function useGatewayDraft({
     setOutcome(null);
     setKeyRequested(false);
     setDirty(false);
+    testedInputs.current = null;
   }, [open, editProvider]);
 
   useEffect(() => {
@@ -136,11 +142,16 @@ export function useGatewayDraft({
     setTesting(true);
     setOutcome(null);
     setTested(null);
-    // A new provider takes its APIs and models from its latest Test alone.
-    if (!editProvider) {
+    const inputs = JSON.stringify([
+      runtimeLocation,
+      baseUrl.trim(),
+      secret.trim(),
+    ]);
+    if (!editProvider && inputs !== testedInputs.current) {
       setApis([]);
       setModels([]);
     }
+    testedInputs.current = inputs;
     let response: Awaited<ReturnType<typeof testConnection>>;
     try {
       response = await testConnection({
