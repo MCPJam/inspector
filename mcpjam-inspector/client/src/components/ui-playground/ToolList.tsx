@@ -5,7 +5,7 @@
  *   - Server tools (passed in via `tools` prop)
  */
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Plug, RefreshCw } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { Button } from "@mcpjam/design-system/button";
@@ -71,6 +71,7 @@ interface ToolListProps {
    * it and the empty state keeps navigating to Servers.
    */
   onAddServerRequested?: () => void;
+  connectServerControl?: ReactNode;
 }
 
 export function ToolList({
@@ -96,6 +97,7 @@ export function ToolList({
   onSelectBrowser,
   hasConnectedServer = true,
   onAddServerRequested,
+  connectServerControl,
 }: ToolListProps) {
   const navigate = useAppNavigate();
   const appToolCount = onSelectApp
@@ -207,22 +209,24 @@ export function ToolList({
                   ? "No tools found. Try refreshing and make sure the server is running."
                   : "No server connected yet. Connect one to load its tools and use them in chat."}
             </p>
-            {hasNoTools && !hasConnectedServer && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (onAddServerRequested) {
-                    onAddServerRequested();
-                    return;
-                  }
-                  navigate(routePaths.servers);
-                }}
-              >
-                <Plug className="h-3.5 w-3.5" />
-                Connect a server
-              </Button>
-            )}
+            {hasNoTools &&
+              !hasConnectedServer &&
+              (connectServerControl ?? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (onAddServerRequested) {
+                      onAddServerRequested();
+                      return;
+                    }
+                    navigate(routePaths.servers);
+                  }}
+                >
+                  <Plug className="h-3.5 w-3.5" />
+                  Connect a server
+                </Button>
+              ))}
           </div>
         ) : (
           <div className="space-y-3">

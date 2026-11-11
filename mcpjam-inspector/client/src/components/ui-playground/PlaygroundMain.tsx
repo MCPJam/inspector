@@ -2469,12 +2469,20 @@ export function PlaygroundMain({
     },
     [activeProjectId, multiModelSessionGeneration, setPaneTarget],
   );
+  const connectedServerNames = useMemo(
+    () =>
+      Object.keys(servers).filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      ),
+    [servers],
+  );
   const paneControls = useComparePaneControls({
     sections: skillsSection,
     active: isMultiHostMode,
     panes: comparePanes,
     resolutions: clientResolutions,
     sharedServers: selectedServers,
+    connectedServers: connectedServerNames,
     serverIdByName: serversByName,
     orgConfig: hostedOrgModelConfig,
     restorePanes,
@@ -2484,6 +2492,26 @@ export function PlaygroundMain({
     targets: compareEnvironments.targets,
     paneEnvironments: compareEnvironments.byPane,
   });
+  // A client pane with its own servers shows their Apps, not the chat's.
+  const paneLaneServers = useMemo(
+    () =>
+      new Map(
+        comparePanes.flatMap((pane) => {
+          const names = paneControls.paneServers(pane.paneId)?.names;
+          if (!names) return [];
+          const laneServers = buildExtensionServers({
+            isEnvironmentMode: false,
+            environmentServers: [],
+            selectedServers: names,
+            serversByName,
+            servers,
+            pluginServers: NO_PLUGIN_SERVERS,
+          });
+          return [[pane.paneId, laneServers] as const];
+        }),
+      ),
+    [comparePanes, paneControls.paneServers, serversByName, servers],
+  );
   // The id alone: the panes themselves are republished on every render.
   const selectedComparePaneId = useComparePaneStore(
     (state) => state.selectedPaneId ?? state.panes[0]?.paneId ?? null,
@@ -7161,7 +7189,7 @@ export function PlaygroundMain({
                             },
                             paneControls.environmentLaneServers.get(
                               column.compareId,
-                            ),
+                            ) ?? paneLaneServers.get(column.compareId),
                           )}
                           browserWorkspace={{
                             id: comparisonRecoveryGroupId,
