@@ -14,9 +14,7 @@ import type { Tool } from "../src/mcp-client-manager/types.js";
  * the runner sent every tool whatever the setting.
  */
 
-type Step =
-  | { call: string; input: Record<string, unknown> }
-  | { text: string };
+type Step = { call: string; input: Record<string, unknown> } | { text: string };
 
 type SeenCall = { tools: string[]; toolChoice: unknown };
 
@@ -254,11 +252,16 @@ describe("HostRunner progressive tool discovery", () => {
   });
 
   it("returns an error result when a server tool uses a meta-tool's name", async () => {
-    const tools = { ...makeTools(2), search_mcp_tools: makeTools(1).ctrl_tool_0 };
+    const tools = {
+      ...makeTools(2),
+      search_mcp_tools: makeTools(1).ctrl_tool_0,
+    };
     const { model, seen } = scriptedModel([{ text: "unreachable" }]);
     const result = await runner(true, tools, model).run("hi");
     expect(result.hasError()).toBe(true);
-    expect(result.getError()).toMatch(/collides with the progressive-discovery/);
+    expect(result.getError()).toMatch(
+      /collides with the progressive-discovery/
+    );
     expect(seen).toHaveLength(0);
   });
 });

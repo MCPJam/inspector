@@ -22,10 +22,9 @@ import {
 
 const scripted = vi.hoisted(() => ({ model: undefined as unknown }));
 vi.mock("../src/model-factory", async () => {
-  const actual =
-    await vi.importActual<typeof import("../src/model-factory")>(
-      "../src/model-factory"
-    );
+  const actual = await vi.importActual<typeof import("../src/model-factory")>(
+    "../src/model-factory"
+  );
   return { ...actual, createModelFromString: () => scripted.model };
 });
 
@@ -65,7 +64,9 @@ function toolResults(prompt: PromptMessage[], toolName: string) {
     .flatMap((message) =>
       Array.isArray(message.content) ? message.content : []
     )
-    .filter((part) => part.type === "tool-result" && part.toolName === toolName);
+    .filter(
+      (part) => part.type === "tool-result" && part.toolName === toolName
+    );
 }
 
 function adaptiveModel() {
@@ -146,7 +147,9 @@ describe("runWithClient with progressive tool discovery (real MCP server)", () =
   let manager: MCPClientManager;
 
   beforeEach(async () => {
-    served = await serveCountingFixtureOnPort(createMcpHandler(buildCtrlServer));
+    served = await serveCountingFixtureOnPort(
+      createMcpHandler(buildCtrlServer)
+    );
     manager = new MCPClientManager();
     await manager.connectToServer("ctrl", { url: served.url, timeout: 10_000 });
   });

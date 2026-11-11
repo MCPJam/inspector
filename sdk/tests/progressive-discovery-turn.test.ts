@@ -35,16 +35,12 @@ function execute(tools: ToolSet, name: string, input: unknown) {
 describe("startProgressiveTurn", () => {
   it("does nothing when the setting is off", () => {
     const tools = makeTools(40);
-    expect(
-      startProgressiveTurn({ tools, mode: false })
-    ).toBeUndefined();
+    expect(startProgressiveTurn({ tools, mode: false })).toBeUndefined();
   });
 
   it("on Auto, keeps a small tool set and turns on at 30 tools", () => {
     const few = makeTools(5);
-    expect(
-      startProgressiveTurn({ tools: few, mode: "auto" })
-    ).toBeUndefined();
+    expect(startProgressiveTurn({ tools: few, mode: "auto" })).toBeUndefined();
 
     const many = makeTools(30);
     const turn = startProgressiveTurn({
@@ -135,8 +131,8 @@ describe("startProgressiveTurn", () => {
 
   it("refuses a server tool that uses a meta-tool's name", () => {
     const tools = { ...makeTools(2), [META_TOOL_SEARCH]: makeTools(1).tool_0 };
-    expect(() =>
-      startProgressiveTurn({ tools, mode: true })
-    ).toThrow(/collides with the progressive-discovery meta-tool/);
+    expect(() => startProgressiveTurn({ tools, mode: true })).toThrow(
+      /collides with the progressive-discovery meta-tool/
+    );
   });
 });

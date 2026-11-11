@@ -1056,7 +1056,9 @@ export class HostRunner implements HostExecutor {
       ]);
       const toolCalls = extractToolCalls(
         result,
-        blockedToolCallIds.size ? { excludeToolCallIds: blockedToolCallIds } : {}
+        blockedToolCallIds.size
+          ? { excludeToolCallIds: blockedToolCallIds }
+          : {}
       );
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
