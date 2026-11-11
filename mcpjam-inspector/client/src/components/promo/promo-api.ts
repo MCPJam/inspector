@@ -18,11 +18,19 @@ export type Ready = {
   credits: number;
   cutoff: number;
   label: string;
-  mode: "single_use" | "shared";
-  collectLead: boolean;
+  /**
+   * Optional because a backend deployed before shared campaigns omits both;
+   * those campaigns are single use and always collect name and company.
+   */
+  mode?: "single_use" | "shared";
+  collectLead?: boolean;
   account: { userId: string; name: string; email: string };
   organizations: { organizationId: string; name: string }[];
 };
+export function collectsLead(context: Ready) {
+  return context.collectLead !== false;
+}
+
 export const contextQuery = makeFunctionReference<
   "query",
   { campaignId: string },
