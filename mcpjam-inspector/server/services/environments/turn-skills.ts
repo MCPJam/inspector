@@ -83,9 +83,9 @@ export type ServerSkillsVia =
  * How MCPJam's agent serves the plan, as its skill tools behave today:
  *  - `frozen`: a run's pinned skills, addressed by ref, whatever the run
  *    pinned. The approval switch does not apply: they are content frozen at
- *    run start, and an eval run denies every approval. A captured server
- *    skill's load still asks on its own (`effective-skill-tools.ts`), which an
- *    eval denies.
+ *    run start, and eval runs and swarm sessions deny every approval. A
+ *    captured server skill's load still asks on its own
+ *    (`effective-skill-tools.ts`), which they deny.
  *  - `environment`: an environment's skills, by ref. Loads follow the switch,
  *    so a person watching their own turn gets the prompt they configured.
  *  - `live`: the skills a person has right now, by ref, under the switch, plus
