@@ -33,8 +33,14 @@ import {
   runtimeServerIds,
   runtimeServerNames,
 } from "../../services/environments/runtime.js";
-import { paneSkillsRequest } from "../../../shared/pane-skills-preview.js";
-import { previewPaneSkills } from "../../services/environments/pane-skills.js";
+import {
+  paneSkillsRequest,
+  suiteSkillsPreviewRequest,
+} from "../../../shared/pane-skills-preview.js";
+import {
+  previewPaneSkills,
+  previewSuiteSkills,
+} from "../../services/environments/pane-skills.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { xaaPolicyFromMcpProfile } from "../../utils/effective-auth.js";
 import { toPlaygroundEnvironmentPreview } from "../../services/environments/playground-preview.js";
@@ -61,6 +67,26 @@ environments.post("/skills-preview", async (c) =>
     const bearer = await getConvexBearerForRequest(c);
     return previewPaneSkills(createConvexClient(bearer), bearer, input, c.req.raw.signal);
   })
+);
+
+// The Evaluate page's read: every environment of a suite in one request, each
+// as an eval run of it would deliver.
+environments.post("/skills-preview/suite", async (c) =>
+  handleRoute(c, async () => {
+    if (c.get("guestId")) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "Project membership is required.",
+      );
+    }
+    const input = parseWithSchema(
+      suiteSkillsPreviewRequest,
+      await readJsonBody(c),
+    );
+    const bearer = await getConvexBearerForRequest(c);
+    return previewSuiteSkills(createConvexClient(bearer), input);
+  }),
 );
 
 // GET /api/web/environments/:environmentId/preview?projectId=...

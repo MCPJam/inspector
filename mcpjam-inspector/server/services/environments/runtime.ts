@@ -28,7 +28,6 @@ import type { ConvexHttpClient } from "convex/browser";
 import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
-import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
 import { ORG_KEY_MISSING_MESSAGE } from "../../../shared/org-key-surfaces.js";
@@ -61,10 +60,10 @@ export interface ResolvedEnvironmentSkill {
    * writer.
    *
    * OPAQUE on purpose. Re-declaring its fields here would make this the FOURTH
-   * hand mirror of a shape whose three existing mirrors all drifted — and the
-   * only thing this side does with it is echo it back onto the turn trace.
-   * Typing it as a record is what keeps that honest: nothing here can read a
-   * field, so nothing here can start depending on one.
+   * hand mirror of a shape whose three existing mirrors all drifted — and this
+   * side only echoes it back onto the turn trace, apart from the skills
+   * preview, which shows its revision number when it carries one. Typing it as
+   * a record keeps that honest: a reader has to check every field it uses.
    *
    * Optional for deploy skew: an older backend omits it, and a turn then
    * records no provenance rather than a partial one.
@@ -640,6 +639,12 @@ function readBoolean(
   return typeof value === "boolean" ? value : null;
 }
 
+/** The agent loop and harness a resolved client config names (`turnRuntime`). */
+export function runtimeSelectors(config: Record<string, unknown>) {
+  const agentLoop = readString(config, "agentLoop");
+  return { agentLoop, harness: readString(config, "harness") };
+}
+
 /**
  * Narrow, read-only projection for the browser.
  *
@@ -653,19 +658,16 @@ function readBoolean(
  * sizes, and the signed `url`s most of all), the host's `computer` block,
  * `mcpProfile` (carries the enterprise auth policy), `harness` broker/proxy
  * settings, and anything under `runtimeConfig` not listed below.
+ *
+ * The caller passes `skillDelivery`, decided for the engine the turn's skill
+ * plan runs on (`turnRuntime`), so this preview and the turn agree on it.
  */
 export function toEnvironmentPreview(
   spec: ResolvedEnvironmentRuntime,
-  options: { harnessSupportsSkills: (harnessId: string) => boolean }
+  { skillDelivery }: { skillDelivery: EnvironmentSkillDelivery },
 ): EnvironmentPreview {
   const runtimeConfig = spec.host.runtimeConfig;
   const harness = readString(runtimeConfig, "harness");
-  // Delivery follows the loop the turn runs: `agentLoop ?? harness`, as in
-  // `resolveAgentLoop`. Reading `harness` alone mislabels an agent-loop client.
-  const loop = effectiveHarnessId({
-    agentLoop: readString(runtimeConfig, "agentLoop"),
-    harness,
-  });
   const builtInToolIds = Array.isArray(runtimeConfig.builtInToolIds)
     ? runtimeConfig.builtInToolIds.filter(
         (id): id is string => typeof id === "string"
@@ -673,11 +675,6 @@ export function toEnvironmentPreview(
     : [];
   const skills = spec.skills ?? [];
   const capturedServerSkills = spec.serverSkills ?? [];
-  const skillDelivery: EnvironmentSkillDelivery = !loop
-    ? "emulated"
-    : options.harnessSupportsSkills(loop)
-    ? "harness"
-    : "unsupported";
 
   const connectable = Array.isArray(spec.servers.connectable)
     ? spec.servers.connectable
