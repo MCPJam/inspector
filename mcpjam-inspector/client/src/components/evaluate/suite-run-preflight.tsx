@@ -458,7 +458,7 @@ export function useSuiteRunPreflight({
   });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const harnessKeys = useOrgHarnessKeys(projectId, orgConfig, hosts);
-  const accounts = useSuiteAccountPreflight({ suite, projectServers });
+  const accounts = useSuiteAccountPreflight({ suite, projectServers, planned });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
     projectId,

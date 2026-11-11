@@ -34,6 +34,7 @@ import {
 import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { RunsAsLine } from "./suite-runs-as";
+import { scopeAccountPreflight } from "./suite-run-account-preflight";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
@@ -225,11 +226,15 @@ export function SuiteRunReviewContent({
   const scopedPreflight =
     !preflight || matrix
       ? preflight
-      : suite.environmentIds?.length
-        ? scopePreflightToEnvironments(preflight, selectedIds)
-        : suite.hostAttachments?.length
-          ? scopePreflightToHosts(preflight, suite, selectedIds)
-          : preflight;
+      : scopeAccountPreflight(
+          suite.environmentIds?.length
+            ? scopePreflightToEnvironments(preflight, selectedIds)
+            : suite.hostAttachments?.length
+              ? scopePreflightToHosts(preflight, suite, selectedIds)
+              : preflight,
+          suite,
+          selectedIds,
+        );
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??

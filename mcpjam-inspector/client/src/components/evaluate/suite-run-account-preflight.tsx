@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { buildProjectServerPath, navigateApp } from "@/lib/app-navigation";
 import type { RemoteServer } from "@/hooks/useProjects";
-import { serverNameFrom, useSuiteAccountsView } from "@/hooks/use-suite-accounts";
+import {
+  serverNameFrom,
+  useSuiteAccountsView,
+} from "@/hooks/use-suite-accounts";
 import {
   chosenAccountProblems,
   runsAsEntries,
@@ -19,12 +22,16 @@ export type AccountPreflight = {
   accountProblems?: AccountProblem[];
   /** The person's own accounts the run will use. */
   runsAs?: RunsAsEntry[];
+  /** Both, for only the servers these refs (ids or names) name. */
+  accountsFor?: (
+    refs: readonly string[],
+  ) => Pick<AccountPreflight, "accountProblems" | "runsAs">;
 };
 
 /**
  * {@link AccountPreflight} for a suite, read for the same servers its
  * Accounts settings row lists, so the sheet and the row never disagree about
- * which accounts exist.
+ * which accounts exist. A planned launch counts only the servers it connects.
  *
  * `useSuiteRunPreflight` calls this before its environment resolutions. That
  * read is the last one a render makes, and tests read the environments it
@@ -33,25 +40,80 @@ export type AccountPreflight = {
 export function useSuiteAccountPreflight({
   suite,
   projectServers,
+  planned,
 }: {
   suite: EvalSuite;
   /** The project's servers, as the preflight already read them. */
   projectServers: RemoteServer[] | undefined;
+  planned?: {
+    environmentIds: readonly string[];
+    serverRefs?: readonly string[];
+  };
 }): AccountPreflight {
   const serverIds = useMemo(
     () => serverIdsForRefs(getEffectiveSuiteServers(suite), projectServers),
     [suite, projectServers],
   );
   const { view } = useSuiteAccountsView({ suiteId: suite._id, serverIds });
-  return useMemo(() => {
-    if (!view) return {};
-    const serverName = serverNameFrom(projectServers);
-    const accountProblems = chosenAccountProblems(view, serverName);
+  if (!view) return {};
+  const serverName = serverNameFrom(projectServers);
+  const accountsFor = (refs: readonly string[]) => {
+    const ids = new Set(serverIdsForRefs(refs, projectServers));
+    const kept = {
+      ...view,
+      servers: view.servers.filter((s) => ids.has(s.serverId)),
+    };
+    const accountProblems = chosenAccountProblems(kept, serverName);
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
-      runsAs: runsAsEntries(view, serverName),
+      runsAs: runsAsEntries(kept, serverName),
     };
-  }, [view, projectServers]);
+  };
+  const plannedRefs =
+    planned &&
+    (planned.serverRefs ??
+      environmentServerRefs(suite, planned.environmentIds));
+  return { ...accountsFor(plannedRefs ?? serverIds), accountsFor };
+}
+
+/**
+ * The servers these environments connect, from the suite's list of its own.
+ * Unknown when none is given or one isn't listed, so nothing is left out.
+ */
+function environmentServerRefs(
+  suite: EvalSuite,
+  environmentIds: readonly string[],
+): string[] | undefined {
+  const targets = environmentIds.map((id) =>
+    suite.environmentTargets?.find((target) => target.environmentId === id),
+  );
+  if (!targets.length || !targets.every(Boolean)) return undefined;
+  return targets.flatMap((target) => target?.serverNames ?? []);
+}
+
+/**
+ * The account checks for only the clients or environments picked in the
+ * sheet: a problem on a server that only an unpicked one uses doesn't stop
+ * the run, and its accounts aren't ones the run uses.
+ */
+export function scopeAccountPreflight<T extends AccountPreflight>(
+  preflight: T,
+  suite: EvalSuite,
+  selectedIds: readonly string[],
+): T {
+  const refs = suite.environmentIds?.length
+    ? environmentServerRefs(suite, selectedIds)
+    : suite.hostAttachments?.length
+      ? getEffectiveSuiteServers({
+          ...suite,
+          hostAttachments: suite.hostAttachments.filter((host) =>
+            selectedIds.includes(host.namedHostId),
+          ),
+        })
+      : undefined;
+  if (!refs || !preflight.accountsFor) return preflight;
+  const { accountProblems, runsAs } = preflight.accountsFor(refs);
+  return { ...preflight, accountProblems, runsAs };
 }
 
 /**

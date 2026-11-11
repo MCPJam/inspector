@@ -8,33 +8,6 @@ import {
   toolCallAccountNames,
 } from "../eval-run-accounts";
 
-
-const live = {
-  connectionId: "conn-live",
-  name: "Live",
-  isDefault: true,
-  needsReauth: false,
-};
-const dummy = {
-  connectionId: "conn-dummy",
-  name: "Dummy",
-  isDefault: false,
-  needsReauth: false,
-};
-
-function asana(overrides: Partial<SuiteAccountsServer> = {}): SuiteAccountsServer {
-  return {
-    serverId: "srv-asana",
-    mode: "accounts",
-    accounts: [live, dummy],
-    chosen: null,
-    ...overrides,
-  };
-}
-
-const names = (serverId: string) =>
-  ({ "srv-asana": "Asana", "srv-linear": "Linear" })[serverId] ?? serverId;
-
 describe("ranAsRole", () => {
   it("names the schedule's owner and the key's owner from the run's source", () => {
     expect(ranAsRole("schedule")).toBe("Schedule owner");

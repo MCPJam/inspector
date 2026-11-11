@@ -4,8 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { SuiteRunReview } from "../suite-run-review";
 import { RunsAsLine, SuiteRunsAsLine } from "../suite-runs-as";
-import { useSuiteAccountPreflight } from "../suite-run-account-preflight";
-import { hasBlockingPreflight, type RunPreflightState } from "../suite-run-preflight";
+import {
+  scopeAccountPreflight,
+  useSuiteAccountPreflight,
+  type AccountPreflight,
+} from "../suite-run-account-preflight";
+import {
+  hasBlockingPreflight,
+  type RunPreflightState,
+} from "../suite-run-preflight";
 import type { EvalCase, EvalSuite } from "../../evals/types";
 import type { SuiteAccountsView } from "@/lib/evals/eval-accounts";
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -60,8 +67,18 @@ const suite = {
 } as EvalSuite;
 const cases = [{ _id: "one", runs: 1, models: [] }] as unknown as EvalCase[];
 
-const live = { connectionId: "conn-live", name: "Live", isDefault: true, needsReauth: false };
-const dummy = { connectionId: "conn-dummy", name: "Dummy", isDefault: false, needsReauth: false };
+const live = {
+  connectionId: "conn-live",
+  name: "Live",
+  isDefault: true,
+  needsReauth: false,
+};
+const dummy = {
+  connectionId: "conn-dummy",
+  name: "Dummy",
+  isDefault: false,
+  needsReauth: false,
+};
 
 const emptyPreflight: RunPreflightState = {
   disconnected: [],
@@ -140,7 +157,12 @@ describe("the Runs as you line", () => {
   it("reads the suite's saved choice beside Setup Run", () => {
     state.view = {
       servers: [
-        { serverId: "srv-asana", mode: "accounts", accounts: [live, dummy], chosen: ["conn-dummy"] },
+        {
+          serverId: "srv-asana",
+          mode: "accounts",
+          accounts: [live, dummy],
+          chosen: ["conn-dummy"],
+        },
       ],
       scheduleOwners: [],
     } satisfies SuiteAccountsView;
@@ -256,5 +278,119 @@ describe("the Setup Run account checks", () => {
         accounts: [{ name: "Dummy", needsReauth: true }],
       },
     ]);
+  });
+});
+
+describe("the Setup Run account checks, kept to what the run connects", () => {
+  // Asana runs on its default; the Linear account chosen needs reconnecting.
+  const twoServers = {
+    servers: [
+      {
+        serverId: "srv-asana",
+        mode: "accounts",
+        accounts: [live],
+        chosen: null,
+      },
+      {
+        serverId: "srv-linear",
+        mode: "accounts",
+        accounts: [{ ...dummy, needsReauth: true }],
+        chosen: ["conn-dummy"],
+      },
+    ],
+    scheduleOwners: [],
+  } satisfies SuiteAccountsView;
+  const target = (environmentId: string, server: string) => ({
+    environmentId,
+    hostName: null,
+    serverNames: [server],
+    pluginVersionCount: 0,
+  });
+  const environmentSuite: EvalSuite = {
+    ...suite,
+    environmentIds: ["env-asana", "env-linear"],
+    environmentTargets: [
+      target("env-asana", "Asana"),
+      target("env-linear", "Linear"),
+    ],
+  };
+  const host = (namedHostId: string, server: string) => ({
+    namedHostId,
+    enabledOptionalServerIds: [],
+    hostName: null,
+    resolvedServerNames: [server],
+  });
+  const clientSuite: EvalSuite = {
+    ...suite,
+    environment: { servers: [] },
+    hostAttachments: [
+      host("host-asana", "Asana"),
+      host("host-linear", "Linear"),
+    ],
+  };
+  const serversOf = (preflight: AccountPreflight) =>
+    preflight.runsAs?.map((entry) => entry.serverName);
+
+  beforeEach(() => {
+    state.view = twoServers;
+  });
+
+  it.each([
+    ["environment", environmentSuite, "env"],
+    ["client", clientSuite, "host"],
+  ] as const)(
+    "leaves out a server only an unpicked %s uses",
+    (_, picked, prefix) => {
+      const { result } = renderHook(() =>
+        useSuiteAccountPreflight({ suite: picked, projectServers }),
+      );
+      const asanaOnly = scopeAccountPreflight(result.current, picked, [
+        `${prefix}-asana`,
+      ]);
+      expect(asanaOnly.accountProblems).toBeUndefined();
+      expect(hasBlockingPreflight({ ...emptyPreflight, ...asanaOnly })).toBe(
+        false,
+      );
+      expect(serversOf(asanaOnly)).toEqual(["Asana"]);
+
+      const both = scopeAccountPreflight(result.current, picked, [
+        `${prefix}-asana`,
+        `${prefix}-linear`,
+      ]);
+      expect(both.accountProblems).toHaveLength(1);
+      expect(serversOf(both)).toEqual(["Asana", "Linear"]);
+    },
+  );
+
+  it("keeps a planned launch to its servers, and to all of them when unknown", () => {
+    const planned = renderHook(() =>
+      useSuiteAccountPreflight({
+        suite,
+        projectServers,
+        planned: { environmentIds: [], serverRefs: ["Asana"] },
+      }),
+    );
+    expect(planned.result.current.accountProblems).toBeUndefined();
+    expect(serversOf(planned.result.current)).toEqual(["Asana"]);
+
+    const listed = renderHook(() =>
+      useSuiteAccountPreflight({
+        suite: environmentSuite,
+        projectServers,
+        planned: { environmentIds: ["env-asana"] },
+      }),
+    );
+    expect(serversOf(listed.result.current)).toEqual(["Asana"]);
+
+    // An environment the suite doesn't list: its servers are unknown, so
+    // nothing is left out.
+    const unlisted = renderHook(() =>
+      useSuiteAccountPreflight({
+        suite: environmentSuite,
+        projectServers,
+        planned: { environmentIds: ["env-elsewhere"] },
+      }),
+    );
+    expect(unlisted.result.current.accountProblems).toHaveLength(1);
   });
 });
