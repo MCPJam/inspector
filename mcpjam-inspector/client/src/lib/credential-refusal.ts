@@ -10,6 +10,9 @@
  * - `exportDenied`: the organization's credential export policy keeps saved
  *   credentials inside MCPJam-hosted connections, and this connect would have
  *   delivered them to this machine. Only an organization admin can change it.
+ *   With `policy: "hostedOnlyAccount"` the refusal is the account's own rule
+ *   (an API-uploaded or project account), which no admin can change, so the
+ *   backend's sentence is kept.
  *
  * The decision is always the backend's. This module only recognises the
  * refusal on a connect result and turns it into something a person can act on.
@@ -27,7 +30,8 @@ export type CredentialRefusal =
       boundOrigin: string | null;
       targetOrigin: string | null;
     }
-  | { kind: "export_denied" };
+  | { kind: "export_denied" }
+  | { kind: "hosted_only" };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -48,8 +52,13 @@ export function readCredentialRefusal(
   const nested = asRecord(record.credentialRefusal);
   if (nested && typeof nested.kind === "string") {
     return readCredentialRefusal(
-      nested.kind === "export_denied"
-        ? { exportDenied: true }
+      nested.kind === "export_denied" || nested.kind === "hosted_only"
+        ? {
+            exportDenied: true,
+            ...(nested.kind === "hosted_only"
+              ? { policy: "hostedOnlyAccount" }
+              : {}),
+          }
         : {
             secretOriginMismatch: true,
             boundOrigin: nested.boundOrigin,
@@ -66,7 +75,12 @@ export function readCredentialRefusal(
         typeof record.targetOrigin === "string" ? record.targetOrigin : null,
     };
   }
-  if (record.exportDenied === true) return { kind: "export_denied" };
+  if (record.exportDenied === true) {
+    return {
+      kind:
+        record.policy === "hostedOnlyAccount" ? "hosted_only" : "export_denied",
+    };
+  }
   return null;
 }
 
@@ -80,6 +94,13 @@ export function credentialRefusalMessage(
       `${server} uses saved credentials that your organization keeps inside ` +
       "MCPJam-hosted connections. Connect it from MCPJam in the browser, or " +
       "ask an organization admin to change the credential export policy."
+    );
+  }
+  if (refusal.kind === "hosted_only") {
+    return (
+      `${server} signs in with an account for hosted runs only, so its token ` +
+      "is not sent here. Use it in hosted runs, or connect a separate " +
+      "account for local use."
     );
   }
   const moved =
@@ -132,7 +153,9 @@ function credentialRefusalNormalized(
     title:
       refusal.kind === "export_denied"
         ? "Blocked by organization policy"
-        : "Saved credentials not sent",
+        : refusal.kind === "hosted_only"
+          ? "Account for hosted runs only"
+          : "Saved credentials not sent",
     oneLine: message,
     likelyCauses: [],
     nextSteps: [],
@@ -154,7 +177,14 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
   if (serverName && refusal.kind === "origin_mismatch") {
     requestCredentialReentry(serverName, refusal);
   }
-  const message = credentialRefusalMessage(refusal, serverName);
+  // A hosted-only refusal already carries the backend's sentence for a rule
+  // no admin can change; the other two are rewritten into the fix.
+  const message =
+    refusal.kind === "hosted_only" &&
+    typeof record.error === "string" &&
+    record.error.trim()
+      ? record.error
+      : credentialRefusalMessage(refusal, serverName);
   return {
     ...record,
     error: message,
