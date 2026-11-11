@@ -1407,15 +1407,19 @@ describe("MCPAppsRenderer tool input streaming", () => {
     /**
      * The Thread + Playground contract: one displayMode, the fullscreen
      * owner, and a placement in the side panel while that owner is
-     * fullscreen. `entered` is the side-panel tab's handle on the App.
+     * fullscreen. `entered` is the side-panel tab's handle on the App, and
+     * `revealed` counts requests to bring the panel back. Without `panel`,
+     * the client has no side panel (compare lanes, device previews).
      */
     function mountChat(
       presentation: ThreadAppPresentation = "model",
       displayBehavior?: DisplayBehavior,
       showControls = false,
+      panel = true,
     ) {
       const entered: { current: { label: string; exit: () => void } | null } =
         { current: null };
+      const revealed = { count: 0 };
       const state = { mode: "inline" as string };
       function Chat() {
         const [mode, setMode] = React.useState<"inline" | "pip" | "fullscreen">(
@@ -1429,16 +1433,23 @@ describe("MCPAppsRenderer tool input streaming", () => {
         const placed = mode === "fullscreen" && owner !== null;
         return (
           <WidgetFullscreenPlacementContext.Provider
-            value={{
-              rect: placed ? rect : null,
-              exitLabel: "Exit full screen",
-              onEnter: (app) => {
-                entered.current = app;
-              },
-              onLeave: () => {
-                entered.current = null;
-              },
-            }}
+            value={
+              panel
+                ? {
+                    rect: placed ? rect : null,
+                    exitLabel: "Exit full screen",
+                    onEnter: (app) => {
+                      entered.current = app;
+                    },
+                    onLeave: () => {
+                      entered.current = null;
+                    },
+                    reveal: () => {
+                      revealed.count += 1;
+                    },
+                  }
+                : null
+            }
           >
             <InspectorWidgetHostProvider>
               <OwnedHost
@@ -1480,7 +1491,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         );
       }
       const view = render(<Chat />);
-      return { ...view, entered, state };
+      return { ...view, entered, revealed, state };
     }
     /** An App with its own tools goes fullscreen once it initializes. */
     async function goFullscreen() {
@@ -1706,6 +1717,121 @@ describe("MCPAppsRenderer tool input streaming", () => {
           await screen.findByText(/doesn't support full screen/),
         ).toBeInTheDocument();
         expect(mockBridge.close).toHaveBeenCalled();
+      });
+    });
+
+    describe("Claude's side panel rule (inline-then-move)", () => {
+      const CLAUDE_RULES: DisplayBehavior = {
+        hints: "ui",
+        start: "inline-then-move",
+      };
+      const owned = () => handle as unknown as { widgetContent: unknown };
+      let original: unknown;
+      beforeEach(() => {
+        original = owned().widgetContent;
+      });
+      afterEach(() => {
+        owned().widgetContent = original;
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      });
+      const declare = (hints: Record<string, unknown> = {}) => {
+        owned().widgetContent = {
+          html: "<html><body>side panel fixture</body></html>",
+          mimeTypeValid: true,
+          ...hints,
+        };
+      };
+      const initialize = async (availableDisplayModes?: string[]) => {
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue(
+          availableDisplayModes ? { availableDisplayModes } : undefined,
+        );
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+      };
+      const settle = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      const card = () => screen.queryByRole("button", { name: "Open App" });
+
+      it("starts inline, then moves once to the side panel after the result", async () => {
+        declare({ uiDisplayHints: { preferredDisplayMode: "fullscreen" } });
+        const { container, state, entered } = mountChat("model", CLAUDE_RULES);
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        expect(appBridgeArgsRef.current?.options?.hostContext.displayMode).toBe(
+          "inline",
+        );
+        await initialize(["inline", "fullscreen"]);
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(placedApp(container)).not.toBeNull();
+        expect(card()).toBeNull();
+
+        fireEvent.click(
+          screen.getByRole("button", { name: "Exit fullscreen" }),
+        );
+        await settle();
+        expect(state.mode).toBe("inline");
+        expect(entered.current).toBeNull();
+        // One move: it stays inline after the person sends it back.
+        await settle();
+        expect(state.mode).toBe("inline");
+      });
+
+      it("keeps an App without a usable preference inline", async () => {
+        declare({
+          // Claude reads `_meta.ui`, not OpenAI's hints.
+          resourceDisplayHints: { preferredDisplayMode: "fullscreen" },
+        });
+        const { state } = mountChat("model", CLAUDE_RULES);
+        await initialize(["inline", "fullscreen"]);
+        await settle();
+        expect(state.mode).toBe("inline");
+      });
+
+      it.each([[[]], [["pip"]]])(
+        "keeps an App that declares %j inline instead of refusing it",
+        async (modes) => {
+          declare({ uiDisplayHints: { preferredDisplayMode: "fullscreen" } });
+          const { state } = mountChat("model", CLAUDE_RULES);
+          await initialize(modes);
+          await settle();
+          expect(state.mode).toBe("inline");
+          expect(screen.queryByText(/no supported display mode/)).toBeNull();
+        },
+      );
+
+      it("keeps a preferring App inline where there is no side panel", async () => {
+        declare({ uiDisplayHints: { preferredDisplayMode: "fullscreen" } });
+        const { state } = mountChat("model", CLAUDE_RULES, false, false);
+        await initialize(["inline", "fullscreen"]);
+        await settle();
+        expect(state.mode).toBe("inline");
+      });
+
+      it("puts a full-screen-only App in the side panel with the card in the chat", async () => {
+        declare();
+        const { container, state, revealed } = mountChat("model", CLAUDE_RULES);
+        await initialize(["fullscreen"]);
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(placedApp(container)).not.toBeNull();
+        fireEvent.click(card()!);
+        expect(revealed.count).toBe(1);
+        expect(state.mode).toBe("fullscreen");
+      });
+
+      it("keeps a full-screen-only App a card where there is no side panel", async () => {
+        declare();
+        const { state } = mountChat("model", CLAUDE_RULES, false, false);
+        await initialize(["fullscreen"]);
+        await settle();
+        expect(state.mode).toBe("inline");
+        expect(card()).not.toBeNull();
+        // Its click opens the whole-window fullscreen, as before.
+        fireEvent.click(card()!);
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
       });
     });
   });

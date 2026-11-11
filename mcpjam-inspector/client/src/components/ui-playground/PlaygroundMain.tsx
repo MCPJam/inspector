@@ -6265,8 +6265,8 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
-  // ChatGPT and Codex (plugin extensions on): a model-invoked chat App that
-  // goes fullscreen moves into a right-rail tab with "Exit full screen",
+  // ChatGPT, Codex and Claude (Display modes on): a model-invoked chat App
+  // that goes fullscreen moves into a right-rail tab with "Exit full screen",
   // and the chat stays beside it. Other clients keep the full overlay.
   const railFullscreenEligible =
     hasExtensionProvider &&
@@ -6326,6 +6326,7 @@ export function PlaygroundMain({
             onEnter: (app) => extensionStore.setState({ modelFullscreen: app }),
             // Leaving from the App gives a narrow window its chat back.
             onExit: () => dismissRail(extensionStore),
+            reveal: () => revealRail(extensionStore),
           }
         : null,
     [
