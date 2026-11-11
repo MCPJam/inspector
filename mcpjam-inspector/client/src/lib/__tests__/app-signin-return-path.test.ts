@@ -17,6 +17,11 @@ describe("generic app sign-in return path", () => {
     writeAppSignInReturnPath("/redeem", NOW);
     expect(consumeAppSignInReturnPath(NOW)).toBe("/redeem");
   });
+  it("restores the scanned campaign when sign-in state is missing", () => {
+    writeAppSignInReturnPath("/redeem?campaign=talk-123&code=private", NOW);
+    expect(consumeAppSignInReturnPath(NOW)).toBe("/redeem?campaign=talk-123");
+    expect(readAppSignInReturnPath(NOW)).toBeNull();
+  });
   beforeEach(() => {
     clearAppSignInReturnPath();
   });

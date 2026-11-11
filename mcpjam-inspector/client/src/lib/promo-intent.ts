@@ -85,7 +85,7 @@ export function readPromoIntent(
   return memory.campaign === campaign ? memory.code : "";
 }
 
-function redeemPath(campaign: string | null, manual = false) {
+export function redeemPath(campaign: string | null, manual = false) {
   const params = new URLSearchParams();
   if (manual) params.set("manual", "1");
   if (campaign && campaign !== DEFAULT_PROMO_CAMPAIGN)

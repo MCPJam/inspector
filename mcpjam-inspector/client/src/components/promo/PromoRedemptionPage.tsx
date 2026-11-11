@@ -10,6 +10,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   clearPromoIntent,
   readPromoCampaign,
+  redeemPath,
   readPromoIntent,
   promoSignInState,
 } from "@/lib/promo-intent";
@@ -154,7 +155,7 @@ export function PromoRedemptionPage() {
   const [error, setError] = useState("");
   const [campaignId] = useState(() => readPromoCampaign());
   async function login() {
-    writeAppSignInReturnPath("/redeem");
+    writeAppSignInReturnPath(redeemPath(campaignId));
     try {
       await signIn({ state: promoSignInState(campaignId) });
     } catch {
