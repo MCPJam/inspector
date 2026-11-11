@@ -40,7 +40,8 @@ export function testedFromLabel(origin: "backend" | "inspector"): string {
 }
 
 function statusTitle(status: number | undefined): string {
-  if (status === 401) return "The provider needs a valid API key";
+  if (status === 401)
+    return "The provider needs a valid API key. Update the key and test again.";
   if (status === 403) return "The provider refused the request";
   return "The provider test failed. Check the base URL and key, then test again.";
 }

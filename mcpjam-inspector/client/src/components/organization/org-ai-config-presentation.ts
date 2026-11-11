@@ -124,7 +124,7 @@ export const NOT_SUPPORTED_YET_GUIDANCE =
  * that API, on the organization's key.
  */
 export const HARNESS_ORG_KEYS_GUIDANCE =
-  "Claude Code and OpenCode run on an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI run on an OpenAI provider or a custom provider that serves Responses.";
+  "Claude Code and OpenCode need an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI need an OpenAI provider or a custom provider that serves Responses.";
 
 /**
  * The harness row's guidance, or null to fall back to the general one. With
