@@ -156,6 +156,8 @@ you can tell them from skills you authored.
 
 Adoption is deliberately narrow. It does not run when:
 
+- **you use the hosted app** — only a self-hosted Inspector adopts, so a skill
+  an agent writes in a hosted sandbox never becomes a project skill;
 - **the run used pinned skills** — a pinned set is a frozen snapshot, and writing
   back into the pool would change what the *next* eval arm resolves against,
   silently altering the thing under comparison;
@@ -165,8 +167,8 @@ Adoption is deliberately narrow. It does not run when:
   from one it simply failed to see as already managed.
 
 <Note>
-  Set `HARNESS_SKILL_ADOPTION_DISABLED=1` to turn adoption off entirely for a
-  deployment.
+  On a self-hosted Inspector, set `HARNESS_SKILL_ADOPTION_DISABLED=1` to turn
+  adoption off entirely.
 </Note>
 
 ## Using Skills
