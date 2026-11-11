@@ -15,6 +15,7 @@ import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
+import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -38,6 +39,10 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
+// Off unless a test turns the new Suite page on.
+vi.mock("@/hooks/useEvaluateNavEnabled", () => ({
+  useEvaluateNavEnabled: vi.fn(() => undefined),
+}));
 // An imported draft opens in the step editor, which renders the model picker.
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
@@ -1433,4 +1438,70 @@ describe("SuiteDetailOverview run delete", () => {
     renderSuite();
     expect(screen.queryByRole("button", { name: /Delete run/ })).toBeNull();
   });
+});
+
+describe("SuiteDetailOverview — Runs card behind evaluate-nav-enabled", () => {
+  const run = makeRun({ _id: "run-1", runNumber: 1 });
+  const rows = [
+    makeIteration({ _id: "it-1", suiteRunId: "run-1", resultSource: "reported" }),
+  ];
+  function renderRunsCard(onRunClick = vi.fn()) {
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[run]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations(rows)}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onRunClick={onRunClick}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+      />,
+    );
+    return onRunClick;
+  }
+
+  it("puts the health above a strip without its pass cell, with hints, and opens runs", async () => {
+    vi.mocked(useEvaluateNavEnabled).mockReturnValue(true);
+    const onRunClick = renderRunsCard();
+    expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(
+      "average across the last run",
+    );
+    expect(screen.queryByTestId("metric-strip-pass-rate")).toBeNull();
+    // The strip's labels and the table's headers each carry their own ⓘ.
+    for (const [name, count] of [
+      ["About Latency", 2],
+      ["About Tokens", 2],
+      ["About Tool calls", 1],
+      ["About Calls", 1],
+    ] as const) {
+      expect(screen.getAllByRole("button", { name })).toHaveLength(count);
+    }
+    await userEvent
+      .setup()
+      .click(
+        within(screen.getByTestId("nav-suite-health")).getByRole("button", {
+          name: "#1",
+        }),
+      );
+    expect(onRunClick).toHaveBeenCalledWith("run-1");
+    vi.mocked(useEvaluateNavEnabled).mockReturnValue(undefined);
+  });
+
+  it.each([undefined, false])(
+    "keeps today's Runs card while the flag is %s",
+    (flag) => {
+      vi.mocked(useEvaluateNavEnabled).mockReturnValue(flag);
+      renderRunsCard();
+      expect(screen.queryByTestId("nav-suite-health")).toBeNull();
+      expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
+      vi.mocked(useEvaluateNavEnabled).mockReturnValue(undefined);
+    },
+  );
 });

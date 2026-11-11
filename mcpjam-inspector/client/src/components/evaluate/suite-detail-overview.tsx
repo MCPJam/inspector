@@ -96,6 +96,9 @@ import type { EvalCase, EvalSuite } from "../evals/types";
 import type { RunMetricsByRun } from "../evals/run-metrics";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
+import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
+import { resolveSuitePassThreshold } from "./run-compare-lanes-model";
+import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
 
@@ -269,6 +272,16 @@ export function SuiteDetailOverview({
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   // Recent runs gain "Ran as" and "Accounts" once a listed run recorded them.
   const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
+  // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
+  const navEnabled = useEvaluateNavEnabled() === true;
+  const passThreshold = resolveSuitePassThreshold(suite);
+  const runsHealth = navEnabled
+    ? {
+        threshold:
+          passThreshold == null ? null : Math.round(passThreshold * 100),
+        onOpenRun: onRunClick,
+      }
+    : undefined;
   const [clientFilter, setClientFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [modelFilter, setModelFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [showAllRuns, setShowAllRuns] = useState(false);
@@ -849,6 +862,7 @@ export function SuiteDetailOverview({
           <SuiteRunHistorySnapshot
             runs={runs.filter((run) => filteredRunIds.has(run._id))}
             metricsByRun={metricsByRun}
+            nav={runsHealth}
           />
 
           {filteredRows.length === 0 ? (
@@ -865,7 +879,11 @@ export function SuiteDetailOverview({
           ) : (
             <div className="@container/run-history overflow-x-auto bg-card">
               <RunHistoryTable aria-label="Suite run history">
-                <EvaluateHistoryHeader showActions={showDeleteColumn} showAccounts={showAccounts} />
+                <EvaluateHistoryHeader
+                  showActions={showDeleteColumn}
+                  showAccounts={showAccounts}
+                  hints={runsHealth && SUITE_COLUMN_HINTS}
+                />
                 <TableBody>
                   {visibleRows.map((launch) => {
                     const representative = [...launch.runs].sort(
