@@ -27,6 +27,7 @@ import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
+import { useOpenAcrossRemount } from "./use-open-across-remount";
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -129,6 +130,7 @@ export function ClientSelector({
   const keepPopoverOpenRef = useRef(false);
   const keepPopoverOpenTimeoutRef = useRef<number | null>(null);
   const onOpenChangeRef = useRef(onOpenChange);
+  useOpenAcrossRemount(isOpen, () => setIsOpen(true));
 
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;

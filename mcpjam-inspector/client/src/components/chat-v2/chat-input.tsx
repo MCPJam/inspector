@@ -2231,10 +2231,13 @@ export function ChatInput({
                 </Popover>
               )}
               {!minimalMode && clientSelector ? (
+                // No `onModelSelectorOpenChange`: that freezes the single vs
+                // Compare layout while open, so the first ticked client
+                // showed no panes until the popover closed. The selector
+                // stays open across the remount itself.
                 <ClientSelector
                   {...clientSelector}
                   isLoading={isLoading}
-                  onOpenChange={onModelSelectorOpenChange}
                   themeMode={resolvedThemeMode}
                   modalThemeMode={globalThemeMode}
                 />
