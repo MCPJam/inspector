@@ -25,6 +25,8 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import { withProviderSafeToolNames } from "./provider-tool-names.js";
+import { startProgressiveTurn } from "./progressive-discovery/turn.js";
+import type { ProgressiveDiscoveryEnabled } from "./progressive-discovery/discovery.js";
 import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
 
 /**
@@ -364,6 +366,8 @@ export class HostRunner implements HostExecutor {
    * when no host was supplied (legacy explicit-model path).
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
+  /** The host's Progressive tools setting; see the constructor. */
+  private readonly progressiveDiscovery: ProgressiveDiscoveryEnabled;
   /**
    * Description rewrites applied after visibility filtering. Stored so
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
@@ -400,6 +404,11 @@ export class HostRunner implements HostExecutor {
           this.hostSnapshot as unknown as Record<string, unknown>
         )
       : undefined;
+    // A host that leaves it unset is on Auto, as hosted runs read it. Without
+    // a host there is no setting, and every tool is sent as before.
+    this.progressiveDiscovery = this.hostSnapshot
+      ? (this.hostSnapshot.progressiveToolDiscovery ?? "auto")
+      : false;
 
     // Resolve the model: explicit field wins; otherwise pull from host
     // snapshot; if neither, the discriminated-union types should have
@@ -832,7 +841,7 @@ export class HostRunner implements HostExecutor {
   async run(message: string, options?: PromptOptions): Promise<PromptResult> {
     const startTime = Date.now();
     const unavailable: string[] = [];
-    const toolDefinitions = Object.entries(this.tools).map(([name, tool]) => {
+    const describeTool = ([name, tool]: [string, ToolSet[string]]) => {
       try {
         const rawTool = isToolArray(this.rawTools)
           ? this.rawTools.find((candidate) => candidate.name === name)
@@ -848,7 +857,8 @@ export class HostRunner implements HostExecutor {
         unavailable.push(`toolDefinitions.${name}.inputSchema`);
         return { name, description: tool.description };
       }
-    });
+    };
+    const toolDefinitions = Object.entries(this.tools).map(describeTool);
     const recordedContext = {
       toolDefinitions,
       systemPrompt: this.systemPrompt,
@@ -938,10 +948,25 @@ export class HostRunner implements HostExecutor {
       const contextMessages = this.buildContextMessages(options?.context);
       const userMessage: UserModelMessage = { role: "user", content: message };
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
+      const discovery = startProgressiveTurn({
+        tools: this.tools,
+        executableTools: instrumentedTools,
+        mode: this.progressiveDiscovery,
+        priorMessages: contextMessages,
+      });
+      if (discovery) {
+        toolDefinitions.push(
+          ...Object.entries(discovery.metaTools).map(describeTool)
+        );
+      }
 
       const generateTextOptions: any = {
         model: model as any,
-        tools: instrumentedTools,
+        tools: discovery?.tools ?? instrumentedTools,
+        ...(discovery && {
+          prepareStep: ({ stepNumber }: { stepNumber: number }) =>
+            discovery.prepareStep(stepNumber),
+        }),
         system: this.systemPrompt,
         // Use messages array for multi-turn, simple prompt for single-turn
         ...(contextMessages.length > 0

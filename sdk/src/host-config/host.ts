@@ -294,7 +294,11 @@ export class Host {
   requireToolApproval: boolean;
   requireNativeToolDiscovery?: boolean;
 
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off; unset is Auto, on once the tools reach 30 or about 10k tokens
+   * of definitions.
+   */
   progressiveToolDiscovery?: boolean;
 
   /**
