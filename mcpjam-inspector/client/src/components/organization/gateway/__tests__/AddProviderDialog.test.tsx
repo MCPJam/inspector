@@ -208,7 +208,7 @@ describe("AddProviderDialog", () => {
     renderDialog();
     type("gateway-base-url", "https://empty.acme.example/v1");
     submitTest();
-    expect(await screen.findByText("The provider listed no models")).toBeInTheDocument();
+    expect(await screen.findByText("The provider listed no models. Name a model below, or add models to the provider and test again.")).toBeInTheDocument();
     expect(addButton()).toBeDisabled();
 
     fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "house-model" } });
@@ -240,14 +240,14 @@ describe("AddProviderDialog", () => {
     renderDialog();
     type("gateway-base-url", "https://empty.acme.example/v1");
     submitTest();
-    await screen.findByText("The provider listed no models");
+    await screen.findByText("The provider listed no models. Name a model below, or add models to the provider and test again.");
     fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "house-model" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Chat Completions/ }));
 
     submitTest();
     await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
-    await screen.findByText("The provider listed no models");
+    await screen.findByText("The provider listed no models. Name a model below, or add models to the provider and test again.");
     expect(screen.getByText("house-model")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Chat Completions/ })).toBeChecked();
     expect(addButton()).toBeEnabled();
