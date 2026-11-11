@@ -17,6 +17,7 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
+import { RunServerGroups } from "./run-server-groups";
 import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
@@ -194,6 +195,10 @@ export function EvaluateRunPage({
                   {scope}
                 </p>
               ) : null}
+              <RunServerGroups
+                targets={targets}
+                hostNamesById={hostNamesById}
+              />
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
