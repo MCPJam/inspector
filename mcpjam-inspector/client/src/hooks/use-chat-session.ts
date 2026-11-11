@@ -4179,7 +4179,7 @@ export function useChatSession(
         turnRequireToolApprovalRef.current = requireToolApprovalRef.current;
         turnAuthorizationRenewal.stop();
         harnessStartupRequestRef.current = crypto.randomUUID();
-        setHarnessStartupPhase(null);
+        setHarnessStartupPhase(harnessId ? "preparing" : null);
         const taskOwnerScope = getOwnedTaskScope();
         const ownerRequestId = taskOwnerRequests.current.capture(
           generateId(),
@@ -4368,6 +4368,7 @@ export function useChatSession(
         : {}),
     });
   }, [
+    harnessId,
     savedClientSendGuard,
     options.savedClientConfig,
     selectedModel,
@@ -6932,7 +6933,9 @@ export function useChatSession(
   }, [chatSessionId]);
 
   return {
-    harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
+    harnessStartupPhase: status === "submitted" && harnessId
+      ? (harnessStartupPhase ?? "preparing")
+      : status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
     setMessages,
