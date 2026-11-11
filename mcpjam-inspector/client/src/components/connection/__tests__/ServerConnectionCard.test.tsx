@@ -13,6 +13,8 @@ import { describeAsSlug } from "@mcpjam/sdk/browser";
 import { appReducer } from "@/state/app-reducer";
 import type { AppState } from "@/state/app-types";
 import userEvent from "@testing-library/user-event";
+import { WebApiError } from "@/lib/apis/web/base";
+import { connectionFailureFields } from "@/lib/connection-error-presentation";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -144,6 +146,72 @@ describe("ServerConnectionCard", () => {
     expect(screen.getByText(message)).toBeVisible();
     await userEvent.keyboard(" ");
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("shows credential export policy recovery with collapsed, sanitized diagnostics", async () => {
+    const failure = new WebApiError(
+      403,
+      "FORBIDDEN",
+      "client_secret=policy-test-secret",
+      undefined,
+      { exportDenied: true },
+      "req-policy-denial",
+    );
+    const fields = connectionFailureFields(failure);
+    const server = createServer({
+      connectionStatus: "failed",
+      lastError: failure.message,
+      lastNormalizedError: fields.normalized,
+      lastFailureFacts: fields.failureFacts,
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+    expect(
+      screen.getByText(/ask an admin to review the credential export policy/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Sign in" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Copy details" }));
+    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalledOnce());
+    const copied = mockClipboard.writeText.mock.calls[0][0];
+    expect(copied).toContain("credential export policy");
+    expect(copied).toContain("req-policy-denial");
+    expect(copied).not.toContain("policy-test-secret");
+    expect(defaultProps.onReconnect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new WebApiError(401, "SESSION_REVOKED", "revoked test session"),
+    new WebApiError(401, "UNAUTHORIZED", "revoked test session", undefined, {
+      reason: "SESSION_REVOKED",
+    }),
+  ])("recovers expired MCPJam sign-in without starting server OAuth: %j", (failure) => {
+    const fields = connectionFailureFields(failure);
+    const server = createServer({
+      connectionStatus: "failed",
+      lastError: failure.message,
+      lastNormalizedError: fields.normalized,
+      lastFailureFacts: fields.failureFacts,
+    });
+    render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+    expect(
+      screen.getByText(
+        "Your MCPJam sign-in expired. Sign in to MCPJam to continue.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByTestId("error-card-details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(mockSignIn).toHaveBeenCalledOnce();
     expect(defaultProps.onReconnect).not.toHaveBeenCalled();
   });
 
