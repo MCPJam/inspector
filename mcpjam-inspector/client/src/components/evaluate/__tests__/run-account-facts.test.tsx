@@ -17,6 +17,8 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
+// The header's server groups beside the accounts read Convex themselves.
+vi.mock("../run-server-groups", () => ({ RunServerGroups: () => null }));
 vi.mock("@/hooks/useProjects", () => ({
   shouldQueryProjectId: () => true,
   useProjectServers: () => ({
