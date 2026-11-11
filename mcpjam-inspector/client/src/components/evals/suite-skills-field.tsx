@@ -105,11 +105,8 @@ function useSuiteSkillDelivery(
       ),
     ).then(
       (previews) => {
-        if (controller.signal.aborted) return;
-        setResult({
-          key,
-          previews: new Map(ids.map((id, index) => [id, previews[index]!])),
-        });
+        const map = new Map(ids.map((id, index) => [id, previews[index]!]));
+        if (!controller.signal.aborted) setResult({ key, previews: map });
       },
       () => {
         if (!controller.signal.aborted) setResult({ key, previews: null });
@@ -171,14 +168,16 @@ export function SuiteSkillsHints({
       ))}
       {delivery.status === "failed" ? (
         <div className="flex items-center gap-2">
-          <p role="status">Couldn’t check which clients load these skills.</p>
+          <p role="status">
+            Couldn’t check which clients load these skills. Try again.
+          </p>
           <Button
             type="button"
             size="sm"
             variant="ghost"
             onClick={delivery.retry}
           >
-            Try again
+            Retry
           </Button>
         </div>
       ) : null}

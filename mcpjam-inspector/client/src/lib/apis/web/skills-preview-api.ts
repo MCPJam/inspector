@@ -8,8 +8,8 @@ import {
 /**
  * Which skills a client or an environment would load, and why it leaves the
  * others out. The Compare pane and the Evaluate page's skill hints both read
- * it, so they give one answer. Throws on any failure; each caller words its
- * own message.
+ * it, so they give one answer. A failed read throws with the HTTP status in
+ * `cause`, for diagnostics.
  */
 export async function fetchSkillsPreview(
   request: PaneSkillsRequest,
@@ -22,7 +22,9 @@ export async function fetchSkillsPreview(
     signal,
   });
   if (!response.ok) {
-    throw new Error(`Skills preview failed with status ${response.status}`);
+    throw new Error("Couldn’t load the skills preview. Try again.", {
+      cause: { status: response.status },
+    });
   }
   return paneSkillsPreview.parse(await response.json());
 }

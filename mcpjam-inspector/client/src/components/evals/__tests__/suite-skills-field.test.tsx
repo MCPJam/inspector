@@ -314,7 +314,7 @@ describe("Skills hints", () => {
     ]);
   });
 
-  it("says when the previews fail, and reads them again on Try again", async () => {
+  it("says when the previews fail, and reads them again on Retry", async () => {
     mocks.previews = {
       "chat-env": { deliveredCount: 1, skills: [row("triage")] },
       "codex-env": { deliveredCount: 1, skills: [row("triage")] },
@@ -323,10 +323,10 @@ describe("Skills hints", () => {
     renderSettings();
     expect(
       await screen.findByText(
-        "Couldn’t check which clients load these skills.",
+        "Couldn’t check which clients load these skills. Try again.",
       ),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByText("Every client loads triage."),
     ).toBeInTheDocument();
