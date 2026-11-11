@@ -29,13 +29,13 @@ const NONE = {
   delivered_plugin_count: 0,
   delivered_mcp_server_count: 0,
   delivered_local_count: 0,
+  omitted_from_catalog_count: 0,
   excluded_unsupported_harness_count: 0,
   excluded_server_skill_unsupported_count: 0,
   excluded_plugin_disabled_count: 0,
   excluded_name_collision_count: 0,
   excluded_invalid_skill_name_count: 0,
   excluded_over_cap_count: 0,
-  excluded_omitted_from_catalog_count: 0,
   failed_count: 0,
   $process_person_profile: false,
 };
@@ -55,11 +55,13 @@ function sent(): Array<Record<string, unknown>> {
 async function evalIteration(
   execution: { harness?: string },
   pins = evalRunPins(),
+  modelContextTokens?: number,
 ) {
   const run = await preparedRunSkills(pins);
   return iterationTurnSkills({
     pinnedSkillSource: run.pinnedSkillSource,
     execution,
+    ...(modelContextTokens ? { modelContextTokens } : {}),
   }).skills;
 }
 
@@ -123,6 +125,24 @@ describe("an eval iteration", () => {
         harness_id: "codex",
         delivered_library_count: 1,
         excluded_invalid_skill_name_count: 1,
+      },
+    ]);
+  });
+
+  it("counts a skill left off the prompt's skill list as delivered", async () => {
+    // 1,000 tokens leave the list room for one of these three skills.
+    const pins = ["alpha", "bravo", "charlie"].map((name) =>
+      namePin(name, { description: "x".repeat(45) }),
+    );
+    await evalIteration({}, pins, 1_000);
+    expect(sent()).toEqual([
+      {
+        ...NONE,
+        surface: "eval",
+        outcome: "ok",
+        runtime: "agent",
+        delivered_library_count: 3,
+        omitted_from_catalog_count: 2,
       },
     ]);
   });

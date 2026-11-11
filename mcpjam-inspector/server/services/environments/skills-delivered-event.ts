@@ -46,13 +46,13 @@ const EXCLUDED_FIELD = {
   "name-collision": "excluded_name_collision_count",
   "invalid-skill-name": "excluded_invalid_skill_name_count",
   "over-cap": "excluded_over_cap_count",
-  "omitted-from-catalog": "excluded_omitted_from_catalog_count",
 } as const satisfies Record<SkillExclusionReason, string>;
 
 // Every count rides every event, zeros included, so an insight never has to
 // read a missing field as zero.
 const COUNT_FIELDS = [
   ...Object.values(DELIVERED_FIELD),
+  "omitted_from_catalog_count",
   ...Object.values(EXCLUDED_FIELD),
   "failed_count",
 ];
@@ -67,9 +67,11 @@ const DISTINCT_ID = randomUUID();
  * `outcome` compares what arrived with the plan: `ok` when nothing failed,
  * `partial` when some skills arrived and some failed, `failed` when none
  * arrived. A skill the plan left out is counted under its reason, never as a
- * failure. A turn with no skills reports nothing: it is not a delivery
- * attempt, and counting it would bury every failure under turns that never
- * had a skill.
+ * failure. A skill MCPJam's agent left off its prompt's skill list did arrive,
+ * since its tools load it by name; `omitted_from_catalog_count` says how many
+ * of the delivered those are. A turn with no skills reports nothing: it is not
+ * a delivery attempt, and counting it would bury every failure under turns
+ * that never had a skill.
  */
 export function reportSkillsDelivered(
   surface: SkillsDeliveredSurface,
@@ -81,8 +83,10 @@ export function reportSkillsDelivered(
   if (attempted === 0) return;
   const counts = zeroCounts();
   const familyOf = skillFamilies(skills.set);
-  for (const ref of result.delivered)
+  for (const ref of result.delivered) {
     counts[DELIVERED_FIELD[familyOf(ref)]] += 1;
+    if (ref.omittedFromCatalog) counts.omitted_from_catalog_count += 1;
+  }
   for (const { reason } of skills.excluded) counts[EXCLUDED_FIELD[reason]] += 1;
   counts.failed_count = result.failed.length;
   const outcome =

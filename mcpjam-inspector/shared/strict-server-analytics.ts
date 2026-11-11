@@ -58,18 +58,19 @@ const numbers = new Set([
   "environment_base_server_count",
   "environment_effective_server_count",
   "environment_skill_count",
-  // skills_delivered: one turn's skills by family, by exclusion reason, failed
+  // skills_delivered: one turn's skills by family, off the prompt's list, by
+  // exclusion reason, and failed
   "delivered_library_count",
   "delivered_plugin_count",
   "delivered_mcp_server_count",
   "delivered_local_count",
+  "omitted_from_catalog_count",
   "excluded_unsupported_harness_count",
   "excluded_server_skill_unsupported_count",
   "excluded_plugin_disabled_count",
   "excluded_name_collision_count",
   "excluded_invalid_skill_name_count",
   "excluded_over_cap_count",
-  "excluded_omitted_from_catalog_count",
   "failed_count",
 ]);
 const booleans = new Set([
