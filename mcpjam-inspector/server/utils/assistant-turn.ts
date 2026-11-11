@@ -32,7 +32,7 @@ import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type {
   ProgressiveToolPlan,
   ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   runChatEngineLoop,
   type MCPJamHandlerOptions,

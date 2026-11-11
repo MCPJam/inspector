@@ -10,7 +10,6 @@
  */
 
 import { tool, type ToolSet } from "ai";
-import { needsApprovalFor } from "@/shared/tool-approval";
 import { z } from "zod";
 import {
   META_TOOL_LOAD,
@@ -23,7 +22,7 @@ import {
   type ToolDiscoveryPolicy,
   type ToolDiscoveryState,
   type ToolSearchMatch,
-} from "@/shared/progressive-tool-discovery";
+} from "./discovery.js";
 
 const SEARCH_DESCRIPTION =
   "Search the available MCP tools by keyword and return concise matches. " +
@@ -92,11 +91,12 @@ export interface ProgressiveMetaToolsConfig {
  * supplied `state` object — the orchestrator reads it after each step to
  * decide which tools are active for the next one.
  *
- * The meta-tools declare a `never` floor: gating discovery itself behind N
- * approvals defeats the point, so they run even when the user has approval
- * enabled — see the module docstring. Stated rather than left to silence,
- * because every engine now reads the declaration and "nobody set it" is not
- * distinguishable from "somebody decided".
+ * The meta-tools declare a `never` floor (`needsApproval: false`, which is
+ * what the Inspector's `needsApprovalFor("never", …)` returns): gating
+ * discovery itself behind N approvals defeats the point, so they run even when
+ * the user has approval enabled — see the module docstring. Stated rather than
+ * left to silence, because every engine now reads the declaration and "nobody
+ * set it" is not distinguishable from "somebody decided".
  */
 export function createProgressiveMetaTools(
   config: ProgressiveMetaToolsConfig
@@ -106,7 +106,7 @@ export function createProgressiveMetaTools(
   result[META_TOOL_SEARCH] = tool({
     description: SEARCH_DESCRIPTION,
     inputSchema: searchSchema,
-    needsApproval: needsApprovalFor("never", false),
+    needsApproval: false,
     execute: async ({ query, limit }): Promise<SearchMcpToolsResult> => {
       // Clamp caller-supplied limit. Zod only checks positive-int; a model
       // (or a tampered/injected one) can ask for `limit: 10_000` and force
@@ -138,7 +138,7 @@ export function createProgressiveMetaTools(
   result[META_TOOL_LOAD] = tool({
     description: LOAD_DESCRIPTION,
     inputSchema: loadSchema,
-    needsApproval: needsApprovalFor("never", false),
+    needsApproval: false,
     execute: async (input): Promise<LoadMcpToolsResult> => {
       const catalog = getCatalog();
       const byId = new Map<string, ToolCatalogEntry>();

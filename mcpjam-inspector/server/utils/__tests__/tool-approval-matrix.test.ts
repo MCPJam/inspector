@@ -51,7 +51,7 @@ import { buildSandboxBashTool } from "../built-in-tools/sandbox-bash";
 import { buildMcpjamTool } from "../built-in-tools/mcpjam";
 import { buildBrowserTools } from "../built-in-tools/browser";
 import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
-import { createProgressiveMetaTools } from "../progressive-tool-meta-tools";
+import { createProgressiveMetaTools } from "@mcpjam/sdk";
 import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
 import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
