@@ -142,16 +142,11 @@ export async function storePluginSettingsDocument(
       error.code !== "SETTINGS_CONTROL_CONFLICT"
     )
       throw error;
-    // Another read of this Settings App stored first. Both are fresh reads of
-    // the same plugin, so this one is written once more at the version that
-    // read left.
-    const current = await readPluginSettingsState(token, actor, signal);
-    if (current.version === undefined) throw error;
-    await port.writeSettings(
-      token,
-      { expectedVersion: current.version, settingsJson },
-      signal,
-    );
+    // Another read of this Settings App stored first, and which of the two
+    // reached the plugin later is unknown, so this one never overwrites it.
+    // The read stands only when both kept the same document.
+    const current = await port.read(token, signal);
+    if (current?.settingsJson !== settingsJson) throw error;
   }
 }
 
@@ -229,21 +224,38 @@ export async function readPluginSettingsChild(
   if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
   const control = await port.read(childToken, signal);
   if (!control) throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
-  const child = childSnapshotSchema.parse(JSON.parse(control.snapshotJson));
+  // Any other row the actor holds, a root App included, is not a child.
+  const child = childSnapshotSchema.safeParse(JSON.parse(control.snapshotJson));
   if (
-    child.parentInstanceId !== parent.owner.instanceId ||
-    child.parentGeneration !== parent.owner.generation
+    !child.success ||
+    child.data.parentInstanceId !== parent.owner.instanceId ||
+    child.data.parentGeneration !== parent.owner.generation
   )
     throw new PluginInvocationError("INSTANCE_DENIED");
-  return child;
+  return child.data;
 }
 
+/** Close a Settings App child for the Settings App that opened it, and no
+ * other row. A child that is already gone needs nothing. */
 export async function closePluginSettingsChild(
   childToken: string,
   actor: PluginInstanceIdentity,
+  parent: PluginPreviewInstance,
   signal: AbortSignal,
 ) {
   const port = createPluginInstanceControlPort(actor);
   if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
+  try {
+    await readPluginSettingsChild(childToken, actor, parent, signal);
+  } catch (error) {
+    if (
+      error instanceof PluginInvocationError &&
+      ["INSTANCE_UNAVAILABLE", "INSTANCE_PRIVATE_PARENT_UNAVAILABLE"].includes(
+        error.code,
+      )
+    )
+      return;
+    throw error;
+  }
   await port.close(childToken, signal);
 }

@@ -70,6 +70,8 @@ const shared = vi.hoisted(() => {
     }) => Promise<unknown>,
     storeDown: false,
     refuseSettingsWrites: false,
+    /** Holds a request while its catalog loads, as a cold connection would. */
+    catalogHold: undefined as undefined | (() => Promise<void>),
   };
 });
 vi.mock("../../../services/plugin-host/invocation.js", async (original) => {
@@ -120,6 +122,7 @@ vi.mock("../../../utils/tool-approval-token.js", () => ({
 vi.mock("../../../services/plugin-host/request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
     catalog: async () => {
+      await shared.catalogHold?.();
       const current = shared.catalog();
       return shared.tools ? shared.tools(current) : current;
     },
@@ -291,6 +294,7 @@ beforeEach(() => {
   shared.receipts.clear();
   shared.storeDown = false;
   shared.refuseSettingsWrites = false;
+  shared.catalogHold = undefined;
   hold = undefined;
   Object.assign(plugin, {
     values: { ...settingsFixture().values },
@@ -442,6 +446,52 @@ describe("Settings across replicas", () => {
     expect((await refused.json()).code).toBe("INSTANCE_STORE_UNAVAILABLE");
     expect(plugin.reads).toBe(1);
   });
+
+  it.each([
+    { kept: "the same document", changed: false },
+    { kept: "a different document", changed: true },
+  ])(
+    "lets a read that stores second stand only when both kept $kept",
+    async ({ changed }) => {
+      const [a, b] = await replicas(2);
+      const token = await open(a);
+      let reached!: () => void;
+      let release: (() => void) | undefined;
+      const holding = new Promise<void>((resolve) => (reached = resolve));
+      const call = shared.call;
+      shared.call = async (params) => {
+        if (params.name === "read" && !release) {
+          const released = new Promise<void>((resolve) => (release = resolve));
+          reached();
+          await released;
+          if (changed) plugin.values = { ...plugin.values, label: "late" };
+        }
+        return call(params);
+      };
+      const slow = read(a, token);
+      await holding;
+      expect((await read(b, token)).status).toBe(200);
+      release!();
+      const late = await slow;
+      expect(late.status).toBe(changed ? 403 : 200);
+      if (changed)
+        expect((await late.json()).code).toBe("SETTINGS_CONTROL_CONFLICT");
+      // The document the first read kept is still the one stored.
+      const { createPluginInstanceControlPort } = await import(
+        "../../../services/plugin-host/instance-store.js"
+      );
+      const stored = await createPluginInstanceControlPort(
+        {
+          actorId: "actor",
+          projectId: "project",
+          workspaceId: "workspace",
+          subject: "verified-subject",
+        },
+        { env: {}, hosted: false },
+      )!.read(token, AbortSignal.timeout(5000));
+      expect(JSON.parse(stored!.settingsJson!).document.values.label).toBe("");
+    },
+  );
 });
 
 describe("Settings Apps across replicas", () => {
@@ -500,5 +550,49 @@ describe("Settings Apps across replicas", () => {
     const refused = await callApp(b, b, token, app);
     expect(refused.status).toBe(403);
     expect(plugin.resets).toBe(0);
+  });
+
+  it("refuses a call that was still loading when its App closed on another replica", async () => {
+    const [a, b] = await replicas(2);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    let reached!: () => void;
+    let release!: () => void;
+    const holding = new Promise<void>((resolve) => (reached = resolve));
+    shared.catalogHold = () => {
+      shared.catalogHold = undefined;
+      reached();
+      return new Promise<void>((resolve) => (release = resolve));
+    };
+    const call = callApp(b, b, token, app);
+    await holding;
+    expect(
+      (await a.post("app/close", { ...scope, instanceToken: token, childToken: app }))
+        .status,
+    ).toBe(200);
+    release();
+    const refused = await call;
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("INSTANCE_UNAVAILABLE");
+    expect(plugin.resets).toBe(0);
+  });
+
+  it("closes only its own Settings Apps, never another row the user holds", async () => {
+    const [a, b] = await replicas(2);
+    const token = await open(a);
+    expect((await read(a, token)).status).toBe(200);
+    const app = await openApp(a, token);
+    // The Settings App's own token, sent as if it were one of its Apps.
+    const refused = await b.post("app/close", {
+      ...scope,
+      instanceToken: token,
+      childToken: token,
+    });
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe("INSTANCE_DENIED");
+    expect((await read(b, token)).status).toBe(200);
+    expect((await callApp(b, b, token, app)).status).toBe(200);
+    expect(plugin.resets).toBe(1);
   });
 });

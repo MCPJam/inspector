@@ -602,7 +602,8 @@ routes.post("/app/call", (c) =>
       c.req.raw.signal,
     );
     if (!document || !instance.activation.settings) throw denied();
-    // Read at the start: the checks during the call cannot wait on the store.
+    // The action it was opened for. Its Settings App can close it from any
+    // replica, so each authorization below reads its row again.
     const child = await readPluginSettingsChild(
       body.childToken,
       actor,
@@ -654,6 +655,12 @@ routes.post("/app/call", (c) =>
           const catalog = await runtime.catalog(
             AbortSignal.any([signal, active]),
             read,
+          );
+          await readPluginSettingsChild(
+            body.childToken,
+            actor,
+            instance,
+            AbortSignal.any([signal, active]),
           );
           live();
           if (
@@ -718,12 +725,17 @@ routes.post("/app/close", (c) =>
       workspaceId: body.pluginWorkspace.workspaceId,
       subject,
     };
-    await pluginInstances.getPersistent(
+    const parent = await pluginInstances.getPersistent(
       body.instanceToken,
       cleanup,
       c.req.raw.signal,
     );
-    await closePluginSettingsChild(body.childToken, cleanup, c.req.raw.signal);
+    await closePluginSettingsChild(
+      body.childToken,
+      cleanup,
+      parent,
+      c.req.raw.signal,
+    );
     return c.json({ ok: true });
   }),
 );

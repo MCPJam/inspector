@@ -52,7 +52,18 @@ export function memorySettingsState(
         throw new PluginInvocationError("INSTANCE_DENIED");
       return child;
     },
-    closePluginSettingsChild: async (childToken: string) => {
+    closePluginSettingsChild: async (
+      childToken: string,
+      _actor: unknown,
+      parent: unknown,
+    ) => {
+      const child = children.get(childToken);
+      if (child && JSON.stringify(child.parent) !== JSON.stringify(parent)) {
+        const { PluginInvocationError } = await import(
+          "../../../services/plugin-host/invocation"
+        );
+        throw new PluginInvocationError("INSTANCE_DENIED");
+      }
       children.delete(childToken);
     },
   };
