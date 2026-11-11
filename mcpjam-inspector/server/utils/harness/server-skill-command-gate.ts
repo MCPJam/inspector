@@ -12,7 +12,9 @@
  *   - while one is in use, a member watching their own turn is asked about
  *     every command, and a turn nobody can answer (an eval, a swarm, an API
  *     turn) or a User Testing guest's refuses it.
- * Edits never ask for this reason: the spec gates code execution.
+ * Edits never ask for this reason: the spec gates code execution. MCPJam's
+ * own command tools, which a runtime calls as host tools, get the same
+ * answers where they run ({@link withHostCommandGate}).
  *
  * Whether a skill is in use is read from the turn's transcript, which
  * `harness-server-skills.ts` keeps: the runtime holds its own context, and
@@ -20,6 +22,7 @@
  */
 import type { HarnessV1, HarnessV1PermissionMode } from "@ai-sdk/harness";
 import { logger } from "../logger.js";
+import { ACTING_SERVER_SKILL_GATED_TOOLS } from "../server-skill-acting-gate.js";
 import {
   withNativeRequestDecisions,
   type NativeRequestCall,
@@ -63,6 +66,17 @@ export interface CommandGateState {
   /** The host's approval switch: on, every request asks a person. */
   switchOn: boolean;
   answerer: CommandGateAnswerer;
+}
+
+/** A turn's gate, which reads the transcript at each request, so a skill
+ *  loaded earlier in the turn counts. */
+export type TurnCommandGate = Omit<CommandGateState, "inUse"> & {
+  inUse: () => boolean;
+};
+
+function stateOf(gate: TurnCommandGate): CommandGateState {
+  const { switchOn, answerer } = gate;
+  return { inUse: gate.inUse(), switchOn, answerer };
 }
 
 /**
@@ -143,9 +157,9 @@ export function commandGateDecision(
 }
 
 /**
- * The gate's switch and who answers, for a turn with these handler options.
- * A local turn always asks, and MCPJam answers it only with the switch off; a
- * hosted turn asks only when the switch is on or the gate holds it.
+ * The gate for a turn with these handler options. A local turn always asks,
+ * and MCPJam answers it only with the switch off; a hosted turn asks only
+ * when the switch is on or the gate holds it.
  */
 export function commandGateTurn(
   options: {
@@ -154,40 +168,36 @@ export function commandGateTurn(
     sourceType?: string;
     scenarioParticipant?: boolean;
   },
-  turn: { local: boolean; resumable: boolean },
-): Omit<CommandGateState, "inUse"> {
+  turn: { local: boolean; resumable: boolean; inUse: () => boolean },
+): TurnCommandGate {
   return {
     switchOn: turn.local
       ? options.requireToolApproval !== false
       : options.requireToolApproval === true,
     answerer: commandGateAnswerer({ ...options, resumable: turn.resumable }),
+    inUse: turn.inUse,
   };
 }
 
 /**
- * The runtime with MCPJam answering its requests through the gate. `inUse` is
- * read at each request, so a skill loaded earlier in the turn counts. A
- * request whose decision a continuation already carries is the person's.
+ * The runtime with MCPJam answering its requests through the gate. A request
+ * whose decision a continuation already carries is the person's.
  */
 export function withServerSkillCommandGate<T extends HarnessV1>(
   harness: T,
-  gate: Omit<CommandGateState, "inUse"> & {
-    inUse: () => boolean;
-    pendingApprovalIds: ReadonlySet<string>;
+  gate: TurnCommandGate & {
+    pendingApprovals: ReadonlyArray<{ approvalId: string }>;
     /** Logged with each answer; ids only, never a command. */
     log?: Record<string, unknown>;
   },
 ): T {
   return withNativeRequestDecisions(
     harness,
-    (call) =>
-      commandGateDecision(call, {
-        inUse: gate.inUse(),
-        switchOn: gate.switchOn,
-        answerer: gate.answerer,
-      }),
+    (call) => commandGateDecision(call, stateOf(gate)),
     {
-      pendingApprovalIds: gate.pendingApprovalIds,
+      pendingApprovalIds: new Set(
+        gate.pendingApprovals.map(({ approvalId }) => approvalId),
+      ),
       onAnswer: (approvalId, answer) =>
         logger.info("[harness] server-skill command gate answered", {
           ...gate.log,
@@ -196,4 +206,80 @@ export function withServerSkillCommandGate<T extends HarnessV1>(
         }),
     },
   );
+}
+
+/**
+ * MCPJam's own command tools when a runtime calls them as host tools: the
+ * tools MCPJam's agent holds while it acts on a server's skill (the shell,
+ * and the workspace read that dials a saved server). A host tool never
+ * reaches the runtime's permission requests, so the gate answers it where it
+ * runs, with the same decision: a refused call returns the refusal in place
+ * of its result. Asking is {@link hostToolApproval}'s.
+ */
+export function withHostCommandGate<T extends Record<string, unknown>>(
+  tools: T,
+  gate: TurnCommandGate,
+): T {
+  const out: Record<string, unknown> = { ...tools };
+  for (const name of ACTING_SERVER_SKILL_GATED_TOOLS) {
+    const tool = tools[name] as
+      { execute?: (input: unknown, options: unknown) => unknown } | undefined;
+    const execute = tool?.execute;
+    if (typeof execute !== "function") continue;
+    out[name] = {
+      ...tool,
+      execute: (input: unknown, options: unknown): unknown => {
+        const decision = commandGateDecision({ name, input }, stateOf(gate));
+        return decision.kind === "deny"
+          ? { error: decision.reason }
+          : execute(input, options);
+      },
+    };
+  }
+  return out as T;
+}
+
+/** A host tool's status for `HarnessAgent`, as its `toolApproval` takes it. */
+export type HostToolApproval = "user-approval" | "not-applicable";
+
+/**
+ * `HarnessAgent`'s approval map for a turn's host tools: the tools in
+ * `asking` ask, as their own declarations say, and on a gated turn MCPJam's
+ * command tools follow the gate. `HarnessAgent` reads a tool's entry at each
+ * call, so a command tool's entry is a getter: it asks while the gate or the
+ * tool's own declaration asks, and a call the gate refuses is not asked
+ * about, since the refusal above answers it.
+ */
+export function hostToolApproval(
+  asking: readonly string[],
+  tools: Record<string, unknown>,
+  gate: TurnCommandGate | undefined,
+): Record<string, HostToolApproval> | undefined {
+  const approval: Record<string, HostToolApproval> = Object.fromEntries(
+    asking.map((name) => [name, "user-approval"]),
+  );
+  if (gate) {
+    for (const name of ACTING_SERVER_SKILL_GATED_TOOLS) {
+      if (!(name in tools)) continue;
+      const declared = approval[name] ?? "not-applicable";
+      Object.defineProperty(approval, name, {
+        enumerable: true,
+        get: () => gatedApproval(name, gate, declared),
+      });
+    }
+  }
+  return Object.keys(approval).length > 0 ? approval : undefined;
+}
+
+function gatedApproval(
+  name: string,
+  gate: TurnCommandGate,
+  declared: HostToolApproval,
+): HostToolApproval {
+  const decision = commandGateDecision(
+    { name, input: undefined },
+    stateOf(gate),
+  );
+  if (decision.kind === "deny") return "not-applicable";
+  return decision.kind === "ask" ? "user-approval" : declared;
 }

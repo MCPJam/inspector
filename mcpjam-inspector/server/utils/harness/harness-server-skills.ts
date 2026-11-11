@@ -34,6 +34,10 @@ import type { BoxSkillOutcome, BoxSkillsResult } from "./box-skills-writer.js";
 import type { HarnessRuntimeAdapter } from "./registry.js";
 import type { HarnessSkillSource } from "./skill-delivery.js";
 import { takesServerSkillsAsTools } from "./skills-descriptor.js";
+import {
+  withHostCommandGate,
+  type TurnCommandGate,
+} from "./server-skill-command-gate.js";
 
 /** The conversation as MCPJam sees it during a harness turn. */
 export interface ServerSkillTranscript {
@@ -57,19 +61,26 @@ export interface HarnessServerSkills {
 
 /**
  * Whether a turn serves server skills through MCPJam's skill tools: its
- * runtime takes them that way, and the gate can hold its commands. A local
- * eval or swarm runs `allow-all`, where no command asks, so it serves none.
+ * runtime takes them that way, and the gate can hold its commands, the
+ * runtime's own and MCPJam's host tools. A local eval or swarm runs
+ * `allow-all`, where no command asks, so it serves none.
  */
 export function servesServerSkills(
   adapter: Pick<
     HarnessRuntimeAdapter,
-    "supportsSkills" | "skills" | "supportsNativeToolApproval"
+    | "supportsSkills"
+    | "skills"
+    | "supportsNativeToolApproval"
+    | "supportsHostExecutedToolApproval"
+    | "hostToolApprovalAtRuntime"
   >,
   turn: { localUnattended: boolean },
 ): boolean {
   return (
     takesServerSkillsAsTools(adapter) &&
     adapter.supportsNativeToolApproval &&
+    adapter.supportsHostExecutedToolApproval &&
+    !adapter.hostToolApprovalAtRuntime &&
     !turn.localUnattended
   );
 }
@@ -158,13 +169,15 @@ const HARNESS_SERVER_SKILLS_SENTENCE =
   "load them with MCPJam's `loadSkill` tool, never with your own skill tool.";
 
 /**
- * Merge the turn's server-skill tools into its host tools. A name another
- * host tool already holds is a bug, not a choice, so the turn refuses to
- * start rather than hand the runtime one of the two.
+ * Merge the turn's server-skill tools into its host tools, with MCPJam's
+ * command tools behind the turn's gate when it has one. A name another host
+ * tool already holds is a bug, not a choice, so the turn refuses to start
+ * rather than hand the runtime one of the two.
  */
 export function withServerSkillTools<T extends Record<string, unknown>>(
   hostTools: T,
   serverSkills: HarnessServerSkills | undefined,
+  gate?: TurnCommandGate,
 ): T {
   const tools = serverSkills?.tools ?? {};
   for (const name of Object.keys(tools)) {
@@ -174,7 +187,8 @@ export function withServerSkillTools<T extends Record<string, unknown>>(
       );
     }
   }
-  return { ...hostTools, ...tools };
+  const merged = { ...hostTools, ...tools };
+  return gate ? withHostCommandGate(merged, gate) : merged;
 }
 
 /** A run's frozen copy of a skill captured from a server, as the set holds it. */

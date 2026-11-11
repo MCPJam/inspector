@@ -254,6 +254,7 @@ import {
 import {
   COMMAND_GATE_PERMISSION_MODE,
   commandGateTurn,
+  hostToolApproval,
   withServerSkillCommandGate,
 } from "./server-skill-command-gate.js";
 import { takesServerSkillsAsTools } from "./skills-descriptor.js";
@@ -2886,18 +2887,17 @@ export async function runHarnessTurn(
           }, new Set(approvalContinuations.map(continuation => continuation.approvalId)));
         }
       }
-      if (serverSkills?.gated) {
-        harnessRuntime = withServerSkillCommandGate(harnessRuntime, {
-          ...commandGateTurn(options, {
+      const commandGate = serverSkills?.gated
+        ? commandGateTurn(options, {
             local: !!localPrepared,
             resumable: !!continuity,
-          }),
-          inUse: serverSkills.transcript.inUse,
-          pendingApprovalIds: new Set(
-            approvalContinuations.map(
-              (continuation) => continuation.approvalId,
-            ),
-          ),
+            inUse: serverSkills.transcript.inUse,
+          })
+        : undefined;
+      if (commandGate) {
+        harnessRuntime = withServerSkillCommandGate(harnessRuntime, {
+          ...commandGate,
+          pendingApprovals: approvalContinuations,
           log: { harness: harnessAdapter.id, turnId },
         });
       }
@@ -2950,6 +2950,7 @@ export async function runHarnessTurn(
         withServerSkillTools(
           { ...appTools, ...hostExecutedMcp.tools, ...offeredBuiltInTools },
           serverSkills,
+          commandGate,
         ),
       );
       // The tools that actually ask, read off the same `needsApproval` the
@@ -2982,6 +2983,11 @@ export async function runHarnessTurn(
               })
               .map(([name]) => name)
           : [];
+      const hostApproval = hostToolApproval(
+        gatedHostExecutedToolNames,
+        hostExecutedTools,
+        commandGate,
+      );
       const skillsHome = localPrepared?.homeDir ?? HOME_ROOT;
       const agent = new HarnessAgent({
         harness: harnessRuntime,
@@ -3018,11 +3024,9 @@ export async function runHarnessTurn(
         // that made a host tool ask; they do not now, and asking about a tool
         // that declares `never` — an exa search, a workspace read — is a pill
         // for something the other two engines run without one.
-        ...(gatedHostExecutedToolNames.length
+        ...(hostApproval
           ? {
-              toolApproval: Object.fromEntries(
-                gatedHostExecutedToolNames.map((n) => [n, "user-approval"]),
-              ) as NonNullable<
+              toolApproval: hostApproval as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["toolApproval"]
               >,
             }

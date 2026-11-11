@@ -1,8 +1,9 @@
 /**
  * A harness turn that offers MCP-server skills: what the turn hands
  * `HarnessAgent` (the skill tools, the gate's permission mode, the prompt
- * section, a box without the server's skill) and that the runtime it hands
- * over answers its requests through MCPJam's gate.
+ * section, a box without the server's skill), that the runtime it hands over
+ * answers its requests through MCPJam's gate, and that MCPJam's own `bash`,
+ * which the runtime calls as a host tool, gets the same answers.
  *
  * The adapter is a stand-in with Codex's real skills descriptor; the gate's
  * answers are covered by `server-skill-command-gate.test.ts`, and the tools by
@@ -163,6 +164,21 @@ const PICKED = {
   ],
 };
 
+/** MCPJam's own `bash`, with Tool Approval off. */
+const hostBash = {
+  description: "Run a command on the project's computer",
+  needsApproval: false,
+  execute: vi.fn(async () => "ran"),
+};
+
+/** A member's own chat turn, which can pause for their answer. */
+const MEMBER = {
+  sourceType: "direct",
+  approvalMode: undefined,
+  chatSessionId: "chat-1",
+  ownerType: "direct-chat",
+};
+
 async function evalTurn(overrides: Record<string, unknown> = {}) {
   const run = await preparedRunSkills();
   await runHarnessTurn(
@@ -217,6 +233,7 @@ beforeEach(() => {
   vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
   agentConstruction.last = undefined;
   runtime.submitToolApproval.mockClear();
+  hostBash.execute.mockClear();
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -278,5 +295,57 @@ describe("a harness turn without one", () => {
     expect(agent.permissionMode).toBe("allow-all");
     expect(agent.tools ?? {}).not.toHaveProperty("loadSkill");
     expect(agent.instructions).toBe("You are Codex.");
+  });
+});
+
+describe("MCPJam's own bash on a turn with a server skill", () => {
+  /** The turn's `bash` and its approval, called as `HarnessAgent` calls it. */
+  async function hostCommand(overrides: Record<string, unknown>) {
+    const agent = await evalTurn({
+      builtInTools: { bash: hostBash },
+      ...overrides,
+    });
+    const bash = (
+      agent.tools as Record<
+        string,
+        { execute: (input: unknown, options: unknown) => unknown }
+      >
+    ).bash!;
+    const approval = (agent.toolApproval as Record<string, string>)?.bash;
+    const result: unknown = await bash.execute(
+      { command: "ls" },
+      { toolCallId: "host-1", messages: [] },
+    );
+    return { approval, result };
+  }
+
+  it("runs freely before a server skill is in use", async () => {
+    await expect(hostCommand({})).resolves.toEqual({
+      approval: "not-applicable",
+      result: "ran",
+    });
+  });
+
+  it("is refused in an eval while a picked server skill is in use", async () => {
+    await expect(hostCommand({ messages: [PICKED, ASK] })).resolves.toEqual({
+      approval: "not-applicable",
+      result: { error: COMMAND_REFUSED_IN_USE.nobody },
+    });
+    expect(hostBash.execute).not.toHaveBeenCalled();
+  });
+
+  it("asks the member only while a picked server skill is in use", async () => {
+    const approvalOf = async (messages: unknown[]) =>
+      (
+        (
+          await evalTurn({
+            ...MEMBER,
+            builtInTools: { bash: hostBash },
+            messages,
+          })
+        ).toolApproval as Record<string, string>
+      ).bash;
+    await expect(approvalOf([ASK])).resolves.toBe("not-applicable");
+    await expect(approvalOf([PICKED, ASK])).resolves.toBe("user-approval");
   });
 });
