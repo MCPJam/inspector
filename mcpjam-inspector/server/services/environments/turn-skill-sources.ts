@@ -2,17 +2,20 @@
  * A live turn's skill sources, made ready for the engine rules in
  * `turn-skills.ts`: a resolved environment, or a client with no environment.
  * Each becomes one capability set, a ref for every skill it names, and the
- * copies a harness turn would hand its adapter; `boxVerdicts` says which of
- * them the adapter keeps, for a run's pins as well.
+ * copies a harness turn would hand its box writer; `boxVerdicts` says which of
+ * them the writer delivers, for a run's pins as well.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
-import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/pinned-harness-skills.js";
+import { planBoxSkills } from "../../utils/harness/box-skills-writer.js";
 import {
   getHarnessAdapter,
   harnessSupportsSkills,
 } from "../../utils/harness/registry.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
-import { composeLivePlusSkills } from "../../utils/harness/skill-delivery.js";
+import {
+  composeLivePlusSkills,
+  pinnedArtifactsToRuntimeSkills,
+} from "../../utils/harness/skill-delivery.js";
 import {
   allEffectiveSkills,
   buildLiveEffectiveCapabilities,
@@ -70,7 +73,7 @@ export interface LiveSkillSource {
 
 /** What a harness turn writes to its box. */
 export interface BoxInput {
-  /** The list its adapter's `prepareSkills` is given. */
+  /** The list the box writer plans from (`planBoxSkills`). */
   copies: readonly RuntimeSkill[];
   /** For each ref, in ref order: its copy, or why the turn writes none. */
   copyOf: ReadonlyArray<RuntimeSkill | SkillExclusionReason>;
@@ -211,9 +214,9 @@ export function pinnedBox(
 }
 
 /**
- * What a harness's adapter makes of a box: for each ref, null when its copy
- * is one the adapter's `prepareSkills` keeps, else why the box lacks it. A
- * harness with no skill channel takes none.
+ * What the box writer makes of a harness's box: for each ref, null when the
+ * writer's plan delivers its copy, else why the box lacks it. A harness with
+ * no skill channel takes none.
  */
 export function boxVerdicts(
   harnessId: string,
@@ -225,16 +228,22 @@ export function boxVerdicts(
   if (!harnessSupportsSkills(harnessId)) {
     return { reasonFor: () => "unsupported-harness", serverSkillsVia: "none" };
   }
-  const prepared = getHarnessAdapter(harnessId).prepareSkills([...box.copies]);
-  const kept = new Set(prepared.delivered);
-  const skipped = new Set(prepared.skipped.map((skill) => skill.name));
+  const descriptor = getHarnessAdapter(harnessId).skills;
+  const plan = planBoxSkills(descriptor, box.copies);
+  const kept = new Set(plan.deliver);
+  const skipped = new Map(
+    plan.skipped.map(({ skill, reason }) => [skill, reason]),
+  );
   return {
-    reasonFor: (ref, index) => {
+    reasonFor: (_ref, index) => {
       const copy = box.copyOf[index];
       if (typeof copy === "string") return copy;
       if (copy && kept.has(copy)) return null;
-      return skipped.has(ref.name) ? "invalid-skill-name" : "name-collision";
+      return (copy && skipped.get(copy)) ?? "name-collision";
     },
-    serverSkillsVia: box.serverSkillsVia,
+    serverSkillsVia:
+      box.serverSkillsVia === "box-files"
+        ? descriptor.serverSkills
+        : box.serverSkillsVia,
   };
 }

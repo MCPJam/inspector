@@ -241,6 +241,7 @@ import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
 import { failCommittedQuickRun } from "./evals/quick-run-environment.js";
 import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import { iterationTurnSkills } from "./evals/pinned-skill-source.js";
+import { reportBoxSkillsDelivered } from "./environments/skills-delivered-event.js";
 import type { PinnedSkillSource } from "./environments/turn-skills.js";
 import {
   buildIterationFinishParams,
@@ -6466,6 +6467,7 @@ const runHostedIterationWithBrowser = async (
     pinnedSkillSource,
     execution: resolvedExecution,
     modelContextTokens: modelDefinition.contextLength,
+    harnessTurnsReport: true,
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
@@ -7377,6 +7379,13 @@ const runHostedIterationWithBrowser = async (
     // harness's live project-wide fetch — which would let a project skill
     // edited mid-run change what a running iteration sees.
     ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // Each harness turn's skills event, from what its box writer wrote.
+    ...(turnSkills.skills.runtime.kind === "harness"
+      ? {
+          onBoxSkillsWritten: (written) =>
+            reportBoxSkillsDelivered("eval", turnSkills.skills, written),
+        }
+      : {}),
     // Passed EXPLICITLY: `runHarnessTurn` reads built-ins off this field and
     // nowhere else, so supplying only `tools` would hand the runtime a turn
     // with no built-ins and no way to notice.

@@ -223,10 +223,6 @@ vi.mock("../materialize-skill-frontmatter.js", async (original) => ({
   ...await original<typeof import("../materialize-skill-frontmatter.js")>(),
   materializeSkillFrontmatter: vi.fn(async () => ({ rewritten: 0, skipped: 0, removed: new Map() })),
 }));
-vi.mock("../pinned-harness-skills.js", async (original) => ({
-  ...await original<typeof import("../pinned-harness-skills.js")>(),
-  materializePinnedSkillFiles: vi.fn(async () => {}),
-}));
 vi.mock("../adopt-sandbox-skills.js", async (original) => ({
   ...await original<typeof import("../adopt-sandbox-skills.js")>(),
   adoptSandboxSkills: vi.fn(async () => ({ adopted: [{ skillId: "new", name: "new" }] })),
@@ -234,7 +230,6 @@ vi.mock("../adopt-sandbox-skills.js", async (original) => ({
 import { handOffLegacySkillDirs, preseedAdapterSkills } from "../preseed-adapter-skills.js";
 import { materializeSkillFiles } from "../materialize-skill-files.js";
 import { materializeSkillFrontmatter } from "../materialize-skill-frontmatter.js";
-import { materializePinnedSkillFiles } from "../pinned-harness-skills.js";
 import { HARNESS_SKILLS } from "../skills-descriptor.js";
 import { adoptSandboxSkills } from "../adopt-sandbox-skills.js";
 import { reconcileSkillDirs, appendManagedSkills } from "../reconcile-skill-dirs.js";
@@ -352,13 +347,20 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.invokeSandboxCallback = true;
     harnessState.supportsSkills = true;
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
+    const onBoxSkillsWritten = vi.fn();
     await runHarnessTurn(baseOptions(mode === "pinned"
-      ? { pinnedHarnessSkills: [skill] }
-      : { runtimeSkillsOverride: [skill] }) as any, "none");
+      ? { pinnedHarnessSkills: [skill], onBoxSkillsWritten }
+      : { runtimeSkillsOverride: [skill], onBoxSkillsWritten }) as any, "none");
+    expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
+    expect(onBoxSkillsWritten).toHaveBeenCalledWith({
+      delivered: [{ skillId: "skill-1", name: "test-skill" }],
+      notDelivered: [],
+      failed: [],
+    });
     const common = [reconcileSkillDirs, handOffLegacySkillDirs, preseedAdapterSkills, materializeSkillFrontmatter, materializeSkillFiles];
-    // A pinned turn writes its copies' own files, and never adopts.
+    // A pinned turn never adopts.
     const passes = mode === "pinned"
-      ? [...common, materializePinnedSkillFiles]
+      ? common
       : [...common, adoptSandboxSkills, appendManagedSkills];
     for (const pass of passes) {
       expect(pass).toHaveBeenCalledWith(expect.objectContaining({
@@ -376,9 +378,17 @@ describe("runHarnessTurn local continuity", () => {
     const failure = new Error('Could not update or remove the skill "test-skill" in the sandbox.');
     vi.mocked(materializeSkillFrontmatter).mockRejectedValueOnce(failure);
     const onEngineError = vi.fn();
+    const onBoxSkillsWritten = vi.fn();
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
-    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError }) as any, "none");
+    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
     expect(onEngineError).toHaveBeenCalledWith(expect.objectContaining({ message: failure.message, phase: "setup" }));
+    // The skills event still hears about the turn: every skill failed.
+    expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
+    expect(onBoxSkillsWritten).toHaveBeenCalledWith({
+      delivered: [],
+      notDelivered: [],
+      failed: [{ skillId: "skill-1", name: "test-skill", error: failure.message }],
+    });
     expect(harnessState.streamStarted).not.toHaveBeenCalled();
     expect(releaseHarnessSessionState).toHaveBeenCalled();
   });

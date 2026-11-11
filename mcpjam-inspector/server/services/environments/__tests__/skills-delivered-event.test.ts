@@ -1,7 +1,8 @@
 /**
  * The skills-delivered event, as eval turns report it: one event per planned
- * iteration and one for a run stopped before its first model call. Only the
- * PostHog capture is mocked; the plans come from the real preparation code.
+ * iteration or harness turn, and one for a run stopped before its first model
+ * call. Only the PostHog capture is mocked; the plans come from the real
+ * preparation code, and a harness turn's box from the real box writer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,12 +17,17 @@ import {
   buildPinnedSkillSource,
   iterationTurnSkills,
 } from "../../evals/pinned-skill-source";
-import { reportSkillsDelivered } from "../skills-delivered-event";
+import {
+  reportBoxSkillsDelivered,
+  reportSkillsDelivered,
+} from "../skills-delivered-event";
+import { fakeSkillBox } from "../../../test/support/fake-skill-box";
 import {
   authoredPin,
   evalRunPins,
   namePin,
   preparedRunSkills,
+  writeTurnToBox,
 } from "../../../test/support/skill-delivery";
 
 const NONE = {
@@ -36,6 +42,7 @@ const NONE = {
   excluded_name_collision_count: 0,
   excluded_invalid_skill_name_count: 0,
   excluded_over_cap_count: 0,
+  not_delivered_count: 0,
   failed_count: 0,
   $process_person_profile: false,
 };
@@ -200,6 +207,81 @@ describe("an eval iteration", () => {
         if (value) expect(text).not.toContain(value);
       }
     }
+  });
+});
+
+describe("a harness eval turn", () => {
+  async function harnessIteration() {
+    const run = await preparedRunSkills();
+    const { skills } = iterationTurnSkills({
+      pinnedSkillSource: run.pinnedSkillSource,
+      execution: { harness: "claude-code" },
+      harnessTurnsReport: true,
+    });
+    return { run, skills };
+  }
+  const base = {
+    ...NONE,
+    surface: "eval",
+    runtime: "harness",
+    harness_id: "claude-code",
+  };
+
+  it("reports what its box writer wrote instead of the plan", async () => {
+    const { run, skills } = await harnessIteration();
+    expect(capture).not.toHaveBeenCalled();
+    const written = await writeTurnToBox(
+      "claude-code",
+      { pinnedHarnessSkills: run.pinnedHarnessSkills },
+      fakeSkillBox(),
+    );
+    reportBoxSkillsDelivered("eval", skills, written);
+    expect(sent()).toEqual([
+      {
+        ...base,
+        outcome: "ok",
+        delivered_library_count: 1,
+        delivered_plugin_count: 1,
+        delivered_mcp_server_count: 1,
+      },
+    ]);
+  });
+
+  it("counts a skill the turn never wrote apart from one that failed", async () => {
+    const { skills } = await harnessIteration();
+    const [library, plugin] = skills.delivered;
+    reportBoxSkillsDelivered("eval", skills, {
+      delivered: [{ skillId: library!.skillId, name: library!.name }],
+      notDelivered: [],
+      failed: [
+        {
+          skillId: plugin!.skillId,
+          name: plugin!.name,
+          error: "A supporting file did not download.",
+        },
+      ],
+    });
+    expect(sent()).toEqual([
+      {
+        ...base,
+        outcome: "partial",
+        delivered_library_count: 1,
+        not_delivered_count: 1,
+        failed_count: 1,
+      },
+    ]);
+  });
+
+  it("leaves an iteration on MCPJam's agent reporting its plan", async () => {
+    const run = await preparedRunSkills();
+    iterationTurnSkills({
+      pinnedSkillSource: run.pinnedSkillSource,
+      execution: {},
+      harnessTurnsReport: true,
+    });
+    expect(sent()).toEqual([
+      expect.objectContaining({ runtime: "agent", outcome: "ok" }),
+    ]);
   });
 });
 

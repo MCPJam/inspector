@@ -14,8 +14,8 @@
  *      adapter's real target, or the box writer's supporting-file, SKILL.md
  *      and reconcile steps would operate on folders the runtime never reads.
  *   2. That the delivered SKILL.md is valid frontmatter for our descriptions
- *      (both runtimes interpolate `description: ${value}` raw, hence
- *      `frontmatterSafeSkills`).
+ *      (both runtimes interpolate `description: ${value}` raw, hence the
+ *      plan's YAML-quoted descriptions).
  *   3. That a name MCPJam accepts is a name the adapters accept — the shared
  *      writer's validator THROWS mid-turn, which would fail the whole turn.
  *
@@ -34,13 +34,9 @@ import matter from "gray-matter";
 import { WebSocketServer } from "ws";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
-import { boxSkillsFolder } from "../box-skills-writer";
+import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
-import {
-  prepareCodexSkills,
-  toHarnessSkills,
-  type RuntimeSkill,
-} from "../runtime-skills";
+import type { RuntimeSkill } from "../runtime-skills";
 
 /** `$HOME` on the E2B harness box (see `e2b-sandbox-provider`). */
 const BOX_HOME = "/home/user";
@@ -192,14 +188,14 @@ function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
 describe("codex skill parity (real adapter)", () => {
   it("writes each delivered skill under the descriptor's write folder", async () => {
     const adapter = getHarnessAdapter("codex");
-    const prepared = prepareCodexSkills([
+    const plan = planBoxSkills(adapter.skills, [
       skill({ skillId: "s1", name: "pdf-tools" }),
       skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
     ]);
 
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
 
     expectReachedPrompt(error);
@@ -249,14 +245,14 @@ describe("codex skill parity (real adapter)", () => {
   it("produces PARSEABLE frontmatter for MCPJam-encoded descriptions", async () => {
     // codex builds `description: ${value}` by string interpolation, so a raw
     // description containing a quote or colon would emit broken YAML. This is
-    // why the payload goes through `frontmatterSafeSkills` — assert on the file
-    // the adapter actually wrote, not on our own encoder.
+    // why the plan quotes each description — assert on the file the adapter
+    // actually wrote, not on our own encoder.
     const runtime = [
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ];
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepareCodexSkills(runtime).payload
+      planBoxSkills(getHarnessAdapter("codex").skills, runtime).payload
     );
 
     expectReachedPrompt(error);
@@ -274,9 +270,13 @@ describe("codex skill parity (real adapter)", () => {
     // round-trip through codex's raw interpolation.
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      toHarnessSkills([
-        skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
-      ])
+      [
+        {
+          name: "pdf-tools",
+          description: 'Process: PDFs "safely"',
+          content: "# Body",
+        },
+      ]
     );
 
     expectReachedPrompt(error);
@@ -294,7 +294,7 @@ describe("codex skill parity (real adapter)", () => {
   });
 
   it("accepts every name MCPJam's validator accepts", async () => {
-    // `prepareCodexSkills` filters on MCPJam's `isValidSkillName`; that is only
+    // The descriptor's name rule is MCPJam's `isValidSkillName`; that is only
     // safe if it is a SUBSET of codex's own rule. Names at the edges of the
     // shared spec (digits, hyphens, length) must all survive `doStart`.
     const names = [
@@ -305,14 +305,15 @@ describe("codex skill parity (real adapter)", () => {
       "a-b-c-d",
       "z".repeat(64),
     ];
-    const prepared = prepareCodexSkills(
+    const plan = planBoxSkills(
+      getHarnessAdapter("codex").skills,
       names.map((name, i) => skill({ skillId: `s${i}`, name }))
     );
-    expect(prepared.skipped).toEqual([]);
+    expect(plan.skipped).toEqual([]);
 
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
 
     expectReachedPrompt(error);
@@ -322,7 +323,7 @@ describe("codex skill parity (real adapter)", () => {
   });
 
   it("THROWS on a name MCPJam filters out — which is why it filters", async () => {
-    // Demonstrates the failure mode `prepareCodexSkills` exists to prevent: on
+    // Demonstrates the failure mode the name rule exists to prevent: on
     // the stable line the rejection happens inside `doPromptTurn` (skills are
     // synced per turn), so an unfiltered bad name takes down the entire turn
     // (not just that skill).
@@ -338,7 +339,7 @@ describe("codex skill parity (real adapter)", () => {
     // differs, and each adapter's root is the one the registry advertises.
     const codexAdapter = getHarnessAdapter("codex");
     const claudeAdapter = getHarnessAdapter("claude-code");
-    const payload = prepareCodexSkills([
+    const payload = planBoxSkills(codexAdapter.skills, [
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ]).payload;
 
@@ -378,7 +379,7 @@ describe("codex skill delivery details", () => {
     const { writes, error } = await promptWithSkills(
       createCodexAppServer() as never,
       [
-        ...prepareCodexSkills([
+        ...planBoxSkills(adapter.skills, [
           skill({ skillId: "s1", name: "pdf-tools" }),
           skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
         ]).payload,
@@ -406,12 +407,13 @@ describe("codex skill delivery details", () => {
 
   it("accepts every name MCPJam accepts and refuses what MCPJam filters", async () => {
     const names = ["a", "pdf-tools", "skill-2", "z".repeat(64)];
-    const prepared = prepareCodexSkills(
+    const plan = planBoxSkills(
+      getHarnessAdapter("codex").skills,
       names.map((name, i) => skill({ skillId: `s${i}`, name }))
     );
     const ok = await promptWithSkills(
       createCodexAppServer() as never,
-      prepared.payload
+      plan.payload
     );
     expectReachedPrompt(ok.error);
     expect(

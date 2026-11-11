@@ -99,14 +99,17 @@ export async function buildPinnedSkillSource(args: {
  * by (a quick run without an environment) records nothing, since `[]` would
  * claim it ran with none.
  *
- * The plan is also the iteration's skills-delivered event. Until the box
- * writer reports what it wrote, a harness iteration reports its plan.
+ * The plan is also the iteration's skills-delivered event, unless its turns
+ * run on a harness whose box writer reports them.
  */
 export function iterationTurnSkills(args: {
   pinnedSkillSource?: PinnedSkillSource;
   /** The iteration's resolved client config. */
   execution: { agentLoop?: string; harness?: string };
   modelContextTokens?: number;
+  /** The caller reports each harness turn from its box write
+   *  (`reportBoxSkillsDelivered`). */
+  harnessTurnsReport?: boolean;
 }): { skills: TurnSkills; skillsAtTurn?: Array<Record<string, unknown>> } {
   const skills = resolveTurnSkills({
     source: args.pinnedSkillSource ?? { kind: "none" },
@@ -115,7 +118,9 @@ export function iterationTurnSkills(args: {
       ? { modelContextTokens: args.modelContextTokens }
       : {}),
   });
-  reportSkillsDelivered("eval", skills);
+  if (!args.harnessTurnsReport || skills.runtime.kind !== "harness") {
+    reportSkillsDelivered("eval", skills);
+  }
   return args.pinnedSkillSource
     ? { skills, skillsAtTurn: toSkillsAtTurn(skills) }
     : { skills };

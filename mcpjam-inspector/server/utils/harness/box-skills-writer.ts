@@ -19,6 +19,7 @@ import {
 } from "./materialize-skill-frontmatter.js";
 import {
   materializeSkillFiles,
+  type BoxSkillFile,
   type MaterializeSession,
 } from "./materialize-skill-files.js";
 import {
@@ -31,16 +32,18 @@ import {
   reconcileSkillDirs,
   type ReconcileSession,
 } from "./reconcile-skill-dirs.js";
-import {
-  skillsFingerprint,
-  type HarnessSkillPayload,
-  type RuntimeSkill,
-  type RuntimeSkillFile,
-} from "./runtime-skills.js";
+import { skillsFingerprint, type RuntimeSkill } from "./runtime-skills.js";
 import {
   foldersToClear,
   type HarnessSkillsDescriptor,
 } from "./skills-descriptor.js";
+
+/** Structural shape of the harness `skills` param entry (`HarnessV1Skill`). */
+export interface HarnessSkillPayload {
+  name: string;
+  description: string;
+  content: string;
+}
 
 /** Why a skill stays off the box this turn: the runtime can't take its name,
  *  or an earlier skill of the turn holds its folder. Neither is a failure. */
@@ -120,7 +123,7 @@ export interface BoxSkillsResult {
  *  doesn't hold (`complete` false) keeps the files it has on the box: its list
  *  could not be read this turn, and an empty stand-in would prune them. */
 export interface BoxSkillFiles {
-  files: readonly RuntimeSkillFile[];
+  files: readonly BoxSkillFile[];
   complete(skillId: string): boolean;
 }
 
@@ -128,6 +131,31 @@ export type BoxSkillsSession = ReconcileSession &
   PreseedSession &
   MaterializeSession &
   FrontmatterSession;
+
+const outcome = (skill: RuntimeSkill): BoxSkillOutcome => ({
+  skillId: skill.skillId,
+  name: skill.name,
+});
+
+const skippedOutcomes = (plan: BoxSkillsPlan) =>
+  plan.skipped.map(({ skill, reason }) => ({ ...outcome(skill), reason }));
+
+/** A write that threw: the runtime never starts on it, so none of the
+ *  planned skills arrived. */
+export function failedBoxSkills(
+  plan: BoxSkillsPlan,
+  error: unknown,
+): BoxSkillsResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    delivered: [],
+    notDelivered: skippedOutcomes(plan),
+    failed: plan.deliver.map((skill) => ({
+      ...outcome(skill),
+      error: message,
+    })),
+  };
+}
 
 /**
  * Put a planned turn's skills on the box. Runs before the runtime starts, on
@@ -149,16 +177,9 @@ export async function writeBoxSkills(args: {
   signal?: AbortSignal;
 }): Promise<BoxSkillsResult> {
   const { session, descriptor, plan, signal } = args;
-  const outcome = (skill: RuntimeSkill): BoxSkillOutcome => ({
-    skillId: skill.skillId,
-    name: skill.name,
-  });
   const result: BoxSkillsResult = {
     delivered: [],
-    notDelivered: plan.skipped.map(({ skill, reason }) => ({
-      ...outcome(skill),
-      reason,
-    })),
+    notDelivered: skippedOutcomes(plan),
     failed: [],
   };
   if (plan.skipped.length > 0) {

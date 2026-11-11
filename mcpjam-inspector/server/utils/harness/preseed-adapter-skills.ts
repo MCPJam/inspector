@@ -38,7 +38,7 @@
 import { writeSkills } from "@ai-sdk/harness/utils";
 import { posix } from "node:path";
 import { shellQuote } from "./shell-quote.js";
-import type { HarnessSkillPayload } from "./runtime-skills.js";
+import type { HarnessSkillPayload } from "./box-skills-writer.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session (dual-`ai` boundary:

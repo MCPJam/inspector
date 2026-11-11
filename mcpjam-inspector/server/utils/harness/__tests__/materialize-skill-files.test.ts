@@ -423,3 +423,53 @@ describe("materializeSkillFiles reports which skills are missing a file", () => 
     expect(res.failed).toEqual(new Map());
   });
 });
+
+describe("materializeSkillFiles with a frozen run's files in hand", () => {
+  it("writes text and base64 files byte for byte, downloading nothing", async () => {
+    const { session } = fakeSession();
+    const res = await materializeSkillFiles({
+      session,
+      skillsBase: SKILLS_BASE,
+      files: [
+        { skillId: "sk_1", path: "scripts/run.sh", content: "echo hi" },
+        {
+          skillId: "sk_1",
+          path: "assets/logo.bin",
+          base64: Buffer.from([0, 255, 7]).toString("base64"),
+        },
+      ],
+      skillNamesById: new Map([["sk_1", "pdf-tools"]]),
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ written: 2, failed: new Map() });
+    expect(
+      session.writeBinaryFile.mock.calls.map(([call]) => [
+        call.path,
+        [...call.content],
+      ]),
+    ).toEqual([
+      [
+        `${SKILLS_BASE}/pdf-tools/scripts/run.sh`,
+        [...new TextEncoder().encode("echo hi")],
+      ],
+      [`${SKILLS_BASE}/pdf-tools/assets/logo.bin`, [0, 255, 7]],
+    ]);
+  });
+
+  it("refuses a path out of the skill folder and prunes files the run lacks", async () => {
+    const { session, removed } = fakeSession([
+      `${SKILLS_BASE}/pdf-tools/old.md`,
+    ]);
+    const res = await materializeSkillFiles({
+      session,
+      skillsBase: SKILLS_BASE,
+      files: [{ skillId: "sk_1", path: "../escape.md", content: "x" }],
+      skillNamesById: new Map([["sk_1", "pdf-tools"]]),
+    });
+    expect(session.writeBinaryFile).not.toHaveBeenCalled();
+    expect([...res.failed]).toEqual([
+      ["pdf-tools", "../escape.md: path escapes the skill folder"],
+    ]);
+    expect(removed).toEqual([`${SKILLS_BASE}/pdf-tools/old.md`]);
+  });
+});

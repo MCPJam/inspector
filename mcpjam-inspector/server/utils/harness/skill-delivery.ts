@@ -33,9 +33,12 @@
  */
 import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import type {
+  CloudSkillRuntimeItem,
+  SkillExtraFrontmatterInput,
+} from "../computers/convex-skills-client.js";
 import { logger } from "../logger.js";
 import type { BoxSkillFiles } from "./box-skills-writer.js";
-import { pinnedArtifactsToRuntimeSkills } from "./pinned-harness-skills.js";
 import { capabilitySkillFiles, skillsHashWithPlugins } from "./plugin-delivery.js";
 import {
   skillsFingerprint,
@@ -177,11 +180,11 @@ const NO_FILES_KNOWN: BoxSkillFiles = { files: [], complete: () => false };
 
 /**
  * Read a turn's skills from its source (`selectHarnessSkillSource`). Files come
- * from the same place as the skills: an environment's capability set carries
- * its skills' (the only source of a plugin skill's, which the project-wide
- * file query leaves out), and the project's pool is read with the project-wide
- * query, at write time and only when the box gets a skill. A run's frozen
- * copies carry theirs, which `materializePinnedSkillFiles` writes.
+ * from the same place as the skills: a run's frozen copies carry theirs, an
+ * environment's capability set carries its skills' (the only source of a
+ * plugin skill's, which the project-wide file query leaves out), and the
+ * project's pool is read with the project-wide query, at write time and only
+ * when the box gets a skill.
  */
 export async function harnessTurnSkills(args: {
   pinnedHarnessSkills?: PinnedSkillArtifact[];
@@ -206,16 +209,22 @@ export async function harnessTurnSkills(args: {
       : NO_FILES_KNOWN;
   };
   if (source.mode === "pinned" || source.mode === "environment") {
+    const files =
+      source.mode === "pinned"
+        ? (args.pinnedHarnessSkills ?? []).flatMap((artifact, index) =>
+            (artifact.files ?? []).map((file) => ({
+              ...file,
+              skillId: source.skills[index]!.skillId,
+            })),
+          )
+        : own;
     return {
       mode: source.mode,
       skills: source.skills,
       skillsHash: skillsFingerprint(source.skills),
-      readFiles:
-        source.mode === "pinned"
-          ? async () => NO_FILES_KNOWN
-          : own
-            ? async () => ({ files: own, complete: () => true })
-            : projectFiles,
+      readFiles: files
+        ? async () => ({ files, complete: () => true })
+        : projectFiles,
     };
   }
   const fetched = args.project
@@ -270,4 +279,60 @@ export async function harnessTurnSkills(args: {
       };
     },
   };
+}
+
+/** Defensive projection of the artifact's preserved frontmatter onto the known
+ * Agent-Skills envelope. Unknown keys are dropped (the backend re-validates on
+ * pin; this only guards against a drifted wire shape). */
+function toExtraFrontmatter(
+  frontmatter: Record<string, unknown> | undefined
+): SkillExtraFrontmatterInput | undefined {
+  if (!frontmatter) return undefined;
+  const out: SkillExtraFrontmatterInput = {};
+  if (typeof frontmatter.license === "string")
+    out.license = frontmatter.license;
+  if (typeof frontmatter.compatibility === "string") {
+    out.compatibility = frontmatter.compatibility;
+  }
+  const allowedTools =
+    frontmatter["allowedTools"] ?? frontmatter["allowed-tools"];
+  if (
+    Array.isArray(allowedTools) &&
+    allowedTools.every((t) => typeof t === "string")
+  ) {
+    out.allowedTools = allowedTools as string[];
+  }
+  const metadata = frontmatter.metadata;
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    Object.values(metadata).every((v) => typeof v === "string")
+  ) {
+    out.metadata = metadata as Record<string, string>;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Map pinned artifacts onto the runtime-skill shape the harness machinery
+ * consumes. `aggregateHash` is the artifact's `contentHash` (the complete
+ * pinned-envelope fingerprint), so `skillsFingerprint` over this list IS the
+ * pinned-artifact fingerprint hash. `skillId` falls back to a content-derived
+ * synthetic id when the pin lost its source skill pointer — it only needs to
+ * be stable within the run for reconcile/fingerprint bookkeeping.
+ */
+export function pinnedArtifactsToRuntimeSkills(
+  artifacts: PinnedSkillArtifact[]
+): CloudSkillRuntimeItem[] {
+  return artifacts.map((a) => ({
+    skillId: a.skillId ?? `pinned:${a.contentHash}`,
+    name: a.name,
+    description: a.description,
+    content: a.content,
+    aggregateHash: a.contentHash,
+    ...(toExtraFrontmatter(a.frontmatter)
+      ? { extraFrontmatter: toExtraFrontmatter(a.frontmatter) }
+      : {}),
+  }));
 }

@@ -80,6 +80,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
@@ -1238,6 +1239,11 @@ export interface MCPJamHandlerOptions {
    * `finalize-iteration` as the same policy blocks the in-process gate yields.
    */
   onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
+  /**
+   * What the box writer did with a harness turn's skills, once per turn: after
+   * its session is up, or when the turn stops before that.
+   */
+  onBoxSkillsWritten?: (result: BoxSkillsResult) => void;
   /**
    * The host's approval switch for this turn.
    *

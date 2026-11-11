@@ -248,10 +248,11 @@ import {
 import { harnessTurnSkills } from "./skill-delivery.js";
 import {
   boxSkillsFolder,
+  failedBoxSkills,
   planBoxSkills,
   writeBoxSkills,
+  type BoxSkillsResult,
 } from "./box-skills-writer.js";
-import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
 import { appendManagedSkills } from "./reconcile-skill-dirs.js";
 import {
   adoptSandboxSkills,
@@ -837,6 +838,7 @@ export async function runHarnessTurn(
     evalIterationId,
     onHarnessEvidenceDecision,
     onHarnessPolicyBlocks,
+    onBoxSkillsWritten,
     builtInTools,
     computerWorkdir,
     harnessSandboxBinding,
@@ -1094,6 +1096,9 @@ export async function runHarnessTurn(
   // broker start, runtime/agent construction, createSession) must release the
   // lane in onFinishEngine, or the next chat turn is blocked until the lease TTL.
   let sessionEstablished = false;
+  // The last box write's result, reported once: a fresh session after a
+  // failed resume writes the box again.
+  let boxSkillsWritten: BoxSkillsResult | undefined;
   // Cumulative tool spans for the turn trace, hoisted so onFinishEngine (a
   // sibling closure) can read them into PersistedTurnTrace.spans.
   const unprojectableAppTools = options.harnessAppTools?.filter((entry) =>
@@ -3057,7 +3062,11 @@ export async function runHarnessTurn(
                 ? { computerId: uploadQuotaComputerId }
                 : {}),
               ...(abortSignal ? { signal: abortSignal } : {}),
+            }).catch((error: unknown) => {
+              boxSkillsWritten = failedBoxSkills(boxSkills, error);
+              throw error;
             });
+            boxSkillsWritten = written;
             if (effectiveCapabilities) {
               logPluginSkillDelivery({
                 set: effectiveCapabilities,
@@ -3066,16 +3075,6 @@ export async function runHarnessTurn(
                 harness: harnessAdapter.id,
                 boxKind: box?.kind ?? "local-native",
                 boxId: computerId,
-              });
-            }
-            // A run's frozen copies carry their files' bytes, which the
-            // pinned writer puts beside each SKILL.md.
-            if (skillsArePinned && boxSkills.deliver.length > 0) {
-              await materializePinnedSkillFiles({
-                session,
-                artifacts: pinnedHarnessSkills!,
-                skillsBase: boxSkillsFolder(harnessAdapter.skills, skillsHome),
-                ...(abortSignal ? { signal: abortSignal } : {}),
               });
             }
           }
@@ -3260,6 +3259,7 @@ export async function runHarnessTurn(
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
+      if (boxSkillsWritten) onBoxSkillsWritten?.(boxSkillsWritten);
 
       const stopHeartbeat = continuity ? startLeaseHeartbeat({
         owner: continuity.owner,
@@ -4616,6 +4616,9 @@ export async function runHarnessTurn(
         if (credentialCleanupError) throw credentialCleanupError;
       }
     } catch (err) {
+      if (!sessionEstablished && boxSkillsWritten) {
+        onBoxSkillsWritten?.(boxSkillsWritten);
+      }
       const livenessFailed = isLivenessFailure();
       if (!livenessFailed && (effectiveAbortSignal.aborted || isAbortError(err))) {
         aborted = true;

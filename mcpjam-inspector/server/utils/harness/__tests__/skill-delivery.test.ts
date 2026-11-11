@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   composeLivePlusSkills,
   harnessTurnSkills,
+  pinnedArtifactsToRuntimeSkills,
   selectHarnessSkillSource,
 } from "../skill-delivery.js";
 import { skillsFingerprint, type RuntimeSkill } from "../runtime-skills.js";
@@ -218,8 +219,12 @@ describe("harnessTurnSkills", () => {
     expect(turn.mode).toBe("pinned");
     expect(turn.skills?.map((entry) => entry.name)).toEqual(["pinned-skill"]);
     expect(turn.skillsHash).toBe(skillsFingerprint(turn.skills!));
-    // The pinned file writer puts the copies' own files on the box.
-    expect((await turn.readFiles()).complete("sk_pinned")).toBe(false);
+    // Each copy's files ride with it, read at run start.
+    const listing = await turn.readFiles();
+    expect(listing.files).toEqual([
+      { path: "scripts/run.sh", content: "echo", skillId: "sk_pinned" },
+    ]);
+    expect(listing.complete("sk_pinned")).toBe(true);
     expect(live.skills).not.toHaveBeenCalled();
     expect(live.files).not.toHaveBeenCalled();
   });
@@ -288,5 +293,68 @@ describe("harnessTurnSkills", () => {
     expect(files.files.map((file) => file.skillId)).toEqual(["sk_env"]);
     expect(files.complete("sk_env")).toBe(true);
     expect(files.complete("sk_notes")).toBe(false);
+  });
+});
+
+const artifact = (
+  over: Partial<PinnedSkillArtifact> = {}
+): PinnedSkillArtifact => ({
+  name: "my-skill",
+  description: "does things",
+  content: "# body",
+  contentHash: "hash-1",
+  ...over,
+});
+
+describe("pinnedArtifactsToRuntimeSkills", () => {
+  it("maps artifacts onto the runtime-skill shape with aggregateHash = the pinned contentHash", () => {
+    const skills = pinnedArtifactsToRuntimeSkills([
+      artifact({ skillId: "sk1" }),
+    ]);
+    expect(skills).toEqual([
+      {
+        skillId: "sk1",
+        name: "my-skill",
+        description: "does things",
+        content: "# body",
+        aggregateHash: "hash-1",
+      },
+    ]);
+  });
+
+  it("synthesizes a content-derived skillId when the pin lost its source pointer", () => {
+    const [s] = pinnedArtifactsToRuntimeSkills([artifact()]);
+    expect(s!.skillId).toBe("pinned:hash-1");
+  });
+
+  it("skillsFingerprint over the mapped set derives from the pinned artifact fingerprints", () => {
+    const a = skillsFingerprint(
+      pinnedArtifactsToRuntimeSkills([artifact({ skillId: "sk1" })])
+    );
+    const b = skillsFingerprint(
+      pinnedArtifactsToRuntimeSkills([
+        artifact({ skillId: "sk1", contentHash: "hash-2" }),
+      ])
+    );
+    expect(a).not.toBe(b); // a different pinned artifact ⇒ a different hash
+    expect(skillsFingerprint(pinnedArtifactsToRuntimeSkills([]))).toBe(""); // empty pinned set ⇒ the stable empty sentinel
+  });
+
+  it("projects preserved frontmatter onto the known Agent-Skills envelope only", () => {
+    const [s] = pinnedArtifactsToRuntimeSkills([
+      artifact({
+        frontmatter: {
+          license: "MIT",
+          "allowed-tools": ["Bash", "Read"],
+          metadata: { origin: "plugin" },
+          bogus: { nested: true },
+        },
+      }),
+    ]);
+    expect(s!.extraFrontmatter).toEqual({
+      license: "MIT",
+      allowedTools: ["Bash", "Read"],
+      metadata: { origin: "plugin" },
+    });
   });
 });

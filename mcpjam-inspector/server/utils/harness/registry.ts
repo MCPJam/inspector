@@ -70,13 +70,6 @@ import {
   type HarnessMcpJson,
 } from "./mcp-config.js";
 import {
-  prepareClaudeCodeSkills,
-  prepareCodexSkills,
-  prepareNoSkills,
-  type PreparedHarnessSkills,
-  type RuntimeSkill,
-} from "./runtime-skills.js";
-import {
   HARNESS_SKILLS,
   type HarnessSkillsDescriptor,
 } from "./skills-descriptor.js";
@@ -405,12 +398,6 @@ type HarnessRuntimeAdapterBase = {
    *  this and nothing else about the runtime, `supportsSkills` off included:
    *  a runtime that takes no skills still reads folders other runtimes write. */
   skills: HarnessSkillsDescriptor;
-  /** Shape the runtime skills into this adapter's `skills` param, and report
-   *  which skills that actually amounts to (a runtime may reject a name outright
-   *  — Codex throws mid-`doStart`, which would fail the whole turn). Turn
-   *  plans and the Compare preview read `delivered`; the box writer plans its
-   *  own (`planBoxSkills`). */
-  prepareSkills(skills: RuntimeSkill[]): PreparedHarnessSkills;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
    *  the bundle's components into per-kind channels (skills, native MCP config)?
@@ -891,7 +878,6 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   liveApprovalRuntime: true,
   supportsSkills: true,
   skills: HARNESS_SKILLS["claude-code"],
-  prepareSkills: prepareClaudeCodeSkills,
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
   // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
@@ -1067,7 +1053,6 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // root the retired exec transport used.
   supportsSkills: true,
   skills: HARNESS_SKILLS.codex,
-  prepareSkills: prepareCodexSkills,
   // Codex has no plugin-install interface — MCPJam still projects a plugin's
   // components (skills param, host-executed MCP tools), which is not the same
   // contract as a native bundle install.
@@ -1190,9 +1175,6 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // path rather than a capability wall.
   supportsSkills: false,
   skills: HARNESS_SKILLS.cursor,
-  // Never called (turn plans guard on supportsSkills), and honest if the
-  // guard ever moves: nothing delivered, every skill reported skipped.
-  prepareSkills: prepareNoSkills,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
   fileChangeToolName: undefined,
@@ -1268,7 +1250,6 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
   supportsSkills: false,
   skills: HARNESS_SKILLS["copilot-cli"],
-  prepareSkills: prepareNoSkills,
   supportsPluginBundles: false,
   listBuiltinTools: () => [],
   parseToolName: parseHarnessToolName,
@@ -1300,7 +1281,6 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
   supportsSkills: false,
   skills: HARNESS_SKILLS.opencode,
-  prepareSkills: prepareNoSkills,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),

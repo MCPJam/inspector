@@ -94,9 +94,11 @@ describe("planBoxSkills", () => {
 
   it("YAML-quotes each description for the adapter, which interpolates it raw", () => {
     const plan = planBoxSkills(claude, [
-      skill("notes", { description: 'Process: "PDFs"\nsafely' }),
+      skill("notes", { description: 'Process: "PDFs"\nsafely in c:\\docs' }),
     ]);
-    expect(plan.payload[0]!.description).toBe('"Process: \\"PDFs\\"\\nsafely"');
+    expect(plan.payload[0]!.description).toBe(
+      '"Process: \\"PDFs\\"\\nsafely in c:\\\\docs"',
+    );
   });
 });
 

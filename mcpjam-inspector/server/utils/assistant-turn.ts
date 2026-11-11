@@ -261,6 +261,7 @@ export interface RunAssistantTurnOptions {
   /** Reports back what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: MCPJamHandlerOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: MCPJamHandlerOptions["onBoxSkillsWritten"];
 
   /**
    * Swarm (journey-execution) continuity identity. Forwarded to the harness
@@ -534,9 +535,8 @@ function buildHandlerOptions(
     ...(opts.harnessToolPolicy
       ? { harnessToolPolicy: opts.harnessToolPolicy }
       : {}),
-    ...(opts.onHarnessPolicyBlocks
-      ? { onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks }
-      : {}),
+    onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks,
+    onBoxSkillsWritten: opts.onBoxSkillsWritten,
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     // Pinned harness skills: presence (even an EMPTY array) is semantic — an
