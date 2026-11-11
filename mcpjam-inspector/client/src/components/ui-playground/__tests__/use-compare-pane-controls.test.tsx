@@ -80,6 +80,7 @@ const resolutions = [codex, cursor].map((host) =>
 const serverIdByName = new Map([
   ["GitHub", "srv-github"],
   ["Docs", "srv-docs"],
+  ["Linear", "srv-linear"],
 ]);
 
 const clientTargets = [codex, cursor].map((host) => ({
@@ -97,6 +98,7 @@ function Harness({
   lineupResolutions = resolutions,
   environments = [],
   paneEnvironments = new Map(),
+  connectedServers,
 }: {
   paneId: string;
   lane?: ComparePaneLane;
@@ -112,12 +114,14 @@ function Harness({
   lineupResolutions?: PlaygroundClientResolution[];
   environments?: ComparePaneTargetOption[];
   paneEnvironments?: ReadonlyMap<string, ComparePaneEnvironment>;
+  connectedServers?: string[];
 }) {
   const controls = useComparePaneControls({
     active: true,
     panes: lineup.map((pane) => ({ ...pane, ...overrides[pane.paneId] })),
     resolutions: lineupResolutions,
     sharedServers: ["GitHub", "Docs"],
+    connectedServers,
     serverIdByName,
     orgConfig: undefined,
     sections,
@@ -287,6 +291,28 @@ describe("Compare pane settings", () => {
     await user.click(screen.getByRole("switch", { name: "Use Docs in codex" }));
     expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("codex", {
       serverIds: null,
+    });
+  });
+
+  it("keeps a turned-off pane-only server in settings while it is connected", async () => {
+    const user = userEvent.setup();
+    const calls = spies();
+    render(
+      <Harness
+        paneId="codex"
+        overrides={{ codex: { serverIds: ["srv-github"] } }}
+        connectedServers={["GitHub", "Linear"]}
+        spies={calls}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Pane settings for codex" }),
+    );
+    const linear = screen.getByRole("switch", { name: "Use Linear in codex" });
+    expect(linear).not.toBeChecked();
+    await user.click(linear);
+    expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("codex", {
+      serverIds: ["srv-github", "srv-linear"],
     });
   });
 
