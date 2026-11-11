@@ -66,7 +66,7 @@ describe("gatewayTestOutcome", () => {
     const message = 'The provider rejected the API key: "Authentication Error, Invalid proxy server token passed". Check the key and test again.';
     expect(gatewayTestOutcome(result({ status: 401, message, apis: {}, models: [] }))).toEqual({
       tone: "destructive",
-      title: "The provider needs a valid API key",
+      title: "The provider needs a valid API key. Update the key and test again.",
       message,
       focus: "secret",
       testedFrom: "Tested from MCPJam's servers",
