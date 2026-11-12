@@ -91,7 +91,7 @@ export function buildOptionPrompt(
     heading(option),
     "",
     "## Observed",
-    problem.observed,
+    fence("Recorded observation", problem.observed),
     `This applies to ${option.iterationIds.length} of the ${plural(problem.coverage.observed, "affected iteration")}: ${option.iterationIds.map((id) => sanitizeIdentifier(id, 60)).join(", ")}.`,
     ...(causes.length
       ? [
@@ -116,7 +116,7 @@ export function buildOptionPrompt(
     "",
     option.kind === "investigation" ? "## Next step" : "## Change",
     prose(option.change),
-    ...(target ? [`Surface: ${target}.`] : []),
+    ...(target ? [`Surface: ${sanitizeIdentifier(target, 200)}.`] : []),
     "",
     "## Why",
     prose(option.rationale),

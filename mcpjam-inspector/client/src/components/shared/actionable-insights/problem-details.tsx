@@ -75,34 +75,49 @@ export function CopyOptionPrompt({
   problem,
   option,
   context,
-  onUnavailable,
 }: {
   problem: FindingProblem;
   option: FindingOption;
   context?: FindingPromptContext;
-  /** Called when the clipboard refuses, so the caller can show the text. */
-  onUnavailable?: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "copied" | "unavailable">("idle");
+  const prompt = buildOptionPrompt(problem, option, context);
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-9 shadow-none"
-      data-testid="problem-copy-prompt"
-      onClick={() => {
-        void copyToClipboard(buildOptionPrompt(problem, option, context)).then(
-          (ok) => {
-            if (!ok) return onUnavailable?.();
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          },
-        );
-      }}
-    >
-      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : optionPromptLabel(option)}
-    </Button>
+    <div className="min-w-0 space-y-3">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 shadow-none"
+        data-testid="problem-copy-prompt"
+        onClick={() => {
+          void copyToClipboard(prompt).then((ok) => {
+            setStatus(ok ? "copied" : "unavailable");
+            if (ok) setTimeout(() => setStatus("idle"), 2000);
+          });
+        }}
+      >
+        {status === "copied" ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Copy className="size-3.5" />
+        )}
+        {status === "copied" ? "Copied" : optionPromptLabel(option)}
+      </Button>
+      {status === "unavailable" ? (
+        <>
+          <p role="status" className="text-xs text-muted-foreground">
+            The clipboard is unavailable. Select the prompt below to copy it.
+          </p>
+          <pre
+            tabIndex={0}
+            className="max-h-80 max-w-[calc(100vw-3rem)] overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
+            data-testid="problem-prompt-text"
+          >
+            {prompt}
+          </pre>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -136,7 +151,6 @@ export function ProblemDetailsContent({
   onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
 }) {
   const [chosen, setChosen] = useState(problem.recommendedOptionId);
-  const [showPrompt, setShowPrompt] = useState(false);
   const option =
     problem.options.find((row) => row.id === chosen) ?? problem.options[0];
   const recommended = option?.id === problem.recommendedOptionId;
@@ -169,10 +183,7 @@ export function ProblemDetailsContent({
               </label>
               <Select
                 value={option.id}
-                onValueChange={(value) => {
-                  setChosen(value);
-                  setShowPrompt(false);
-                }}
+                onValueChange={setChosen}
               >
                 <SelectTrigger
                   className="w-full min-w-0 [&>span]:block [&>span]:truncate"
@@ -249,30 +260,12 @@ export function ProblemDetailsContent({
               <FindingText text={option.verification} />
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <CopyOptionPrompt
-              key={option.id}
-              problem={problem}
-              option={option}
-              context={context}
-              onUnavailable={() => setShowPrompt(true)}
-            />
-            {showPrompt ? (
-              <p role="status" className="text-xs text-muted-foreground">
-                The clipboard is unavailable. Select the prompt below to copy
-                it.
-              </p>
-            ) : null}
-          </div>
-          {showPrompt ? (
-            <pre
-              tabIndex={0}
-              className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
-              data-testid="problem-prompt-text"
-            >
-              {buildOptionPrompt(problem, option, context)}
-            </pre>
-          ) : null}
+          <CopyOptionPrompt
+            key={option.id}
+            problem={problem}
+            option={option}
+            context={context}
+          />
         </section>
       ) : null}
       {problem.explanations.length > 0 ? (
