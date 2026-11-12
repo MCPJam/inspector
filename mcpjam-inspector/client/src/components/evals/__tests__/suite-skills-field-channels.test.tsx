@@ -61,6 +61,8 @@ vi.mock("@/hooks/use-server-skills", () => ({
           id: `${id}-v${n}`,
           versionNumber: n,
           capturedAt: n,
+          // `broken`'s latest capture lists no files; its first one does.
+          fileCount: id === "broken" && n === 2 ? 0 : 1,
         }))
       : undefined,
 }));
@@ -310,6 +312,55 @@ describe("From MCP servers", () => {
         },
       }),
     );
+  });
+
+  it("lets a skill whose latest capture lists no files move to an older one", async () => {
+    both({
+      serverSkillSelection: { mode: "explicit", serverSkillIds: ["broken"] },
+    });
+    renderSettings();
+    await openSkills();
+    expect(
+      screen.getByText(/Its server lists no files for this skill/),
+    ).toBeInTheDocument();
+    const version = screen.getByLabelText("Version for acme-crm/broken");
+    expect(version).not.toBeDisabled();
+    fireEvent.focus(version);
+    await screen.findByText("v1");
+    // Neither Latest nor the capture it names can be used; the first can.
+    expect(screen.getByRole("option", { name: "Latest (v2)" })).toBeDisabled();
+    expect(
+      screen.getByRole("option", { name: "v2 (current, no files listed)" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("option", { name: "v1" })).not.toBeDisabled();
+    fireEvent.change(version, { target: { value: "broken-v1" } });
+    expect(await savedOverrides()).toEqual(
+      Array(2).fill({
+        serverSkillSelection: {
+          mode: "explicit",
+          serverSkillIds: ["broken"],
+          versionPins: [{ serverSkillId: "broken", versionId: "broken-v1" }],
+        },
+      }),
+    );
+  });
+
+  it("doesn't call a pin to an older capture blocked because the latest one is", async () => {
+    both({
+      serverSkillSelection: {
+        mode: "explicit",
+        serverSkillIds: ["broken"],
+        versionPins: [{ serverSkillId: "broken", versionId: "broken-v1" }],
+      },
+    });
+    renderSettings();
+    await openSkills();
+    expect(
+      screen.queryByText(/Its server lists no files for this skill/),
+    ).toBeNull();
+    const version = screen.getByLabelText("Version for acme-crm/broken");
+    expect(version).not.toBeDisabled();
+    expect(version).toHaveDisplayValue("v1");
   });
 
   it("keeps a picked skill removable after its server leaves the group", async () => {

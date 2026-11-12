@@ -30,6 +30,8 @@ export type ServerSkillVersion = {
   id: string;
   versionNumber: number;
   capturedAt: number;
+  /** Files the capture lists; none means an exact pin can't verify it. */
+  fileCount: number;
 };
 
 const listProjectServerSkills = makeFunctionReference<

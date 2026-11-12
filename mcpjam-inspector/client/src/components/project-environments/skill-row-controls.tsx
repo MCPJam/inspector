@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 export function SkillVersionSelect({
   label,
   latestLabel,
+  latestDisabled = false,
   versions,
   loading,
   pinnedVersionId,
@@ -30,8 +31,14 @@ export function SkillVersionSelect({
   /** The control's accessible name. */
   label: string;
   latestLabel: string;
-  /** Every version, newest first, once loaded. */
-  versions: ReadonlyArray<{ id: string; label: string }> | null;
+  /** Latest can't be chosen, because the newest capture is unusable. */
+  latestDisabled?: boolean;
+  /** Every version, newest first, once loaded; a `disabled` one is unusable. */
+  versions: ReadonlyArray<{
+    id: string;
+    label: string;
+    disabled?: boolean;
+  }> | null;
   loading: boolean;
   pinnedVersionId: string | null;
   disabled: boolean;
@@ -62,10 +69,12 @@ export function SkillVersionSelect({
       onFocus={onOpen}
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
     >
-      <option value="">{latestLabel}</option>
+      <option value="" disabled={latestDisabled}>
+        {latestLabel}
+      </option>
       {loading ? <option disabled>Loading…</option> : null}
       {(versions ?? []).map((version) => (
-        <option key={version.id} value={version.id}>
+        <option key={version.id} value={version.id} disabled={version.disabled}>
           {version.label}
         </option>
       ))}

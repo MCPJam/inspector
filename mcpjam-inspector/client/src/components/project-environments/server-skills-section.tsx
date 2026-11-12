@@ -61,19 +61,25 @@ function useServersInEveryGroup(
   );
 }
 
-/** Why an environment can't select this skill, or `null` when it can. */
+/**
+ * Why an environment can't select this skill, or `null` when it can. The
+ * `unpinnable` flag describes the latest capture, so an exact pin, which the
+ * backend judges by the capture it names, isn't blocked by it.
+ */
 function blockedReason(
   skill: ProjectServerSkill,
   inEveryGroup: boolean,
+  pinned: boolean,
 ): string | null {
-  if (skill.unpinnable?.reason === "no_resources") {
-    return "Its server lists no files for this skill, so MCPJam can’t verify it. Update the server to list them.";
+  const latest = pinned ? undefined : skill.unpinnable;
+  if (latest?.reason === "no_resources") {
+    return "Its server lists no files for this skill, so MCPJam can’t verify it. Update the server to list them, or pick an older version that does.";
   }
-  if (skill.unpinnable?.reason === "files_over_cap") {
-    return "This skill has more files than MCPJam captures, so runs can’t use it. Remove some files on the server.";
+  if (latest?.reason === "files_over_cap") {
+    return "This skill has more files than MCPJam captures, so runs can’t use it. Remove some files on the server, or pick an older version.";
   }
-  if (skill.unpinnable) {
-    return "Runs can’t use this skill. Open it in the Skills tab to see why.";
+  if (latest) {
+    return "Runs can’t use the latest version of this skill. Open it in the Skills tab to see why, or pick an older version.";
   }
   if (!inEveryGroup) {
     return "Its server isn’t in every client’s server group. Add the server to the group to use this skill.";
@@ -115,7 +121,9 @@ export function ServerSkillsSection({
       {rows.map((skill) => {
         const checked = selectedIds.has(skill.id);
         const partial = !checked && choice.across.partialIds.has(skill.id);
-        const reason = blockedReason(skill, served.has(skill.serverId));
+        const inGroup = served.has(skill.serverId);
+        const pinnedVersionId = pins.get(skill.id) ?? null;
+        const reason = blockedReason(skill, inGroup, pinnedVersionId !== null);
         const capBlocked = !checked && !choice.across.canAdd(skill.id);
         // Partly on but can't be turned on: only its own button removes it.
         const removeOnly = partial && (reason !== null || capBlocked);
@@ -170,10 +178,11 @@ export function ServerSkillsSection({
             {checked ? (
               <ServerSkillVersionControl
                 skill={skill}
-                pinnedVersionId={pins.get(skill.id) ?? null}
-                // A selection the backend refuses leads nowhere; removing
-                // it is the only repair.
-                disabled={disabled || reason !== null}
+                pinnedVersionId={pinnedVersionId}
+                // A server outside the group is refused at any version, so
+                // removing the skill is the only repair. An unusable latest
+                // capture leaves the older ones to pick.
+                disabled={disabled || !inGroup}
                 onChange={(versionId) =>
                   choice.onChange({ kind: "pin", skillId: skill.id, versionId })
                 }
@@ -207,13 +216,23 @@ function ServerSkillVersionControl({
     <SkillVersionSelect
       label={`Version for ${skill.ref}`}
       latestLabel={`Latest (v${skill.versionNumber})`}
+      latestDisabled={skill.unpinnable !== undefined}
       versions={
-        versions?.map((version) => ({
-          id: version.id,
-          label: `v${version.versionNumber}${
-            version.id === skill.versionId ? " (current)" : ""
-          }`,
-        })) ?? null
+        versions?.map((version) => {
+          // The backend refuses a pin to a capture that lists no files.
+          const noFiles = version.fileCount === 0;
+          const notes = [
+            version.id === skill.versionId ? "current" : null,
+            noFiles ? "no files listed" : null,
+          ].filter(Boolean);
+          return {
+            id: version.id,
+            label: `v${version.versionNumber}${
+              notes.length ? ` (${notes.join(", ")})` : ""
+            }`,
+            disabled: noFiles,
+          };
+        }) ?? null
       }
       loading={opened && versions === undefined}
       pinnedVersionId={pinnedVersionId}
