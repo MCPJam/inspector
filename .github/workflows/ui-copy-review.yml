@@ -75,7 +75,6 @@ jobs:
           sparse-checkout: |
             scripts/slop
             .agents/skills/ui-copy
-            .agents/skills/error-message-review
           fetch-depth: 1
           persist-credentials: false
 

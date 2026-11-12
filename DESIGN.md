@@ -413,11 +413,12 @@ Nielsen's ninth heuristic: **plain language, a precise statement of the problem,
 and a way out.** NN/g's dedicated error guidance (Neusesser & Sunwall, 2023)
 sharpens the same three into rules we can actually check.
 
-We already do this well in one place. `sdk/src/error-describer/catalog.ts` gives
+`sdk/src/error-describer/catalog.ts` gives
 every known failure a title, a one-line explanation, its likely causes, its next
-steps, and a docs anchor. That schema **is** the checks below, in code. When a new
-error has a real diagnosis, it belongs in the catalog and renders through
-`ErrorCard`, not as a fresh string at the call site.
+steps, and a docs anchor. Reuse that schema for diagnosed failures and render them
+through `ErrorCard`, not as fresh strings at the call site. Some existing catalog
+copy predates this standard and does not meet E4; the schema is not a blanket
+endorsement of its wording. New or changed catalog copy must pass the checks below.
 
 ### The four checks
 

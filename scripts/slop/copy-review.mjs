@@ -34,7 +34,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WORKTREE, changedPaths } from "./ratchet.mjs";
 import { addedCopy, isUiFile } from "./ui-strings.mjs";
-import { errorsSection } from "../check-error-rules.mjs";
 
 export const MODELS = {
   classify: { id: "claude-haiku-5-5", input: 0.1, output: 0.5 },
@@ -75,12 +74,15 @@ export function collectAdded(base) {
 
 /** The skill body without its front matter: the same text the editors load. */
 export function rubric(path = RUBRIC_PATH) {
+  return readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, "");
+}
+
+export async function copyRubric() {
+  const { errorsSection } = await import("../check-error-rules.mjs");
   const root = resolve(dirname(RUBRIC_PATH), "../../..");
-  const read = file => readFileSync(resolve(root, file), "utf8");
   return [
-    readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, ""),
-    errorsSection(read("DESIGN.md")),
-    read(".agents/skills/error-message-review/SKILL.md"),
+    rubric(),
+    errorsSection(readFileSync(resolve(root, "DESIGN.md"), "utf8")),
   ].join("\n\n");
 }
 
@@ -147,7 +149,7 @@ async function classifyBatch(items, rubricText, call) {
   return call({
     model: MODELS.classify,
     effort: "low",
-    system: `${rubricText}\n\nYou are doing the Detect job on strings a pull request added to the UI. Report only strings that match a pattern from the table, using the pattern's exact name. A string that matches nothing is not reported.\n\nCapability boundary: this CI classifier receives only id, path and text, not the surrounding controls or repository tools. Do not attempt the skill's source-inspection steps. Do not issue context-dependent verdicts about placement, preserved input, diagnostic accuracy, or absent recovery affordances. In particular, missing next-step text alone cannot establish no-next-step when a nearby action may provide recovery. Those checks belong to a repository-capable reviewer. Judge only defects established by the supplied text.`,
+    system: `${rubricText}\n\nYou are doing the Detect job on strings a pull request added to the UI. Report only strings that match a pattern from the table, using the pattern's exact name. A string that matches nothing is not reported.`,
     user: JSON.stringify(items.map(({ id, path, text }) => ({ id, path, text }))),
     format: schema({ id: { type: "integer" }, pattern: { type: "string" }, note: { type: "string" } }),
   });
@@ -311,7 +313,7 @@ export async function main(argv, call = callClaude) {
   const waived = process.env.SLOP_WAIVER === "true";
   const items = collectAdded(base);
   if (!items.length) return report({ items, findings: [], usd: 0, waived, posted: 0 });
-  const text = rubric();
+  const text = await copyRubric();
   const classified = await classify(items, text, call);
   let usd = cost(classified.usage, MODELS.classify);
   let findings = matchFindings(items, classified.items);

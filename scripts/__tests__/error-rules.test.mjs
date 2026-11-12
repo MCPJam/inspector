@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { checkErrorRules, errorsSection } from "../check-error-rules.mjs";
-import { rubric, classify } from "../slop/copy-review.mjs";
+import { rubric, copyRubric, classify } from "../slop/copy-review.mjs";
 
 const design = `# Design
 ## Errors
@@ -86,21 +89,49 @@ test("committed standard and reviewer stay in sync", () => {
     read(".agents/skills/ui-copy/SKILL.md")), []);
 });
 
-test("the trusted AI rubric contains the canonical standard and decision order", () => {
-  assert.match(rubric(), /\*\*E1 — Plain language/);
-  assert.match(rubric(), /## Order of decision/);
-  assert.match(rubric(), /Validation never goes in a toast/);
+test("rubric(path) loads only the requested prompt", () => {
+  for (const name of ["review-triage.md", "adversarial-review.md"]) {
+    const path = new URL(`../slop/${name}`, import.meta.url);
+    assert.equal(
+      rubric(path),
+      readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, ""),
+    );
+  }
 });
 
-test("string-only classification excludes verdicts requiring unavailable source context", async () => {
+test("shared prompt loading works in the scripts/slop-only trusted checkout", t => {
+  const root = mkdtempSync(join(tmpdir(), "copy-review-sparse-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const slop = join(root, "scripts/slop");
+  cpSync(new URL("../slop", import.meta.url), slop, { recursive: true });
+  const module = pathToFileURL(join(slop, "copy-review.mjs")).href;
+  const runner = join(root, "load-prompt.mjs");
+  for (const name of ["review-triage.md", "adversarial-review.md"]) {
+    const prompt = join(slop, name);
+    const script = `import { rubric } from ${JSON.stringify(module)}; process.stdout.write(rubric(${JSON.stringify(prompt)}));`;
+    writeFileSync(runner, script);
+    assert.equal(
+      execFileSync(process.execPath, [runner], { cwd: root, encoding: "utf8" }),
+      rubric(prompt),
+    );
+  }
+});
+
+test("the copy-specific rubric includes the standard but not the full-tree reviewer mechanics", async () => {
+  const text = await copyRubric();
+  assert.match(text, /\*\*E1 — Plain language/);
+  assert.match(text, /Validation never goes in a toast/);
+  assert.doesNotMatch(text, /## Order of decision|## Calibration|Stop at the first failure/);
+});
+
+test("classification receives the copy rubric without conflicting repository-review instructions", async () => {
   let request;
-  await classify([{ id: 1, path: "example.tsx", text: "Couldn't save the server." }], rubric(), async input => {
+  await classify([{ id: 1, path: "example.tsx", text: "Couldn't save the server." }], await copyRubric(), async input => {
     request = input;
     return { items: [], usage: {} };
   });
-  assert.match(request.system, /not the surrounding controls or repository tools/);
-  assert.match(request.system, /Do not issue context-dependent verdicts/);
-  assert.match(request.system, /missing next-step text alone cannot establish no-next-step/);
+  assert.match(request.system, /\*\*E1 — Plain language/);
+  assert.doesNotMatch(request.system, /Capability boundary|## Order of decision|You have the full working tree/);
   assert.deepEqual(JSON.parse(request.user), [{ id: 1, path: "example.tsx", text: "Couldn't save the server." }]);
 });
 

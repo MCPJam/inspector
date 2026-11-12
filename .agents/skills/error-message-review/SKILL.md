@@ -25,14 +25,20 @@ errors that are caught and mapped before display, test fixtures, code comments.
 Log verbs and error codes are correct in logs. A changed line that is out of scope
 gets **N/A**, not pass.
 
-You have the full working tree, not only the diff: `.github/workflows/claude.yml`
-checks out the repository before running you. Open the surrounding function when
+Invoke this skill in a repository-capable review. Claude Code discovers it through
+the `.claude/skills/error-message-review` symlink; run `/error-message-review`.
+Codex and Cursor can load this file from `.agents/skills/`. It is not wired into
+`claude.yml` or the string-only CI classifier.
+
+Read the full working tree, not only the diff. Open the surrounding function when
 deciding the surface, and grep sibling messages when checking E4's one-name-per-
 thing rule. Neither judgment is safe from the changed line alone.
 
 ## Order of decision
 
-Stop at the first failure.
+Apply every check in order to in-scope messages and report all established
+failures. Stop only for an out-of-scope string; do not infer a failure when the
+required context is unavailable.
 
 1. **In scope?** No → **N/A**.
 2. **E1, plain language.** A raw `error.message`, response body, stack fragment or
@@ -66,7 +72,7 @@ without a replacement makes the author guess, and guessing is how one product
 ended up with four failure verbs.
 
 ```
-FAIL E1, E4 · ServerConnectionCard.tsx:214
+FAIL E1, E4 · ServerConnectionCard.tsx
   `Failed to export ${server.name}: ${errorMessage}`
   → "Couldn't export {server.name}." plus an ErrorCard from describeError(err)
 ```
@@ -76,20 +82,14 @@ second and third sentences when E2's cause is unknown or E3's exemption applies.
 
 ## Calibration
 
-Real strings from this repository. Your verdicts should match. If they don't, the
-rule in DESIGN.md is underspecified — say so rather than bending to this table.
+These strings occur at the linked call sites. Read the surrounding controls before
+applying the listed checks. Catalog entries must meet E1–E4 too; their schema is not
+a copy verdict.
 
-| String | Verdict | Why |
-| --- | --- | --- |
-| `toast.error(error.message)` | FAIL E1 | Whatever text the failure carried, rendered verbatim |
-| `` `Failed to export ${server.name}: ${errorMessage}` `` | FAIL E1, E4 | Raw tail, and a log verb in front of a reader |
-| `"Something went wrong"` | FAIL E2, E3 | The whole message, so it names nothing and offers nothing |
-| `"Copy failed"` | FAIL E2, E3 | Copy of what, and what now |
-| `"Update failed. Try again later."` | FAIL E2, E4 | "Later" is not a step, and the update is unnamed |
-| `toast.error("Please select at least one server")` | FAIL surface | Validation in a toast, away from the control |
-| `"Could not load live client templates"` | FAIL E4 | Right content, wrong verb |
-| `"Tool requires elicitation (not supported here)"` | FAIL E1, E3 | "Elicitation" is jargon, and there is no way forward |
-| `"Couldn't apply that edit. Try again."` | PASS | Names the action, gives the step |
-| `"That client no longer exists. It may have been deleted."` | PASS | Honest hedge: the client is gone and we can't say why |
-| `"Create or join an organization to create projects."` | PASS | The recovery is the message |
-| `ERROR_CATALOG["transport/econnrefused"]` | PASS | The model: title, one line, three real causes, three real steps |
+| String | Source | Verdict | Why |
+| --- | --- | --- | --- |
+| `` `Failed to export ${server.name}: ${errorMessage}` `` | [ServerConnectionCard.tsx](../../../mcpjam-inspector/client/src/components/connection/ServerConnectionCard.tsx) | FAIL E1, E4 | Raw exception tail and a log verb in front of a reader |
+| `toast.error("Please select a valid JSON file")` | [JsonImportModal.tsx](../../../mcpjam-inspector/client/src/components/connection/JsonImportModal.tsx) | FAIL surface | Validation in a toast, away from the control |
+| `"Could not load live client templates"` | [CreateHostDialog.tsx](../../../mcpjam-inspector/client/src/components/hosts/CreateHostDialog.tsx) | FAIL E4 | Wrong failure verb |
+| `"Couldn't apply that edit. Try again."` | [ChatTabV2.tsx](../../../mcpjam-inspector/client/src/components/ChatTabV2.tsx) | PASS | Names the action and gives the step |
+| `"Create or join an organization to create projects."` | [use-project-state.ts](../../../mcpjam-inspector/client/src/hooks/use-project-state.ts) | PASS | The recovery is the message |
