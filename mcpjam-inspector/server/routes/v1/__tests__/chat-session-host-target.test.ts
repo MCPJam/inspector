@@ -157,6 +157,14 @@ vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},
 }));
 
+// The delivery event is a PostHog capture; these tests read what it is handed.
+const reportSkillsDeliveredMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../services/environments/skills-delivered-event.js", () => ({
+  reportSkillsDelivered: (...args: unknown[]) =>
+    reportSkillsDeliveredMock(...args),
+  reportBoxSkillsDelivered: () => {},
+}));
+
 import chatSessions from "../chat-sessions.js";
 import type { TurnSkills } from "../../../services/environments/turn-skills.js";
 import { v1OnError } from "../envelope.js";
@@ -446,6 +454,52 @@ describe("host targeting dispatches the real harness", () => {
     expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
       expect.not.objectContaining({ harnessSandboxBinding: expect.anything() }),
     );
+  });
+
+  it("reports the skills MCPJam's agent holds just before its engine starts", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+    // What `prepareChatV2` holds once the connected servers' skills joined.
+    const effectiveSkills = {
+      runtime: { kind: "agent" },
+      delivered: [
+        {
+          skillId: "skill://acme/refunds/SKILL.md",
+          ref: "acme/refunds",
+          name: "refunds",
+        },
+      ],
+    };
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      effectiveSkills,
+    });
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(reportSkillsDeliveredMock).toHaveBeenCalledTimes(1);
+    expect(reportSkillsDeliveredMock).toHaveBeenCalledWith(
+      "api",
+      effectiveSkills,
+    );
+    expect(reportSkillsDeliveredMock.mock.invocationCallOrder[0]).toBeLessThan(
+      runUnifiedAssistantTurnMock.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("reports no delivery for a turn whose runtime cannot be resolved", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec({}));
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      effectiveSkills: { runtime: { kind: "agent" }, delivered: [] },
+    });
+    resolveTurnRuntimeMock.mockRejectedValue(new Error("no model rail"));
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    expect(reportSkillsDeliveredMock).not.toHaveBeenCalled();
   });
 
   it("runs the harness an explicit hostId names, using the host's own servers", async () => {

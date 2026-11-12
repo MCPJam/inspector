@@ -168,7 +168,8 @@ function capture(properties: Record<string, string | number>): void {
  * A skill's family is the list of the turn's set that holds it. Library is the
  * family with no origin of its own, so it also takes a skill the set does not
  * hold: one whose ref another skill already holds, which the bare-name tools
- * still serve by name.
+ * still serve by name. A connected server's own skill on a live turn is known
+ * by its URI (`planWithLiveServerSkills`).
  */
 function skillFamilies(
   set: EffectiveCapabilitySet,
@@ -176,6 +177,9 @@ function skillFamilies(
   const families = new Map<string, SkillFamily>([
     ...set.pluginSkills.map((skill) => [skill.skillId, "plugin"] as const),
     ...set.serverSkills.map((skill) => [skill.skillId, "mcp-server"] as const),
+    ...(set.liveServerSkills?.skills ?? []).map(
+      (skill) => [skill.skillUri, "mcp-server"] as const,
+    ),
     ...set.localSkills.map((skill) => [skill.skillId, "local"] as const),
   ]);
   return (ref) => families.get(ref.skillId) ?? "library";
