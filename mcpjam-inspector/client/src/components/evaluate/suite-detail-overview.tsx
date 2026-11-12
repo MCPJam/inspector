@@ -99,6 +99,7 @@ import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
 import { SuitePageHeader } from "./nav-suite/suite-page-header";
 import { SuiteNavEmptyState } from "./nav-suite/suite-runs-health";
+import { useSuitePageViewed } from "./nav-suite/use-suite-page-viewed";
 import { newestLaunchPills } from "./nav-suite/newest-launch-pills";
 import { SuitePills } from "./landing/suite-pills";
 import { resolveSuitePassThreshold } from "./run-compare-lanes-model";
@@ -278,6 +279,11 @@ export function SuiteDetailOverview({
   const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
   // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
   const resultsPageEnabled = useSuiteResultsPageEnabled() === true;
+  useSuitePageViewed({
+    enabled: resultsPageEnabled,
+    projectId,
+    suiteId: suite._id,
+  });
   const passThreshold = resolveSuitePassThreshold(suite);
   const runsHealth = resultsPageEnabled
     ? {

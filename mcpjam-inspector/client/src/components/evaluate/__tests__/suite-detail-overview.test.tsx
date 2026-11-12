@@ -17,6 +17,7 @@ import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
 import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
 import { SuiteRunsAsLine } from "../suite-runs-as";
+import { track } from "@/lib/analytics";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -49,6 +50,10 @@ vi.mock("@/stores/preferences/preferences-provider", async (original) => ({
 // Off unless a test turns the new Suite page on.
 vi.mock("@/hooks/use-suite-results-page-enabled", () => ({
   useSuiteResultsPageEnabled: vi.fn(() => undefined),
+}));
+vi.mock("@/lib/analytics", async (original) => ({
+  ...(await original<object>()),
+  track: vi.fn(),
 }));
 // The accounts line has its own tests; here it only has to land in the header.
 vi.mock("../suite-runs-as", async (original) => ({
@@ -1521,7 +1526,12 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
   afterEach(() => {
     vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
     vi.mocked(SuiteRunsAsLine).mockImplementation(() => null);
+    vi.mocked(track).mockClear();
   });
+  const pageViews = () =>
+    vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === "eval_nav_page_viewed");
   const run = makeRun({
     _id: "run-1",
     runNumber: 1,
@@ -1667,8 +1677,23 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     ).toHaveTextContent("Runs as you · Asana Dummy");
   });
 
+  it("counts one suite page view with the flag on", () => {
+    renderSuitePage();
+    expect(pageViews()).toEqual([
+      [
+        "eval_nav_page_viewed",
+        expect.objectContaining({
+          page: "suite",
+          ui: "nav",
+          project_id: "project-1",
+        }),
+      ],
+    ]);
+  });
+
   it("keeps today's header and Test Cases card with the flag off", () => {
     renderSuitePage({}, false);
+    expect(pageViews()).toEqual([]);
     expect(screen.queryByTestId("suite-page-header")).toBeNull();
     expect(screen.getByText("Configure suite evaluators")).toBeVisible();
     expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
