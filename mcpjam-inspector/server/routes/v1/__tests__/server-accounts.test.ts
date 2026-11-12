@@ -477,6 +477,37 @@ describe("v1 server accounts", () => {
     expect(headers.get("x-mcpjam-acting-in-org")).toBe("org_1");
     expect(JSON.stringify(calls)).not.toContain("sk_live_secret");
   });
+
+  it("tells the backend which API key and channel a write came from, for its audit row", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc_token");
+    validateApiKeyMock.mockResolvedValue({
+      apiKey: { id: "key_1", owner: { id: "workos_user_1" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValue({ _id: "convex_user_1" });
+    lookupWorkosKeyBindingMock.mockResolvedValue({
+      mcpjamOrganizationId: "org_1",
+    });
+    const calls = stubConvex({
+      "/web/oauth/import-tokens": {
+        body: {
+          success: true,
+          created: true,
+          account: ACCOUNT,
+          expiresAt: ACCOUNT.expiresAt,
+        },
+      },
+    });
+    const res = await send(
+      "PUT",
+      `${BASE}/test-automation-1`,
+      UPLOAD,
+      "sk_live_secret",
+    );
+    expect(res.status).toBe(201);
+    const headers = calls[0]!.headers;
+    expect(headers.get("x-mcpjam-agent-surface")).toBe("rest");
+    expect(headers.get("x-mcpjam-agent-api-key-id")).toBe("key_1");
+  });
 });
 
 describe("deprecated oauth/import-tokens", () => {

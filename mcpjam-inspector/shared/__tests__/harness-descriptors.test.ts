@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import {
   HARNESS_DESCRIPTORS,
+  HARNESS_SURFACES,
   LOCAL_HARNESS_IDS,
   effectiveHarnessId,
+  harnessSurfaceOfSource,
+  harnessSurfaceRefusal,
   usesMcpjamClient,
 } from "../harness-descriptors";
 import { HARNESS_MCP_DELIVERY } from "../harness-mcp-delivery";
@@ -49,5 +52,37 @@ describe("harness descriptors", () => {
   it("enforces the model selected for a Cursor account", () => {
     expect(HARNESS_DESCRIPTORS.cursor.controls.modelId.enforced).toBe(true);
     expect(HARNESS_DESCRIPTORS.cursor.modelAccess).toBe("external-account");
+  });
+});
+
+describe("harness surface support", () => {
+  // Every runtime runs everywhere unless it declares otherwise, so this table
+  // is the whole list of exceptions. Changing it is a product decision.
+  it("declares only these exceptions", () => {
+    const declared = HARNESS_IDS.flatMap((id) =>
+      HARNESS_SURFACES.filter((surface) => harnessSurfaceRefusal(id, surface)).map(
+        (surface) => `${id} ${surface}`,
+      ),
+    ).sort();
+    expect(declared).toEqual([
+      "copilot-cli local",
+      "cursor api",
+      "cursor events",
+      "cursor guests",
+      "cursor local",
+      "cursor user-testing",
+      "opencode guests",
+      "opencode local",
+    ]);
+  });
+  it("names the surface each turn source runs on", () => {
+    expect(
+      ["scenario", "eval", "swarm", "event", "direct", undefined].map(harnessSurfaceOfSource),
+    ).toEqual(["user-testing", "evals", "swarms", "events", undefined, undefined]);
+  });
+  it("derives the local runtimes from the exceptions", () => {
+    expect(LOCAL_HARNESS_IDS).toEqual(
+      HARNESS_IDS.filter((id) => !harnessSurfaceRefusal(id, "local")),
+    );
   });
 });
