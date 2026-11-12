@@ -148,6 +148,8 @@ export type SuiteRunRecorder = {
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /** Each harness turn's MCP route, by promptIndex. Pass-through. */
     harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+    /** The skills every turn of the iteration ran with. Pass-through. */
+    skillsAtTurn?: Array<Record<string, unknown>>;
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**

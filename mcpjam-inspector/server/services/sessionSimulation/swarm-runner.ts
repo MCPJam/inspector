@@ -1568,7 +1568,7 @@ async function runJourneyFanOut(
               ...(bashUnavailableReason ? { bashUnavailableReason } : {}),
               // Authoritative pinned skills for env-based targets (undefined ⇒
               // legacy live-pool). The shared core routes them to prepareChatV2
-              // (`skillsSource`) or the harness pinned path — never a live query.
+              // (its `skills` plan) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
               // The target's Project Environment — the GRANT BOUNDARY for its
               // project secrets, and the same id `resolveGrantForSandbox`

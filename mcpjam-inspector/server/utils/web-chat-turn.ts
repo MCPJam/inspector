@@ -116,6 +116,7 @@ import {
   harnessModelRefusal,
 } from "./harness/harness-availability.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import { turnSkillsFromLegacySource } from "../services/environments/turn-skills.js";
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
@@ -553,8 +554,7 @@ export interface WebChatTurnPrepareInputs {
   /**
    * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
    * side. When set (even empty) they are the only skills the emulated engine
-   * advertises: `prepareChatV2` receives them as `skillsSource: "resolved"`,
-   * which is now the ONLY skill source `prepareChatV2` accepts.
+   * advertises: `prepareChatV2` receives them as the turn's `skills` plan.
    *
    * Ignored when `harness` is set: a harness turn delivers skills natively
    * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
@@ -930,26 +930,32 @@ export async function streamChatTurn(
       // BEFORE a navigation adds them; the refresher's presence is the fact.
       pageToolsMayGrow: Boolean(prepare.refreshTools),
 
-      // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
-      // EMULATED engine only. On a harness turn the adapter delivers them
-      // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
-      // a second, different delivery of the same set to the same model.
-      ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
-        ? {
-            skillsSource: {
-              kind: "resolved" as const,
-              capabilities: prepare.effectiveCapabilities,
-              ...(prepare.liveSkillSurface
-                ? { composeLiveServerSkills: true as const }
-                : {}),
-              // So a supporting-file read stops when the client disconnects
-              // instead of holding a worker for its full fetch timeout.
-              ...(runtime.abortSignal
-                ? { abortSignal: runtime.abortSignal }
-                : {}),
-            },
-          }
-        : {}),
+      // Skills for the EMULATED engine only. On a harness turn the adapter
+      // delivers them natively, so advertising emulated `loadSkill` (+ file
+      // tools) on top would describe a second, different delivery of the same
+      // set to the same model. Without a resolved set the turn is still live:
+      // it gets the connected servers' skills.
+      ...(prepare.harness
+        ? {}
+        : {
+            skills: turnSkillsFromLegacySource(
+              prepare.effectiveCapabilities !== undefined
+                ? {
+                    kind: "resolved",
+                    capabilities: prepare.effectiveCapabilities,
+                    ...(prepare.liveSkillSurface
+                      ? { composeLiveServerSkills: true }
+                      : {}),
+                  }
+                : undefined,
+              prepare.modelDefinition.contextLength,
+            ),
+            // So a supporting-file read stops when the client disconnects
+            // instead of holding a worker for its full fetch timeout.
+            ...(runtime.abortSignal
+              ? { abortSignal: runtime.abortSignal }
+              : {}),
+          }),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

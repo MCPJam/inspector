@@ -589,10 +589,10 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // The project pool arrives as a live capability set, and the source keeps
     // `composeLiveServerSkills` so a connected server's SEP-2640 skills compose
     // ON TOP of it rather than being displaced by it.
-    expect(prepareOpts.skillsSource.kind).toBe("resolved");
-    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
     expect(
-      prepareOpts.skillsSource.capabilities.standaloneSkills.map(
+      prepareOpts.skills.set.standaloneSkills.map(
         (skill: any) => skill.ref,
       ),
     ).toEqual(["pdf-tools"]);
@@ -610,7 +610,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.skills).toBeUndefined();
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
@@ -627,7 +627,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.skills).toBeUndefined();
     expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
@@ -655,9 +655,9 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     // and take the connected servers' skills down with it — skills that were
     // never fetched from Convex and never failed.
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.skillsSource.kind).toBe("resolved");
-    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
-    expect(prepareOpts.skillsSource.capabilities.standaloneSkills).toEqual([]);
+    expect(prepareOpts.skills.runtime).toEqual({ kind: "agent" });
+    expect(prepareOpts.skills.agent).toEqual({ kind: "live" });
+    expect(prepareOpts.skills.set.standaloneSkills).toEqual([]);
   });
 
   it("disposes the context when the turn throws, and reports failed", async () => {

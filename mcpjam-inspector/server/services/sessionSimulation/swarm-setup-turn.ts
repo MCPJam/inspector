@@ -220,7 +220,6 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
         requireToolApproval: false,
         respectToolVisibility: args.target.respectToolVisibility,
         excludeMcpToolNames: policy.excluded,
-        skillsSource: { kind: "none" },
         progressiveToolDiscovery: { enabled: false },
       }),
       deadline.signal,

@@ -1068,8 +1068,8 @@ export interface MCPJamHandlerOptions {
    * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
    * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
    * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skillsSource` instead (which THROWS on
-   * harness+pinned — the two paths are deliberately disjoint).
+   * pinned skills via prepareChatV2's `skills` plan instead (which it refuses
+   * on a harness turn — the two paths are deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
