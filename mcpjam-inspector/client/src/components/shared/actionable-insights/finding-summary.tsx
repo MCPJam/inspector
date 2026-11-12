@@ -108,7 +108,7 @@ export function findingTargetLabel(finding: ActionableFinding): string | null {
   }
   return finding.actionTarget === "investigate"
     ? null
-    : OWNERS[finding.actionTarget] ?? null;
+    : (OWNERS[finding.actionTarget] ?? null);
 }
 
 export function FindingDetailsContent({
