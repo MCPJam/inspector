@@ -124,6 +124,11 @@ export function ConnectionAccountsSection({
  * project's accounts: admins manage them and connect more, and everyone else
  * sees them read-only, since the backend refuses their writes.
  */
+// The backend's caps (`lib/connectionProfile.ts`): 8 live accounts per
+// server, and 16 rows counting the ones that need reconnecting.
+const MAX_LIVE_ACCOUNTS = 8;
+const MAX_ACCOUNT_ROWS = 16;
+
 export function ConnectionAccountsList({
   connections,
   shared,
@@ -149,6 +154,10 @@ export function ConnectionAccountsList({
   ) => Promise<void>;
 }) {
   const canManage = shared !== true || isAdmin;
+  // An account that needs reconnecting holds no token, so it doesn't count.
+  const atAccountLimit =
+    connections.filter((connection) => !connection.needsReauth).length >=
+      MAX_LIVE_ACCOUNTS || connections.length >= MAX_ACCOUNT_ROWS;
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
   const renameRef = useRef<HTMLInputElement>(null);
@@ -337,7 +346,7 @@ export function ConnectionAccountsList({
       {shared !== undefined && canManage && canAddAccount && (
         <button
           type="button"
-          disabled={busy || connections.length >= 8}
+          disabled={busy || atAccountLimit}
           onClick={() => void onAuthenticate({ kind: "add" })}
           className="flex w-full items-center gap-3 rounded-lg px-1 py-1.5 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
         >

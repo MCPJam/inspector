@@ -180,6 +180,37 @@ describe("ConnectionAccountsSection", () => {
     expect(auth).toHaveBeenCalledWith({ kind: "add" });
   });
 
+  it("counts only live accounts toward the limit of eight", () => {
+    const accounts = (count: number, needsReauth = false) =>
+      Array.from({ length: count }, (_, i) => ({
+        connectionId: `${needsReauth ? "stale" : "live"}-${i}`,
+        isDefault: i === 0 && !needsReauth,
+        label: `${needsReauth ? "Stale" : "Live"} ${i}`,
+        ...(needsReauth ? { needsReauth: true } : {}),
+      }));
+    const addButton = () =>
+      screen.getByRole("button", {
+        name: /Connect another account/,
+      }) as HTMLButtonElement;
+
+    mocks.hook.mockReturnValue({
+      connections: [...accounts(7), ...accounts(3, true)],
+      shared: false,
+      loaded: true,
+    });
+    const { unmount } = mount();
+    expect(addButton().disabled).toBe(false);
+    unmount();
+
+    mocks.hook.mockReturnValue({
+      connections: accounts(8),
+      shared: false,
+      loaded: true,
+    });
+    mount();
+    expect(addButton().disabled).toBe(true);
+  });
+
   it("hides add behind the rollout flag while still managing what exists", () => {
     mocks.flag.mockReturnValue(false);
     mount();
