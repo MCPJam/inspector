@@ -13,6 +13,7 @@ import {
   parseErrorMessage,
 } from "../routes/web/errors.js";
 import { HOSTED_MODE } from "../config.js";
+import { hostedCredentialDeliveryHeaders } from "../services/service-credential.js";
 import {
   refreshTokensAgainstPrivateAuthorizationServer,
   type PrivateAuthorizationServerRefreshMaterial,
@@ -230,6 +231,7 @@ export async function forceRefreshHostedOAuthAccessToken(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${bearerToken}`,
+        ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
       },
       body: JSON.stringify({
         projectId,

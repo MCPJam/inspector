@@ -144,6 +144,7 @@ import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidenti
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
+  hostedCredentialDeliveryHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
@@ -725,12 +726,19 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
   };
 }
 
+/**
+ * Headers for a call from this server to the backend. In hosted mode they
+ * also carry the service token that marks a credential request as managed
+ * delivery (see {@link hostedCredentialDeliveryHeaders}). No caller passes
+ * the backend's tokens on to its own client, so every call carries it.
+ */
 export function buildConvexAuthHeaders(
   caller: ManagerCallerContext,
   originalBearer: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
   };
   if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
