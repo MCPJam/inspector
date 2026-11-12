@@ -12,7 +12,7 @@ import {
   type RunRef,
 } from "./result-page-links";
 
-/** Previous and next on this column, keeping the open tab. */
+/** Previous and next within this test case on this model, keeping the open tab. */
 export function IterationPager({
   run,
   position,
@@ -25,7 +25,7 @@ export function IterationPager({
   return (
     <div
       role="group"
-      aria-label="Iterations on this model"
+      aria-label="Iterations of this test case"
       className="flex items-center gap-1"
     >
       <PagerArrow
@@ -34,7 +34,7 @@ export function IterationPager({
         neighbor={position.prev}
         label="Previous iteration"
         tooltip="Previous"
-        disabledReason="First iteration on this model"
+        disabledReason="First iteration of this test case"
       >
         <ChevronLeft />
       </PagerArrow>
@@ -47,7 +47,7 @@ export function IterationPager({
         neighbor={position.next}
         label="Next iteration"
         tooltip="Next"
-        disabledReason="Last iteration on this model"
+        disabledReason="Last iteration of this test case"
       >
         <ChevronRight />
       </PagerArrow>
@@ -80,7 +80,7 @@ function PagerArrow({
   return (
     <DisabledReasonTooltip
       reason={page ? undefined : disabledReason}
-      fallback={neighbor ? `${tooltip}: ${neighbor.caseTitle}` : undefined}
+      fallback={neighbor ? `${tooltip}: ${neighbor.label}` : undefined}
     >
       {page ? (
         <Button asChild variant="ghost" size="icon" className="size-8">

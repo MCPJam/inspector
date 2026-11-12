@@ -24,7 +24,6 @@ import {
 import { IterationPager } from "./iteration-pager";
 import { pagerPosition } from "./iteration-pager-model";
 import { resultLinkRewrite } from "./result-link-rewrite";
-import { readRunView } from "./run-view-memory";
 import {
   trackCaseResultViewed,
   trackIterationViewed,
@@ -181,7 +180,7 @@ export function RunResultPage({
     onEditCase && testCaseId ? () => onEditCase(testCaseId) : undefined;
   const pager =
     matrix && target && iteration
-      ? pagerPosition(matrix, target.key, iteration._id, readRunView(runId))
+      ? pagerPosition(matrix, target.key, caseKey, iteration._id)
       : null;
   return (
     <section

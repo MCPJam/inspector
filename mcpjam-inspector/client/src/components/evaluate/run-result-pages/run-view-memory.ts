@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type UIEvent } from "react";
 
 /**
- * What a run's grid shows, kept for the back button and the pager. In memory
+ * What a run's grid shows, kept for the back button. In memory
  * only: a reload starts clean, and filters stay out of the run's URL.
  */
 export type RunView = {

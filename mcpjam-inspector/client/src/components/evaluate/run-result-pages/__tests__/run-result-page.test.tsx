@@ -205,8 +205,16 @@ describe("RunResultPage", () => {
     expect(mocks.track).not.toHaveBeenCalled();
   });
 
-  it("pages through the column, keeping the tab", async () => {
-    renderPage({ caseKey: "refund", iterationId: "it1", tab: "trace" });
+  it("pages through this test case's iterations only, keeping the tab", async () => {
+    renderPage(
+      { caseKey: "refund", iterationId: "it1", tab: "trace" },
+      {
+        allIterations: [
+          ...iterations,
+          iteration("it4", "one", { iterationNumber: 2 }),
+        ],
+      },
+    );
     expect(screen.getByText("1 of 2")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Previous iteration" }),
@@ -214,20 +222,21 @@ describe("RunResultPage", () => {
     const next = screen.getByRole("link", { name: "Next iteration" });
     expect(next).toHaveAttribute(
       "href",
-      "/evaluate/suite/suite/runs/one/cases/title%3AShip%20label/iterations/it3?tab=trace",
+      "/evaluate/suite/suite/runs/one/cases/refund/iterations/it4?tab=trace",
     );
     await userEvent.click(next);
     expect(mocks.navigateApp).toHaveBeenCalledWith(
-      "/evaluate/suite/suite/runs/one/cases/title%3AShip%20label/iterations/it3?tab=trace",
+      "/evaluate/suite/suite/runs/one/cases/refund/iterations/it4?tab=trace",
       { state: { runResultVia: "pager" } },
     );
   });
 
-  it("follows the grid's remembered filters", () => {
-    rememberRunView("one", { search: "refund" });
+  it("does not page into another test case", () => {
     renderPage({ caseKey: "refund", iterationId: "it1" });
     expect(screen.getByText("1 of 1")).toBeVisible();
-    rememberRunView("one", { search: "" });
+    expect(
+      screen.getByRole("button", { name: "Next iteration" }),
+    ).toBeDisabled();
   });
 
   it("counts a view reached from the pager as such", () => {

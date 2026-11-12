@@ -26,6 +26,7 @@ function iteration(
   runId: string,
   title: string,
   result: string,
+  iterationNumber?: number,
 ): EvalIteration {
   return {
     _id: id,
@@ -33,6 +34,7 @@ function iteration(
     testCaseId: title.toLowerCase(),
     status: result === "pending" ? "running" : "completed",
     result,
+    iterationNumber,
     actualToolCalls: [],
     tokensUsed: 0,
     startedAt: 1,
@@ -50,97 +52,54 @@ function iteration(
 const one = run("one");
 const two = run("two", { runNumber: 2, namedHostId: "cursor" });
 
-function matrixOf(iterations: EvalIteration[]) {
-  return buildRunResultsMatrix<EvalSuiteRunListItem>({
-    run: one,
-    runs: [one, two],
-    iterations,
-    hostNamesById: new Map(),
-  });
-}
-
-const iterations = [
-  iteration("a1", "one", "Alpha", "passed"),
-  iteration("a2", "one", "Alpha", "failed"),
-  iteration("b1", "one", "Beta", "passed"),
-  iteration("c1", "one", "Charlie", "failed"),
-  iteration("c2", "one", "Charlie", "failed"),
-  iteration("x1", "two", "Alpha", "passed"),
-  iteration("x2", "two", "Beta", "failed"),
-];
-const matrix = matrixOf(iterations);
+const matrix = buildRunResultsMatrix<EvalSuiteRunListItem>({
+  run: one,
+  runs: [one, two],
+  iterations: [
+    iteration("a1", "one", "Alpha", "passed", 1),
+    iteration("a2", "one", "Alpha", "failed", 2),
+    iteration("a3", "one", "Alpha", "passed", 3),
+    iteration("b1", "one", "Beta", "failed", 1),
+    iteration("x1", "two", "Alpha", "passed", 1),
+  ],
+  hostNamesById: new Map(),
+});
 const column = (runId: string) =>
   matrix.targets.find((target) => target.run._id === runId)?.key ?? "";
-/** Follows `next` from `start`, which must be the walk's first entry. */
-const walk = (runId: string, start: string, filters = {}) => {
-  const seen: string[] = [];
-  for (let id: string | undefined = start; id;) {
-    seen.push(id);
-    id = pagerPosition(matrix, column(runId), id, filters)?.next?.iterationId;
-  }
-  return seen;
-};
 
 describe("pagerPosition", () => {
-  it("walks one column in grid row order, each cell failures first", () => {
-    // Rows: Charlie (two failures), then Alpha and Beta (one each) by title.
-    expect(walk("one", "c1")).toEqual(["c1", "c2", "a2", "a1", "b1"]);
-    expect(pagerPosition(matrix, column("one"), "a2")).toEqual({
-      index: 2,
-      total: 5,
-      prev: { caseKey: "charlie", caseTitle: "Charlie", iterationId: "c2" },
-      next: { caseKey: "alpha", caseTitle: "Alpha", iterationId: "a1" },
+  it("walks only the open test case's iterations, in the test case page's order", () => {
+    // Failures first, then the rest in their original order.
+    expect(pagerPosition(matrix, column("one"), "alpha", "a1")).toEqual({
+      index: 1,
+      total: 3,
+      prev: { caseKey: "alpha", iterationId: "a2", label: "Iteration #2" },
+      next: { caseKey: "alpha", iterationId: "a3", label: "Iteration #3" },
     });
   });
 
-  it("has no neighbor past either end", () => {
-    const first = pagerPosition(matrix, column("one"), "c1");
-    const last = pagerPosition(matrix, column("one"), "b1");
+  it("has no neighbor past either end, even when other test cases follow", () => {
+    const first = pagerPosition(matrix, column("one"), "alpha", "a2");
+    const last = pagerPosition(matrix, column("one"), "alpha", "a3");
     expect(first?.prev).toBeUndefined();
     expect(last?.next).toBeUndefined();
+    expect(pagerPosition(matrix, column("one"), "beta", "b1")).toEqual({
+      index: 0,
+      total: 1,
+      prev: undefined,
+      next: undefined,
+    });
   });
 
-  it("walks a sibling run's column on its own", () => {
-    expect(walk("two", "x1")).toEqual(["x1", "x2"]);
-  });
-
-  it("applies search to rows and status to this column's own cell", () => {
-    const failed = { status: "failed" };
-    // Beta failed on the sibling column only, so it is not walked here.
-    expect(walk("one", "c1", failed)).toEqual(["c1", "c2", "a2", "a1"]);
-    expect(
-      pagerPosition(matrix, column("one"), "c2", {
-        ...failed,
-        search: " CHAR ",
-      }),
-    ).toMatchObject({ index: 1, total: 2, next: undefined });
-    expect(pagerPosition(matrix, column("two"), "x2", failed)).toMatchObject({
+  it("stays on the iteration's own client and model", () => {
+    expect(pagerPosition(matrix, column("two"), "alpha", "x1")).toMatchObject({
       index: 0,
       total: 1,
     });
   });
 
-  it("walks everything when the open iteration is outside the filters", () => {
-    expect(
-      pagerPosition(matrix, column("one"), "b1", { status: "failed" }),
-    ).toMatchObject({ index: 4, total: 5 });
-  });
-
-  it("follows the new order when a live result reorders the rows", () => {
-    const live = matrixOf([
-      ...iterations.filter((item) => item._id !== "b1"),
-      iteration("b1", "one", "Beta", "failed"),
-      iteration("b2", "one", "Beta", "failed"),
-    ]);
-    const key = live.targets[0]?.key ?? "";
-    expect(pagerPosition(live, key, "b1")).toMatchObject({
-      index: 0,
-      next: { iterationId: "b2" },
-    });
-  });
-
-  it("returns null for an unknown iteration or column", () => {
-    expect(pagerPosition(matrix, column("one"), "nope")).toBeNull();
-    expect(pagerPosition(matrix, "nope", "a1")).toBeNull();
+  it("returns null for an iteration outside the test case, or an unknown column", () => {
+    expect(pagerPosition(matrix, column("one"), "beta", "a1")).toBeNull();
+    expect(pagerPosition(matrix, "nope", "alpha", "a1")).toBeNull();
   });
 });
