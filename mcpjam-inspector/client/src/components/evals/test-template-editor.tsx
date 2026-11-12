@@ -5010,7 +5010,7 @@ export function TestTemplateEditor({
                               <>
                                 <Play className="size-3.5 fill-current" />
                                 {useWorkspace
-                                  ? "Setup Run"
+                                  ? "Run"
                                   : selectedModelValues.length > 1
                                     ? "Run compare"
                                     : "Quick Run"}
@@ -5058,7 +5058,7 @@ export function TestTemplateEditor({
                           <>
                             <Play className="size-3.5 fill-current" />
                             {useWorkspace
-                              ? "Setup Run"
+                              ? "Run"
                               : selectedModelValues.length > 1
                                 ? "Run compare"
                                 : "Quick Run"}
