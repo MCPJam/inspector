@@ -225,7 +225,13 @@ describe("buildFrozenScreenshotOverrides", () => {
     it("shows the recorded picture when the run clicked inside the App", () => {
       const out = buildFrozenScreenshotOverrides(
         savedCopy(),
-        [obs({ toolCallId: "tc1", ts: 1, screenshotUrl: "https://s/page.png" })],
+        [
+          obs({
+            toolCallId: "tc1",
+            ts: 1,
+            screenshotUrl: "https://s/page.png",
+          }),
+        ],
         [
           interaction({
             toolCallId: "tc1",
@@ -278,7 +284,9 @@ describe("buildFrozenScreenshotOverrides", () => {
 
     it("keeps the picture when the saved copy has no UI metadata to mount it", () => {
       const out = buildFrozenScreenshotOverrides(
-        { tc1: { cachedWidgetHtmlUrl: "https://s/app.html", toolMetadata: {} } },
+        {
+          tc1: { cachedWidgetHtmlUrl: "https://s/app.html", toolMetadata: {} },
+        },
         [obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" })],
       );
       expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/page.png");
@@ -298,7 +306,10 @@ describe("buildFrozenScreenshotOverrides", () => {
       ["a failed click", { action: "left_click" as const, ok: false }],
       [
         "a skipped click",
-        { action: "left_click" as const, note: "step_budget_exceeded" as const },
+        {
+          action: "left_click" as const,
+          note: "step_budget_exceeded" as const,
+        },
       ],
     ])("keeps the live App when the only step is %s", (_label, step) => {
       const base = savedCopy();
@@ -320,14 +331,23 @@ describe("buildFrozenScreenshotOverrides", () => {
     });
 
     it.each([
-      ["called a tool", { widgetToolCalls: [{ name: "load_squad", ok: true }] }],
+      [
+        "called a tool",
+        { widgetToolCalls: [{ name: "load_squad", ok: true }] },
+      ],
       ["sent a message", { followUps: ["Show me more"] }],
     ])(
       "shows the picture when the App %s during a wait step",
       (_label, extra) => {
         const out = buildFrozenScreenshotOverrides(
           savedCopy(),
-          [obs({ toolCallId: "tc1", ts: 1, screenshotUrl: "https://s/page.png" })],
+          [
+            obs({
+              toolCallId: "tc1",
+              ts: 1,
+              screenshotUrl: "https://s/page.png",
+            }),
+          ],
           [
             interaction({
               toolCallId: "tc1",
@@ -349,8 +369,26 @@ describe("buildFrozenScreenshotOverrides", () => {
         [obs({ toolCallId: "tc1", screenshotUrl: null })],
         [interaction({ toolCallId: "tc1", screenshotUrl: null })],
       );
-      expect(out).toBe(base);
       expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+      expect(out.tc1?.cachedWidgetHtmlUrl).toBe(base.tc1?.cachedWidgetHtmlUrl);
+      expect(out.tc1?.readOnly).toBe(true);
+    });
+
+    it("makes a saved App with only recorded errors read-only", () => {
+      const out = buildFrozenScreenshotOverrides(savedCopy(), [
+        obs({
+          toolCallId: "tc1",
+          screenshotUrl: null,
+          consoleErrors: ["boom"],
+        }),
+      ]);
+      expect(out.tc1?.readOnly).toBe(true);
+      expect(out.tc1?.recordedWidgetErrors?.consoleErrors).toEqual(["boom"]);
+    });
+
+    it("leaves saved Apps alone when there is no run evidence", () => {
+      const base = savedCopy();
+      expect(buildFrozenScreenshotOverrides(base, [], [])).toBe(base);
     });
   });
 });

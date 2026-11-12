@@ -11,15 +11,9 @@ import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
  * (also what scripted asserts map to), `mouse_move` and `wait` only look, so
  * the saved copy still matches what the run saw.
  */
-const APP_STATE_CHANGING_ACTIONS: ReadonlySet<EvalTraceBrowserAction> =
-  new Set([
-    "left_click",
-    "double_click",
-    "right_click",
-    "type",
-    "key",
-    "scroll",
-  ]);
+const APP_STATE_CHANGING_ACTIONS: ReadonlySet<EvalTraceBrowserAction> = new Set(
+  ["left_click", "double_click", "right_click", "type", "key", "scroll"],
+);
 
 /** A step that actually acted on the App: a state-changing action that did
  *  not fail and was not skipped (a `note` marks a step that never ran). */
@@ -158,7 +152,6 @@ export function buildFrozenScreenshotOverrides(
     set(toolCallId, {
       ...base[toolCallId],
       fallbackScreenshotUrl: url,
-      readOnly: true,
       ...recordedErrorsFor(toolCallId),
     });
   }
@@ -173,6 +166,14 @@ export function buildFrozenScreenshotOverrides(
     const errors = recordedErrorsFor(toolCallId);
     if (errors.recordedWidgetErrors) {
       set(toolCallId, { ...base[toolCallId], ...errors });
+    }
+  }
+  // Viewing a finished run: every saved App copy is a replay, so it gets no
+  // tool or message handlers, picture or not.
+  if (observations.length || interactionSteps.length) {
+    for (const [toolCallId, override] of Object.entries(merged ?? base)) {
+      if (override.cachedWidgetHtmlUrl && !override.readOnly)
+        set(toolCallId, { ...override, readOnly: true });
     }
   }
   return merged ?? base;

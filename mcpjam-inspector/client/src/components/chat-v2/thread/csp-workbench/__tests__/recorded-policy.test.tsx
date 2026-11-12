@@ -61,6 +61,21 @@ describe("CspWorkbench recorded policy", () => {
     expect(screen.getByRole("tab", { name: "Findings" })).toBeInTheDocument();
   });
 
+  it("shows a run's recorded errors when the live App has no sandbox info", () => {
+    render(
+      <CspWorkbench
+        protocol="mcp-apps"
+        recordedErrors={{
+          consoleErrors: ["TypeError: broken"],
+          blockedRequests: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("1 recorded error")).toBeInTheDocument();
+    expect(screen.getByText("TypeError: broken")).toBeInTheDocument();
+  });
+
   it("shows missing old snapshot fields as unavailable instead of null JSON", () => {
     render(<CspWorkbench protocol="mcp-apps" recordedPolicy={{}} />);
 
