@@ -15,7 +15,8 @@
  *  - a text turn comes back through the gateway, with the capability, never
  *    the upstream key, in any supervised process's environment;
  *  - a host tool MCPJam registers runs here and its result reaches the model;
- *  - the conversation survives detach and resume;
+ *  - the conversation survives detach and resume, and after Stop the next
+ *    message continues it on a fresh bridge, as a chat turn resumes it;
  *  - no supervised process listens off loopback;
  *  - Stop leaves no process and no registry record, and nothing in the
  *    workspace.
@@ -32,6 +33,7 @@ import { HarnessAgent, type HarnessAgentSession } from "@ai-sdk/harness/agent";
 import { HARNESS_DESCRIPTORS } from "../../../../../shared/harness-descriptors.js";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
+import { diskResumeState } from "../resume-state.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import { createSupervisedLocalHarnessProvider, sessionStateDirFor } from "../supervised-provider.js";
 import { resolveLocalHarnessAvailability } from "../availability.js";
@@ -262,15 +264,26 @@ async function main() {
   const seen = Number(/USER_TURNS=(\d+)/.exec(turns.count.text)?.[1] ?? 0);
   if (seen < 2) failures.push(`after resume the model saw ${seen} scenario turns, expected at least 2`);
 
-  const treeBefore = [bridgePid, ...(await descendants(bridgePid))];
-  await session.stop().catch((error: unknown) => say(`stop() threw: ${String(error)}`));
-  await supervisor.stopSession(sessionId);
+  const stopAndCheck = async (current: HarnessAgentSession, label: string) => {
+    const tree = [bridgePid, ...(await descendants(bridgePid))];
+    await current.stop().catch((error: unknown) => say(`${label}: stop() threw: ${String(error)}`));
+    await supervisor.stopSession(sessionId);
+    const survivors: number[] = [];
+    for (const pid of tree) if (await running(pid)) survivors.push(pid);
+    if (survivors.length > 0) failures.push(`${label} left ${survivors.length} process(es) running: ${survivors}`);
+    const records = (await listProcessRecords()).length;
+    if (records !== 0) failures.push(`${records} process registry record(s) survived ${label}`);
+  };
+  await stopAndCheck(session, "Stop");
+
+  // The member's next message: the saved state with its bridge stripped, so a
+  // fresh bridge resumes the conversation from disk.
+  session = await agent.createSession({ sessionId, resumeFrom: diskResumeState(resumeState) });
+  turns.afterStop = await runTurn("after-stop", agent, session, "COUNT");
+  const continued = Number(/USER_TURNS=(\d+)/.exec(turns.afterStop.text)?.[1] ?? 0);
+  if (continued <= seen) failures.push(`after Stop the next message saw ${continued} scenario turns, expected more than ${seen}`);
+  await stopAndCheck(session, "the second Stop");
   owned = null;
-  const survivors: number[] = [];
-  for (const pid of treeBefore) if (await running(pid)) survivors.push(pid);
-  if (survivors.length > 0) failures.push(`Stop left ${survivors.length} process(es) running: ${survivors}`);
-  const records = (await listProcessRecords()).length;
-  if (records !== 0) failures.push(`${records} process registry record(s) survived Stop`);
   for (const [label, turn] of Object.entries(turns)) {
     if (turn.errors.length > 0) failures.push(`${label} reported stream errors: ${JSON.stringify(turn.errors.slice(0, 3))}`);
     if (turn.text.trim() === "") failures.push(`${label} produced no assistant text`);
