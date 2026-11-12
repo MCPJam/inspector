@@ -59,6 +59,13 @@ on:
         required: false
         type: boolean
         default: false
+      certified_only:
+        description: >-
+          Run only the targets each harness's manifest advertises: the evidence
+          a release needs. The rest still run on a push to main.
+        required: false
+        type: boolean
+        default: false
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
@@ -101,8 +108,9 @@ on:
 concurrency:
   # The versions AND the harness selection: a release calls this twice (its
   # desired packs, then its permitted ones), and the two must not cancel each
-  # other.
-  group: local-harness-conformance-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}-${{ inputs.candidate }}
+  # other. The calling workflow too: a release and the evidence run on the
+  # same commit ask for the same packs, and neither may cancel the other.
+  group: local-harness-conformance-${{ github.workflow }}-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}-${{ inputs.candidate }}
   cancel-in-progress: true
 
 permissions:
@@ -133,12 +141,21 @@ jobs:
       codex_matrix: ${{ steps.plan.outputs.codex_matrix }}
     steps:
       - uses: actions/checkout@v7
+      # A push runs no legs when it changed no conformance input, which the
+      # plan decides against main's previous tip; that tree is needed here.
+      - name: Fetch main's previous tip
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: git fetch --no-tags --depth=1 origin "$BEFORE" || echo "::warning::Could not fetch $BEFORE, so every leg runs."
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
           CLAUDE_INPUT: ${{ inputs.published_pack_version }}
           CODEX_INPUT: ${{ inputs.codex_published_pack_version }}
           HARNESSES: ${{ inputs.harnesses }}
+          CERTIFIED_ONLY: ${{ inputs.certified_only }}
         run: node mcpjam-inspector/scripts/plan-local-harness-conformance.mjs >> "$GITHUB_OUTPUT"
 
   unit:
@@ -171,10 +188,39 @@ jobs:
       # to do with the code under test.
       # The SDK first: the browser harness bundle in `pretest` pulls in
       # widget-react, which resolves `@mcpjam/sdk` subpaths from dist.
+      #
+      # Every platform leg runs on what this step builds. The SDK, evaluators
+      # and pretest bundles are plain JavaScript, the same on every OS, and
+      # rebuilding them took the Mac legs five to seven minutes each. The
+      # listing before and after is what makes the package exactly the files
+      # the build wrote, never a platform-specific file `npm ci` put there.
       - name: Build shared contracts and adapter fixtures
         run: |
+          set -euo pipefail
+          generated() {
+            git ls-files --others --ignored --exclude-standard -- ':(exclude,glob)**/node_modules/**'
+            git diff --name-only
+          }
+          generated | sort -u > "$RUNNER_TEMP/before-adapter-build.txt"
           npm run build:sdk -w @mcpjam/inspector
           npm run pretest -w @mcpjam/inspector
+          generated | sort -u > "$RUNNER_TEMP/after-adapter-build.txt"
+          comm -13 "$RUNNER_TEMP/before-adapter-build.txt" "$RUNNER_TEMP/after-adapter-build.txt" \
+            > "$RUNNER_TEMP/adapter-build-files.txt"
+          test -s "$RUNNER_TEMP/adapter-build-files.txt"
+          tar -czf "$RUNNER_TEMP/adapter-build.tgz" -T "$RUNNER_TEMP/adapter-build-files.txt"
+          echo "Packaged $(wc -l < "$RUNNER_TEMP/adapter-build-files.txt") built files for the platform legs."
+
+      # Named by the inputs: a release calls this workflow twice in one run,
+      # and artifact names are run-wide.
+      - name: Hand the adapter build to the platform legs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
+          path: ${{ runner.temp }}/adapter-build.tgz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Run the local harness suite
         working-directory: mcpjam-inspector
@@ -196,9 +242,25 @@ jobs:
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
+      # darwin-x64 runs on Apple Silicon with x64 Node (the plan script says
+      # why), and Node needs Rosetta 2 before setup-node can run it.
+      - name: Make sure Rosetta 2 is installed
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 /usr/bin/true
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
+          architecture: ${{ matrix.node_arch }}
+
+      # The scenarios pick their pack target from `process.arch`, so evidence
+      # for an x64 target has to come from an x64 process.
+      - name: Check the leg runs the target's architecture
+        if: matrix.node_arch != ''
+        run: test "$(node -p process.arch)" = "${{ matrix.node_arch }}"
+
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
@@ -252,10 +314,15 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
 
-      - name: Build Inspector adapter dependencies
-        run: |
-          npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+      # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
+      # Windows path for a remote host.
+      - name: Download the adapter build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
+          path: ${{ runner.temp }}/adapter-build
+      - name: Unpack the adapter build
+        run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
 
       - name: Full turn
         working-directory: mcpjam-inspector
@@ -501,10 +568,15 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
 
-      - name: Build Inspector adapter dependencies
-        run: |
-          npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+      # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
+      # Windows path for a remote host.
+      - name: Download the adapter build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
+          path: ${{ runner.temp }}/adapter-build
+      - name: Unpack the adapter build
+        run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
 
       - name: Full turn
         working-directory: mcpjam-inspector
@@ -623,9 +695,10 @@ jobs:
   # claims, so its own legs — against a mock OpenAI Responses upstream behind
   # the same loopback gateway. Only the model is fake.
   #
-  # D8: the targets Codex's manifest certifies (`nativeTargets`) block; the
-  # others run so their evidence stays visible without holding up a certified
-  # target's release. Windows is a certified target, so its leg blocks too:
+  # D8: the targets Codex's manifest certifies (`nativeTargets`, which the plan
+  # reads, so `certified` cannot drift from what the release gate requires)
+  # block; the others run so their evidence stays visible without holding up
+  # a certified target's release. Windows is a certified target, so its leg blocks too:
   # the pin needs evidence for every advertised target. Like the Claude Code
   # `windows` job it builds the Job Object launcher into the pack and reads
   # the process table through PowerShell.
@@ -649,9 +722,20 @@ jobs:
         id: toolchain
         run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
 
+      # As in `scenarios`: darwin-x64 is x64 Node under Rosetta 2.
+      - name: Make sure Rosetta 2 is installed
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 /usr/bin/true
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.toolchain.outputs.node }}
+          architecture: ${{ matrix.node_arch }}
+      - name: Check the leg runs the target's architecture
+        if: matrix.node_arch != ''
+        run: test "$(node -p process.arch)" = "${{ matrix.node_arch }}"
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
@@ -730,10 +814,15 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
             "$RUNNER_TEMP/conformance/runtime/codex"
 
-      - name: Build Inspector adapter dependencies
-        run: |
-          npm run build:sdk -w @mcpjam/inspector
-          npm run pretest -w @mcpjam/inspector
+      # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
+      # Windows path for a remote host.
+      - name: Download the adapter build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
+          path: ${{ runner.temp }}/adapter-build
+      - name: Unpack the adapter build
+        run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
 
       # Playground profile: a command pauses for approval and runs only once
       # approved; a host-executed MCP tool runs through MCPJam's relay; the
