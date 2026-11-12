@@ -67,7 +67,8 @@ export interface EnvironmentSkillSource {
   liveExtras?: LiveSkillExtras;
 }
 
-/** A client turn with no environment behind it. */
+/** A turn with no environment behind it: a client's, or an older swarm
+ *  target's, which pinned none of its project's skills. */
 export interface LiveSkillSource {
   kind: "live";
   liveExtras: LiveSkillExtras;

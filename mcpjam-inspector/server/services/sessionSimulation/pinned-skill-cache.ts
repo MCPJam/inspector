@@ -4,8 +4,11 @@
  * cached entry can be shared across targets AND runs within this process.
  *
  * Contract:
- *   - key `${projectId}:${contentHash}`; max {@link PINNED_SKILL_CACHE_MAX}
- *     entries (LRU eviction), {@link PINNED_SKILL_CACHE_TTL_MS} TTL.
+ *   - keyed by `(projectId, contentHash)`, and by `(serverId, skillUri)` too
+ *     for a captured MCP-server skill: two servers can serve one skill byte
+ *     for byte, and each target must get its own server's pin. Max
+ *     {@link PINNED_SKILL_CACHE_MAX} entries (LRU eviction),
+ *     {@link PINNED_SKILL_CACHE_TTL_MS} TTL.
  *   - in-flight fetches for the same key COALESCE onto one promise (two
  *     same-project targets pinning the same skill fetch once).
  *   - failures are NEVER cached: a rejected fetch clears the in-flight slot so
@@ -18,6 +21,7 @@ import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   PinnedSkillIntegrityError,
   SwarmAgentError,
+  type PinnedServerSkill,
 } from "../swarm-agent.js";
 
 export const PINNED_SKILL_CACHE_MAX = 256;
@@ -111,11 +115,18 @@ async function fetchWithRetry(
 export async function resolvePinnedSkillCached(args: {
   projectId: string;
   contentHash: string;
+  /** A captured MCP-server skill's server and URI; absent for the rest. */
+  serverSkill?: PinnedServerSkill;
   fetcher: () => Promise<PinnedSkillArtifact>;
   retryDelaysMs?: readonly number[];
   signal?: AbortSignal;
 }): Promise<PinnedSkillArtifact> {
-  const key = `${args.projectId}:${args.contentHash}`;
+  const key = JSON.stringify([
+    args.projectId,
+    args.contentHash,
+    args.serverSkill?.serverId ?? null,
+    args.serverSkill?.skillUri ?? null,
+  ]);
 
   const cached = cache.get(key);
   if (cached) {
