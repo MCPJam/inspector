@@ -1084,6 +1084,39 @@ describe("PartSwitch", () => {
       },
     );
 
+    it("gives a read-only eval replay no tool or message handlers", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              type: "tool-invocation",
+              toolName: "create_view",
+              toolCallId: "call-replay",
+              state: "output-available",
+              input: {},
+              output: { content: "saved" },
+            } as any
+          }
+          toolRenderOverrides={{
+            "call-replay": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              readOnly: true,
+            },
+          }}
+        />,
+      );
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered).toBeDefined();
+      expect(rendered.onCallTool).toBeUndefined();
+      expect(rendered.onSendFollowUp).toBeUndefined();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({ keepLiveWidgetDiagnostics: true }),
+      );
+    });
+
     // SEP-1865 `ui/notifications/request-teardown`: once the host has
     // honored the widget's teardown request, its toolCallId lands in
     // `tornDownWidgetIds` on the Thread. PartSwitch must

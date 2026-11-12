@@ -738,6 +738,7 @@ function LivePartSwitch({
             resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            keepLiveWidgetDiagnostics={!isFrozenWidget}
             recordedWidgetDiagnostics={
               // A live App from an eval run still shows the errors the run
               // recorded, not only those from this replay.
@@ -861,9 +862,13 @@ function LivePartSwitch({
               resolveHostSupportsWidget={(sid) =>
                 hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
               }
-              onSendFollowUp={interactive ? onSendFollowUp : undefined}
+              onSendFollowUp={
+                interactive && !renderOverride?.readOnly
+                  ? onSendFollowUp
+                  : undefined
+              }
               onCallTool={
-                interactive
+                interactive && !renderOverride?.readOnly
                   ? (toolName, params) => {
                       const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
                       const bound = widgetContext ?? proof;

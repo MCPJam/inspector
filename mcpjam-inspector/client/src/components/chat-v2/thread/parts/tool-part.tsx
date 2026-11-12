@@ -119,6 +119,7 @@ export function ToolPart({
   mcpToolResultImageRendering,
   rawOutput,
   recordedWidgetDiagnostics,
+  keepLiveWidgetDiagnostics = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -173,6 +174,9 @@ export function ToolPart({
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
   recordedWidgetDiagnostics?: RecordedWidgetPolicy;
+  /** A live App (not a picture): its own diagnostics win, and the recorded
+   *  errors are shown next to them. */
+  keepLiveWidgetDiagnostics?: boolean;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -355,16 +359,18 @@ export function ToolPart({
   // A completed eval can retain live store data from the streaming phase.
   // Once its widget becomes a frozen screenshot, the recorded snapshot is the
   // source of truth and stale live diagnostics must not leak into the card.
-  const widgetDebugInfo = recordedWidgetDiagnostics
-    ? undefined
-    : storedWidgetDebugInfo;
+  const widgetDebugInfo =
+    recordedWidgetDiagnostics && !keepLiveWidgetDiagnostics
+      ? undefined
+      : storedWidgetDebugInfo;
   const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
     [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasRecordedWidgetDebug =
+    !!recordedWidgetDiagnostics && !widgetDebugInfo;
   const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
 
@@ -1231,6 +1237,7 @@ export function ToolPart({
                       : undefined
                   }
                   protocol={widgetDebugInfo.protocol}
+                  recordedErrors={recordedWidgetDiagnostics}
                 />
               )}
               {!hasWidgetDebug &&

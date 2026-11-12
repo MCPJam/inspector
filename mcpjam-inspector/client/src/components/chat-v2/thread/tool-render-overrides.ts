@@ -24,6 +24,12 @@ export interface ToolRenderOverride {
    * with neither the App nor the picture.
    */
   fallbackScreenshotUrl?: string | null;
+  /**
+   * Viewing a finished eval run: the live App is a replay, so it gets no tool
+   * call or message handlers. Opening a run must not run tools against today's
+   * server or start a chat.
+   */
+  readOnly?: boolean;
   /** Eval-only browser evidence captured with a frozen widget screenshot. */
   recordedWidgetErrors?: {
     consoleErrors: string[];

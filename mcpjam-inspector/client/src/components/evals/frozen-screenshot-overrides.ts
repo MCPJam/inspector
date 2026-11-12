@@ -158,6 +158,7 @@ export function buildFrozenScreenshotOverrides(
     set(toolCallId, {
       ...base[toolCallId],
       fallbackScreenshotUrl: url,
+      readOnly: true,
       ...recordedErrorsFor(toolCallId),
     });
   }

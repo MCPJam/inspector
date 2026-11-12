@@ -54,6 +54,8 @@ export interface CspWorkbenchProps {
   };
   protocol?: "openai-apps" | "mcp-apps";
   recordedPolicy?: RecordedWidgetPolicy;
+  /** Errors an eval run recorded, shown next to a live App's own findings. */
+  recordedErrors?: Pick<RecordedWidgetPolicy, "consoleErrors" | "blockedRequests">;
 }
 
 function stringList(value: unknown): string[] | undefined {
@@ -79,15 +81,17 @@ export function CspWorkbench({
   sandboxInfo,
   protocol,
   recordedPolicy,
+  recordedErrors: liveRecordedErrors,
 }: CspWorkbenchProps) {
   const [activeTab, setActiveTab] = useState<TabKey>(() =>
     recordedPolicy ? "policy-diff" : "findings",
   );
   const [jumpToHost, setJumpToHost] = useState<string | null>(null);
   const isRecorded = !!recordedPolicy;
+  const recordedErrors = recordedPolicy ?? liveRecordedErrors;
   const recordedErrorCount =
-    (recordedPolicy?.consoleErrors?.length ?? 0) +
-    (recordedPolicy?.blockedRequests?.length ?? 0);
+    (recordedErrors?.consoleErrors?.length ?? 0) +
+    (recordedErrors?.blockedRequests?.length ?? 0);
 
   // The policy the proxy reported injecting, parsed once. `undefined` on every
   // path that never round-trips through the proxy — an offline replay from
@@ -181,13 +185,13 @@ export function CspWorkbench({
             {recordedErrorCount} recorded error
             {recordedErrorCount === 1 ? "" : "s"}
           </div>
-          {(recordedPolicy?.consoleErrors?.length ?? 0) > 0 && (
+          {(recordedErrors?.consoleErrors?.length ?? 0) > 0 && (
             <div className="mt-2">
               <div className="text-[10px] font-medium text-muted-foreground">
                 Console
               </div>
               <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
-                {recordedPolicy?.consoleErrors?.map((error, index) => (
+                {recordedErrors?.consoleErrors?.map((error, index) => (
                   <li key={`${error}-${index}`} className="break-all">
                     {error}
                   </li>
@@ -195,13 +199,13 @@ export function CspWorkbench({
               </ul>
             </div>
           )}
-          {(recordedPolicy?.blockedRequests?.length ?? 0) > 0 && (
+          {(recordedErrors?.blockedRequests?.length ?? 0) > 0 && (
             <div className="mt-2">
               <div className="text-[10px] font-medium text-muted-foreground">
                 Blocked requests
               </div>
               <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
-                {recordedPolicy?.blockedRequests?.map((request, index) => (
+                {recordedErrors?.blockedRequests?.map((request, index) => (
                   <li key={`${request}-${index}`} className="break-all">
                     {request}
                   </li>

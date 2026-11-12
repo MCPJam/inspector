@@ -316,6 +316,7 @@ describe("buildFrozenScreenshotOverrides", () => {
       );
       expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
       expect(out.tc1?.fallbackScreenshotUrl).toBe("https://s/step.png");
+      expect(out.tc1?.readOnly).toBe(true);
     });
 
     it.each([

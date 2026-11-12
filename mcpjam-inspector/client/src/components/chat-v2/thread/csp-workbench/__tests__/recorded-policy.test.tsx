@@ -38,6 +38,29 @@ describe("CspWorkbench recorded policy", () => {
     expect(screen.getByText("not recorded")).toBeInTheDocument();
   });
 
+  it("shows a run's recorded errors next to a live App's own findings", () => {
+    render(
+      <CspWorkbench
+        protocol="mcp-apps"
+        sandboxInfo={{
+          mode: "widget-declared",
+          connectDomains: [],
+          resourceDomains: [],
+          violations: [],
+        }}
+        recordedErrors={{
+          consoleErrors: ["TypeError: broken"],
+          blockedRequests: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("1 recorded error")).toBeInTheDocument();
+    expect(screen.getByText("TypeError: broken")).toBeInTheDocument();
+    expect(screen.queryByText("Recorded widget policy")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Findings" })).toBeInTheDocument();
+  });
+
   it("shows missing old snapshot fields as unavailable instead of null JSON", () => {
     render(<CspWorkbench protocol="mcp-apps" recordedPolicy={{}} />);
 
