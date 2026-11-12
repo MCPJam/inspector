@@ -701,9 +701,9 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   // with no saved account choice sign in as, which is not an unattended
   // caller's choice.
   upload_server_account_tokens:
-    "The access token is an argument, so it would transit model context and be written into chat transcripts before any approval could run. Available on REST and the SDK, where the caller controls where the token comes from. The reads (list_server_accounts, get_server_account) are in the catalog.",
+    "The access token is an argument, so it would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the token comes from. The reads (list_server_accounts, get_server_account) are in the catalog.",
   update_server_account:
-    "Making an account the default decides which account runs with no saved account choice sign in as, and a rename changes which account a name addresses. Available on REST and the SDK, for a person who means it.",
+    "Making an account the default decides which account runs with no saved account choice sign in as, and a rename changes which account a name addresses. Available on REST, the SDK and the CLI, for a person who means it.",
   // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
   // `create_secret` argument above: the vendor headers are arguments, so they
   // would transit model context and be written into chat transcripts before

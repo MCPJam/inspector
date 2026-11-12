@@ -751,7 +751,7 @@ describe("platform tool registration", () => {
       "update_server_account",
     ]) {
       expect(names.has(name), name).toBe(false);
-      expect(EXCLUDED_FROM_CATALOG[name], name).toMatch(/REST and the SDK/);
+      expect(EXCLUDED_FROM_CATALOG[name], name).toMatch(/REST, the SDK and the CLI/);
     }
 
     // A conformance start costs no MCPJam credits, but the server's saved
