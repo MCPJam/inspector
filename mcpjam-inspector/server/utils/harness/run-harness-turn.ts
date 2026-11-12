@@ -2971,10 +2971,9 @@ export async function runHarnessTurn(
       // this map in that shape today and the branch is defence, not policy:
       // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
       // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
-      // output, every member of which declares a boolean too. The two
-      // function-form families (`server-skill-tools`, `effective-skill-tools`)
-      // reach the emulated engine through `allTools`, which this path does not
-      // consume.
+      // output, every member of which declares a boolean too. The
+      // function-form skill tools (`effective-skill-tools`) reach the
+      // emulated engine through `allTools`, which this path does not consume.
       //
       // The adapter capability still gates the whole map — advertise =
       // enforce, and an adapter that cannot pause on a host tool must not be
@@ -3527,24 +3526,6 @@ export async function runHarnessTurn(
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
       sessionEstablished = true;
 
-      // Re-write SKILL.md WITH preserved extra frontmatter (allowed-tools /
-      // license / …) for skills that carry it. The adapter's `skills` param
-      // structurally can't deliver those fields. The `onSandboxSession`
-      // pre-seed wrote each (extras-less) SKILL.md and made the adapter's own
-      // per-prompt write a hash-unchanged no-op, so this rewrite survives the
-      // turn; it runs post-createSession only to keep it off the session-start
-      // critical path.
-      // Fail-soft (never fails the turn); zero session calls when no skill
-      // has extras; same gating as the onSandboxSession skill passes.
-      if (deliveredSkills.length > 0 && sandboxFileSession) {
-        await materializeSkillFrontmatter({
-          session: sandboxFileSession,
-          skills: deliveredSkills,
-          skillsBase: skillsBaseDir!,
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        }).catch(() => {});
-      }
-
       const stopHeartbeat = continuity ? startLeaseHeartbeat({
         owner: continuity.owner,
         leaseId: continuity.leaseId,
@@ -3555,6 +3536,26 @@ export async function runHarnessTurn(
         onLost: (error) => livenessAbort.abort(error),
       }) : undefined;
       try {
+        // Re-write SKILL.md WITH preserved extra frontmatter (license /
+        // compatibility / metadata) for skills that carry it. The adapter's
+        // `skills` param structurally can't deliver those fields. The
+        // `onSandboxSession` pre-seed wrote each (extras-less) SKILL.md and made
+        // the adapter's own per-prompt write a hash-unchanged no-op, so this
+        // rewrite survives the turn; it runs post-createSession only to keep it
+        // off the session-start critical path. Zero session calls when no skill
+        // has extras; same gating as the onSandboxSession skill passes.
+        // Fail-soft, except that it throws when a failed rewrite leaves a
+        // SKILL.md it can't read, or one listing `allowed-tools` that it can't
+        // remove. It runs inside this `try` so that throw fails the turn and
+        // the `finally` releases the box.
+        if (deliveredSkills.length > 0 && sandboxFileSession) {
+          await materializeSkillFrontmatter({
+            session: sandboxFileSession,
+            skills: deliveredSkills,
+            skillsBase: skillsBaseDir!,
+            ...(abortSignal ? { signal: abortSignal } : {}),
+          });
+        }
         // v6 messages → v7 agent input: a documented loose cast at the boundary.
         // `session` is REQUIRED — agent.stream() reads options.session in
         // _startTurn (session.promptTurn); omitting it throws "Cannot read
@@ -4730,7 +4731,7 @@ export async function runHarnessTurn(
           // adapter (re)writes on the fresh start) — expected, not a bug.
           //
           // See `shouldAdoptSandboxSkills` for why each condition is there —
-          // in particular why a PINNED turn must never adopt.
+          // in particular why a PINNED turn and the hosted app never adopt.
           if (
             shouldAdoptSandboxSkills({
               runSucceeded,
@@ -4742,8 +4743,6 @@ export async function runHarnessTurn(
               hasExecutionScope: Boolean(executionScope),
               hasCredentials: Boolean(authHeader && projectId),
               hasFileSession: Boolean(sandboxFileSession),
-              adoptionDisabled:
-                process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1",
             }) &&
             authHeader &&
             projectId &&

@@ -310,7 +310,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(persistArgs.turnTrace.environmentAtTurn).toBeDefined();
     // Delivery is unaffected — the skill still reaches the engine.
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource.capabilities.standaloneSkills).toHaveLength(1);
+    expect(args.skills.set.standaloneSkills).toHaveLength(1);
   });
 
   it("a HOST-backed scenario records nothing — there is no environment", async () => {
@@ -363,9 +363,9 @@ describe("web chat-v2 — environment-backed scenario", () => {
     // Captured, not live — the same single-channel rule as an environment
     // target: the payload already froze this turn's skills, so composing the
     // connected servers' live catalogs would add ones it excluded.
-    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-    expect(args.skillsSource.kind).toBe("resolved");
-    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
+    expect(args.skills.agent).toEqual({ kind: "environment" });
+    expect(args.skills.runtime).toEqual({ kind: "agent" });
+    expect(args.skills.set.standaloneSkills).toEqual([
       {
         ref: "release-notes",
         skillId: "sk_env",
@@ -379,7 +379,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     ]);
     // The plugin-sourced server keeps its classification even with no
     // attribution probe on this path.
-    expect(args.skillsSource.capabilities.pluginServerIds).toEqual([
+    expect(args.skills.set.pluginServerIds).toEqual([
       "env-server-2",
     ]);
 
@@ -411,8 +411,8 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource.composeLiveServerSkills).toBeUndefined();
-    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
+    expect(args.skills.agent).toEqual({ kind: "environment" });
+    expect(args.skills.set.standaloneSkills).toEqual([]);
     // Deploy-skew fallback: no `connectable` projection ⇒ raw ids connect and
     // the manager shows the id as the name.
     expect(args.selectedServers).toEqual(["env-server-1"]);
@@ -437,7 +437,8 @@ describe("web chat-v2 — environment-backed scenario", () => {
       "body-server-9",
     ]);
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    expect(args.skillsSource).toBeUndefined();
+    // No skills of its own, so the turn stays live on its servers' skills.
+    expect(args.skills).toMatchObject({ agent: { kind: "live" }, delivered: [] });
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
     expect(handlerArgs.runtimeSkillsOverride).toBeUndefined();
   });
@@ -525,7 +526,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     );
 
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     expect(capabilities.problems).toEqual([]);
     expect(
       capabilities.servers.find(
@@ -553,7 +554,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const capabilities =
-      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+      prepareChatV2Mock.mock.calls.at(-1)![0].skills.set;
     expect(
       capabilities.problems.map((problem: { code: string }) => problem.code)
     ).toEqual(["plugin_origin_unavailable"]);

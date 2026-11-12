@@ -760,8 +760,8 @@ describe("serverLabels on the agent turn", () => {
     // The bug this pins: the hosted turn called `prepareChatV2` without
     // `serverLabels`, so every SEP-2640 ref fell back to the server id and the
     // model (and the user) saw `p176vpy587jn4v51vd9bm5g3rx8d8yry/run-evals`
-    // instead of `mcpjam-staging-skills/run-evals` — in the `listSkills`
-    // catalog AND in the origin banner on loaded skill content.
+    // instead of `mcpjam-staging-skills/run-evals` — in the prompt's skill
+    // list AND in the origin banner on loaded skill content.
     const { selected } = narrowTarget(
       {
         serverIds: ["p176vpy587jn4v51vd9bm5g3rx8d8yry"],
@@ -801,8 +801,8 @@ describe("serverLabels on the agent turn", () => {
 describe("skills capability on the agent turn", () => {
   it("declares the extension in a form the SDK's own gate recognises", () => {
     // The bug this pins: a hosted turn that advertises nothing leaves the
-    // extension inactive, so `withServerSkills` merges no tools and the model
-    // is handed no `listSkills` / `loadSkill` at all — a server that serves
+    // extension inactive, so `prepareChatV2` lists none of the server's
+    // skills and the model is handed none of them — a server that serves
     // skills is then indistinguishable from one that does not.
     //
     // Asserted through `clientDeclaresSkillsExtension`, the same predicate the

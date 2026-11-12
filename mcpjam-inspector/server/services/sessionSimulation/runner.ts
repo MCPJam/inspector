@@ -91,6 +91,7 @@ import {
   buildLiveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
+import { turnSkillsFromLegacySource } from "../../services/environments/turn-skills.js";
 import {
   persistChatSessionToConvex,
   type PersistChatOutcome,
@@ -440,9 +441,9 @@ export interface SyntheticHostRuntime {
    * catalog as a resolved capability set, plus the connected servers' own
    * skills. An array — possibly EMPTY, meaning deliberately skill-less — ⇒
    * skills come EXCLUSIVELY from these pinned artifacts: the emulated engine
-   * gets them via prepareChatV2 `skillsSource`, and a harness turn gets them
-   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER through
-   * prepareChatV2's pinned branch, which throws on harness).
+   * gets them via prepareChatV2's `skills` plan, and a harness turn gets them
+   * via the pinned harness path (never `fetchRuntimeSkills`, and NEVER as
+   * agent tools, which prepareChatV2 refuses on a harness turn).
    */
   pinnedSkills?: PinnedSkillArtifact[];
   /**
@@ -1079,7 +1080,10 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
-      skillsSource,
+      skills: turnSkillsFromLegacySource(
+        skillsSource,
+        modelDefinition.contextLength,
+      ),
     });
 
     if (skillsFetchFailed) {
