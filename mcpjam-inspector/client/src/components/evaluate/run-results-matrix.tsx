@@ -50,6 +50,10 @@ import {
 import { CaseIterations } from "./run-result-pages/case-iterations";
 import { IterationReport } from "./run-result-pages/iteration-report";
 import { outcomeLabel, outcomeTextTone } from "./run-result-pages/outcome";
+import {
+  trackCaseResultViewed,
+  trackIterationViewed,
+} from "./run-result-pages/run-view-events";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
 const STATUS_LABEL: Record<StatusFilter, string> = {
@@ -512,6 +516,13 @@ export function RunResultsMatrix({
                               caseKey: row.key,
                               targetKey: target.key,
                             });
+                            trackCaseResultViewed(
+                              {
+                                suiteId: target.run.suiteId,
+                                runId: target.run._id,
+                              },
+                              "drawer",
+                            );
                           }}
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
                           className={cn(
@@ -633,7 +644,17 @@ export function RunResultsMatrix({
                 <CaseIterations
                   target={selectedTarget}
                   caseKey={selectedRow.key}
-                  onSelectIteration={setSelectedIterationId}
+                  onSelectIteration={(iterationId) => {
+                    setSelectedIterationId(iterationId);
+                    trackIterationViewed(
+                      {
+                        suiteId: selectedTarget.run.suiteId,
+                        runId: selectedTarget.run._id,
+                      },
+                      "drawer",
+                      "grid",
+                    );
+                  }}
                 />
                 {onEditCase && selectedRow.testCaseId && (
                   <div className="mt-4 flex justify-end">
