@@ -29,7 +29,7 @@ import {
  * Returning `undefined` for empty messages keeps the reducer free of
  * synthetic "unknown error" entries that would obscure healthy state.
  */
-function resolveNormalized(
+export function resolveNormalized(
   message: string | undefined,
   normalized: NormalizedError | undefined
 ): NormalizedError | undefined {
