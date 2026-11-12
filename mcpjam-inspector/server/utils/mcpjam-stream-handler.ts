@@ -649,11 +649,10 @@ export interface MCPJamEngineErrorEvent {
    */
   normalized?: NormalizedError;
   /**
-   * The turn's failure reporter's verdict on this failure
-   * (`RouteFailureReport.origin`, promotion included). The reporter pages only
-   * on `mcpjam`, so any other set value means it was recorded and deliberately
-   * not paged. Absent ⇒ not reported (an aborted turn, or an emitter that does
-   * not report): a consumer must treat that as unrecorded.
+   * The origin the turn's failure reporter based its capture decision on
+   * (`RouteFailureReport.origin`, promotion included). Absent ⇒ not reported
+   * (an aborted turn, or an emitter that does not report): a consumer must
+   * treat that as unrecorded.
    */
   reportedOrigin?: ErrorOrigin;
 }

@@ -504,6 +504,33 @@ export function failedLayerForEngineError(
   return event?.phase === "setup" ? "setup" : "model";
 }
 
+/**
+ * Whether a failed turn's log line must capture. `logger.error` with no error
+ * object always captures, untagged, so it is skipped only when the engine's
+ * reporter already recorded this failure:
+ * - it classified it (`reportedOrigin` set, not `ambiguous`): it paged if
+ *   ours and declined otherwise (INSPECTOR-HONO-70);
+ * - an empty step: the emitter decided ownership itself
+ *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+ *   `ambiguous` on purpose.
+ * Anything else — `ambiguous`, no verdict, no engine error — has no other
+ * Sentry record. Nor does a harness setup failure, whatever its verdict: the
+ * harness catch classifies it from the message alone, so a 401 or 429 from
+ * our own control plane can read as `user_config`.
+ */
+export function failedTurnNeedsCapture(
+  event:
+    | Pick<MCPJamEngineErrorEvent, "code" | "infra" | "reportedOrigin">
+    | undefined,
+): boolean {
+  if (event?.code === "provider_empty_response") return false;
+  const setup = event?.infra?.source;
+  if (setup === "sandbox_setup" || setup === "platform_setup") return true;
+  return (
+    event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
+  );
+}
+
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
   origin: "prompt" | "widget-follow-up" = "prompt",
@@ -1103,25 +1130,10 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures, untagged. Skip it
-    // only when the engine's reporter already recorded this failure:
-    // - it classified it (`reportedOrigin` set, not `ambiguous`): it paged if
-    //   ours and deliberately declined otherwise (INSPECTOR-HONO-70);
-    // - an empty step: the emitter decided ownership itself
-    //   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
-    //   `ambiguous` on purpose.
-    // Anything else — `ambiguous`, no verdict, no engine error — has no other
-    // Sentry record, so it still captures here.
-    const reporterClassified =
-      lastEngineError?.reportedOrigin !== undefined &&
-      lastEngineError.reportedOrigin !== "ambiguous";
-    if (
-      reporterClassified ||
-      lastEngineError?.code === "provider_empty_response"
-    ) {
-      logger.warn(logLine);
-    } else {
+    if (failedTurnNeedsCapture(lastEngineError)) {
       logger.error(logLine);
+    } else {
+      logger.warn(logLine);
     }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call

@@ -611,7 +611,11 @@ describe("a failed turn's log line captures only what the engine's reporter did 
     runAssistantTurnMock.mockReset();
   });
 
-  const failWith = (code: string, reportedOrigin?: string) =>
+  const failWith = (
+    code: string,
+    reportedOrigin?: string,
+    infra?: Record<string, unknown>,
+  ) =>
     runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
       opts.onEngineError?.({
         message: "Backend step returned no content (stream error or empty response)",
@@ -621,6 +625,7 @@ describe("a failed turn's log line captures only what the engine's reporter did 
         stepIndex: 0,
         phase: "stream",
         ...(reportedOrigin ? { reportedOrigin } : {}),
+        ...(infra ? { infra } : {}),
       });
       return {
         messages: [{ role: "user", content: "hello" }],
@@ -720,6 +725,32 @@ describe("a failed turn's log line captures only what the engine's reporter did 
     );
     error.mockRestore();
   });
+
+  it.each(["sandbox_setup", "platform_setup"])(
+    "keeps a harness %s failure on logger.error even when the reporter called it the user's",
+    async (source) => {
+      const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      // The harness catch classifies from the message alone, so a 429 from
+      // our own control plane reads as `user_config`.
+      failWith("harness_broker_unavailable", "user_config", {
+        source,
+        code: "harness_broker_unavailable",
+        httpStatus: 429,
+      });
+
+      await driveHostedEvalTurn(baseParams());
+
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("engineError=harness_broker_unavailable"),
+      );
+      expect(warn).not.toHaveBeenCalledWith(
+        expect.stringContaining("engineError="),
+      );
+      error.mockRestore();
+      warn.mockRestore();
+    },
+  );
 
   it("keeps a failure with no engine error on logger.error", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
