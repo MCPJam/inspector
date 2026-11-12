@@ -886,6 +886,21 @@ describe("buildOrgModelFromResolvedConfig", () => {
     });
   });
 
+  it("azure: reads the resource from the hostname only", () => {
+    const crafted =
+      "https://good.example.com/?u=http://localhost/x.openai.azure.com";
+    const config: OrgProviderResolvedConfig = {
+      providerKey: "azure",
+      apiKey: "az-key",
+      baseUrl: crafted,
+    };
+    buildOrgModelFromResolvedConfig(config, "gpt-4");
+    expect(createAzure).toHaveBeenCalledWith({
+      apiKey: "az-key",
+      baseURL: crafted,
+    });
+  });
+
   it("openrouter: includes HTTP-Referer and X-Title headers", () => {
     const config: OrgProviderResolvedConfig = {
       providerKey: "openrouter",

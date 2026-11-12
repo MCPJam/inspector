@@ -238,6 +238,25 @@ const tools = await manager.getTools();
 const agent = new HostRunner({ tools, ... });
 ```
 
+### Progressive tool discovery
+
+A runner built from a `host` follows the host's `progressiveToolDiscovery`
+setting:
+
+| Setting | What the model gets |
+|---|---|
+| `true` | `search_mcp_tools` and `load_mcp_tools` first; its first step is a search, and it loads the tools it needs |
+| unset | Every tool, for a host built in code. A saved client (`runWithClient`) or host template (`mcpjam test --host`) means Auto by it, as hosted runs do: the same as `true` once the tools reach 30 or about 10k tokens of definitions |
+| `false` | Every tool, every step |
+
+- The search and load calls appear in `toolsCalled()` and the trace, as in
+  hosted runs.
+- A call to a tool that isn't loaded never runs. The model gets an error that
+  lists the tools it can call, and the call is left out of `toolsCalled()`.
+- Hosted runs that know the model's context size also turn Auto on when tool
+  definitions pass 3% of it. The runner doesn't know context sizes.
+- A runner built with `model` instead of `host` sends every tool.
+
 ### model
 
 The LLM model identifier. Format: `provider/model-id`.

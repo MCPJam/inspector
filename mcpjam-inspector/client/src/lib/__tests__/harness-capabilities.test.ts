@@ -139,7 +139,7 @@ describe("harnessControlState — who chooses the MODEL", () => {
    * account picks the model, so a selection persists onto the host, shows in
    * the editor, and reaches nothing — a saved setting that lies about what ran.
    */
-  it("is enforced exactly for the harnesses whose models MCPJam brokers", () => {
+  it("is enforced for brokered and Cursor account model choices", () => {
     expect(harnessControlState("claude-code", "modelId")).toEqual({
       enforced: true,
     });
@@ -148,13 +148,7 @@ describe("harnessControlState — who chooses the MODEL", () => {
       enforced: true,
     });
 
-    const cursor = harnessControlState("cursor", "modelId");
-    expect(cursor.enforced).toBe(false);
-    // The note is what a user reads beside the disabled selector, so it has to
-    // name the account that actually decides — not read as an MCPJam limit.
-    expect(cursor.enforced === false && cursor.note).toMatch(
-      /Cursor account.*chooses the model/i,
-    );
+    expect(harnessControlState("cursor", "modelId")).toEqual({ enforced: true });
   });
 
   it("leaves the emulated host's selector alone", () => {

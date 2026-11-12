@@ -20,7 +20,7 @@ vi.mock("../../../utils/computers/control-plane-client.js", async (original) => 
   >()),
   provisionPlaygroundTerminalSandbox: m.provision,
   isComputersDataPlaneConfigured: () => true,
-  touchSandbox: vi.fn(async () => "touched"),
+  touchSandbox: vi.fn(async () => ({ outcome: "touched" })),
 }));
 vi.mock("../../../utils/computers/runtime-config.js", async (original) => ({
   ...(await original<

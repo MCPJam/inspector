@@ -1,7 +1,15 @@
 import { useOrgUsagePages } from "./org-usage-pages";
 import { useCallback, useState } from "react";
 import { useQuery, useAction } from "convex/react";
-import type { PolicyEligibility } from "@/shared/org-ai-key-policy";
+import {
+  orgRequiresOwnKeys,
+  type PolicyEligibility,
+} from "@/shared/org-ai-key-policy";
+import type {
+  GatewayApi,
+  GatewayLastTest,
+  GatewayModel,
+} from "@/shared/gateway-connection";
 
 export interface OrgModelProvider {
   /**
@@ -31,20 +39,36 @@ export interface OrgModelProvider {
    * closed when an older backend sent none.
    */
   policyEligibility?: PolicyEligibility;
+  /**
+   * A gateway connection's APIs, models and last Test. Read only for
+   * `custom:*` rows: built-in rows carry values filled in for compatibility.
+   * Absent from older backends.
+   */
+  apis?: GatewayApi[];
+  models?: GatewayModel[];
+  lastTest?: GatewayLastTest;
 }
+
+export type UpsertOrgProviderArgs = {
+  providerKey: string;
+  secret?: string;
+  baseUrl?: string;
+  protocol?: string;
+  modelIds?: string[];
+  displayName?: string;
+  selectedModels?: string[];
+  /** The gateway editor always sends where calls come from. */
+  runtimeLocation?: "cloud" | "local";
+  apis?: GatewayApi[];
+  models?: GatewayModel[];
+};
 
 export interface OrgModelConfigResult {
   providers: OrgModelProvider[] | undefined;
+  /** The organization requires its own keys for AI features. */
+  requireOrgKeys: boolean;
   isLoading: boolean;
-  upsertProvider: (args: {
-    providerKey: string;
-    secret?: string;
-    baseUrl?: string;
-    protocol?: string;
-    modelIds?: string[];
-    displayName?: string;
-    selectedModels?: string[];
-  }) => Promise<{ success: true }>;
+  upsertProvider: (args: UpsertOrgProviderArgs) => Promise<{ success: true }>;
   deleteProvider: (providerKey: string) => Promise<{ success: true }>;
   isSaving: boolean;
   error: string | null;
@@ -117,7 +141,7 @@ export function useOrgModelConfig(
   const config = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
     shouldQuery ? ({ organizationId } as any) : "skip"
-  ) as { providers: OrgModelProvider[] } | undefined;
+  ) as { providers: OrgModelProvider[]; aiKeyPolicy?: unknown } | undefined;
 
   const upsertProviderAction = useAction(
     "organizationModelProviders:upsertProvider" as any
@@ -130,15 +154,7 @@ export function useOrgModelConfig(
   const [error, setError] = useState<string | null>(null);
 
   const upsertProvider = useCallback(
-    async (args: {
-      providerKey: string;
-      secret?: string;
-      baseUrl?: string;
-      protocol?: string;
-      modelIds?: string[];
-      displayName?: string;
-      selectedModels?: string[];
-    }): Promise<{ success: true }> => {
+    async (args: UpsertOrgProviderArgs): Promise<{ success: true }> => {
       if (!organizationId) throw new Error("Organization is required");
       setIsSaving(true);
       setError(null);
@@ -185,6 +201,7 @@ export function useOrgModelConfig(
 
   return {
     providers: config?.providers,
+    requireOrgKeys: orgRequiresOwnKeys(config),
     isLoading: shouldQuery && config === undefined,
     upsertProvider,
     deleteProvider,

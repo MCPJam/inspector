@@ -47,7 +47,6 @@ vi.mock("@/hooks/use-conformance-run", async (importOriginal) => ({
     openAuthorizationWindow: vi.fn(),
     skipOAuth: vi.fn(),
     oauthUnscored: [],
-    oauthNotScored: false,
     isRunning: false,
   }),
 }));

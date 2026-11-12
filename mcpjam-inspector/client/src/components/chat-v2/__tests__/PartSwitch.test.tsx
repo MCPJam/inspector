@@ -908,6 +908,42 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("gives a reopened App the raw result from a toolOutput-only override", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const modelCopy = {
+        type: "json",
+        value: { content: [{ type: "text", text: "Showing card Visa" }] },
+      };
+      const rawResult = {
+        content: [{ type: "text", text: "Showing card Visa" }],
+        structuredContent: { card: "Visa" },
+        _meta: { ui: { resourceUri: "ui://repro/card.html" } },
+      };
+      const part = {
+        type: "dynamic-tool",
+        toolName: "show_card",
+        toolCallId: "call-card",
+        state: "output-available",
+        input: { name: "Visa" },
+        output: modelCopy,
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            show_card: { ui: { resourceUri: "ui://repro/card.html" } },
+          }}
+          toolRenderOverrides={{ "call-card": { toolOutput: rawResult } }}
+        />,
+      );
+
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered.toolOutput).toEqual(rawResult);
+      expect(rendered.rawOutput).toEqual(modelCopy);
+    });
+
     it("uses recorded diagnostics and hides live controls for frozen widgets", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const part = {

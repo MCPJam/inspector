@@ -115,6 +115,18 @@ import {
   listConformanceRunsOperation,
   startConformanceRunOperation,
 } from "./conformance-operations.js";
+import {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+} from "./server-revision-operations.js";
+import {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+} from "./server-account-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2371,6 +2383,43 @@ export type {
   StartConformanceRunResult,
 } from "./conformance-operations.js";
 export type { ResolvedServerInfo, ServerScopedInput };
+
+// ── Server revision operations ───────────────────────────────────────
+// Defined in `server-revision-operations.ts`; re-exported like the above.
+
+export {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+};
+export type {
+  DiffServerRevisionsInput,
+  DiffServerRevisionsResult,
+  GetServerRevisionInput,
+  GetServerRevisionResult,
+  ListServerRevisionsInput,
+  ListServerRevisionsResult,
+} from "./server-revision-operations.js";
+
+// ── Server account operations ────────────────────────────────────────
+// Defined in `server-account-operations.ts`; re-exported like the above.
+
+export {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+};
+export type {
+  DeleteServerAccountResult,
+  ListServerAccountsResult,
+  ServerAccountInput,
+  ServerAccountResult,
+  UpdateServerAccountInput,
+  UploadServerAccountTokensInput,
+  UploadServerAccountTokensResult,
+} from "./server-account-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19230,6 +19279,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  // Server accounts. Tokens are write-only, and the upload and the update are
+  // excluded from the MCP catalog and the agent registry: the upload carries a
+  // token in its INPUT, and the default decides which account runs with no
+  // saved account choice sign in as.
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
   listServerToolsOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,

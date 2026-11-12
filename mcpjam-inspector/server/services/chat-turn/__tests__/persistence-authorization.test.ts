@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
   getBearer: vi.fn(async () => "current-delegation"),
   prepare: vi.fn(),
   revalidate: vi.fn(),
+  resolveAgent: vi.fn(),
+}));
+vi.mock("../../agent-registration-caller.js", () => ({
+  resolveAgentRegistrationCaller: state.resolveAgent,
 }));
 vi.mock("../../../config.js", () => ({
   get HOSTED_MODE() {
@@ -39,10 +43,26 @@ vi.mock("../../../middleware/bearer-auth.js", () => ({
 }));
 import { prepareBackgroundRequestAuthorization, preparePersistenceAuthorization } from "../persistence-authorization.js";
 
+const AGENT_CLAIMS = {
+  registrationId: "agent_reg_1",
+  userId: "actor",
+  workosOrganizationId: "org_workos_1",
+};
+const agentResolves = (overrides: Record<string, unknown> = {}) =>
+  state.resolveAgent.mockResolvedValue({
+    ok: true,
+    registrationId: "agent_reg_1",
+    workosUserId: "actor",
+    mcpjamUserId: "user_doc",
+    mcpjamOrganizationId: "original-org",
+    ...overrides,
+  });
+
 async function prepare(
   method:
     | "authkit_jwt"
     | "workos_api_key"
+    | "workos_agent"
     | "unverified_passthrough" = "authkit_jwt",
   executionTarget: InternalExecutionTarget = { kind: "host", hostId: "host" },
   history = true,
@@ -56,6 +76,7 @@ async function prepare(
     c.set("mcpjamOrganizationId", "original-org");
     c.set("workosApiKeyValidation", { old: true });
     c.set("workosApiKeyBinding", { old: true });
+    if (method === "workos_agent") c.set("workosAgentClaims", AGENT_CLAIMS);
     authorization = await preparePersistenceAuthorization(c, {
       projectId: "project",
       executionTarget,
@@ -147,4 +168,23 @@ it("defers optional operation delegation until it is actually used", async () =>
   expect(state.prepare).not.toHaveBeenCalled();
   expect(await resolve!()).toBe("Bearer current-delegation");
   expect(state.prepare).toHaveBeenCalledOnce();
+});
+
+it("rechecks an agent from its original claims, not its short-lived token", async () => {
+  agentResolves();
+  const authorization = await prepare("workos_agent");
+  expect(await authorization!()).toBe("Bearer current-delegation");
+  expect(state.resolveAgent).toHaveBeenCalledWith(AGENT_CLAIMS);
+  expect(state.revalidate).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["no longer resolves", () => state.resolveAgent.mockResolvedValue({ ok: false, reason: "AGENT_USER_UNKNOWN" })],
+  ["resolves to another organization", () => agentResolves({ mcpjamOrganizationId: "other-org" })],
+  ["resolves to another user", () => agentResolves({ workosUserId: "other-actor" })],
+])("refuses an agent whose user %s before using delegation", async (_case, arrange) => {
+  const authorization = await prepare("workos_agent");
+  arrange();
+  await expect(authorization!()).rejects.toMatchObject({ status: 403 });
+  expect(state.getBearer).not.toHaveBeenCalled();
 });

@@ -1,4 +1,4 @@
-import type { ModelSelection } from "@mcpjam/sdk/browser";
+import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostSlot } from "@/hooks/use-playground-host-slots";
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
@@ -10,10 +10,8 @@ import { describeEnvironmentError } from "@/lib/environment-error";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { snapshotFromHostConfig } from "@/lib/host-snapshot";
 import type { PlaygroundClientResolution } from "@/lib/playground-client-columns";
-import { runtimeChosenModelRow } from "@/lib/runtime-chosen-model";
 import {
   effectiveHarnessId,
-  harnessAccountChoosesModel,
 } from "@/shared/harness-descriptors";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import type { ModelDefinition } from "@/shared/types";
@@ -42,7 +40,7 @@ export function resolveEnvironmentPaneColumn({
   hosts: readonly HostListItem[];
   models: readonly ModelDefinition[];
   orgConfig?: OrgVisibleConfig;
-  pickedSelection?: ModelSelection;
+  pickedSelection?: RequestedModelSelection;
 }): PlaygroundClientResolution {
   const { environmentId, preview, visible } = environment;
   const hostId = preview?.host.hostId ?? "";
@@ -81,18 +79,12 @@ export function resolveEnvironmentPaneColumn({
     };
   const config = host.config;
   const harnessId = effectiveHarnessId(config);
-  const accountChosen = harnessAccountChoosesModel(harnessId)
-    ? runtimeChosenModelRow(preview.host.modelId ?? "")
-    : undefined;
-  const modelRows = accountChosen
-    ? []
-    : harnessPickerModels([...models], harnessId ? { harnessId } : null, {
+  const modelRows = harnessPickerModels([...models], harnessId ? { harnessId } : null, {
         requireOrgKeys: orgRequiresOwnKeys(orgConfig),
       });
-  const picked = accountChosen ? undefined : pickedSelection;
+  const picked = pickedSelection;
   const inherited = preview.host.modelSelection ?? undefined;
   const model =
-    accountChosen ??
     (picked
       ? resolveCompareSelectionRow(picked, modelRows, orgConfig)
       : inherited
@@ -102,7 +94,7 @@ export function resolveEnvironmentPaneColumn({
             modelRows,
             orgConfig,
           ));
-  if (!model || (model.disabled && !accountChosen))
+  if (!model || model.disabled)
     return {
       ...identity,
       status: "unavailable",

@@ -19,8 +19,11 @@ const LOOP_CONTROLS: Record<
     // Claude Code pauses on all three surfaces: its own built-ins, its
     // host-executed tools, and — under `approvalPermissionMode: "allow-reads"`
     // — the MCP tools its in-sandbox client calls. The interposition point is
-    // the adapter bridge's `canUseTool`, which every tool call passes through
-    // before the CLI may run it; MCP tool names fall into its "edit" default,
+    // the adapter bridge's `canUseTool`, which the CLI calls only for a call
+    // its own permission check would ask about. It allows MCPJam's host tools
+    // (they run on the host, which gates them) and read-only kinds (Read,
+    // Glob, Grep, WebFetch, WebSearch, ReadMcpResource, Skill, …) without
+    // asking. An MCP tool name falls into its kind table's "edit" default,
     // which "allow-reads" gates. This entry previously read `enforced: false`
     // on the belief that MCP tools were unreachable, and a turn on an approval
     // host with any server selected was REFUSED outright. It isn't anymore.
@@ -55,16 +58,7 @@ const LOOP_CONTROLS: Record<
     progressiveToolDiscovery: { enforced: false, note: "GitHub Copilot CLI receives the selected tools at turn start." },
   },
   cursor: {
-    // The one harness whose MODEL is not MCPJam's to choose. It authenticates
-    // with the customer's own Cursor account and that account picks the model
-    // (Cursor Auto), so a selection here would persist onto the host, show in
-    // the editor, and reach nothing — a saved setting that silently lies about
-    // what ran. The host carries the `cursor/auto` sentinel instead, which is
-    // what the runtime actually resolves to.
-    modelId: {
-      enforced: false,
-      note: "The Cursor CLI runs on your Cursor account, which chooses the model itself.",
-    },
+    modelId: ENFORCED,
     // Permanent for the same reason: Cursor's CLI takes no temperature either.
     temperature: {
       enforced: false,
@@ -73,14 +67,8 @@ const LOOP_CONTROLS: Record<
     // The ACP bridge pauses on its own built-ins: every tool call goes through
     // `session/request_permission`, and under the adapter's "allow-reads" mode
     // anything outside read/search/think/fetch emits a `tool-approval-request`
-    // the turn waits on. Verified against a live cursor-agent.
-    //
-    // ENFORCED describes the NATIVE surface, which is what this control means
-    // here. Whether Cursor also pauses on MCP-server tools is not yet measured
-    // — the adapter's `supportsMcpToolApproval` is `false` pending that check,
-    // so a host that requires approval AND selects servers is refused outright
-    // rather than run with some calls unapproved. Refused, never silently
-    // un-enforced.
+    // the turn waits on. Verified against a live cursor-agent, MCP-server
+    // tools included: Cursor asks (kind `other`) before it sends the call.
     requireToolApproval: ENFORCED,
     // The real Cursor CLI owns its own tool discovery, same as the other two.
     progressiveToolDiscovery: {
@@ -106,41 +94,41 @@ const LOOP_CONTROLS: Record<
   },
 };
 
-/** Runtime facts shared by the adapters, admission gates and client controls. */
+/**
+ * Runtime facts shared by the adapters, admission gates and client controls.
+ * `protocol` is the wire API the harness speaks to its model; `orgKeys` says
+ * whether it may run on an organization connection that serves that API.
+ */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
     displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
-    modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "anthropic", profile: "anthropic-native" },
+    modelAccess: "broker", local: true, guest: true, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS["claude-code"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   },
   codex: {
     displayName: "Codex", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
-    modelAccess: "broker", local: true, guest: true,
-    orgUpstream: { provider: "openai", profile: "openai-native" },
+    modelAccess: "broker", local: true, guest: true, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
     displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false,
-    orgUpstream: { provider: "openai", profile: "openai-native" },
+    modelAccess: "broker", local: false, guest: false, orgKeys: true,
     protocol: "openai-responses", credential: null,
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", local: false, guest: false,
-    orgUpstream: null, protocol: null,
+    orgKeys: false, protocol: null,
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
   opencode: {
-    displayName: "OpenCode", runtimeVersion: "1.18.23", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false,
-    orgUpstream: null,
+    displayName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
+    modelAccess: "broker", local: false, guest: false, orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
@@ -155,15 +143,6 @@ export function effectiveHarnessId(
   config: { agentLoop?: string | null; harness?: string | null } | null | undefined,
 ): string | null {
   return config?.agentLoop ?? config?.harness ?? null;
-}
-
-/** A harness whose own account picks the model (Cursor CLI), so no catalog row is the model that runs. */
-export function harnessAccountChoosesModel(harnessId: string | null | undefined): boolean {
-  return (
-    !!harnessId &&
-    Object.hasOwn(HARNESS_DESCRIPTORS, harnessId) &&
-    HARNESS_DESCRIPTORS[harnessId as Harness].modelAccess === "external-account"
-  );
 }
 
 /** Missing/unknown selectors never gain MCPJam-owned extension authority. */

@@ -74,6 +74,19 @@ describe("connection error presentation", () => {
     );
   });
 
+  it.each([
+    { credentialRefusal: { kind: "hosted_only" } },
+    { failureFacts: { credentialRefusal: { kind: "hosted_only" } } },
+    { details: { exportDenied: true, policy: "hostedOnlyAccount" } },
+  ])("preserves hosted-only account refusals without suggesting an admin policy change: %j", (input) => {
+    const facts = readConnectionFailureFacts(input);
+    expect(facts.credentialRefusal).toEqual({ kind: "hosted_only" });
+    const result = presentConnectionError(input, context);
+    expect(result.explanation).toContain("Use it in hosted runs");
+    expect(result.explanation).not.toMatch(/admin|re-enter/i);
+    expect(result.recovery).not.toBe("sign-in");
+  });
+
   it("keeps credential policy denial separate from origin mismatch and generic 403", () => {
     const denied = readConnectionFailureFacts({
       details: { exportDenied: true },

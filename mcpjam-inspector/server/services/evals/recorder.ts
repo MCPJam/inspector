@@ -14,6 +14,7 @@ import type {
 } from "@/shared/eval-trace";
 import { isModelFree, type PromptTurn, type TestStep } from "@/shared/steps";
 import type { UsageTotals } from "./types";
+import type { EvalTraceModelSource } from "./persist-eval-trace.js";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
@@ -141,10 +142,14 @@ export type SuiteRunRecorder = {
     messages: ModelMessage[];
     /** Effective model used by the iteration; persisted on the eval session. */
     modelId?: string;
+    /** Whose spend that model was, on the eval session; absent is MCPJam's. */
+    modelSource?: EvalTraceModelSource;
     spans?: EvalTraceSpan[];
     requestPayloads?: LiveChatTraceRequestPayloadEntry[];
     /** Each harness turn's MCP route, by promptIndex. Pass-through. */
     harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+    /** The skills every turn of the iteration ran with. Pass-through. */
+    skillsAtTurn?: Array<Record<string, unknown>>;
     prompts?: PromptTraceSummary[];
     widgetSnapshots?: EvalTraceWidgetSnapshot[];
     /**
@@ -610,6 +615,7 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  accountsAtRun,
   launcher,
   ciMetadata,
 }: EvalRunProvenance & {
@@ -769,6 +775,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
   /**
+   * The accounts each server was authorized with, by id only. The backend
+   * keeps the ids that belong to the person starting the run and names them
+   * itself, so nothing sent here can put an email on the run.
+   */
+  accountsAtRun?: Array<{ serverId: string; connectionIds: string[] }>;
+  /**
    * The run's DECLARED launcher, read off `x-mcpjam-launcher` at the `/v1`
    * boundary. A LABEL, not an authorization input: `source` is still stamped
    * by the route and the verified attribution is still what the audit reads.
@@ -827,6 +839,7 @@ export const startSuiteRunWithRecorder = async ({
       ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
       ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      ...(accountsAtRun?.length ? { accountsAtRun } : {}),
       // Forwarded only when present. An older backend's `startTestSuiteRun`
       // validator does not know these args and rejects the whole call for an
       // unknown field, so sending `launcher: undefined` would break every
@@ -839,12 +852,18 @@ export const startSuiteRunWithRecorder = async ({
         ...(runtimeVenue === "local" ? localHarnessCapabilities(localHarnessIds) : []),
       ],
     };
-    response = await retrySuiteStartOnConflict(() =>
-      convexClient.mutation(
-        "testSuites:startTestSuiteRun" as any,
-        mutationArgs,
-      ),
-    );
+    const start = (args: Record<string, unknown>) =>
+      retrySuiteStartOnConflict(() =>
+        convexClient.mutation("testSuites:startTestSuiteRun" as any, args),
+      );
+    response = await start(mutationArgs).catch((error: unknown) => {
+      // A backend that predates run accounts rejects the argument outright.
+      // Every run carries it, so start without it there rather than fail
+      // every launch; that backend has nowhere to keep it anyway.
+      if (!/extra field `?accountsAtRun/.test(String(error))) throw error;
+      const { accountsAtRun: _unsupported, ...older } = mutationArgs;
+      return start(older);
+    });
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here

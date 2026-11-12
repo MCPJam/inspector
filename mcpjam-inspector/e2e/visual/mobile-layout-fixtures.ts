@@ -55,6 +55,23 @@ export async function prepareMobileApp(
             },
           ],
         },
+        // Startup reads the handshake details of every server listed above
+        // as connected, so the card and Overview survive a page reload.
+        [`/api/mcp/servers/init-info/${server.name}`]: {
+          success: true,
+          serverId: server.name,
+          initInfo: {
+            protocolVersion: "2025-11-25",
+            transport: "streamable-http",
+            serverVersion: { name: server.name, version: "1.0.0" },
+            serverCapabilities: {
+              tools: {},
+              resources: {},
+              prompts: {},
+              tasks: {},
+            },
+          },
+        },
         "/api/mcp/resources/list": {
           resources: [
             {

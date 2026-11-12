@@ -406,9 +406,14 @@ export const SandboxedIframe = forwardRef<
   const sandboxProxyUrl = preparedView.required
     ? preparedView.result?.proxyUrl
     : legacyProxyUrl;
+  // Null while no proxy is loaded: `about:blank` has the opaque origin
+  // "null", which postMessage rejects as a target. An admitted view drops its
+  // URL while it is prepared again for new HTML, and `proxyReady` from the old
+  // proxy is still true for that one commit.
   const sandboxProxyOrigin = useMemo(() => {
+    if (!sandboxProxyUrl) return null;
     try {
-      return new URL(sandboxProxyUrl ?? "about:blank").origin;
+      return new URL(sandboxProxyUrl).origin;
     } catch {
       return "*";
     }
@@ -418,7 +423,7 @@ export const SandboxedIframe = forwardRef<
     ref,
     () => ({
       postMessage: (data: unknown) => {
-        if (sandboxProxyUrl) outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
+        if (sandboxProxyOrigin) outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
       },
       getIframeElement: () => outerRef.current,
     }),
@@ -597,7 +602,7 @@ export const SandboxedIframe = forwardRef<
 
   // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
-    if (!proxyReady || !html) return;
+    if (!proxyReady || !html || !sandboxProxyOrigin) return;
     const resourceTargetKey = `${sandboxProxyOrigin}\0${resourceReadyKey}`;
     if (lastResourceReadyKeyRef.current === resourceTargetKey) return;
     lastResourceReadyKeyRef.current = resourceTargetKey;
@@ -664,7 +669,7 @@ export const SandboxedIframe = forwardRef<
 
   // Keep iframe color-scheme in sync without reloading the widget document.
   useEffect(() => {
-    if (!proxyReady || !colorScheme) return;
+    if (!proxyReady || !colorScheme || !sandboxProxyOrigin) return;
 
     outerRef.current?.contentWindow?.postMessage(
       {

@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
   ensure: vi.fn(),
   useLocalHarness: vi.fn(),
   localSkills: vi.fn(),
+  studyLibrary: vi.fn(),
 }));
 vi.mock("../resolve-hosted-chat-setup.js", () => ({
   resolveHostedChatSetup: m.hostedSetup,
@@ -44,11 +45,12 @@ vi.mock("../../../utils/harness/harness-availability.js", async (original) => ({
   checkHarnessRuntimeAvailable: () => ({ ok: true }),
   externalAccountHostModelRefusalReason: () => undefined,
 }));
-vi.mock("../../../utils/computers/cloud-skill-tools.js", async (original) => ({
+vi.mock("../../../utils/harness/runtime-skills.js", async (original) => ({
   ...(await original<
-    typeof import("../../../utils/computers/cloud-skill-tools.js")
+    typeof import("../../../utils/harness/runtime-skills.js")
   >()),
-  listCloudRuntimeSkills: async () => [],
+  fetchRuntimeSkills: m.studyLibrary,
+  fetchRuntimeSkillFiles: async () => ({ ok: true, files: [] }),
 }));
 vi.mock("../../../utils/skill-tools.js", async (original) => ({
   ...(await original<typeof import("../../../utils/skill-tools.js")>()),
@@ -74,7 +76,9 @@ function hostedSetup(
     environmentSpec: null,
     scenarioEnvironment: null,
     effectiveCapabilities: null,
-    usesLiveSkills: true,
+    clientTurn: mode === "interactive",
+    attribution: null,
+    pluginDisabled: [],
     authoritativeConnectionPolicy: mode === "recorded",
     pinsEnvironment: false,
     authoritativeCapabilities: mode === "recorded",
@@ -112,8 +116,18 @@ describe("managed setup local runtime policy", () => {
     m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
     m.useLocalHarness.mockResolvedValue(false);
     m.localSkills.mockResolvedValue([
-      { ref: "machine-skill", skillId: "local:machine-skill" },
+      {
+        ref: "local/machine-skill",
+        skillId: "local:machine-skill",
+        name: "machine-skill",
+        description: "A skill on this machine.",
+        content: "# Machine skill",
+        aggregateHash: "agg",
+        files: [],
+        directory: "/machine/machine-skill",
+      },
     ]);
+    m.studyLibrary.mockResolvedValue({ ok: true, skills: [] });
   });
 
   it("retains successful project authorization only when the backend proves project access", async () => {
@@ -184,13 +198,41 @@ describe("managed setup local runtime policy", () => {
     });
   });
 
-  it("gives an interactive turn this machine's skills", async () => {
-    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+  const clientEnvironment = {
+    environmentRef: { environmentId: "env_chat", name: "Chat", revision: 1 },
+    environmentOrigin: "adhoc",
+    host: { hostId: "host_1", runtimeConfig: {} },
+    servers: { effectiveServerIds: [] },
+    skills: [],
+  };
+
+  it("gives a client's turn this machine's skills", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive"),
+      environmentSpec: clientEnvironment,
+    });
     const { setup } = await resolveSetup({});
     expect(m.localSkills).toHaveBeenCalled();
-    expect(setup.value?.liveProjectCapabilities?.localSkills).toEqual([
-      expect.objectContaining({ ref: "machine-skill" }),
+    expect(setup.value?.turnSkills.skills.delivered).toEqual([
+      expect.objectContaining({ ref: "local/machine-skill" }),
     ]);
+    // Live: the client's servers are connected now.
+    expect(setup.value?.turnSkills.skills.agent).toEqual({ kind: "live" });
+    expect(m.studyLibrary).not.toHaveBeenCalled();
+  });
+
+  it("gives a named environment's turn neither this machine's skills nor its servers' own", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive"),
+      environmentSpec: { ...clientEnvironment, environmentOrigin: "named" },
+      clientTurn: false,
+    });
+    const { setup } = await resolveSetup({});
+    expect(m.localSkills).not.toHaveBeenCalled();
+    expect(setup.value?.turnSkills.skills.agent).toEqual({
+      kind: "environment",
+    });
+    expect(setup.value?.turnSkills.live).toBe(false);
   });
 
   it("never gives a recorded scenario turn this machine's skills", async () => {
@@ -201,9 +243,108 @@ describe("managed setup local runtime policy", () => {
     });
     expect(setup.value?.turnMode).toBe("recorded");
     expect(m.localSkills).not.toHaveBeenCalled();
-    expect(setup.value?.liveProjectCapabilities?.localSkills ?? []).toEqual(
-      [],
+    expect(setup.value?.turnSkills.skills.set.localSkills).toEqual([]);
+  });
+
+  it("reads an older study's shared Library through the study's scope", async () => {
+    const executionScope = {
+      kind: "swarm",
+      swarmId: "sw_1",
+      accessVersion: 1,
+      projectId: "project-1",
+      workspaceId: "ws_1",
+    };
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("recorded", { executionScope }),
     );
+    m.studyLibrary.mockResolvedValue({
+      ok: true,
+      skills: [
+        {
+          skillId: "sk_shared",
+          name: "onboarding",
+          description: "Project onboarding",
+          content: "# Onboarding",
+          aggregateHash: "agg",
+        },
+      ],
+    });
+    const { setup } = await resolveSetup({
+      scenarioId: "scenario-1",
+      accessVersion: 1,
+    });
+    expect(m.studyLibrary).toHaveBeenCalledWith(
+      "bearer",
+      "project-1",
+      executionScope,
+    );
+    expect(
+      setup.value?.turnSkills.skills.delivered.map((ref) => ref.ref),
+    ).toEqual(["onboarding"]);
+    expect(setup.value?.turnSkills.box?.skills.map((s) => s.name)).toEqual([
+      "onboarding",
+    ]);
+    // Its servers are connected now, on a harness too.
+    expect(setup.value?.turnSkills.live).toBe(true);
+  });
+});
+
+describe("a Cursor CLI client", () => {
+  const cursorBody = {
+    model: { id: "cursor/auto", provider: "cursor", name: "Cursor Auto" },
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.authorize.mockResolvedValue({
+      chatEnvironments: false,
+      chatPreparation: false,
+    });
+    m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
+    m.useLocalHarness.mockResolvedValue(false);
+    m.localSkills.mockResolvedValue([]);
+  });
+
+  it("is refused in User Testing, before the turn's tools or box", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("recorded", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    let thrown: unknown;
+    const app = new Hono();
+    app.post("/", async (c) => {
+      try {
+        await resolveManagedTurnSetup({
+          c,
+          rawBody: {
+            ...baseBody,
+            ...cursorBody,
+            scenarioId: "scenario-1",
+            accessVersion: 1,
+          },
+          bearerToken: "bearer",
+          localIngress: true,
+          rpcCollector: createHostedRpcLogCollector({}),
+        });
+      } catch (error) {
+        thrown = error;
+      }
+      return c.json({});
+    });
+    await app.request("/", { method: "POST" });
+    expect(thrown).toMatchObject({
+      status: 422,
+      message:
+        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Choose a different client for this study.",
+      details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
+    });
+  });
+
+  it("runs from the Playground", async () => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup("interactive", { harness: "cursor", modelId: "cursor/auto" }),
+    );
+    const { setup } = await resolveSetup(cursorBody);
+    expect(setup.value?.turnMode).toBe("interactive");
   });
 });
 

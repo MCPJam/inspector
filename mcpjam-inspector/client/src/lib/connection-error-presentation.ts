@@ -5,6 +5,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import { isRecord } from "./host-capabilities";
 import {
+  credentialRefusalMessage,
   readCredentialRefusal,
   type CredentialRefusal,
 } from "./credential-refusal";
@@ -51,6 +52,7 @@ export function readConnectionFailureFacts(
     const kind = record(value.credentialRefusal).kind;
     return kind === "origin_mismatch" ||
       kind === "export_denied" ||
+      kind === "hosted_only" ||
       value.secretOriginMismatch === true ||
       value.exportDenied === true
       ? readCredentialRefusal(value)
@@ -70,13 +72,13 @@ export function readConnectionFailureFacts(
     ...(refusal
       ? {
           credentialRefusal:
-            refusal.kind === "export_denied"
-              ? refusal
-              : {
+            refusal.kind === "origin_mismatch"
+              ? {
                   kind: "origin_mismatch" as const,
                   boundOrigin: clean(refusal.boundOrigin, 240) || null,
                   targetOrigin: clean(refusal.targetOrigin, 240) || null,
-                },
+                }
+              : refusal,
         }
       : {}),
   };
@@ -187,6 +189,8 @@ export function presentConnectionError(
   } else if (facts.credentialRefusal?.kind === "origin_mismatch") {
     explanation =
       "The server address changed after its credentials were saved. Open the server settings and re-enter the credentials for the new address.";
+  } else if (facts.credentialRefusal?.kind === "hosted_only") {
+    explanation = credentialRefusalMessage(facts.credentialRefusal, name);
   } else if (entry.slug === "internal/unknown") {
     explanation =
       !context.recoveries || context.recoveries.includes("settings")

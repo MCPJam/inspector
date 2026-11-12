@@ -30,7 +30,7 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
-const touchSandboxMock = vi.fn(async () => "touched" as const);
+const touchSandboxMock = vi.fn(async () => ({ outcome: "touched" as const }));
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();

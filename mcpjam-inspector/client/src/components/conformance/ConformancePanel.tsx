@@ -19,6 +19,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
+  notApplicableSubtitle,
   OverallScoreCard,
   SUITE_COPY,
   SuiteRow,
@@ -34,8 +35,9 @@ import {
 import {
   APPS_CATALOG,
   OAUTH_CATALOG,
-  TASKS_CATALOG,
   protocolCatalog,
+  shownTasksCatalog,
+  useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import {
   ConformanceConnectError,
@@ -130,6 +132,17 @@ function SuiteSection({
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
   const skipped = Boolean((state as { skipped?: boolean }).skipped);
+  // OAuth on a server that answered without a token.
+  const noLogin =
+    unavailable &&
+    (state as { result?: { outcome?: string } }).result?.outcome ===
+      "not-applicable";
+  // Ran, but none of its checks applied to this server.
+  const appliedToNothing =
+    state.status === "done" &&
+    state.verdict === "passed" &&
+    score?.applicable === 0 &&
+    score.notApplicable > 0;
   const autoOpen =
     waitingForAuth ||
     state.status === "error" ||
@@ -140,21 +153,13 @@ function SuiteSection({
     <SuiteRow
       title={title}
       subtitle={
-        unavailable && state.unavailableReason
-          ? state.unavailableReason
-          : description
+        noLogin || appliedToNothing
+          ? notApplicableSubtitle(title, noLogin)
+          : unavailable && state.unavailableReason
+            ? state.unavailableReason
+            : description
       }
-      badge={
-        <SuiteBadge
-          state={state}
-          notApplicable={
-            state.status === "done" &&
-            state.verdict === "passed" &&
-            score?.applicable === 0 &&
-            score.notApplicable > 0
-          }
-        />
-      }
+      badge={<SuiteBadge state={state} notApplicable={appliedToNothing} />}
       score={
         score && score.score !== null
           ? {
@@ -227,6 +232,7 @@ export function ConformanceContent({
   serverIconUrl,
   autoStart = false,
   onAutoStart,
+  onConnectingChange,
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
@@ -265,6 +271,8 @@ export function ConformanceContent({
   /** Run once on mount: the setup steps just chose this server. */
   autoStart?: boolean;
   onAutoStart?: () => void;
+  /** Whether this run is connecting its server before it starts. */
+  onConnectingChange?: (connecting: boolean) => void;
   initialVersionPin?: ProtocolVersionPin;
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
@@ -295,7 +303,6 @@ export function ConformanceContent({
     tasksScore,
     oauthScore,
     pooledScore,
-    oauthNotScored,
     oauthUnscored,
     isRunning,
     openAuthorizationWindow,
@@ -423,6 +430,17 @@ export function ConformanceContent({
   }, [autoStart]);
   const isConnecting =
     connect.status === "connecting" || connect.status === "ready";
+  // The page's server list says which card is starting while this connects.
+  // Cleared on unmount too, so a run dropped mid-connect leaves no card stuck.
+  const reportConnecting = useRef(onConnectingChange);
+  useEffect(() => {
+    reportConnecting.current = onConnectingChange;
+  });
+  useEffect(() => {
+    if (!isConnecting) return;
+    reportConnecting.current?.(true);
+    return () => reportConnecting.current?.(false);
+  }, [isConnecting]);
   const hasStarted =
     started ||
     isRunning ||
@@ -462,6 +480,7 @@ export function ConformanceContent({
   // rather than flashing them for users the flag excludes.
   const directoryReadinessEnabled =
     useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+  const tasksUpdateCheck = useTasksUpdateCheckEnabled();
   const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">
       <DirectoryReadinessSection publisher="claude" server={server} />
@@ -569,32 +588,28 @@ export function ConformanceContent({
                     ? "This run is waiting for you to sign in."
                     : ""}
                 </p>
-                {oauth.waitingForAuth ? (
+                {oauth.waitingForAuth && !oauth.popupBlocked ? (
                   // At the top of the run, and pinned there while it scrolls:
                   // the run cannot finish until someone signs in, and inside
                   // the OAuth suite at the end of the page this read as a run
-                  // that never stops loading.
+                  // that never stops loading. A blocked window gets the
+                  // OAuthPopupBlockedDialog instead, with the same choices.
                   <div
                     data-testid="conformance-oauth-prompt"
                     className="sticky top-0 z-10 mb-3 space-y-2 rounded-lg border border-border bg-popover px-4 py-3 text-sm shadow-sm"
                   >
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      {oauth.popupBlocked ? (
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                      ) : (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      )}
-                      {oauth.popupBlocked
-                        ? "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page."
-                        : "Waiting for browser authorization..."}
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Waiting for browser authorization...
                     </div>
-                    {/* Always offer a way forward: a blocked popup used to
-                        leave the spinner alone until the session expired. */}
+                    {/* Always offer a way forward: a sign-in window closed
+                        early used to leave the spinner alone until the
+                        session expired. */}
                     <div className="flex gap-2">
                       {oauth.authorizationUrl ? (
                         <Button
                           size="sm"
-                          variant={oauth.popupBlocked ? "default" : "outline"}
+                          variant="outline"
                           onClick={openAuthorizationWindow}
                         >
                           Open sign-in page
@@ -621,7 +636,6 @@ export function ConformanceContent({
                   isRunning={isRunning}
                   progress={runProgress}
                   serverIconUrl={serverIconUrl}
-                  oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
                   timedOut={timedOut}
                 />
@@ -704,7 +718,7 @@ export function ConformanceContent({
                     description={SUITE_COPY.tasks.description}
                     state={tasks}
                     score={tasksScore}
-                    catalog={TASKS_CATALOG}
+                    catalog={shownTasksCatalog(tasksUpdateCheck)}
                     hasResult={Boolean(tasks.result)}
                   >
                     {tasks.result ? (

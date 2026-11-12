@@ -512,8 +512,9 @@ export function ClientSelector({
                   checklistMode && !isSelected && limitReached;
                 const logo = resolveHostLogoByName(host.name, modalThemeMode);
 
-                // A real button, not the row's own click target: the row body
-                // switches clients, the checkbox builds the comparison. Same
+                // A real button, not the row's own click target. Outside a
+                // comparison the row body switches clients; while comparing it
+                // toggles like the checkbox, and "Only" switches. Same
                 // stopPropagation pattern the chip strip's remove control uses.
                 const compareToggle = (
                   <button
@@ -568,8 +569,14 @@ export function ClientSelector({
                     value={`${clientDisplayName(host)} ${host.name} ${
                       host.hostId
                     }`}
-                    onSelect={() => handleSelectLead(host.hostId)}
-                    className="cursor-pointer rounded-sm px-2 py-1"
+                    onSelect={() => {
+                      if (!checklistMode || !isComparing) {
+                        handleSelectLead(host.hostId);
+                      } else if (!isLimitedOut) {
+                        handleMultiSelect(host.hostId);
+                      }
+                    }}
+                    className="group/client-row cursor-pointer rounded-sm px-2 py-1"
                     data-testid={`client-row-${host.hostId}`}
                   >
                     <HostChipLogo
@@ -586,14 +593,30 @@ export function ClientSelector({
                       </span>
                     ) : null}
                     {checklistMode ? (
-                      <div className="ml-auto flex shrink-0 items-center">
+                      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                        {isComparing ? (
+                          <button
+                            type="button"
+                            aria-label={`Use only ${clientDisplayName(host)}`}
+                            data-testid={`client-row-only-${host.hostId}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleSelectLead(host.hostId);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") event.stopPropagation();
+                            }}
+                            className="rounded px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/client-row:opacity-100 group-data-[selected=true]/client-row:opacity-100"
+                          >
+                            Only
+                          </button>
+                        ) : null}
                         {isLimitedOut ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               {/* Holds the cursor the button can no longer
                                   show, and swallows the click the button no
-                                  longer takes — reaching the row would switch
-                                  the client the user aimed a checkbox at. */}
+                                  longer takes, so it never reaches the row. */}
                               <span
                                 className="flex cursor-not-allowed"
                                 onClick={(event) => event.stopPropagation()}

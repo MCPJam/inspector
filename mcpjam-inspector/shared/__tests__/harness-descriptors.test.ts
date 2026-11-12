@@ -4,11 +4,10 @@ import {
   HARNESS_DESCRIPTORS,
   LOCAL_HARNESS_IDS,
   effectiveHarnessId,
-  harnessAccountChoosesModel,
   usesMcpjamClient,
 } from "../harness-descriptors";
 import { HARNESS_MCP_DELIVERY } from "../harness-mcp-delivery";
-import { HARNESS_PINNED_VERSIONS, HARNESS_ORG_UPSTREAM } from "../harness-model-support";
+import { HARNESS_PINNED_VERSIONS } from "../harness-model-support";
 
 describe("harness descriptors", () => {
   it("covers every SDK id and derives the existing runtime maps", () => {
@@ -25,10 +24,10 @@ describe("harness descriptors", () => {
       codex: "0.163.0",
       cursor: "2026.11.05-86047df",
       "copilot-cli": "1.0.92",
-      opencode: "1.18.23",
+      opencode: "1.18.34",
     });
-    expect(HARNESS_ORG_UPSTREAM.cursor).toBeNull();
-    expect(HARNESS_ORG_UPSTREAM.opencode).toBeNull();
+    expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
+    expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
     expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
@@ -47,14 +46,8 @@ describe("harness descriptors", () => {
     expect(effectiveHarnessId({ agentLoop: "codex" })).toBe("codex");
     expect(effectiveHarnessId({ agentLoop: "codex", harness: "claude-code" })).toBe("codex");
   });
-  it("knows which harness's account picks the model", () => {
-    for (const id of HARNESS_IDS) {
-      expect(harnessAccountChoosesModel(id)).toBe(
-        HARNESS_DESCRIPTORS[id].modelAccess === "external-account",
-      );
-    }
-    expect(harnessAccountChoosesModel("cursor")).toBe(true);
-    expect(harnessAccountChoosesModel(null)).toBe(false);
-    expect(harnessAccountChoosesModel("constructor")).toBe(false);
+  it("enforces the model selected for a Cursor account", () => {
+    expect(HARNESS_DESCRIPTORS.cursor.controls.modelId.enforced).toBe(true);
+    expect(HARNESS_DESCRIPTORS.cursor.modelAccess).toBe("external-account");
   });
 });

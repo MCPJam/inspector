@@ -16,10 +16,8 @@
  * or off: nothing short of asking tells this process the policy just changed.
  */
 import { RetryError, wrapLanguageModel, type LanguageModel } from "ai";
-import {
-  assertOrgModelAllowed,
-  buildOrgModelFromResolvedConfig,
-} from "@mcpjam/sdk/model-factory";
+import { assertOrgModelAllowed } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { recognizedAiRefusalCode } from "../../shared/ai-execution-refusal.js";
 import {
   admitLocalOrgAttempt,
@@ -60,7 +58,7 @@ export function admitEachLocalOrgAttempt(
     }
     const provider = await admitLocalOrgAttempt(admission, { abortSignal });
     assertOrgModelAllowed(provider, modelId);
-    const prepared = buildOrgModelFromResolvedConfig(provider, modelId);
+    const prepared = buildGuardedOrgModel(provider, modelId);
     return attempts
       ? observeLocalProviderAttempts(prepared, modelId, attempts)
       : asAttemptModel(prepared);

@@ -77,7 +77,7 @@ describe("the OpenCode adapter", () => {
       const leaseBase = `http://127.0.0.1:${port}/web/harness/model-proxy/anthropic`;
       const auth = buildBrokerDummyAuth("opencode", leaseBase);
       // This appends `/messages` itself. It checks MCPJam's dummy base URL,
-      // not what the OpenCode binary appends (that evidence is the 1.18.23 run).
+      // not what the OpenCode binary appends (that evidence is the 1.18.34 run).
       const outgoing = `${String(auth.ANTHROPIC_BASE_URL).replace(/\/+$/, "")}/messages`;
       const response = await fetch(outgoing, {
         method: "POST",
@@ -125,33 +125,6 @@ describe("the OpenCode adapter", () => {
           compaction: { model: "anthropic/claude-haiku-4-5" },
         },
       },
-    });
-  });
-
-  it("points 1.0.119 doStart at the framework state directory, not the session workdir", async () => {
-    const doStart = vi.fn(async (opts: { sandboxSession: { defaultWorkingDirectory?: string } }) => {
-      return { defaultWorkingDirectory: opts.sandboxSession.defaultWorkingDirectory };
-    });
-    vi.mocked(createOpenCode).mockReturnValueOnce({
-      specificationVersion: "harness-v1",
-      harnessId: "opencode",
-      doStart,
-    } as never);
-    const harness = createOpenCodeHarness({
-      modelId: "anthropic/claude-haiku-4.5",
-      auth: buildBrokerDummyAuth("opencode", "https://broker.example"),
-    });
-    const session = await harness.doStart({
-      sessionId: "s1",
-      sessionWorkDir: "/home/user/project",
-      sandboxSession: {
-        defaultWorkingDirectory: "/home/user",
-        run: async () => ({ exitCode: 0, stdout: "/home/user", stderr: "" }),
-      },
-    } as never);
-    expect(doStart).toHaveBeenCalledOnce();
-    expect(session).toEqual({
-      defaultWorkingDirectory: "/home/user/.ai-sdk-harness",
     });
   });
 

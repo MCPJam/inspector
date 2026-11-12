@@ -11,7 +11,6 @@
   "server/routes/v1/environments.ts": 1,
   "server/routes/v1/evals.ts": 2,
   "server/routes/v1/goals.ts": 14,
-  "server/routes/v1/oauth.ts": 1,
   "server/routes/v1/scenarios.ts": 2,
   "server/routes/v1/shares.ts": 4,
   "server/routes/v1/studies.ts": 17,

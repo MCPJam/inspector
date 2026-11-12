@@ -690,57 +690,35 @@ export async function provisionPlaygroundSandbox(args: {
   return outOfTime();
 }
 
-/** One required credential, as the box's own scope answers about it. */
-export type BoxCredentialStatus =
-  | { status: "available" }
-  | { status: "unselected" }
-  | { status: "misbound"; hosts: string[] }
-  | { status: "absent" };
-
-export interface BoxCredentialAvailabilityAnswer {
-  /** The box's grant names no usable environment, so nothing is granted. */
-  environmentMissing: boolean;
-  credentials: Record<string, BoxCredentialStatus>;
-}
+/** Whether a harness's organization key can carry a turn right now. */
+export type HarnessCredentialReadiness = "ready" | "missing" | "invalid";
 
 /**
- * Which of these credentials does THIS box carry, and are they usable?
- *
- * Authorized by the box's own scope (a scenario participant may ask about their
- * own conversation's box; so may a Playground owner or a run's launcher), which
- * is the point: the member-only secret readers a Cursor pre-flight used before
- * fail for everyone who is not a project member. The answer is statuses and, for
- * a mis-bound row, the hosts it binds — never a row id, a secret id or a value.
- *
- * `404` means the backend predates the route; the caller falls back to the
- * member readers it used before.
+ * Can a turn on this harness (Cursor) start in this project? Asked on the
+ * member's own bearer before any box is reserved; the answer names no key,
+ * secret or account. `missing` flips the moment an admin removes the key.
  */
-export async function getBoxCredentialAvailability(args: {
+export async function getHarnessCredentialReadiness(args: {
   bearer: string;
-  sandboxRowId: string;
-  required: Readonly<
-    Record<string, { hosts: readonly string[]; header: string; template: string }>
-  >;
+  projectId: string;
+  harnessId: string;
+  modelId?: string;
   signal?: AbortSignal;
-}): Promise<ControlPlaneResult<BoxCredentialAvailabilityAnswer>> {
-  return postJson<BoxCredentialAvailabilityAnswer>(
-    "/web/harness/box-credentials",
+}): Promise<ControlPlaneResult<{ readiness: HarnessCredentialReadiness; modelAvailable?: boolean }>> {
+  const result = await postJson<{ readiness?: unknown; modelAvailable?: unknown }>(
+    "/web/harness/credential-readiness",
     bearerHeader(args.bearer),
-    {
-      sandboxRowId: args.sandboxRowId,
-      required: Object.fromEntries(
-        Object.entries(args.required).map(([name, binding]) => [
-          name,
-          {
-            hosts: [...binding.hosts],
-            header: binding.header,
-            template: binding.template,
-          },
-        ]),
-      ),
-    },
+    { projectId: args.projectId, harnessId: args.harnessId, ...(args.modelId ? { modelId: args.modelId } : {}) },
     args.signal,
   );
+  if (!result.ok) return result;
+  // A 2xx whose body is not JSON parses to null: an unexpected answer, not a crash.
+  const readiness = result.value?.readiness;
+  return readiness === "ready" ||
+    readiness === "missing" ||
+    readiness === "invalid"
+    ? { ok: true, value: { readiness, ...(typeof result.value.modelAvailable === "boolean" ? { modelAvailable: result.value.modelAvailable } : {}) } }
+    : { ok: false, status: 502, error: "unexpected readiness answer" };
 }
 
 /** The Playground conversation's disposable shell. */
@@ -749,6 +727,12 @@ export interface PlaygroundTerminalSandbox {
   sandboxRowId: string;
   /** Working directory the box starts in (backend-resolved). */
   workdir?: string;
+  /**
+   * How long the box may go unused before the backend pauses it. The backend
+   * owns the value and sends it in reserve and touch replies; the Inspector
+   * keeps no copy, so changing it needs no Inspector release.
+   */
+  idleMs?: number;
 }
 
 /**
@@ -823,7 +807,7 @@ export async function provisionPlaygroundTerminalSandbox(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     },
   );
-  if (outcome.kind === "settled") return outcome.result;
+  if (outcome.kind === "settled") return keepSaneIdleWindow(outcome.result);
   if (outcome.reason === "aborted") {
     return { ok: false, status: 499, error: "cancelled" };
   }
@@ -932,6 +916,8 @@ export interface ScenarioSandbox {
    * fused path or a backend that predates the protocol. Nothing to ack.
    */
   noticeAckPending?: boolean;
+  /** The backend's idle window for this box, as for a Playground box. */
+  idleMs?: number;
 }
 
 /**
@@ -945,8 +931,8 @@ export interface ScenarioSandbox {
  *
  * IDEMPOTENT at the backend: the next turn of the same conversation returns the
  * SAME sandbox rather than booting a second paid box. There is no matching
- * release: the box lives for the conversation and the backend's idle reaper
- * (20 min since last use, 4h ceiling) owns its teardown.
+ * release: the box lives for the conversation. The backend pauses it once it
+ * has been idle for `idleMs` and wakes it for the next turn.
  *
  * Failure statuses the caller must distinguish:
  *   409 — not env-backed / no image pinned / image unavailable. Terminal for
@@ -959,17 +945,19 @@ export async function provisionScenarioSandbox(args: {
   chatSessionId: string;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<ScenarioSandbox>> {
-  return postJson<ScenarioSandbox>(
-    "/scenarios/sandbox/provision",
-    bearerHeader(args.bearer),
-    {
-      scenarioId: args.scenarioId,
-      chatSessionId: args.chatSessionId,
-      // Opt into peek/ack delivery. Without this the backend consumes the
-      // notice here, before any SSE writer exists to carry it.
-      noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
-    },
-    args.signal,
+  return keepSaneIdleWindow(
+    await postJson<ScenarioSandbox>(
+      "/scenarios/sandbox/provision",
+      bearerHeader(args.bearer),
+      {
+        scenarioId: args.scenarioId,
+        chatSessionId: args.chatSessionId,
+        // Opt into peek/ack delivery. Without this the backend consumes the
+        // notice here, before any SSE writer exists to carry it.
+        noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
+      },
+      args.signal,
+    ),
   );
 }
 
@@ -1059,6 +1047,45 @@ export async function releaseSandbox(args: {
  */
 export type TouchSandboxOutcome = "touched" | "gone" | "failed";
 
+/** The idle windows a reply may carry; anything outside is malformed. */
+const MIN_IDLE_WINDOW_MS = 60_000;
+const MAX_IDLE_WINDOW_MS = 24 * 60 * 60_000;
+
+/**
+ * A backend idle window, if `value` is a sane one: whole milliseconds between
+ * a minute and a day. Read once here, because it becomes a heartbeat delay
+ * and the warm bridge's window, and a malformed one would turn every held box
+ * into a stream of touches.
+ */
+export function readIdleMs(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_IDLE_WINDOW_MS &&
+    value <= MAX_IDLE_WINDOW_MS
+    ? value
+    : undefined;
+}
+
+/** Drops a reply's idle window unless it is a sane one. */
+function keepSaneIdleWindow<T extends { idleMs?: number }>(
+  result: ControlPlaneResult<T>,
+): ControlPlaneResult<T> {
+  if (
+    result.ok &&
+    result.value &&
+    readIdleMs(result.value.idleMs) === undefined
+  ) {
+    delete result.value.idleMs;
+  }
+  return result;
+}
+
+/** A touch's outcome, with the box's idle window when the backend sent one. */
+export type TouchSandboxResult = {
+  outcome: TouchSandboxOutcome;
+  idleMs?: number;
+};
+
 /**
  * Restart an ephemeral box's idle clock (service-token auth). The reaper judges
  * eval, scenario and playground boxes idle by the row's `lastUsedAt` alone, so
@@ -1076,10 +1103,10 @@ export async function touchSandbox(args: {
    */
   ended?: boolean;
   signal?: AbortSignal;
-}): Promise<TouchSandboxOutcome> {
+}): Promise<TouchSandboxResult> {
   const headers = authHeaders();
-  if (!headers) return "failed";
-  const result = await postJson(
+  if (!headers) return { outcome: "failed" };
+  const result = await postJson<{ idleMs?: unknown }>(
     "/computers/sandbox/touch",
     headers,
     {
@@ -1090,9 +1117,16 @@ export async function touchSandbox(args: {
     args.signal,
     { quietNetworkErrors: true },
   );
-  if (result.ok) return "touched";
-  if (result.status === 404 || result.status === 409) return "gone";
-  return "failed";
+  if (result.ok) {
+    const idleMs = readIdleMs(result.value?.idleMs);
+    return {
+      outcome: "touched",
+      ...(idleMs !== undefined ? { idleMs } : {}),
+    };
+  }
+  if (result.status === 404 || result.status === 409)
+    return { outcome: "gone" };
+  return { outcome: "failed" };
 }
 
 /** @deprecated Renamed {@link releaseSandbox} — release is scope-agnostic now.
