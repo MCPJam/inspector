@@ -200,3 +200,81 @@ describe("OAuthFlowLogger request/response card split", () => {
     expect(copied).not.toContain("401 Unauthorized");
   });
 });
+
+describe("OAuthFlowLogger step range selection", () => {
+  const RANGE_STEPS = [
+    "request_without_token",
+    "received_401_unauthorized",
+    "request_resource_metadata",
+    "received_resource_metadata",
+  ] as const;
+
+  function renderRangeLogger() {
+    return renderLogger({
+      currentStep: "received_resource_metadata",
+      infoLogs: RANGE_STEPS.map((step, index) => ({
+        id: step,
+        step,
+        label: `Log for ${step}`,
+        data: {},
+        timestamp: index,
+        level: "info" as const,
+      })),
+    });
+  }
+
+  const stepCheckboxes = () =>
+    screen.getAllByRole("checkbox", { name: /^Select step / });
+
+  it("copies a shift-clicked range from the Guide view in flow order", async () => {
+    const user = userEvent.setup();
+    copyToClipboard.mockClear();
+    renderRangeLogger();
+
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+    expect(stepCheckboxes()).toHaveLength(4);
+    expect(stepCheckboxes()[0]).toHaveAccessibleName(/^Select step 1\. /);
+
+    // Click the fourth step, then shift-click back to the second.
+    await user.click(stepCheckboxes()[3]);
+    await user.keyboard("{Shift>}");
+    await user.click(stepCheckboxes()[1]);
+    await user.keyboard("{/Shift}");
+
+    expect(
+      stepCheckboxes().map((box) => box.getAttribute("aria-checked")),
+    ).toEqual(["false", "true", "true", "true"]);
+
+    await user.click(screen.getByRole("button", { name: "Copy 3 steps" }));
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    const positions = RANGE_STEPS.slice(1).map((step) =>
+      copied.indexOf(`Log for ${step}`),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(copied).not.toContain("Log for request_without_token");
+  });
+
+  it("leaves select mode when switching to the Raw view", async () => {
+    const user = userEvent.setup();
+    renderRangeLogger();
+
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(stepCheckboxes()[0]);
+    await user.click(screen.getByRole("tab", { name: "Raw" }));
+
+    expect(
+      screen.getByRole("button", { name: "Copy all" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Select step" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Guide" }));
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+  });
+});

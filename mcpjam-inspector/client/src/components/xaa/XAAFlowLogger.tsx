@@ -45,6 +45,11 @@ import {
   type HttpEntryDisplayItem,
 } from "@/lib/http-entry-views";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useStepRangeSelect } from "@/hooks/use-step-range-select";
+import {
+  StepRangeSelectToolbar,
+  StepSelectIndicator,
+} from "@/components/oauth/StepRangeSelectToolbar";
 import {
   getXAAErrorGuidance,
   latestErroredHttpEntry,
@@ -579,6 +584,14 @@ export function XAAFlowLogger({
     };
   }, []);
 
+  const flowSteps = useMemo(() => groups.map((group) => group.step), [groups]);
+  const rangeSelect = useStepRangeSelect({
+    orderedSteps: flowSteps,
+    available: hasProfile && groups.length > 0,
+    copySteps: (steps) =>
+      copyToClipboard(generateXAAFlowText(flowState, summary, { steps })),
+  });
+
   const toggleStep = (step: XAAFlowStep) => {
     setExpandedSteps((previous) => {
       const next = new Set(previous);
@@ -759,15 +772,17 @@ export function XAAFlowLogger({
                   </div>
                 )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleCopyFlow()}
-                className="h-8 shrink-0"
-                title={copyError ?? undefined}
-              >
-                {copyError ?? (copySuccess ? "Copied!" : "Copy")}
-              </Button>
+              <StepRangeSelectToolbar controls={rangeSelect}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleCopyFlow()}
+                  className="h-8 shrink-0"
+                  title={copyError ?? undefined}
+                >
+                  {copyError ?? (copySuccess ? "Copied!" : "Copy all")}
+                </Button>
+              </StepRangeSelectToolbar>
             </div>
           </>
         )}
@@ -915,7 +930,13 @@ export function XAAFlowLogger({
                         }
                       }}
                       className="w-full px-4 py-3 flex items-start gap-3 text-left hover:bg-muted/40 rounded-t-lg"
+                      {...rangeSelect.getStepHeaderProps(group.step, stepLabel)}
                     >
+                      {rangeSelect.isSelecting && (
+                        <StepSelectIndicator
+                          checked={rangeSelect.isSelected(group.step)}
+                        />
+                      )}
                       <div className="flex-shrink-0 mt-0.5">
                         {expandedSteps.has(group.step) ? (
                           <ChevronDown className="h-4 w-4 text-muted-foreground" />
