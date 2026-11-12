@@ -6420,9 +6420,11 @@ export function PlaygroundMain({
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <OwnedModelAppPortsProvider value={ownedModelWorkspace.value}>
-      {/* The client's display rules reach every App in the chat, owned or not. */}
+      {/* While this chat's plugin extensions run (a scope exists only then), the
+          client's display rules reach every App in it, owned or not. The
+          provider alone isn't enough: it is mounted with the flag off too. */}
       <ChatAppDisplayBehaviorProvider
-        value={hasExtensionProvider ? displayBehavior : undefined}
+        value={extensionScope ? displayBehavior : undefined}
       >
       <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
       <ChatDeepLinkProvider value={chatDeepLinks}>
