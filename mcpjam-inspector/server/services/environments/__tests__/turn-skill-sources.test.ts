@@ -122,6 +122,36 @@ describe("resolveTurnSkills for an environment", () => {
     expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
   });
 
+  it("gives a name's box folder to its first copy", () => {
+    const { spec, attribution } = evalEnvironment();
+    const server = spec.serverSkills![0]!;
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            {
+              ...docsEnvironment().skills![0]!,
+              skillId: "sk_own_search",
+              name: server.name,
+            },
+          ],
+        },
+        attribution,
+        frozen: true,
+      },
+      runtime: harness("claude-code"),
+    });
+    // A run writes a captured server skill under its plain name, which the
+    // environment's own skill before it already holds.
+    expect(skills.delivered.map((ref) => ref.skillId)).toContain(
+      "sk_own_search",
+    );
+    expect(reasons(skills)).toEqual([[server.ref, "name-collision"]]);
+  });
+
   it("leaves out a skill the backend left out of the environment, on every engine", () => {
     const spec = {
       ...docsEnvironment(),

@@ -247,7 +247,16 @@ export function boxVerdicts(
     return { reasonFor: () => "unsupported-harness", serverSkillsVia: "none" };
   }
   const prepared = getHarnessAdapter(harnessId).prepareSkills([...box.copies]);
-  const kept = new Set(prepared.delivered);
+  // A box has one folder per skill name, so only the first copy with a name
+  // gets one; a later copy with that name is a collision.
+  const names = new Set<string>();
+  const kept = new Set(
+    prepared.delivered.filter((copy) => {
+      if (names.has(copy.name)) return false;
+      names.add(copy.name);
+      return true;
+    }),
+  );
   const skipped = new Set(prepared.skipped.map((skill) => skill.name));
   return {
     reasonFor: (ref, index) => {

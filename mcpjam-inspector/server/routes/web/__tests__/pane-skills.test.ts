@@ -285,6 +285,10 @@ describe("per-pane Skills preview", () => {
           provenance: { projectSkillVersionNumber: 3, versionPinned: true },
         },
         { ...plugin, provenance: { projectSkillVersionNumber: 1 } },
+        {
+          ...skill("s9", "notes", ["environment"]),
+          provenance: { projectSkillVersionNumber: 4, versionPinned: false },
+        },
       ],
       serverSkills: [
         { ...spec.serverSkills[0], serverLabel: "Search", versionNumber: 2 },
@@ -292,20 +296,27 @@ describe("per-pane Skills preview", () => {
     });
     const response = await preview(named);
     expect(response.status).toBe(200);
-    expect((await response.json()).skills).toEqual([
+    const { skills } = await response.json();
+    expect(skills).toEqual([
       expect.objectContaining({
         origin: { kind: "library" },
         version: { number: 3, pinned: true },
       }),
       expect.objectContaining({
         origin: { kind: "plugin" },
-        version: { number: 1, pinned: false },
+        version: { number: 1 },
+      }),
+      expect.objectContaining({
+        origin: { kind: "library" },
+        version: { number: 4, pinned: false },
       }),
       expect.objectContaining({
         origin: { kind: "mcp-server", server: "Search" },
         version: { number: 2 },
       }),
     ]);
+    // A revision whose provenance doesn't say whether it is pinned is unknown.
+    expect(skills[1].version).not.toHaveProperty("pinned");
   });
 });
 

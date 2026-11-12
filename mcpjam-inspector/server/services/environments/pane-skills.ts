@@ -220,6 +220,7 @@ function rowsOf(
     const channels = skill.channels ?? [];
     // The resolved entry carries its revision only in its provenance row.
     const version = revision(skill.provenance?.projectSkillVersionNumber);
+    const pinned = skill.provenance?.versionPinned;
     add({
       skillId: skill.skillId,
       name: skill.name,
@@ -236,7 +237,8 @@ function rowsOf(
         ? {
             version: {
               number: version,
-              pinned: skill.provenance?.versionPinned === true,
+              // Absent when the provenance doesn't say: unknown, not Latest.
+              ...(typeof pinned === "boolean" ? { pinned } : {}),
             },
           }
         : {}),
