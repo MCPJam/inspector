@@ -1,8 +1,9 @@
 /**
  * The skills-delivered event: one per turn, in counts. It says how many skills
  * the turn's engine was handed, by family; how many the plan left out, by
- * reason; how many failed to arrive; and whether delivery went as planned
- * (`outcome`). Feature health watches the share of turns that report `failed`.
+ * reason; how many the turn did not get to deliver; how many failed to arrive;
+ * and whether delivery went as planned (`outcome`). Feature health watches the
+ * share of turns that report `failed`.
  *
  * Counts and closed vocabularies only. A skill's name, id, ref or content never
  * rides the event: they are a customer's own words, and the strict server
@@ -15,6 +16,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { captureServerEventForActor } from "../../utils/analytics.js";
+import type { BoxSkillsResult } from "../../utils/harness/box-skills-writer.js";
 import type { EffectiveCapabilitySet } from "./effective-capabilities.js";
 import type {
   SkillExclusionReason,
@@ -54,6 +56,7 @@ const COUNT_FIELDS = [
   ...Object.values(DELIVERED_FIELD),
   "omitted_from_catalog_count",
   ...Object.values(EXCLUDED_FIELD),
+  "not_delivered_count",
   "failed_count",
 ];
 
@@ -67,11 +70,13 @@ const DISTINCT_ID = randomUUID();
  * `outcome` compares what arrived with the plan: `ok` when nothing failed,
  * `partial` when some skills arrived and some failed, `failed` when none
  * arrived. A skill the plan left out is counted under its reason, never as a
- * failure. A skill MCPJam's agent left off its prompt's skill list did arrive,
- * since its tools load it by name; `omitted_from_catalog_count` says how many
- * of the delivered those are. A turn with no skills reports nothing: it is not
- * a delivery attempt, and counting it would bury every failure under turns
- * that never had a skill.
+ * failure. A planned skill the result names neither way is counted as not
+ * delivered: the turn stopped before delivering it. A skill MCPJam's agent
+ * left off its prompt's skill list did arrive, since its tools load it by
+ * name; `omitted_from_catalog_count` says how many of the delivered those
+ * are. A turn with no skills reports nothing: it is not a delivery attempt,
+ * and counting it would bury every failure under turns that never had a
+ * skill.
  */
 export function reportSkillsDelivered(
   surface: SkillsDeliveredSurface,
@@ -88,6 +93,8 @@ export function reportSkillsDelivered(
     if (ref.omittedFromCatalog) counts.omitted_from_catalog_count += 1;
   }
   for (const { reason } of skills.excluded) counts[EXCLUDED_FIELD[reason]] += 1;
+  counts.not_delivered_count =
+    skills.delivered.length - result.delivered.length - result.failed.length;
   counts.failed_count = result.failed.length;
   const outcome =
     result.failed.length === 0
@@ -103,6 +110,29 @@ export function reportSkillsDelivered(
       ? { harness_id: skills.runtime.harnessId }
       : {}),
     ...counts,
+  });
+}
+
+/**
+ * Report a harness turn from what its box writer did with the plan. The box
+ * holds one folder per name, so each planned skill is matched to the writer's
+ * outcome by name.
+ */
+export function reportBoxSkillsDelivered(
+  surface: SkillsDeliveredSurface,
+  skills: TurnSkills,
+  written: BoxSkillsResult,
+): void {
+  const delivered = new Set(written.delivered.map(({ name }) => name));
+  const failed = new Map(
+    written.failed.map(({ name, error }) => [name, error]),
+  );
+  reportSkillsDelivered(surface, skills, {
+    delivered: skills.delivered.filter(({ name }) => delivered.has(name)),
+    failed: skills.delivered.flatMap((ref) => {
+      const error = failed.get(ref.name);
+      return error === undefined ? [] : [{ ref, error }];
+    }),
   });
 }
 

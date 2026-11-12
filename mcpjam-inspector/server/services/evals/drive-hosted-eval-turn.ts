@@ -261,6 +261,7 @@ export interface DriveHostedEvalTurnParams {
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
    * The run's PINNED skills, delivered to the harness verbatim.
    *
@@ -870,6 +871,9 @@ export async function driveHostedEvalTurn(
               : {}),
             ...(params.onHarnessPolicyBlocks
               ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
+              : {}),
+            ...(params.onBoxSkillsWritten
+              ? { onBoxSkillsWritten: params.onBoxSkillsWritten }
               : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
             // this checks for undefined rather than truthiness. Absent would

@@ -27,12 +27,9 @@ import {
 } from "../../services/sessionSimulation/session-skills.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
-  boxSkillsFolder,
-  deliveredPinnedCopies,
   planBoxSkills,
   writeBoxSkills,
 } from "../../utils/harness/box-skills-writer.js";
-import { materializePinnedSkillFiles } from "../../utils/harness/pinned-harness-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { harnessTurnSkills } from "../../utils/harness/skill-delivery.js";
@@ -269,8 +266,7 @@ export async function agentLoads(
 /**
  * One harness turn's box write, as `runHarnessTurn` makes it: the turn's
  * skills read from their source, planned by the runtime's rules (none on a
- * runtime that takes none), written to `box` by the box writer, then a run's
- * own files by the pinned file writer.
+ * runtime that takes none), and written to `box` by the box writer.
  */
 export async function writeTurnToBox(
   harnessId: string,
@@ -283,25 +279,13 @@ export async function writeTurnToBox(
     adapter.skills,
     adapter.supportsSkills ? (turn.skills ?? []) : [],
   );
-  const written = await writeBoxSkills({
+  return await writeBoxSkills({
     session: box.session,
     descriptor: adapter.skills,
     home: BOX_HOME,
     plan,
     readFiles: turn.readFiles,
   });
-  if (turn.mode === "pinned" && plan.deliver.length > 0) {
-    await materializePinnedSkillFiles({
-      session: box.session,
-      artifacts: deliveredPinnedCopies(
-        source.pinnedHarnessSkills ?? [],
-        turn.skills ?? [],
-        plan,
-      ),
-      skillsBase: boxSkillsFolder(adapter.skills, BOX_HOME),
-    });
-  }
-  return written;
 }
 
 /**

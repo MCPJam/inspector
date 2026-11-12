@@ -9,8 +9,8 @@
  *
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
- * budget, and on a harness the adapter's `prepareSkills` over the copies the
- * harness turn writes to its box.
+ * budget, and on a harness the box writer's plan (`planBoxSkills`) over the
+ * copies the harness turn writes to its box.
  *
  * A delivery that fails while the turn runs is not part of the plan. It belongs
  * on the turn's result ({@link TurnSkillsResult}), so a preview of the plan
