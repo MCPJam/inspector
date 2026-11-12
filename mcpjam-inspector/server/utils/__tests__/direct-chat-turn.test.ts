@@ -420,19 +420,6 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       ).resolves.toBe("squad");
     });
 
-    it("still fails the call when its input does not fit the tool", async () => {
-      const { options, discoveryState } = await runTurn();
-      const refine = options.experimental_refineToolInput;
-
-      refine.load_mcp_tools({ names: ["show_squad"] });
-      refine.show_squad({});
-
-      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
-      await expect(callShowSquad(options, {})).rejects.toThrow(
-        /not loaded in this step/,
-      );
-    });
-
     it("runs the call through the real AI SDK stream", async () => {
       // The real `streamText`: the call must survive the SDK's own parsing
       // and tool execution, not only our hooks.

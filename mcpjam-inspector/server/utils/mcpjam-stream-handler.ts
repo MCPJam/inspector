@@ -4,7 +4,6 @@ import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
-import { inputMatchesSchema } from "./same-step-load.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
 import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
@@ -2544,7 +2543,6 @@ async function processStream(
   // `load_mcp_tools` in the same step loads its tool.
   admitSameStepLoadedCall?: (call: {
     toolName: string;
-    input: unknown;
     errorText: string;
     priorParts: ReadonlyArray<PersistedAssistantPart>;
   }) => boolean,
@@ -2888,12 +2886,11 @@ async function processStream(
             unfinishedTools.delete(String(chunk.toolCallId));
           }
           // Loaded and called in the same step: run the call after the load
-          // instead of refusing it, once the caller has checked its input.
+          // instead of refusing it.
           if (
             chunk.type === "tool-input-error" &&
             admitSameStepLoadedCall?.({
               toolName: chunk.toolName,
-              input: chunk.input,
               errorText: chunk.errorText,
               priorParts: contentParts,
             })
@@ -4501,7 +4498,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     onToolCall,
     dispatchPath,
     progressivePlan?.enabled && discoveryState && !prepareAdvertisedTools
-      ? ({ toolName, input, errorText, priorParts }) => {
+      ? ({ toolName, errorText, priorParts }) => {
           if (
             !parseStreamErrorChunkText(errorText).message.startsWith(
               "Model tried to call unavailable tool",
@@ -4519,10 +4516,7 @@ async function processOneStep(ctx: StepContext): Promise<{
                 !isRejectedToolCallMetadata(part.providerOptions),
             ),
           );
-          const def = toolDefsByName.get(toolName);
-          if (!toolId || !def || !inputMatchesSchema(def.inputSchema, input)) {
-            return false;
-          }
+          if (!toolId) return false;
           // Stage the load now, so the call passes the loaded-tools gate
           // whichever of the two runs first.
           discoveryState.newlyLoadedToolIds.add(toolId);

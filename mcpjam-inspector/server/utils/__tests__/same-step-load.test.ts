@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
-import {
-  inputMatchesSchema,
-  withModelVisibleToolsOnly,
-} from "../same-step-load";
+import { withModelVisibleToolsOnly } from "../same-step-load";
 
 const fnTool = (name: string) => ({
   type: "function" as const,
@@ -48,32 +45,5 @@ describe("withModelVisibleToolsOnly", () => {
     expect(withModelVisibleToolsOnly("openai/gpt-5", () => null)).toBe(
       "openai/gpt-5",
     );
-  });
-});
-
-describe("inputMatchesSchema", () => {
-  const schema = {
-    type: "object",
-    properties: { team: { type: "string" } },
-    required: ["team"],
-  };
-
-  it("accepts input the schema accepts", () => {
-    expect(inputMatchesSchema(schema, { team: "Barcelona" })).toBe(true);
-  });
-
-  it("rejects input the schema rejects, and non-objects", () => {
-    expect(inputMatchesSchema(schema, {})).toBe(false);
-    expect(inputMatchesSchema(schema, ["Barcelona"])).toBe(false);
-    expect(inputMatchesSchema(schema, null)).toBe(false);
-  });
-
-  it("rejects any input when the schema dialect cannot be checked", () => {
-    expect(
-      inputMatchesSchema(
-        { ...schema, $schema: "http://json-schema.org/draft-04/schema#" },
-        { team: "Barcelona" },
-      ),
-    ).toBe(false);
   });
 });

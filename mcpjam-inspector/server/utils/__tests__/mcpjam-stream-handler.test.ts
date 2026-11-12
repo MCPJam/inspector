@@ -409,15 +409,12 @@ describe("mcpjam-stream-handler", () => {
     };
     const runLoadAndCall = async (
       input: unknown,
-      {
-        schema = squadSchema as Record<string, unknown>,
-        loadRefused = false,
-      } = {},
+      { loadRefused = false } = {},
     ) => {
       vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
         { name: "search_mcp_tools", inputSchema: { type: "object" } },
         { name: "load_mcp_tools", inputSchema: { type: "object" } },
-        { name: "show_squad", inputSchema: schema },
+        { name: "show_squad", inputSchema: squadSchema },
       ]);
       const loadChunk = loadRefused
         ? {
@@ -521,28 +518,6 @@ describe("mcpjam-stream-handler", () => {
         ...discoveryState.newlyLoadedToolIds,
         ...discoveryState.loadedToolIds,
       ]).toContain("sports::show_squad");
-    });
-
-    it("still fails the call when its input does not fit the tool", async () => {
-      const { callChunks, discoveryState } = await runLoadAndCall({});
-
-      expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
-      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
-      expect(discoveryState.loadedToolIds.size).toBe(0);
-    });
-
-    it("still fails the call when the tool's schema dialect cannot be checked", async () => {
-      const { callChunks } = await runLoadAndCall(
-        {},
-        {
-          schema: {
-            ...squadSchema,
-            $schema: "http://json-schema.org/draft-04/schema#",
-          },
-        },
-      );
-
-      expect(callChunks).toEqual(["tool-input-start", "tool-input-error"]);
     });
 
     it("still fails the call when the backend refused the load", async () => {

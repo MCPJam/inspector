@@ -61,7 +61,7 @@ import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
 import { withProviderSafeToolNames } from "@mcpjam/sdk";
-import { inputMatchesSchema, withModelVisibleToolsOnly } from "./same-step-load";
+import { withModelVisibleToolsOnly } from "./same-step-load";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -742,8 +742,8 @@ export function runDirectChatTurn(
   };
 
   // Loaded and called in the same step: run the call after the load instead of
-  // refusing it, when its input fits the tool's schema (the hosted path does
-  // the same in `mcpjam-stream-handler.ts`). The AI SDK refuses any call to a
+  // refusing it (the hosted path does the same in `mcpjam-stream-handler.ts`).
+  // The AI SDK refuses any call to a
   // tool outside `activeTools`, so every tool stays active while the model is
   // shown only the loaded ones; a call it was never shown and did not load
   // first still fails, at the loaded-tools gate above.
@@ -783,9 +783,7 @@ export function runDirectChatTurn(
               entry.modelName,
               loadCallsThisStep,
             );
-            if (toolId && inputMatchesSchema(entry.inputSchema, input)) {
-              sameStepLoad.state.newlyLoadedToolIds.add(toolId);
-            }
+            if (toolId) sameStepLoad.state.newlyLoadedToolIds.add(toolId);
             return input;
           },
         ]),
