@@ -1843,6 +1843,20 @@ describe("tier derives from operation.risk", () => {
         "The same argument as create_secret: a rotation carries the new " +
         "plaintext as an argument, with the same pre-approval exposure.",
     },
+    upload_server_account_tokens: {
+      tier: "excluded",
+      reason:
+        "The same argument as create_secret: the access token is an " +
+        "argument, with the same pre-approval exposure.",
+    },
+    update_server_account: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but the default decides which " +
+        "account runs with no saved account choice sign in as, so an agent " +
+        "proposing one would be choosing who its own runs act as. A person " +
+        "sets it on REST or the SDK.",
+    },
     create_trace_destination: {
       tier: "excluded",
       reason:
