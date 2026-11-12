@@ -28,7 +28,15 @@ const {
   authorizeServerMock,
   executePersistedConformanceRunMock,
   assertAllowedHostedTargetUrlMock,
+  drainState,
+  takeConformanceStartSlotMock,
+  releaseConformanceStartSlotMock,
+  checkConformanceConnectionMock,
 } = vi.hoisted(() => ({
+  drainState: { draining: false },
+  takeConformanceStartSlotMock: vi.fn(),
+  releaseConformanceStartSlotMock: vi.fn(),
+  checkConformanceConnectionMock: vi.fn(),
   validateGuestTokenMock: vi.fn(),
   validateApiKeyMock: vi.fn(),
   resolveUserByExternalIdMock: vi.fn(),
@@ -65,6 +73,32 @@ vi.mock("convex/browser", () => ({
 }));
 vi.mock("../../../services/conformance-run-executor.js", () => ({
   executePersistedConformanceRun: executePersistedConformanceRunMock,
+}));
+vi.mock("../../../services/lifecycle/drain.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../services/lifecycle/drain.js")>();
+  const real = actual.createDrainCoordinator();
+  return {
+    ...actual,
+    serverDrain: { ...real, isDraining: () => drainState.draining },
+  };
+});
+vi.mock(
+  "../../../middleware/conformance-run-rate-limit.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("../../../middleware/conformance-run-rate-limit.js")
+    >()),
+    takeConformanceStartSlot: (...args: unknown[]) =>
+      takeConformanceStartSlotMock(...args),
+    releaseConformanceStartSlot: (...args: unknown[]) =>
+      releaseConformanceStartSlotMock(...args),
+  }),
+);
+// The version check a start with saved settings makes before the run exists.
+vi.mock("../../shared/conformance-connection.js", () => ({
+  checkConformanceConnection: (...args: unknown[]) =>
+    checkConformanceConnectionMock(...args),
 }));
 
 vi.mock("../../web/auth.js", async () => {
@@ -163,6 +197,15 @@ describe("v1 persisted conformance runs", () => {
     process.env.CONVEX_URL = "https://convex.example.com";
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    drainState.draining = false;
+    takeConformanceStartSlotMock.mockReturnValue(null);
+    // A start reads its key's run first: a row left by an earlier test would
+    // answer every start as a retry.
+    convexQueryMock.mockReset();
+    checkConformanceConnectionMock.mockResolvedValue({
+      status: "ready",
+      protocolVersion: "2025-11-25",
+    });
     authorizeServerMock.mockResolvedValue(HTTP_SERVER);
     assertAllowedHostedTargetUrlMock.mockResolvedValue(undefined);
     executePersistedConformanceRunMock.mockImplementation(async (args: any) => {
@@ -593,6 +636,220 @@ describe("v1 persisted conformance runs", () => {
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1/report",
       );
       expect(res.status).toBe(502);
+    });
+  });
+
+  describe("start options and limits", () => {
+    const START =
+      "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/conformance-runs";
+    const savedRow = (defaultChecks: Record<string, unknown>) =>
+      convexQueryMock.mockImplementation(async (fn: string) =>
+        fn === "conformanceSettings:getServerSettings"
+          ? { serverId: "s1", defaultChecks, runTimeoutSeconds: 60, updatedAt: 1 }
+          : null,
+      );
+
+    it("refuses an unknown protocol version before a run exists, naming the valid ones", async () => {
+      const res = await request("POST", START, {
+        body: { protocolVersion: "2024-01-01" },
+      });
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toContain(
+        "2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28",
+      );
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("runs the server's saved settings by default, without the suites they leave out", async () => {
+      savedRow({ apps: [] });
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        requestedSuites: ["protocol", "tasks"],
+        settingsSource: "saved",
+      });
+      expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject({
+        suites: ["protocol", "tasks"],
+        settings: { source: "saved" },
+        runTimeoutSeconds: 60,
+        actorLabel: "MCPJam API",
+      });
+    });
+
+    it("skips saved settings on request", async () => {
+      savedRow({ apps: [] });
+      const res = await request("POST", START, { body: { settings: "none" } });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        requestedSuites: ["protocol", "apps", "tasks"],
+        settingsSource: "none",
+      });
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "conformanceSettings:getServerSettings",
+        expect.anything(),
+      );
+    });
+
+    it("refuses a start whose saved settings leave out every suite asked for", async () => {
+      savedRow({ protocol: [] });
+      const res = await request("POST", START, {
+        body: { suites: ["protocol"] },
+      });
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(await res.json())).toContain('settings set to \\"none\\"');
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("passes the client's declared launcher to the run, and reads it back", async () => {
+      const res = await makeApp().request(START, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-launcher": JSON.stringify({ kind: "cli", client: "mcpjam-cli" }),
+        },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(202);
+      expect(
+        executePersistedConformanceRunMock.mock.calls[0]![0].launcher,
+      ).toMatchObject({ kind: "cli", client: "mcpjam-cli" });
+
+      convexQueryMock.mockResolvedValue({
+        ...RUN_ROW,
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "rest", apiKeyId: "key_1" },
+        settingsSource: "saved",
+      });
+      const read = await request(
+        "GET",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/conformance-runs/run_1",
+      );
+      expect(await read.json()).toMatchObject({
+        launcher: { kind: "cli", client: "mcpjam-cli" },
+        attribution: { surface: "rest", apiKeyId: "key_1" },
+        settingsSource: "saved",
+      });
+    });
+
+    it("takes the idempotency key from the header before the body", async () => {
+      const res = await makeApp().request(START, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "Idempotency-Key": "header-key",
+        },
+        body: JSON.stringify({ idempotencyKey: "body-key" }),
+      });
+      expect(res.status).toBe(202);
+      expect(
+        executePersistedConformanceRunMock.mock.calls[0]![0].externalRunId,
+      ).toBe("api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s1:header-key");
+    });
+
+    it("leaves out a suite whose saved checks do not apply at the server's version, before the run exists", async () => {
+      // Only a 2026-07-28 check is saved for protocol; the server speaks 2025-11-25.
+      savedRow({ protocol: ["modern-logs-require-log-level"] });
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        requestedSuites: ["apps", "tasks"],
+      });
+      expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject({
+        suites: ["apps", "tasks"],
+        suiteConfigs: { protocolVersion: "2025-11-25" },
+      });
+      expect(checkConformanceConnectionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("answers a retry with the run its key started, without rereading saved settings", async () => {
+      convexQueryMock.mockImplementation(async (fn: string) =>
+        fn === "conformanceRuns:getRunByExternalRunId"
+          ? {
+              _id: "run_9",
+              status: "running",
+              requestedSuites: ["protocol"],
+              settingsSource: "saved",
+            }
+          : null,
+      );
+      const res = await makeApp().request(START, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "Idempotency-Key": "k1",
+        },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        runId: "run_9",
+        status: "running",
+        deduped: true,
+        requestedSuites: ["protocol"],
+        settingsSource: "saved",
+      });
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "conformanceRuns:getRunByExternalRunId",
+        {
+          projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          externalRunId: "api:p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx:s1:k1",
+        },
+      );
+      expect(convexQueryMock).not.toHaveBeenCalledWith(
+        "conformanceSettings:getServerSettings",
+        expect.anything(),
+      );
+      expect(checkConformanceConnectionMock).not.toHaveBeenCalled();
+      expect(takeConformanceStartSlotMock).not.toHaveBeenCalled();
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("spends no start on a request it refuses", async () => {
+      savedRow({ protocol: [] });
+      const res = await request("POST", START, {
+        body: { suites: ["protocol"] },
+      });
+      expect(res.status).toBe(400);
+      expect(takeConformanceStartSlotMock).not.toHaveBeenCalled();
+    });
+
+    it("gives the start back when the backend refuses it before the run exists", async () => {
+      executePersistedConformanceRunMock.mockRejectedValue(
+        Object.assign(new Error("Conformance is not enabled"), {
+          data: { code: "FEATURE_UNAVAILABLE", feature: "conformance" },
+        }),
+      );
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(takeConformanceStartSlotMock).toHaveBeenCalledTimes(1);
+      expect(releaseConformanceStartSlotMock).toHaveBeenCalledWith(
+        takeConformanceStartSlotMock.mock.calls[0]![0],
+      );
+    });
+
+    it("refuses a caller over the start limit with the wait before retrying", async () => {
+      takeConformanceStartSlotMock.mockReturnValue({ retryAfterSeconds: 42 });
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("42");
+      expect(JSON.stringify(await res.json())).toContain("Try again in 42 seconds");
+      expect(takeConformanceStartSlotMock).toHaveBeenCalledWith(expect.any(String));
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses starts while the server drains, and still answers reads", async () => {
+      drainState.draining = true;
+      const res = await request("POST", START, { body: {} });
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        code: "RATE_LIMITED",
+        details: { reason: "SERVER_DRAINING" },
+      });
+      expect(takeConformanceStartSlotMock).not.toHaveBeenCalled();
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
     });
   });
 });

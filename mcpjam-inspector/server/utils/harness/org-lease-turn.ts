@@ -4,16 +4,22 @@ import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
  * of `runHarnessTurn` from the turn's saved selection. The turn reserves its
  * box, starts its lease and prepares a local runtime through it.
  *
- * On an ORG selection (Claude Code on the organization's Anthropic key, Codex
- * on its OpenAI key) the turn:
+ * On an ORG selection (a harness on the organization's Anthropic or OpenAI
+ * key, or on its gateway) the turn:
  *  - runs the selection's canonical id, since the row's own id is the native
  *    one (`claude-sonnet-4-5`), which nothing the lease knows canonicalizes;
+ *    a gateway selection carries the gateway's own model name as its native
+ *    id (`gatewayLeaseSelection`), which lease start matches;
  *  - carries the selection to `/reserve`, the box start and the local
  *    preparation, and hands the start the credential revision `/reserve`
  *    prepared, so a key replaced in between is refused;
- *  - adds whose key it runs on to the runtime fingerprint: opaque provider
- *    state belongs to an account, so a Gateway session never resumes onto an
- *    org key (or back), and two connections are two accounts;
+ *  - adds whose key it runs on, and the upstream profile its lease runs, to
+ *    the runtime fingerprint: opaque provider state belongs to an account, so
+ *    a Gateway session never resumes onto an org key (or back), and two
+ *    connections are two accounts;
+ *  - stamps model failures with who owns the endpoint
+ *    (`byokEndpointOwnership`): a vendor's API, or a gateway the customer
+ *    runs, whose failures are never MCPJam's;
  *  - resumes only state stamped with its lease's revision, and stamps the
  *    state it commits (`org-credential-continuity.ts`);
  *  - runs the runtime natively, on the leased profile and native id.
@@ -24,11 +30,19 @@ import {
   desanitizeFromConvexTransport,
   sanitizeForConvexTransport,
 } from "@/shared/convex-sanitize";
-import { harnessOrgUpstream } from "@/shared/harness-model-support";
-import { getCanonicalModelId } from "@/shared/types";
-import type {
-  InfraFailureEvidence,
-  ModelEndpointOwnership,
+import {
+  gatewayLeaseSelection,
+  harnessOrgUpstreamProfile,
+} from "@/shared/harness-gateway-model";
+import type { HarnessUpstreamProfile } from "@/shared/harness-model-support";
+import {
+  getCanonicalModelId,
+  hostedProviderFromCanonicalId,
+} from "@/shared/types";
+import {
+  byokEndpointOwnership,
+  type InfraFailureEvidence,
+  type ModelEndpointOwnership,
 } from "../infra-failure-evidence.js";
 import {
   orgHarnessSelection,
@@ -58,14 +72,16 @@ import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
 import type { HarnessRuntimeAdapter } from "./registry.js";
 
 export class OrgLeaseTurn {
-  /** MCPJam's model proxy; on the org's key it serves a first-party provider. */
+  /** MCPJam's model proxy, or on the org's key the endpoint the lease reaches. */
   readonly brokeredEndpoint: ModelEndpointOwnership;
+  /** The upstream the runtime talks to: MCPJam's Gateway, or the org lease's. */
+  readonly upstreamProfile: HarnessUpstreamProfile;
   private readonly selection: OrgHarnessSelection | undefined;
   private readonly requestedSelection: ModelSelection | undefined;
   /** The selection a reserve, start or local-prepare body carries. */
   private readonly selectionField: { modelSelection?: OrgHarnessSelection };
-  private readonly profile: string | undefined;
   private readonly bearer: string | undefined;
+  private readonly authorization: MCPJamHandlerOptions["turnAuthorization"];
   /** A run (eval, swarm) owns the local session id and cleans up only it. */
   private readonly runOwnsSession: boolean;
   private readonly turnStartedAt = Date.now();
@@ -81,22 +97,32 @@ export class OrgLeaseTurn {
   constructor(
     options: Pick<
       MCPJamHandlerOptions,
-      "harness" | "modelSelection" | "authHeader" | "harnessExecutionTarget"
+      "harness" | "modelSelection" | "authHeader" | "harnessExecutionTarget" | "turnAuthorization"
     >,
   ) {
-    this.selection = orgHarnessSelection(options.modelSelection);
+    const orgSelection = orgHarnessSelection(options.modelSelection);
+    this.selection = orgSelection && gatewayLeaseSelection(orgSelection);
     this.requestedSelection =
       options.modelSelection?.source === "hosted"
         ? options.modelSelection
         : this.selection;
-    this.profile = this.selection
-      ? harnessOrgUpstream(options.harness ?? "")?.profile
-      : undefined;
+    this.upstreamProfile =
+      (this.selection &&
+        harnessOrgUpstreamProfile(
+          options.harness ?? "",
+          this.selection.modelId,
+        )) ||
+      "gateway";
     this.bearer = options.authHeader;
+    this.authorization = options.turnAuthorization;
     this.runOwnsSession = Boolean(
       options.harnessExecutionTarget?.localSessionId,
     );
-    this.brokeredEndpoint = this.selection ? "byok_hosted" : "platform";
+    this.brokeredEndpoint = this.selection
+      ? byokEndpointOwnership(
+          hostedProviderFromCanonicalId(this.selection.modelId),
+        )
+      : "platform";
     this.selectionField = this.selection
       ? { modelSelection: this.selection }
       : {};
@@ -131,9 +157,9 @@ export class OrgLeaseTurn {
    * carry none, so no existing session's hash moves.
    */
   fingerprint(): { credential?: string } {
-    if (!this.selection || !this.profile) return {};
+    if (!this.selection || this.upstreamProfile === "gateway") return {};
     const connectionId = String(this.selection.connectionRef.id);
-    return { credential: `org:${connectionId}:${this.profile}` };
+    return { credential: `org:${connectionId}:${this.upstreamProfile}` };
   }
 
   /** The claimed state as the adapter wrote it; its stamp is kept here. */
@@ -297,15 +323,20 @@ export class OrgLeaseTurn {
    * a bare refusal status or as nothing typed; the proxy recorded its reason
    * on the lease, so it is read back.
    */
-  failedTurnEvidence(
+  async failedTurnEvidence(
     evidence: InfraFailureEvidence | undefined,
     modelInvoked: boolean,
   ): Promise<InfraFailureEvidence | undefined> {
+    let bearer = this.bearer;
+    if (this.authorization) {
+      try { bearer = await this.authorization.getCleanupAuthorization(); }
+      catch { return evidence; } // A refused identity cannot read additional failure evidence.
+    }
     return failedTurnEvidence({
       evidence,
       modelInvoked,
       leaseRunId: this.leaseRunId,
-      bearer: this.bearer,
+      bearer,
       turnStartedAt: this.turnStartedAt,
     });
   }

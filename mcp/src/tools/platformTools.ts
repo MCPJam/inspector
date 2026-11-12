@@ -26,6 +26,7 @@ import {
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
@@ -100,6 +101,12 @@ import {
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  deleteServerAccountOperation,
   PlatformApiClient,
   readServerResourceOperation,
   listServerSkillsOperation,
@@ -221,19 +228,15 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
   {
-    feature: "conformance and readiness",
+    feature: "readiness",
     operations: [
       startClaudeReadinessRunOperation,
       startOpenAIReadinessRunOperation,
-  startMuseReadinessRunOperation,
+      startMuseReadinessRunOperation,
       getReadinessRunOperation,
       listReadinessRunsOperation,
       cancelReadinessRunOperation,
       getReadinessReportOperation,
-      startConformanceRunOperation,
-      getConformanceRunOperation,
-      listConformanceRunsOperation,
-      getConformanceReportOperation,
     ],
   },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
@@ -328,6 +331,17 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
+  // Stored history, read without connecting: when a server's tools changed
+  // and how. Read-only and confined to MCPJam's own records.
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
+  // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
+  // exist is refused, so the delete never moves runs onto another account.
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  deleteServerAccountOperation,
   callServerToolOperation,
   renderServerWidgetOperation,
   listServerPromptsOperation,
@@ -349,6 +363,7 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getConformanceRunOperation,
   listConformanceRunsOperation,
   getConformanceReportOperation,
+  getConformanceCheckOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -681,6 +696,14 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "The plaintext value is an argument, so it would transit model context and be written into chat transcripts before any approval could run — an approval that fires after the credential is already logged is not one. Available on REST, the SDK and the CLI, where the caller controls where the value comes from. The metadata reads (list_secrets, get_secret) are in the catalog.",
   update_secret:
     "Same as create_secret: a rotation carries the new plaintext as an argument, so it would reach model context and the transcript before any approval could run. Available on REST, the SDK and the CLI. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  // SERVER ACCOUNT WRITES. The upload on create_secret's argument: the token
+  // is an input. The update because the default decides which account runs
+  // with no saved account choice sign in as, which is not an unattended
+  // caller's choice.
+  upload_server_account_tokens:
+    "The access token is an argument, so it would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the token comes from. The reads (list_server_accounts, get_server_account) are in the catalog.",
+  update_server_account:
+    "Making an account the default decides which account runs with no saved account choice sign in as, and a rename changes which account a name addresses. Available on REST, the SDK and the CLI, for a person who means it.",
   // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
   // `create_secret` argument above: the vendor headers are arguments, so they
   // would transit model context and be written into chat transcripts before
@@ -1192,6 +1215,21 @@ function errorStructuredContent(
     // server envelope — so an agent can wait instead of looping or suggesting
     // a top-up that cannot lift it.
     const refusal = describePlatformRefusal(error);
+    // A feature-gate refusal keeps its own code and the feature it names, so
+    // an agent can tell FEATURE_UNAVAILABLE for one beta from any other 403.
+    // Only these two keys: the rest of `details` is the server's envelope.
+    const feature =
+      typeof error.details?.feature === "string"
+        ? error.details.feature
+        : undefined;
+    const detailCode = error.details?.code;
+    const details =
+      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE"
+        ? {
+            ...(typeof detailCode === "string" ? { code: detailCode } : {}),
+            ...(feature !== undefined ? { feature } : {}),
+          }
+        : {};
     return {
       error: {
         code: error.code,
@@ -1200,6 +1238,7 @@ function errorStructuredContent(
         // to the server's logs. Only responses carry one.
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
+        ...(Object.keys(details).length > 0 ? { details } : {}),
       },
     };
   }

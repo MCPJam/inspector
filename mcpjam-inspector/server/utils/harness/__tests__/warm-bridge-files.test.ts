@@ -1,12 +1,55 @@
 import vm from "node:vm";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { patchWarmBridgeExpiry } from "../warm-bridge-files.js";
-import { WARM_BRIDGE_WINDOW_MS } from "../warm-bridge.js";
+import { patchWarmBridgeExpiry, warmBridgeCommand } from "../warm-bridge-files.js";
+import { WARM_BRIDGE_WINDOW_ENV } from "../warm-bridge.js";
+
+/** The box's idle window, as the backend sends it. */
+const WARM_BRIDGE_WINDOW_MS = 5 * 60_000;
 
 const lifecycleFixture = `const writeBridgeMeta = async (state) => {};
 globalThis.lifecycle = writeBridgeMeta; void writeBridgeMeta("waiting");`;
 
-async function watchdog(hasStateDirectory = true, marker?: string) {
+it.skipIf(process.platform !== "linux")("parks and verifies the real process under HOME with an encoded session id", () => {
+  const root = mkdtempSync(join(tmpdir(), "warm-private-home-"));
+  const home = join(root, "home");
+  const workspace = join(root, "workspace");
+  const directory = join(home, ".ai-sdk-harness/.agent-runs/..%2Fshared%2Fsession/bridge");
+  try {
+    mkdirSync(workspace);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "bridge-meta.json"), JSON.stringify({
+      pid: process.pid, port: 8080, state: "waiting",
+    }));
+    const args = { sessionId: "../shared/session", configuration: "configuration", token: "private-channel-token", port: 8080 };
+    const run = (park: boolean, token = args.token, windowMs = WARM_BRIDGE_WINDOW_MS) => spawnSync("sh", ["-c", warmBridgeCommand({
+      ...args, token, park, includeHome: !park, windowMs,
+    })], { cwd: workspace, env: { ...process.env, HOME: home }, encoding: "utf8" });
+    const parked = run(true);
+    expect(parked.status, parked.stderr).toBe(0);
+    expect(readFileSync(join(directory, "mcpjam-warm.json"), "utf8")).not.toContain(args.token);
+    const attached = run(false);
+    expect(attached.status, attached.stderr).toBe(0);
+    expect(JSON.parse(attached.stdout)).toEqual({ ready: true, home });
+    expect(run(false, "another-channel-token").status).toBe(1);
+    // A window shorter than the one it was parked for: no longer reusable.
+    expect(run(false, args.token, 60_000).status).toBe(1);
+    // No window at all: refused rather than guessed.
+    expect(run(false, args.token, 0).status).toBe(1);
+    expect(existsSync(join(workspace, ".agent-runs"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function watchdog(
+  hasStateDirectory = true,
+  marker?: string,
+  windowMs: number | null = WARM_BRIDGE_WINDOW_MS,
+) {
   let now = 1000;
   let state = "waiting";
   let unreadable = false;
@@ -23,6 +66,10 @@ async function watchdog(hasStateDirectory = true, marker?: string) {
       argv: hasStateDirectory
         ? ["node", "bridge.mjs", "--bridge-state-dir", "/bridge"]
         : ["node", "bridge.mjs"],
+      env:
+        windowMs === null
+          ? {}
+          : { [WARM_BRIDGE_WINDOW_ENV]: String(windowMs) },
       exit,
     },
     Date: { now: () => now },
@@ -94,6 +141,16 @@ describe("bridge expiry watchdog", () => {
     w.unreadable();
     w.run();
     expect(w.exit).not.toHaveBeenCalled();
+  });
+
+  it("never reaps itself when it was started without a window", async () => {
+    expect((await watchdog(true, undefined, null)).armed()).toBe(false);
+  });
+
+  it("reads its window at run time, so the patched source does not carry it", () => {
+    const source = patchWarmBridgeExpiry(lifecycleFixture);
+    expect(source).toContain(`process.env.${WARM_BRIDGE_WINDOW_ENV}`);
+    expect(source).not.toContain(String(WARM_BRIDGE_WINDOW_MS));
   });
 
   it("patches a recipe only once", () => {

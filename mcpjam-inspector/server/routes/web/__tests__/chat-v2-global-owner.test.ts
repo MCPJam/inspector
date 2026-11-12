@@ -11,6 +11,7 @@ const chat = Object.freeze({
   projectId: "project",
   workspaceId: "playground:chat",
   revalidate: vi.fn(async () => {}),
+  getAuthorization: vi.fn(async () => "fresh-token"),
 });
 const descriptor = { version: 1, workspaceId: "playground:global" };
 
@@ -22,6 +23,8 @@ describe("global owner binding for chat turns", () => {
       projectId: "project",
       workspaceId: "playground:global",
     });
+    expect(global.getAuthorization).toBe(chat.getAuthorization);
+    expect(await global.getAuthorization!()).toBe("fresh-token");
     await global.revalidate({ expectedActorId: "actor" });
     expect(chat.revalidate).toHaveBeenCalledWith({ expectedActorId: "actor" });
     expect(globalOwnerAdmission(undefined, descriptor)).toBeUndefined();

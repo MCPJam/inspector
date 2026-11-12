@@ -719,12 +719,13 @@ describe("external-account hosts: the host's model is what an eval case runs", (
     provider: "anthropic" as const,
   };
 
-  it("promotes the host's sentinel over the case's own model", () => {
-    const resolved = resolveEvalCaseModelDefinition({
-      hostConfig: cursorHost,
-      caseModel,
-    });
+  it("promotes the host's sentinel over the case's own model, and says so", () => {
+    const { modelDefinition: resolved, externalAccount } =
+      resolveEvalCaseModelDefinition({ hostConfig: cursorHost, caseModel });
 
+    // The flag, not object identity, is what billing reads: the case runs on
+    // the customer's own Cursor account.
+    expect(externalAccount).toBe(true);
     expect(resolved.id).toBe("cursor/auto");
     // Carries the curated label and the registered provider, not a re-derived
     // guess — the same definition the swarm runner builds for a pinned target.
@@ -750,7 +751,7 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       })
     ).toEqual({ ok: true, harness: "cursor" });
 
-    const resolved = resolveEvalCaseModelDefinition({
+    const { modelDefinition: resolved } = resolveEvalCaseModelDefinition({
       hostConfig: cursorHost,
       caseModel,
     });
@@ -770,20 +771,19 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       resolveEvalCaseModelDefinition({
         hostConfig: { harness: "claude-code", modelId: "openai/gpt-5-mini" },
         caseModel,
-      }).id
-    ).toBe(caseModel.id);
+      }),
+    ).toEqual({ modelDefinition: caseModel, externalAccount: false });
   });
 
   it("leaves a non-harness host's case model alone", () => {
-    expect(
-      resolveEvalCaseModelDefinition({
-        hostConfig: { hostStyle: "mcpjam", modelId: "openai/gpt-5-mini" },
-        caseModel,
-      }).id
-    ).toBe(caseModel.id);
-    expect(
-      resolveEvalCaseModelDefinition({ hostConfig: null, caseModel }).id
-    ).toBe(caseModel.id);
+    for (const hostConfig of [
+      { hostStyle: "mcpjam", modelId: "openai/gpt-5-mini" },
+      null,
+    ]) {
+      expect(resolveEvalCaseModelDefinition({ hostConfig, caseModel })).toEqual(
+        { modelDefinition: caseModel, externalAccount: false },
+      );
+    }
   });
 
   it("does NOT promote a mis-configured external-account host's ordinary id", () => {
@@ -794,9 +794,8 @@ describe("external-account hosts: the host's model is what an eval case runs", (
       modelId: "anthropic/claude-sonnet-4.5",
     };
     expect(
-      resolveEvalCaseModelDefinition({ hostConfig: misconfigured, caseModel })
-        .id
-    ).toBe(caseModel.id);
+      resolveEvalCaseModelDefinition({ hostConfig: misconfigured, caseModel }),
+    ).toEqual({ modelDefinition: caseModel, externalAccount: false });
 
     const verdict = checkEvalHarnessAdmission({
       hostConfig: misconfigured,

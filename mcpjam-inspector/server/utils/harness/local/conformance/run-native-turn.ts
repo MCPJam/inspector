@@ -13,7 +13,7 @@ import { diskResumeState } from "../resume-state.js";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import net from "node:net";
+import { availableListenerPort } from "./listener-port.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -267,14 +267,6 @@ async function startChild(script: string, env: Record<string, string>) {
   });
   return { child, port, stderr };
 }
-const freePort = () =>
-  new Promise<number>((resolve) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as net.AddressInfo).port;
-      s.close(() => resolve(p));
-    });
-  });
 /**
  * Is this pid a process that is still RUNNING?
  *
@@ -517,7 +509,7 @@ async function main() {
   const janitor = await supervisor.reclaimOrphans();
   console.log(`[conformance] janitor: ${JSON.stringify(janitor).slice(0, 200)}`);
   const launcher = resolveNodeLauncher({ bundledNodePath: plan.runtime.nodePath! });
-  const bridgePort = await freePort();
+  const bridgePort = await availableListenerPort(MODE === "no-launcher" ? "0.0.0.0" : "127.0.0.1");
   const sessionId = `conformance-${Date.now()}`;
   owned = { supervisor, sessionId };
   const sessionStateDir = sessionStateDirFor(localHarnessStateRoot(), sessionId);

@@ -173,6 +173,8 @@ export function McpAppsModal({
   const appToolsRegistry = useAppToolsRegistryApi();
   const Modal = host.components?.Modal;
   const [modalHtml, setModalHtml] = useState<string | null>(null);
+  const [sourceReceipt, setSourceReceipt] = useState<string | undefined>();
+  const [sandboxSource, setSandboxSource] = useState({ serverId, resourceUri, toolCallId });
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
   // SEP-1865 App-Provided Tools: per-modal-bridge identity. Distinct
@@ -205,12 +207,14 @@ export function McpAppsModal({
         modalAppToolsBridgeIdRef.current = null;
       }
       setModalHtml(null);
+      setSourceReceipt(undefined);
       return;
     }
 
+    let active = true;
     const fetchModalHtml = async () => {
       try {
-        const { html } = await host.services.fetchWidgetContent({
+        const { html, sourceReceipt: receipt } = await host.services.fetchWidgetContent({
           serverId,
           forceWebEndpoint: webManagedServers,
           resourceUri,
@@ -225,13 +229,17 @@ export function McpAppsModal({
           viewMode: "modal",
           viewParams: params,
         });
+        if (!active) return;
         setModalHtml(html);
+        setSourceReceipt(receipt);
+        setSandboxSource({ serverId, resourceUri, toolCallId });
       } catch (err) {
         console.error("[MCP Apps] Failed to fetch modal HTML", err);
       }
     };
 
     fetchModalHtml();
+    return () => { active = false; };
   }, [
     appToolsRegistry,
     open,
@@ -490,6 +498,15 @@ export function McpAppsModal({
           <SandboxedIframe
             ref={modalSandboxRef}
             html={modalHtml}
+            viewAdmission={host.services.prepareSandboxView ? {
+              services: host.services,
+              request: {
+                source: sandboxSource, sourceReceipt, html: modalHtml,
+                policy: { csp: widgetCsp, cspDirectives: widgetCspDirectives,
+                  cspSubtypePolicy: widgetCspSubtypePolicy, permissive: widgetPermissive },
+                mode: widgetPermissive || Object.keys(widgetCspDirectives ?? {}).length > 0 ? "debugger" : "declared",
+              },
+            } : undefined}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
             csp={widgetCsp}
             permissions={widgetPermissions}

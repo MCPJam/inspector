@@ -1,3 +1,4 @@
+import type { InspectorProjectTarget } from "./inspector-project-target.js";
 import { randomBytes } from "node:crypto";
 import {
   readFileSync,
@@ -41,6 +42,8 @@ export interface InspectorApiClientOptions {
 type InspectorRequestInit = Omit<RequestInit, "body"> & {
   body?: unknown;
   timeoutMs?: number;
+  /** Scoped operations may execute a tool before returning an auth failure. */
+  retrySessionAuth?: boolean;
   /**
    * Return this non-2xx body instead of throwing, when the caller can read it.
    *
@@ -564,13 +567,36 @@ export class InspectorApiClient {
   async connectServer(
     serverId: string,
     serverConfig: unknown,
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; target?: InspectorProjectTarget } = {},
   ) {
-    return this.request("/api/mcp/connect", {
-      method: "POST",
-      body: { serverId, serverConfig },
-      timeoutMs: options.timeoutMs,
-    });
+    const target = options.target;
+    try {
+      return await this.request("/api/mcp/connect", {
+        method: "POST",
+        body: target
+          ? {
+              projectId: target.projectId,
+              serverId: target.serverId,
+              serverName: target.serverName,
+            }
+          : { serverId, serverConfig },
+        ...(target
+          ? { headers: { Authorization: `Bearer ${target.accessToken}` } }
+          : {}),
+        timeoutMs: options.timeoutMs,
+      });
+    } catch (error) {
+      if (
+        !target &&
+        error instanceof Error &&
+        error.message.includes("projectId is required")
+      ) {
+        throw operationalError(
+          "This Inspector requires a saved project server. Use --server-id <id> with --project <id-or-name>. Add ad-hoc configurations in Inspector first.",
+        );
+      }
+      throw error;
+    }
   }
 
   async listServers() {
@@ -685,7 +711,7 @@ export class InspectorApiClient {
   ): Promise<unknown> {
     const fetchRequest = async (): Promise<Response> => {
       const token = await fetchInspectorSessionToken(this.baseUrl);
-      const { body: initBody, timeoutMs, ...fetchInit } = init;
+      const { body: initBody, timeoutMs, retrySessionAuth: _retrySessionAuth, ...fetchInit } = init;
       const headers = new Headers(fetchInit.headers);
       headers.set("X-MCP-Session-Auth", `Bearer ${token}`);
 
@@ -708,7 +734,7 @@ export class InspectorApiClient {
     let response: Response;
     try {
       response = await fetchRequest();
-      if (isAuthFailure(response)) {
+      if (init.retrySessionAuth !== false && isAuthFailure(response)) {
         clearInspectorSessionTokenCache(this.baseUrl);
         response = await fetchRequest();
       }

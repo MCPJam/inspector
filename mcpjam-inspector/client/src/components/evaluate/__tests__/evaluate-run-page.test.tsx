@@ -12,6 +12,9 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 
+// It reads Convex; its own test covers it.
+vi.mock("../run-server-groups", () => ({ RunServerGroups: () => null }));
+
 function makeRun(
   overrides: Partial<EvalSuiteRun> & { _id: string },
 ): EvalSuiteRun {

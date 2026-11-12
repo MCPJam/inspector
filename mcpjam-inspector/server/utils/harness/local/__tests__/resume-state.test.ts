@@ -21,7 +21,11 @@ describe("sessionResumeStateFrom", () => {
   });
 
   it("leaves a session state, and anything that is not a state, as it is", () => {
-    const session = { type: "resume-session", harnessId: "codex", data: { thread: "t" } };
+    const session = {
+      type: "resume-session",
+      harnessId: "codex",
+      data: { thread: "t" },
+    };
     expect(sessionResumeStateFrom(session)).toBe(session);
     expect(sessionResumeStateFrom(undefined)).toBeUndefined();
   });
@@ -86,6 +90,27 @@ describe("diskResumeState", () => {
     });
   });
 
+  it("restarts Cursor from its saved ACP session after the process exits", () => {
+    const data = {
+      implementationIdentity: "cursor",
+      acpSessionId: "cursor-session",
+      coldSession: { id: "cursor-session" },
+    };
+    expect(
+      diskResumeState({
+        type: "resume-session",
+        harnessId: "cursor",
+        data: { ...data, bridge: { port: 39271, token: "t" } },
+      }),
+    ).toEqual({ type: "resume-session", harnessId: "cursor", data });
+    const pending = {
+      type: "continue-turn",
+      harnessId: "cursor",
+      data: { ...data, bridge: { port: 39271, token: "t" } },
+    };
+    expect(diskResumeState(pending)).toBe(pending);
+  });
+
   it("keeps an approval continuation's bridge: the paused turn lives in it", () => {
     const paused = {
       type: "continue-turn",
@@ -96,11 +121,11 @@ describe("diskResumeState", () => {
   });
 
   it("leaves a harness it cannot resume from disk alone", () => {
-    const cursor = {
+    const unknown = {
       type: "resume-session",
-      harnessId: "cursor",
+      harnessId: "unqualified",
       data: { bridge: { port: 39271, token: "t" } },
     };
-    expect(diskResumeState(cursor)).toBe(cursor);
+    expect(diskResumeState(unknown)).toBe(unknown);
   });
 });

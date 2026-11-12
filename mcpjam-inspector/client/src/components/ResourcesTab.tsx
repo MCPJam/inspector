@@ -1,4 +1,4 @@
-import { FileOpenWith } from "./host-workspace/file-actions";
+import { ResourceOpenInChat, type ResourceChatScope } from "./host-workspace/resource-chat-handoff";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -105,6 +105,7 @@ function capResourceContentForTranscript(content: unknown): {
 }
 
 interface ResourcesTabProps {
+  openInChatScope?: ResourceChatScope | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   /**
@@ -195,6 +196,7 @@ function renderResourceTextContent(
 }
 
 export function ResourcesTab({
+  openInChatScope,
   serverConfig,
   serverName,
   server,
@@ -1226,7 +1228,7 @@ export function ResourcesTab({
                             <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border break-all md:truncate">
                               {resource.name}
                             </code>
-                            <FileOpenWith reference={serverName ? { serverId: serverName, resourceUri: resource.uri } : null} />
+                            <ResourceOpenInChat scope={openInChatScope} resourceUri={resource.uri} />
                           </div>
                           {resource.description && (
                             <p className="text-xs mt-2 line-clamp-none md:line-clamp-2 leading-relaxed text-muted-foreground">

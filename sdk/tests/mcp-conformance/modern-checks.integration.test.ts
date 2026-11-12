@@ -128,10 +128,17 @@ describe("modern-no-session-id", () => {
     // id whether or not it would, so the empty offender list was a fact about
     // our access — and the servers that answered nothing were the ones this
     // scored check flattered most.
+    // And because every answer was a 401, it is the login to fix: "Not run"
+    // at no cost, while the run still cannot pass.
     expect(check.status).toBe("skipped");
     expect(check.skipReason).toBe("could-not-run");
-    expect(check.error?.message).toMatch(/never in a position to mint/);
-    expect(check.details).toMatchObject({ succeededResponses: 0 });
+    expect(check.error?.message).toMatch(/requires authorization/);
+    expect(check.details).toMatchObject({
+      succeededResponses: 0,
+      missingInput: "login",
+      blockedBy: "modern-server-discover",
+      reason: expect.stringMatching(/never in a position to mint/),
+    });
     expect(result.outcome).toBe("incomplete");
   });
 });

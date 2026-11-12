@@ -1,4 +1,5 @@
 import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
+import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
 import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -203,6 +204,7 @@ evals.post("/run", async (c) =>
         rawBody,
         hostedRunEvalsSchema,
         {
+          pluginComputerRuntime: false,
           // The host THIS run executes under, so the manager negotiates as that
           // host. An environment pins its own, and the browser's pins come from
           // whichever host it had ACTIVE — without this a run could take its
@@ -212,6 +214,11 @@ evals.post("/run", async (c) =>
           // network hop that reorders this route's failures.
           // `loadSuiteHostConfig` is never hostless: no named host and no suite
           // config falls back to the default MCPJam host.
+          connectionIdSetsForBody: async (body) =>
+            loadSuiteConnectionIdSets(
+              createConvexClient(await getConvexBearerForRequest(c)),
+              { suiteId: body.suiteId },
+            ),
           hostConfigForBody: async (body) =>
             await loadSuiteHostConfig(
               createConvexClient(await getConvexBearerForRequest(c)),
@@ -400,9 +407,15 @@ evals.post("/run-test-case", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightQuickRunEnvironment(c, rawBody);
       },
+      connectionIdSetsForBody: async (rawBody) =>
+        loadSuiteConnectionIdSets(
+          createConvexClient(await getConvexBearerForRequest(c)),
+          { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+        ),
       // Connect as the host this case runs under, not as whichever one the
       // browser had active — same rule as the suite-run and streaming routes.
       // An environment runs as its own client. The wrapper owns the body, so
@@ -522,6 +535,10 @@ evals.post("/stream-test-case", async (c) => {
       )
     : mergedCasePins.initializePins;
 
+  const caseConnectionIdSets = await loadSuiteConnectionIdSets(
+    createConvexClient(await getConvexBearerForRequest(c)),
+    { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+  );
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -532,6 +549,9 @@ evals.post("/stream-test-case", async (c) => {
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
+      // A host attachment does not authorize durable Computer placement for an eval.
+      pluginComputerRuntime: false,
+      ...(caseConnectionIdSets ? { connectionIdSets: caseConnectionIdSets } : {}),
       accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
@@ -611,6 +631,7 @@ evals.post("/generate-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },
@@ -634,6 +655,7 @@ evals.post("/generate-negative-tests", async (c) => {
       }),
     {
       rpcLogs: false,
+      pluginComputerRuntime: false,
       beforeConnect: async (rawBody) => {
         preflightEnvironment = await preflightGenerationEnvironment(c, rawBody);
       },

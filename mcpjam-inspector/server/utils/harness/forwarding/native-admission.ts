@@ -23,6 +23,8 @@ type Candidate = {
   hostCapabilities?: HarnessHostCapabilityQualification;
   /** Set only with a live owned elicitation handler for this pinned runtime. */
   elicitationRuntimeVersion?: string;
+  /** The qualified runtime's declared native negotiation, if it has one. */
+  nativeVersionNegotiation?: "legacy-first";
 };
 
 /** UI host promises participate only on connections that declare MCP Apps. */
@@ -85,9 +87,14 @@ export function nativeForwardingGaps(candidate: Candidate): string[] {
     )
       gaps.add("capability-overrides");
     if (config.clientInfo || config.version) gaps.add("client-identity");
+    // The runtime's own negotiation is no pin: the connection negotiates as
+    // the runtime's client does, and what it lands on is judged below.
     if (
       ("mcpProtocolVersion" in config && config.mcpProtocolVersion) ||
-      config.supportedProtocolVersions
+      config.supportedProtocolVersions ||
+      ("versionNegotiation" in config &&
+        config.versionNegotiation !== undefined &&
+        config.versionNegotiation !== candidate.nativeVersionNegotiation)
     )
       gaps.add("protocol-pins");
     if (

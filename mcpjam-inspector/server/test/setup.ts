@@ -20,6 +20,11 @@ process.env.MCPJAM_GUEST_AUTHORITY_ORIGIN ??= "https://guest-authority.invalid";
 // the list inject their own fetch.
 process.env.MCPJAM_LOCAL_HARNESS_REVOCATIONS_URL ??= "http://127.0.0.1:9/revocations.json";
 
+// Tests run the real SDK conformance runners, which send a usage ping to the
+// production PostHog project. Only the SDK reads this switch, so the server's
+// own analytics tests are unaffected.
+process.env.MCPJAM_TELEMETRY_DISABLED ??= "1";
+
 const isCI = process.env.CI === "true";
 const isVerbose = process.env.VERBOSE_TESTS === "1";
 const shouldSuppressConsole = !isCI && !isVerbose;

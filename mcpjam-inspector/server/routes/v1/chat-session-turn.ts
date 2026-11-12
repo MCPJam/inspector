@@ -1,10 +1,16 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
+import { HOSTED_MODE } from "../../config.js";
+import {
+  appendBrowserRefusalContext,
+  classifyBrowserRefusal,
+  type BrowserRefusalReason,
+  type BrowserSuppressionCode,
+} from "../../utils/built-in-tools/browser-refusal.js";
 import { buildSetupManifest } from "../../services/chat-turn/setup-manifest.js";
 import {
   resolveChatSessionEnvironment,
   unappliedBuiltInToolIds,
 } from "./chat-session-environment.js";
-import { resolveApiHarnessEnvironment } from "./chat-session-harness-environment.js";
 import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
 import { browserSessionPolicySchema } from "../../../shared/browser-session-policy";
 import {
@@ -102,6 +108,7 @@ import type { ModelMessage, ToolSet } from "ai";
 import {
   MODEL_ID_PREFIX_TO_PROVIDER,
   runtimeChosenModelSentinelName,
+  isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isBedrockModelId, type ModelProvider } from "@/shared/types";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
@@ -124,11 +131,12 @@ import {
 import { logger } from "../../utils/logger.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
-import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import { environmentTurnSkills } from "../../services/environments/live-turn-skills.js";
+import type { BoxSkillsResult } from "../../utils/harness/box-skills-writer.js";
 import {
-  buildLiveEffectiveCapabilities,
-  type EffectiveCapabilitySet,
-} from "../../services/environments/effective-capabilities.js";
+  reportBoxSkillsDelivered,
+  reportSkillsDelivered,
+} from "../../services/environments/skills-delivered-event.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
@@ -385,11 +393,11 @@ function assertUnambiguousModelId(modelId: string): void {
   // The sentinel is deliberately NOT rewritten into some real model: the whole
   // point of it is that the model is unknown to MCPJam.
   const sentinelName = runtimeChosenModelSentinelName(id);
-  if (sentinelName) {
+  if (isRuntimeAccountModel(id)) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `modelId "${modelId}" (${sentinelName}) is a placeholder for a runtime that chooses its own model on your own account, not a model this API can run. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
+      `modelId "${modelId}" (${sentinelName ?? "Cursor account"}) requires the Cursor runtime and cannot run through this API. It only has meaning on a host whose harness provides that runtime. Send a real provider-prefixed model id instead.`,
       { reason: "MODEL_NOT_RUNNABLE" },
     );
   }
@@ -660,7 +668,7 @@ function narrowTarget(
  * that matters (a server must never get to choose the namespace its own skills
  * are addressed under, so `serverInfo.name` is never a candidate) — it just
  * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
- * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * in the prompt's skill list and in the origin banner on loaded skill content,
  * both of which the model and the user see.
  *
  * Returns `undefined` when nothing is labelled, so the call site can keep to
@@ -980,6 +988,8 @@ async function handleTurn(c: Context): Promise<Response> {
   let wallClock: ReturnType<typeof setTimeout> | undefined;
   let browserOutbox: ReturnType<typeof createBrowserArtifactOutbox> | undefined;
   let browserReason: string | undefined;
+  let browserSuppression: BrowserSuppressionCode | undefined;
+  let browserRefusal: BrowserRefusalReason | undefined;
   const browserEvidence: BrowserScreenshotEvidence[] = [];
   const browserNotices: string[] = [];
   let builtInTools: ToolSet | undefined;
@@ -1343,6 +1353,16 @@ async function handleTurn(c: Context): Promise<Response> {
         chatSessionId: runtimeChatSessionId,
       });
       const context: BuiltInToolContext = {
+        // The harness box is acquired after the browser attaches, so its apps
+        // are resolved when the agent first opens a localhost page.
+        ...(engine.kind === "harness"
+          ? {
+              browserPreviewWorkspace: () =>
+                conversationBox
+                  ? { sandboxId: conversationBox.binding.sandboxId }
+                  : undefined,
+            }
+          : {}),
         authHeader,
         projectId,
         chatSessionId: runtimeChatSessionId,
@@ -1365,6 +1385,7 @@ async function handleTurn(c: Context): Promise<Response> {
         onBrowserNotice: (notice) => browserNotices.push(notice),
         onToolSuppressed: (item) => {
           browserReason = item.reason;
+          browserSuppression ??= item.code;
         },
         browserCorrelation: {
           chatSessionId: runtimeChatSessionId,
@@ -1435,6 +1456,16 @@ async function handleTurn(c: Context): Promise<Response> {
       } else
         browserReason ??=
           "The browser capability is unavailable on this deployment.";
+      // An explicit request that did not attach: tell the model why, so it
+      // explains instead of reaching for a shell browser.
+      browserRefusal = browserAttached
+        ? undefined
+        : classifyBrowserRefusal({
+            configured: true,
+            advertised: false,
+            suppression: browserSuppression,
+            hostedMode: HOSTED_MODE,
+          });
     }
 
     wallClock = setTimeout(
@@ -1462,12 +1493,12 @@ async function handleTurn(c: Context): Promise<Response> {
         timeoutMs: CONNECT_TIMEOUT_MS,
         tolerateServerRefusals: true,
         // This surface emulates no host persona — it is MCPJam's own agent —
-        // and it ships the fulfiller, since `prepareChatV2` merges
-        // `withServerSkills`, which loads only through the verified read path
-        // in `server-skills.ts`. Without the declaration the extension can
-        // never be active: the model is handed no `listSkills` / `loadSkill`
-        // at all, so a server that serves skills is indistinguishable from one
-        // that does not.
+        // and it ships the fulfiller, since `prepareChatV2` adds the
+        // servers' skills to the turn's set, whose tools load only through the
+        // verified read path in `server-skills.ts`. Without the declaration
+        // the extension can never be active: the model is handed none of a
+        // server's skills, so a server that serves skills is
+        // indistinguishable from one that does not.
         advertiseSkillsExtension: true,
       },
     );
@@ -1508,53 +1539,21 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
-    // The project's own skills, which this surface has never had. #4419 gave it
-    // a connected server's skills by advertising the extension above; the
-    // project pool was still invisible, so an agent driving MCPJam could read
-    // somebody else's skills but not its own.
-    //
-    // TWO shapes, because a turn that named an environment is not a live turn.
-    // An environment IS a decision about what runs, so its own resolved set is
-    // the answer — pinned skill selection, attached plugin skills, captured
-    // server skills and all. Only a turn pinning bare `serverIds` has no such
-    // decision behind it, and only that turn builds a live set from the
-    // project pool.
-    //
-    // The live shape stays lazy, like every other live surface: the catalog is
-    // one query and a body is fetched only for the skill the model loads. A
-    // catalog failure degrades to no skills rather than failing the turn.
-    let turnCapabilities: EffectiveCapabilitySet | undefined;
-    let capabilitiesAreLive = false;
-    // The project pool is a MEMBER resource: `listCloudRuntimeSkills` resolves
-    // `projectSkills:listSkills`, which is signed-in-only, and
-    // `getConvexBearerForRequest` forwards a guest bearer verbatim. The v1 mount
-    // already 401s guests on this path (`/chat-sessions/messages` is absent from
-    // `guest-allowed-paths.ts`), so this term is unreachable today — it is here
-    // because that allowlist is edited independently of this file, and the
-    // reachable twin of this exact gate on the local route is what produced
-    // CONVEX-19R.
-    const callerIsGuest = Boolean(c.get("guestId"));
-    if (target.environmentCapabilities) {
-      turnCapabilities = target.environmentCapabilities;
-    } else if (projectId && !callerIsGuest) {
-      try {
-        turnCapabilities = buildLiveEffectiveCapabilities({
-          standaloneSkills: await listCloudRuntimeSkills({
-            authHeader,
-            projectId,
-          }),
-        });
-        capabilitiesAreLive = true;
-      } catch (error) {
-        logger.warn(
-          "[v1/chat-session-turn] project skill catalog unavailable",
-          {
-            projectId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
+    // One skill plan for this turn's engine, from the environment the turn
+    // resolved. A client's turn (a host or a bare server list) carries its
+    // client's selection, all visible by default, and its connected servers'
+    // own skills join when the prompt is built. A named environment's turn
+    // has exactly its own.
+    const turnSkills = environmentTurnSkills({
+      spec: target.resolvedEnvironment,
+      attribution: target.attribution,
+      ...(target.clientTurn ? { liveExtras: {} } : {}),
+      runtime:
+        engine.kind === "harness"
+          ? { kind: "harness", harnessId: engine.harness }
+          : { kind: "agent" },
+      modelContextTokens: modelDefinition.contextLength,
+    });
 
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
@@ -1562,29 +1561,15 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
-      ...(turnCapabilities
-        ? {
-            skillsSource: {
-              kind: "resolved" as const,
-              capabilities: turnCapabilities,
-              // Only a LIVE set composes live server skills, and that is the
-              // same rule `web-chat-turn` follows. An environment's server
-              // skills were CAPTURED; fetching more from the connection would
-              // falsify the claim that the set describes the turn — which is
-              // exactly what this flag exists to prevent. On the live arm it
-              // keeps #4419's server skills composed alongside the project's.
-              ...(capabilitiesAreLive
-                ? { composeLiveServerSkills: true as const }
-                : {}),
-              // The turn's own controller, so a lazy body or file read stops
-              // with the turn instead of running to its own fetch timeout.
-              abortSignal: abortController.signal,
-            },
-          }
-        : {}),
+      // MCPJam's agent gets its skill tools from the plan. A harness gets its
+      // skills on its box, so its prompt must not describe tools it lacks.
+      ...(engine.kind === "harness" ? {} : { skills: turnSkills.skills }),
+      // The turn's own controller, so a lazy body or file read stops with the
+      // turn instead of running to its own fetch timeout.
+      abortSignal: abortController.signal,
       // Without this every server-skill ref is namespaced by the raw server
-      // id, in the `listSkills` catalog the model reads AND in the origin
-      // banner prepended to loaded skill content.
+      // id, in the skill list the model reads AND in the origin banner
+      // prepended to loaded skill content.
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
@@ -1600,6 +1585,11 @@ async function handleTurn(c: Context): Promise<Response> {
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
+    // MCPJam's agent holds its skill tools now; a harness turn reports from
+    // its box writer (`onBoxSkillsWritten` below).
+    if (engine.kind !== "harness") {
+      reportSkillsDelivered("api", turnSkills.skills);
+    }
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
     // than folded into the step budget. One step can emit several parallel
@@ -1612,9 +1602,9 @@ async function handleTurn(c: Context): Promise<Response> {
     //
     // The ZERO case clears the FINAL set rather than trusting the name
     // exclusion above. `prepareChatV2` applies `excludeMcpToolNames` and THEN
-    // merges skill/meta tools (`withServerSkills`), so a server advertising
-    // the skills extension would still hand the model executable `listSkills`
-    // / `loadSkill` entries on a turn that asked for no tools at all. Excluding
+    // merges skill/meta tools, so a server advertising the skills extension
+    // would still hand the model an executable `loadSkill` and its file
+    // tools on a turn that asked for no tools at all. Excluding
     // names bounds what is LOADED; clearing the set is what makes "zero" true.
     const tools = noTools
       ? ({} as ToolSet)
@@ -1667,7 +1657,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const setupAtTurn = await buildSetupManifest({
       environment: target.resolvedEnvironment,
-      capabilities: turnCapabilities,
+      capabilities: turnSkills.skills.set,
       model: {
         id: String(modelDefinition.id),
         provider: modelDefinition.provider,
@@ -1729,35 +1719,19 @@ async function handleTurn(c: Context): Promise<Response> {
           reason: "NOT_A_DATA_PLANE",
         });
       }
-      // A credential harness uses its resolved setup grant. Plain host
-      // conversations retain their existing sandbox identity.
-      const boxEnvironment = resolveApiHarnessEnvironment({
-        credential: boxReason === "credential",
-        pinnedEnvironmentId: pins.environmentId,
-        resolvedEnvironmentId:
-          target.resolvedEnvironment?.environmentRef.environmentId,
-      });
-      if (!boxEnvironment.ok) {
-        return v1Error(
-          c,
-          boxEnvironment.status === 409 ? "CONFLICT" : "SERVER_UNREACHABLE",
-          boxEnvironment.message,
-          { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
-        );
-      }
-      const boxEnvironmentId = boxEnvironment.environmentId;
+      // Only a pinned environment is the box's grant, never the trace
+      // composition; a Cursor key is the organization's, on no environment.
+      const boxEnvironmentId = pins.environmentId;
       if (boxReason === "credential") {
         // The credential check `runHarnessTurn` would fail, run BEFORE the box
         // is booted: a refused turn must not pay for a box, nor fail past
         // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check — this surface hands the harness no
-        // materialized secrets, so only a brokered key can satisfy it.
+        // inputs as the turn's own check.
         const credentialRefusal = await playgroundCredentialRefusal({
           harnessId: engine.harness,
-          secretEnv: undefined,
           bearer: authHeader,
           projectId,
-          ...(boxEnvironmentId ? { environmentId: boxEnvironmentId } : {}),
+          signal: abortController.signal,
         });
         if (credentialRefusal) {
           return v1Error(c, "CONFLICT", credentialRefusal, {
@@ -1828,7 +1802,10 @@ async function handleTurn(c: Context): Promise<Response> {
       approvalMode: "auto-deny",
       messages: inputMessages,
       modelDefinition,
-      systemPrompt: prepared.enhancedSystemPrompt,
+      systemPrompt: appendBrowserRefusalContext(
+        prepared.enhancedSystemPrompt,
+        browserRefusal,
+      ),
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,
@@ -1853,25 +1830,22 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
-      // The ENVIRONMENT's resolved skills, for the harness that will write them
-      // into its sandbox. Without this `selectHarnessSkillSource` falls to its
-      // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
-      // environment's decision honoured by the emulated engine (through
-      // `skillsSource` above) and silently discarded by the harness, which is
-      // the same class of mismatch as running the wrong engine.
-      //
-      // Harness-only and presence-semantic. The emulated arm ignores this
-      // field, so gating on the engine keeps every emulated turn byte-identical
-      // rather than relying on a downstream reader to stay uninterested.
-      //
-      // What still does NOT cross: per-skill SUPPORTING FILES and pinned plugin
-      // versions, which travel as `effectiveCapabilities` — an option
-      // `runAssistantTurn` does not expose (the browser route reaches it
-      // through `web-chat-turn`). So a harness turn here delivers the
-      // environment's skill BODIES, not its attachments. Narrower than the
-      // Playground, and no longer a different set.
-      ...(engine.kind === "harness" && target.environmentSkills !== undefined
-        ? { runtimeSkillsOverride: target.environmentSkills }
+      // The same plan's skills, for the harness that writes them into its
+      // sandbox, with the set that carries their supporting files and pinned
+      // plugin versions. Harness-only and presence-semantic: the emulated arm
+      // ignores these fields, so gating on the engine keeps every emulated
+      // turn byte-identical rather than relying on a downstream reader to
+      // stay uninterested.
+      ...(engine.kind === "harness" && turnSkills.box
+        ? {
+            runtimeSkillsOverride: turnSkills.box.skills,
+            ...(turnSkills.box.set
+              ? { effectiveCapabilities: turnSkills.box.set }
+              : {}),
+            ...(turnSkills.live ? { liveTurn: true } : {}),
+            onBoxSkillsWritten: (written: BoxSkillsResult) =>
+              reportBoxSkillsDelivered("api", turnSkills.skills, written),
+          }
         : {}),
       abortSignal: abortController.signal,
       ...(prepared.progressivePlan
@@ -1891,8 +1865,14 @@ async function handleTurn(c: Context): Promise<Response> {
     unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
+    // The record of what the turn ran with is written from its plan, so it
+    // names exactly the skills the engine was handed.
     if (result.turnTrace)
-      result.turnTrace = { ...result.turnTrace, setupAtTurn };
+      result.turnTrace = {
+        ...result.turnTrace,
+        ...(turnSkills.turnProvenance ?? {}),
+        setupAtTurn,
+      };
 
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
     // waiting on background agents ends that wait at the deadline and keeps
@@ -2194,6 +2174,7 @@ async function handleTurn(c: Context): Promise<Response> {
                     reason:
                       browserReason ??
                       "Browser was not requested for this turn.",
+                    ...(browserRefusal ? { refusal: browserRefusal } : {}),
                   }
                 : {}),
               handoff: { waited: handoffWaited, resumed: handoffResumed },

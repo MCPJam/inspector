@@ -60,7 +60,7 @@ function parseUpdate(
     throw refusal;
   }
 }
-/** Serialize replaces. An uncertain delivery cannot silently retry or reorder state. */
+/** Serialize replacements; reconcile uncertain delivery without replaying it. */
 export function createModelContextController({
   requireLive,
   send,
@@ -130,13 +130,25 @@ export function createModelContextController({
     onSnapshot?.(structuredClone(snapshot));
     return true;
   };
+  const refresh = async () => {
+    if (!read) throw new Error("App context read unavailable");
+    const current = await read();
+    requireLive();
+    if (!acceptSnapshot(current)) throw new Error("Stale app context read");
+    uncertain = false;
+  };
   const enqueue = <T>(execute: () => Promise<T>, allowUncertain = false) => {
     const pending = tail.then(async () => {
       requireLive();
-      if (uncertain && !allowUncertain)
-        throw new Error(
-          "App context outcome unknown; resolve its current state before updating it",
-        );
+      if (uncertain && !allowUncertain) {
+        if (!read)
+          throw new Error(
+            "App context outcome unknown; resolve its current state before updating it",
+          );
+        // This replacement has not been sent. Read the authoritative cursor
+        // before sending it; the earlier uncertain replacement is never replayed.
+        await refresh();
+      }
       try {
         return await execute();
       } catch (error) {
@@ -206,14 +218,7 @@ export function createModelContextController({
   return Object.assign(update, {
     restore: acceptSnapshot,
     /** Explicit reconciliation reads current state; it never retries the failed effect. */
-    refresh: () =>
-      enqueue(async () => {
-        if (!read) throw new Error("App context read unavailable");
-        const current = await read();
-        requireLive();
-        if (!acceptSnapshot(current)) throw new Error("Stale app context read");
-        uncertain = false;
-      }, true),
+    refresh: () => enqueue(refresh, true),
     /**
      * Remove this App's whole context. The caller may re-send the same
      * operation until it has an outcome: the server decides it by `basis`,

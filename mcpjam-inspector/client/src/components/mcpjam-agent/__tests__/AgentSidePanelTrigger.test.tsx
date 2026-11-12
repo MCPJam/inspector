@@ -29,3 +29,17 @@ it("opens scoped chat in Describe", () => {
   expect(useAgentPanelStore.getState().isOpen).toBe(true);
   expect(useAgentPanelStore.getState().activeSessionProjectId).toBe("p");
 });
+it("hides Ask MCPJam everywhere when the server turns the agent off", () => {
+  window.__MCP_RUNTIME_CONFIG__ = { platformAgentDisabled: true };
+  try {
+    useDescribeSurface.setState({ scope: { kind: "evals", version: 1, id: "scope", projectId: "p", suiteId: "s", suiteName: "Suite", caseId: "draft:describe" } });
+    for (const tab of ["home", "servers", "chat", "evaluate"]) {
+      route.tab = tab;
+      const { unmount } = render(<AgentSidePanelTrigger />);
+      expect(screen.queryByRole("button", { name: "Ask MCPJam" })).toBeNull();
+      unmount();
+    }
+  } finally {
+    delete window.__MCP_RUNTIME_CONFIG__;
+  }
+});

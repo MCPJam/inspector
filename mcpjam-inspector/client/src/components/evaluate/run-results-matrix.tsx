@@ -51,6 +51,7 @@ import {
   type RunResultsMatrixData,
 } from "./run-results-matrix-model";
 import { IterationDetails } from "../evals/iteration-details";
+import { RunAccountsProvider } from "../evals/run-accounts-context";
 import { IterationReportScorecard } from "./case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "./case-scorecard/trial-authored";
 
@@ -871,7 +872,8 @@ function IterationDrawer({
   const decisionChain = diagnostic?.chain ?? chain;
 
   return (
-    <>
+    // The trace below names the account each tool call ran on.
+    <RunAccountsProvider accounts={target.run.accountsAtRun ?? fullRun?.accountsAtRun}>
       <EvalInspectHeader
         crumb={
           <>
@@ -945,7 +947,7 @@ function IterationDrawer({
           />
         </div>
       </EvalInspectBody>
-    </>
+    </RunAccountsProvider>
   );
 }
 

@@ -175,3 +175,30 @@ describe("POST /api/mcp/servers/approve-command", () => {
     );
   });
 });
+
+describe("command review is read-only", () => {
+  it("requires authorization and returns current terms without approval or spawn", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "review-command-"));
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example");
+    vi.stubEnv("MCPJAM_STDIO_APPROVALS_FILE", join(dir, "approvals.json"));
+    try {
+      const manager = createMockMcpClientManager();
+      const connect = vi.spyOn(manager, "connectToServer");
+      const app = createTestApp(manager, "servers");
+      stubAuthorize({ transportType: "stdio", ...SPEC });
+      const request = (withBearer: boolean) => app.request("/api/mcp/servers/command-approval", {
+        method: "POST", headers: headers(withBearer),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: "Files" }),
+      });
+      expect((await request(false)).status).toBe(401);
+      const response = await request(true);
+      expect(response.status).toBe(200);
+      expect((await response.json()).approval.fingerprint).toBe(FINGERPRINT);
+      expect((await checkStdioLaunchApproval(SERVER_ID, SPEC)).approval).not.toBe("approved");
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals(); vi.unstubAllEnvs();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

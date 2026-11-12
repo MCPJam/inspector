@@ -46,6 +46,7 @@ import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
 import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
   CheckStepError,
@@ -1417,7 +1418,14 @@ async function defaultRunEvalSuite(
   args: RunEvalSuiteArgs,
 ): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
-  // (same contract as the scheduled worker).
+  // (same contract as the scheduled worker), and the XAA issuer comes from the
+  // deployment's public origin as it does there.
+  //
+  // Unlike the scheduled worker, no host XAA policy. The one server is the
+  // throwaway row this check made for the PR build, registered with no
+  // authorization server: under a policy it could only be refused, and
+  // registering it would hand a customer's client credentials to the PR's
+  // code. It signs in with the repository's chosen OAuth source instead.
   const authorized = await createAuthorizedManager(
     {},
     args.bearer,
@@ -1428,7 +1436,7 @@ async function defaultRunEvalSuite(
       ? { [args.serverId]: args.oauthAccessToken }
       : undefined,
     undefined,
-    { serverNames: [args.serverName] },
+    { serverNames: [args.serverName], xaaIssuer: resolveConfiguredXaaIssuer() },
   );
 
   try {

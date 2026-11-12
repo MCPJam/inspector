@@ -1,3 +1,4 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
@@ -37,11 +38,11 @@ import type {
 } from "@mcpjam/sdk";
 import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/internal";
 import {
-  buildOrgModelFromResolvedConfig,
   assertOrgModelAllowed,
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import { buildGuardedOrgModel } from "./guarded-org-model.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 import {
   type PersistChatOutcome,
@@ -85,11 +86,12 @@ import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import type { SettleSuspendedToolCall } from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   projectId: string;
   providerKey: string;
   /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
@@ -304,6 +306,7 @@ export function formatLocalStreamError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 export interface OrgLocalModelHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   /**
@@ -403,9 +406,9 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the two
- * families that use the form (`effective-skill-tools`, `server-skill-tools`)
- * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * here — this runs before the model has produced an input — and the skill
+ * tools that use the form (`effective-skill-tools`) declare it
+ * UNCONDITIONALLY and answer `false` on the common path. Reading
  * "unevaluable" as "asks" refused every local-runtime turn that carried a
  * skill tool, switch or no switch, where before it ran. `streamText` evaluates
  * the function per call, exactly as it did before the declaration was unified;
@@ -627,7 +630,7 @@ export function handleLocalOrgChatModel(
   try {
     assertOrgModelAllowed(provider, modelId);
     llmModel = admitEachLocalOrgAttempt(
-      buildOrgModelFromResolvedConfig(provider, modelId),
+      buildGuardedOrgModel(provider, modelId),
       options.admission,
       modelId,
       attempts,
@@ -667,6 +670,7 @@ export function handleLocalOrgChatModel(
 
   let streamErrored = false;
   return streamDirectChatWithLiveTrace({
+    turnAuthorization: options.turnAuthorization,
     llmModel,
     modelId,
     messageHistory: messages,
@@ -932,6 +936,7 @@ export async function handleHostedOrgChatModel(
   }
 
   return handleMCPJamFreeChatModel({
+    turnAuthorization: options.turnAuthorization,
     messages: options.messages,
     modelId: options.modelId,
     modelSelection: options.modelSelection,

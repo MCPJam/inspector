@@ -747,7 +747,7 @@ export function toMCPServerConfig(
       : baseClientCapabilities;
   // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
   // client, and it ships the fulfiller: the verified read path in
-  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
+  // `server-skills.ts` plus the agent's skill tools that load through it. So
   // advertise = enforce is satisfied unconditionally here, and the declaration
   // is not gated on the `skills-enabled` product flag — that flag controls UI
   // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
@@ -777,7 +777,7 @@ export function toMCPServerConfig(
     if (typeof timeout === "number") stdio.timeout = timeout;
     if (clientCapabilities) {
       stdio.capabilities = clientCapabilities;
-      stdio.clientCapabilities = clientCapabilities;
+      if (baseClientCapabilities) stdio.clientCapabilities = clientCapabilities;
     }
     // mcpProfile.initialize fields flow into the SDK's per-server config.
     // Undefined skips the field entirely so callers that don't opt in stay
@@ -870,7 +870,7 @@ export function toMCPServerConfig(
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;
-    http.clientCapabilities = clientCapabilities;
+    if (baseClientCapabilities) http.clientCapabilities = clientCapabilities;
   }
   // mcpProfile.initialize fields — same opt-in shape as the stdio branch.
   if (options?.clientInfo) http.clientInfo = options.clientInfo;

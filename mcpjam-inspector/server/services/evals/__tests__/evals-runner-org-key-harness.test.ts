@@ -8,9 +8,11 @@
  * selection arrives: without it the turn is refused as not hosted. Only the
  * engine and the local run's preparation are mocked; every layer that carries
  * the selection is real. The local venue keeps the iteration off a hosted box.
+ * The last block follows the turn's routing record back out to the persist.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelSelection } from "@mcpjam/sdk";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 
 const localVenue = vi.hoisted(() => ({
   prepare: vi.fn(),
@@ -106,6 +108,10 @@ afterEach(() => {
 function runCase(
   selection: ModelSelection,
   extra: Partial<Parameters<typeof runEvalSuiteWithAiSdk>[0]> = {},
+  {
+    client = convexClient(),
+    prompts = ["Hello"],
+  }: { client?: ReturnType<typeof convexClient>; prompts?: string[] } = {},
 ) {
   return runEvalSuiteWithAiSdk({
     suiteId: "suite-1",
@@ -121,15 +127,17 @@ function runCase(
           runs: 1,
           testCaseId: "case-1",
           expectedToolCalls: [],
-          promptTurns: [
-            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-          ],
+          promptTurns: prompts.map((prompt, index) => ({
+            id: `turn-${index + 1}`,
+            prompt,
+            expectedToolCalls: [],
+          })),
         },
       ],
       environment: { servers: ["srv-1"] },
     },
     modelApiKeys: {},
-    convexClient: convexClient(),
+    convexClient: client,
     convexHttpUrl: "https://example.convex.site",
     convexAuthToken: "token",
     mcpClientManager: manager(),
@@ -217,5 +225,65 @@ describe("a harness eval case when the organization requires its own keys", () =
 
     expect(localVenue.prepare).not.toHaveBeenCalled();
     expect(assistantTurn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The turn's MCP routing record on its way back out. The hosted driver keeps
+ * each turn's `turnTrace.harnessMcpAtTurn` by prompt index, and the finalize
+ * fanout sends it with that turn's `appendEvalTurnTrace` call. Every layer
+ * between the engine and the Convex call is real.
+ */
+describe("a harness eval case's routing records", () => {
+  const ROUTE: HarnessMcpAtTurn = {
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: ["eval iteration"],
+    pinnedRuntimeVersion: "2.1.245",
+    plannerVersion: "harness-mcp-plan-v1",
+    qualification: { status: "not-required" },
+  };
+
+  /** A Convex client that keeps the `turn` of each per-turn trace write. */
+  function recordingClient() {
+    const turns: Record<string, unknown>[] = [];
+    const client = convexClient();
+    client.action.mockImplementation(
+      async (name: string, args?: { turn?: Record<string, unknown> }) => {
+        if (name === "testSuites:appendEvalTurnTrace" && args?.turn) {
+          turns.push(args.turn);
+        }
+        return name === "testSuites:startQuickRunIteration"
+          ? { iterationId: "iter-1" }
+          : undefined;
+      },
+    );
+    return { client, turns };
+  }
+
+  it("reach the persist call for their own prompt index, and a turn without one sends none", async () => {
+    let engineTurn = 0;
+    assistantTurn.mockImplementation(async (opts: { messages: unknown[] }) => {
+      const harnessMcpAtTurn = engineTurn++ === 0 ? ROUTE : undefined;
+      return {
+        messages: [...opts.messages, { role: "assistant", content: "Done." }],
+        turnTrace: {
+          spans: [],
+          ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
+        },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    });
+    const { client, turns } = recordingClient();
+
+    await runCase(ORG_ANTHROPIC, {}, { client, prompts: ["Hello", "Again"] });
+
+    expect(assistantTurn).toHaveBeenCalledTimes(2);
+    expect(turns.map((turn) => turn.promptIndex)).toEqual([0, 1]);
+    expect(turns[0]!.harnessMcpAtTurn).toEqual(ROUTE);
+    expect(turns[1]).not.toHaveProperty("harnessMcpAtTurn");
   });
 });

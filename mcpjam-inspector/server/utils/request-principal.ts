@@ -18,6 +18,11 @@ export function principalKey(c: Context): string {
       if (keyId) return `key:${keyId}`;
       break;
     }
+    case "workos_agent": {
+      const registrationId = c.get("workosAgentRegistrationId");
+      if (registrationId) return `agent:${registrationId}`;
+      break;
+    }
     case "guest": {
       const guestId = c.get("guestId");
       if (guestId) return `guest:${guestId}`;

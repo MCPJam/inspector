@@ -154,10 +154,10 @@ describe("PlaygroundEnvironmentSection", () => {
     expect(screen.queryByTestId("playground-environment-reset")).toBeNull();
   });
 
-  it("says out loud when the client cannot consume this environment's skills", () => {
+  it("says out loud when this environment's skills don't load on its client", () => {
     // The count is real but the harness has no skill channel, so the skills
     // would NOT reach the model. Showing "4 skills" alone would be a lie of
-    // omission.
+    // omission. The reason reads as the Compare pane words it.
     const state = environmentState();
     render(
       <PlaygroundEnvironmentSection
@@ -165,6 +165,11 @@ describe("PlaygroundEnvironmentSection", () => {
         environment={environmentState({
           preview: {
             ...state.preview!,
+            host: {
+              ...state.preview!.host,
+              hostName: "Cursor",
+              harness: "cursor",
+            },
             capabilities: {
               ...state.preview!.capabilities,
               skillDelivery: "unsupported",
@@ -174,8 +179,10 @@ describe("PlaygroundEnvironmentSection", () => {
       />,
     );
     expect(
-      screen.getByTestId("playground-environment-skill-limitation").textContent,
-    ).toContain("can't consume skills");
+      screen.getByTestId("playground-environment-skill-limitation"),
+    ).toHaveTextContent(
+      "Skills don’t load on Cursor yet. The 4 skills in this environment won’t reach the model.",
+    );
   });
 
   it("does not show the limitation notice when skills are deliverable", () => {

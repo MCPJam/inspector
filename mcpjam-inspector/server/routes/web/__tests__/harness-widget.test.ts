@@ -6,6 +6,7 @@ import { ExecutionControlError } from "../../../utils/harness/forwarding/executi
 import type { MrtrLegMiddleware } from "@mcpjam/sdk";
 
 const state = vi.hoisted(() => ({
+  sourceReceipt: vi.fn(async () => "signed-source"),
   userId: "user",
   scope: vi.fn(),
   control: vi.fn(),
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   ask: vi.fn(),
   tools: [{ name: "write", _meta: { ui: { visibility: ["app"] } } }],
 }));
+vi.mock("../../../services/sandbox-view-source.js", () => ({ sandboxSourceReceipt: state.sourceReceipt }));
 vi.mock("../../../utils/harness/forwarding/retained-resources", async original => ({...await original<typeof import("../../../utils/harness/forwarding/retained-resources")>(), readRetainedResourceScope: state.retained, retainedProfileFingerprint: () => "legacy-profile"}));
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "user-token",
@@ -265,7 +267,7 @@ it("uses the original account and trusted host for resource reads", async () => 
   state.read.mockResolvedValue({ contents: [{ uri: "test://record", text: "original account" }] });
   const response = await boundResource({ method: "resources/read", uri: "test://record", _meta: { progressToken: "progress" } });
   expect(response.status).toBe(200);
-  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+  expect(state.manager.mock.calls[0][7].connectionIdSets).toEqual({ server: ["original-account"] });
   expect(state.manager.mock.calls[0][4]).toBe(4321);
   expect(state.read).toHaveBeenCalledWith("server", { uri: "test://record", _meta: { progressToken: "progress" } }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(state.scope).toHaveBeenCalledTimes(3);
@@ -340,8 +342,9 @@ it("loads initial widget HTML using the same bound resource route", async () => 
   state.resources.mockResolvedValue({ resources: [] });
   const response = await boundResource({ method: "widget/content", request: { serverId: "server", resourceUri: "ui://app", toolId: "call", toolName: "app", toolInput: {}, injectOpenAiCompat: true, cspMode: "permissive", template: "ui://app" } });
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true });
-  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+  expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true, sourceReceipt: "signed-source" });
+  expect(state.sourceReceipt).toHaveBeenCalledWith(expect.anything(), { serverId: "server", resourceUri: "ui://app", toolCallId: "call" }, expect.stringContaining("Original App"), expect.anything(), "project");
+  expect(state.manager.mock.calls[0][7].connectionIdSets).toEqual({ server: ["original-account"] });
 });
 
 function retainedProof(connectionCapabilities?: Record<string, unknown>) {
@@ -356,7 +359,7 @@ const retainedResource = (context: object) => harnessWidgets.request("/widget-re
 it("verifies the bridge presentation proof and uses only the original connection", async () => {
   const response = await retainedResource(retainedProof());
   expect(response.status).toBe(200);
-  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds: {server: "original-account"}, onlySelectedConnections: true});
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIdSets: {server: ["original-account"]}});
   expect(state.retained).toHaveBeenCalledTimes(3);
   expect(state.retained.mock.calls.every(([, digest]) => digest === "original-digest")).toBe(true);
 });
@@ -411,7 +414,7 @@ it("routes a retained App button through the existing widget gate with its exact
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('"type":"result"');
   expect(state.control).toHaveBeenCalledWith(expect.objectContaining({retainedParent:{toolCallId:"call",turnId:"real-turn",scopeDigest:"original-digest"}}));
-  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds:{server:"original-account"},onlySelectedConnections:true});
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIdSets:{server:["original-account"]}});
   expect(state.gate).toHaveBeenCalledOnce();
   expect(state.dispatch).toHaveBeenCalledOnce();
 });

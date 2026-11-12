@@ -472,6 +472,59 @@ describe("long-lived App limits", () => {
     ).rejects.toThrow("INSTANCE_UNAVAILABLE");
   });
 
+  it("rechecks a durable read overtaken by renewal", async () => {
+    let now = 1_000_000;
+    const clock = () => now;
+    const s = store(clock);
+    const registry = new PluginInstanceRegistry(clock, 100);
+    const opened = await registry.openActivationPersistent(identity, binding, signal(), s.port);
+    const stale = { ...s.rows.get(opened.token)! };
+    let finishRead!: (value: DurablePluginInstanceControl) => void;
+    const read = vi.spyOn(s.port, "read").mockImplementationOnce(() =>
+      new Promise((resolve) => { finishRead = resolve; }),
+    );
+    const pending = registry.getPersistent(opened.token, identity, signal(), s.port);
+    await vi.waitFor(() => expect(finishRead).toBeDefined());
+    now += 50;
+    await registry.renewPersistent(opened.token, identity, signal(), async () => {}, s.port);
+    finishRead(stale);
+    await expect(pending).resolves.toMatchObject({ owner: opened.instance.owner });
+    expect(read).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["removed", "changed", "still-older"])(
+    "refuses an overtaken read when the fresh control is %s",
+    async (fresh) => {
+      let now = 1_000_000;
+      const clock = () => now;
+      const s = store(clock);
+      const registry = new PluginInstanceRegistry(clock, 100);
+      const opened = await registry.openActivationPersistent(identity, binding, signal(), s.port);
+      const stale = { ...s.rows.get(opened.token)! };
+      let finishRead!: (value: DurablePluginInstanceControl) => void;
+      const read = vi.spyOn(s.port, "read").mockImplementationOnce(() =>
+        new Promise((resolve) => { finishRead = resolve; }),
+      );
+      const pending = registry.getPersistent(opened.token, identity, signal(), s.port);
+      await vi.waitFor(() => expect(finishRead).toBeDefined());
+      now += 50;
+      await registry.renewPersistent(opened.token, identity, signal(), async () => {}, s.port);
+      if (fresh === "removed") s.rows.delete(opened.token);
+      else if (fresh === "still-older") s.rows.set(opened.token, stale);
+      else {
+        const row = s.rows.get(opened.token)!;
+        const control = JSON.parse(row.snapshotJson);
+        control.instance.hostRevision = "changed";
+        s.rows.set(opened.token, { ...row, snapshotJson: JSON.stringify(control) });
+      }
+      finishRead(stale);
+      await expect(pending).rejects.toThrow(
+        fresh === "removed" ? "INSTANCE_UNAVAILABLE" : "INSTANCE_CONTROL_CHANGED",
+      );
+      expect(read).toHaveBeenCalledTimes(3);
+    },
+  );
+
   const readOnlyFile = {
     kind: "saved-resource" as const,
     version: 1 as const,

@@ -58,6 +58,8 @@ export default defineConfig({
     // harness.
     "@ai-sdk/harness",
     "@ai-sdk/harness-claude-code",
+    "@ai-sdk/harness-cursor",
+    "@ai-sdk/harness-opencode",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
     "@ai-sdk/deepseek",
@@ -77,6 +79,9 @@ export default defineConfig({
     // `import("node-pty")` resolves from node_modules — and cleanly fails to,
     // degrading the terminal off, when it isn't there. See utils/computers/local-pty.ts.
     "node-pty",
+    // Native addon; loaded with a dynamic `import("sharp")` from the harness
+    // prompt-image pipeline. Bundling it would miss the platform binaries.
+    "sharp",
     // evals-cli dependencies
     "posthog-node",
     "@openrouter/ai-sdk-provider",

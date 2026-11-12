@@ -20,8 +20,8 @@
  *
  * ── Why a closed grammar is enough ────────────────────────────────────────
  * The grammar is small and finite because the framework and adapters are
- * pinned exactly (`@ai-sdk/harness@1.0.117`,
- * `@ai-sdk/harness-claude-code@1.0.121`, `@ai-sdk/harness-codex@1.0.119`) and
+ * pinned exactly (`@ai-sdk/harness@1.0.158`,
+ * `@ai-sdk/harness-claude-code@1.0.162`, `@ai-sdk/harness-cursor@1.0.72`) and
  * every command they emit is a literal in their own source, not model- or
  * repo-derived text. The shapes are enumerated in `ADAPTER_COMMAND_SHAPES`
  * below. An adapter upgrade that changes one of them fails CLOSED — the
@@ -38,9 +38,9 @@
  *
  * ── Path remapping is part of the translation, not a detail ───────────────
  * The adapters declare `bootstrapDir = .harness-bootstrap/<harnessId>`, which
- * the framework resolves against the session's default working directory — for
- * us, the user's granted workspace — and then `pnpm install` a vendor CLI into
- * it at session start. Both halves are unacceptable on a host:
+ * the framework resolves against `$HOME/.ai-sdk-harness` — for us, the
+ * session's synthetic home — and then `pnpm install` a vendor CLI into it at
+ * session start. Both halves are unacceptable on a host:
  *
  *   - a vendor CLI's whole dependency graph does not belong inside somebody's
  *     checkout, where it lands in their working tree and their VCS status;
@@ -116,7 +116,7 @@ export interface CommandTranslationContext {
   harnessId: SupportedLocalHarnessId;
   /**
    * The adapter's declared bootstrap directory as the framework resolves it —
-   * `<defaultWorkingDirectory>/.harness-bootstrap/<harnessId>`. Never touched
+   * `$HOME/.ai-sdk-harness/.harness-bootstrap/<harnessId>`. Never touched
    * on disk: it is matched, and every reference to it is remapped onto the
    * verified managed bundle.
    */

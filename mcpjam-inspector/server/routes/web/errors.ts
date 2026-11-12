@@ -17,6 +17,7 @@ import {
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
+import { GUEST_ACCESS_DISABLED_CODE } from "../../../shared/guest-session-failure.js";
 import { internalErrorResponseView } from "./hosted-internal-error.js";
 import {
   onlyFallbackAnswered,
@@ -43,6 +44,8 @@ export const ErrorCode = {
   CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
+  // The deployment issues no guest sessions; sign-in is the only way in.
+  GUEST_ACCESS_DISABLED: GUEST_ACCESS_DISABLED_CODE,
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
   SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
   TIMEOUT: "TIMEOUT",

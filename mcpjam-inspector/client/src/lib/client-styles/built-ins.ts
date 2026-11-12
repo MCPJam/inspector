@@ -763,6 +763,18 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
   CURSOR_CLI_HOST_STYLE,
+  {
+    id: "copilot-cli",
+    mcp: {
+      protocolOverride: UIType.MCP_APPS,
+      platform: CHATGPT_PLATFORM,
+      fontCss: CHATGPT_FONT_CSS,
+      ...HOST_STYLE_CAPABILITIES["copilot-cli"],
+      resolveStyleVariables: getChatGPTStyleVariables,
+    },
+    chatUi: { ...COPILOT_HOST_STYLE.chatUi, label: "GitHub Copilot CLI",
+      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox" },
+  },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,

@@ -15,6 +15,7 @@ import {
   findPortConflicts,
   npmInvocation,
   parseLauncherArgs,
+  pickFreeInstance,
   planLaunch,
 } from "../dev-worktree.mjs";
 
@@ -64,9 +65,71 @@ test("keeps the existing local/staging/preview modes and adds --env-file and por
   assert.equal(parsed.envFile, "x.env");
   assert.deepEqual(parsed.portOverrides, { server: "7000" });
   assert.equal(parsed.worker, false);
-  assert.throws(() => parseLauncherArgs([]), /Usage/);
+  assert.throws(() => parseLauncherArgs(["one"]), /Usage/);
   assert.throws(() => parseLauncherArgs(["1", "prod"]), /Unknown target/);
   assert.throws(() => parseLauncherArgs(["1", "--bogus"]), /Unknown option/);
+});
+
+test("an omitted instance, or auto, asks for the first free one", () => {
+  assert.equal(parseLauncherArgs([]).instance, "auto");
+  assert.equal(parseLauncherArgs(["--no-worker"]).instance, "auto");
+  assert.equal(parseLauncherArgs(["auto"]).instance, "auto");
+  const staging = parseLauncherArgs(["staging"]);
+  assert.equal(staging.instance, "auto");
+  assert.equal(staging.target, "staging");
+  assert.deepEqual(
+    parseLauncherArgs([
+      "auto",
+      "preview",
+      "https://a.convex.cloud",
+      "https://a.convex.site",
+    ]).previewUrls,
+    ["https://a.convex.cloud", "https://a.convex.site"],
+  );
+  assert.throws(() => parseLauncherArgs(["staging", "x"]), /Unexpected/);
+});
+
+test("picks the first instance whose launched ports are all free", async () => {
+  const checked = [];
+  const busy = new Set([5173, 6275]);
+  const findConflicts = async (ports) => {
+    checked.push(ports);
+    return Object.entries(ports)
+      .filter(([, port]) => busy.has(port))
+      .map(([role, port]) => ({ role, port }));
+  };
+  const instance = await pickFreeInstance(parseLauncherArgs([]), {
+    findConflicts,
+  });
+  assert.equal(instance, 2);
+  assert.deepEqual(checked[2], {
+    client: 5175,
+    server: 6276,
+    worker: 8789,
+    debugger: 9231,
+  });
+
+  // Without the worker, its ports are not checked.
+  checked.length = 0;
+  busy.clear();
+  busy.add(8787);
+  assert.equal(
+    await pickFreeInstance(parseLauncherArgs(["--no-worker"]), {
+      findConflicts,
+    }),
+    0,
+  );
+  assert.deepEqual(checked, [{ client: 5173, server: 6274 }]);
+
+  // An override that is taken is taken for every instance.
+  busy.add(7000);
+  await assert.rejects(
+    pickFreeInstance(parseLauncherArgs(["--server-port", "7000"]), {
+      tries: 3,
+      findConflicts,
+    }),
+    /Instances 0 to 2 all have a port in use/,
+  );
 });
 
 test("plans one coherent instance: ports, origins, worker vars, no inherited target", () => {

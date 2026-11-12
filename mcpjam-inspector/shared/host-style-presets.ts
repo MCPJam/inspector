@@ -258,6 +258,7 @@ export const HOST_STYLE_CAPABILITIES = {
       serverResources: { listChanged: false },
     },
   },
+  "copilot-cli": { mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE },
   "cursor-cli": {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },

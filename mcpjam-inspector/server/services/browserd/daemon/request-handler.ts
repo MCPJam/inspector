@@ -47,6 +47,11 @@ import type {
 } from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
 import {
+  parsePreviewGrant,
+  WORKSPACE_PREVIEW_FEATURE,
+  type WorkspacePreviewRelay,
+} from "./workspace-preview";
+import {
   DEFAULT_RECORD_FPS,
   MAX_RECORD_FPS,
   MIN_RECORD_FPS,
@@ -273,6 +278,8 @@ export interface BrowserdHandlerDeps {
   recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
   /** Export the persistent profile while the queue is drained. */
   profileExport?: () => Promise<Uint8Array>;
+  /** Serves workspace ports on this box's loopback; hosted daemons only. */
+  preview?: Pick<WorkspacePreviewRelay, "grant">;
 }
 
 /**
@@ -307,6 +314,7 @@ export class BrowserdRequestHandler {
   private readonly captureTypedText: boolean;
   private readonly recorder: BrowserdHandlerDeps["recorder"];
   private readonly profileExport: BrowserdHandlerDeps["profileExport"];
+  private readonly preview: BrowserdHandlerDeps["preview"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -360,6 +368,7 @@ export class BrowserdRequestHandler {
     this.features = [
       "sharp-stream-v1",
       ...new Set([...(deps.features ?? []), ...BROWSERD_WEBMCP_FEATURES]),
+      ...(deps.preview ? [WORKSPACE_PREVIEW_FEATURE] : []),
     ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
@@ -369,6 +378,7 @@ export class BrowserdRequestHandler {
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
     this.profileExport = deps.profileExport;
+    this.preview = deps.preview;
   }
 
   /**
@@ -720,6 +730,24 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleViewport(req);
+    }
+
+    // A workspace port on this box's loopback, so the page keeps its literal
+    // `http://localhost:<port>` origin. Outside the command queue: it changes
+    // where a later navigation lands, not what the browser shows.
+    if (req.path === "/v1/preview" && this.preview) {
+      if (req.method !== "POST") return { status: 405, headers: { allow: "POST" } };
+      let grant;
+      try {
+        grant = parsePreviewGrant(JSON.parse(req.body || "null"));
+      } catch {
+        grant = undefined;
+      }
+      if (!grant) return { status: 400, body: { error: "invalid_grant" } };
+      const result = await this.preview.grant(grant);
+      return result.ok
+        ? { status: 200, body: { ok: true, port: result.port } }
+        : { status: 409, body: { error: result.error } };
     }
 
     return { status: 404 };

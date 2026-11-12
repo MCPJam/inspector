@@ -21,6 +21,32 @@ export function conformanceTargetKey(server: ServerWithName): string {
   ]);
 }
 
+/**
+ * The server answered 401: the caller's login to fix, not a server fault. The
+ * run still starts its suites, so each check reports "Not run" (gray, no point
+ * lost) with the sign-in prompt instead of every suite failing outright.
+ */
+export class ConformanceLoginRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConformanceLoginRequiredError";
+  }
+}
+
+/**
+ * The suite state a failed version check leaves. A 401 still owes the run an
+ * "incomplete" verdict, so a run of OAuth alone reports the login gap instead
+ * of "nothing applicable".
+ */
+export function versionErrorState(
+  error: unknown,
+  message: string,
+): { status: "error"; error: string; verdict?: "incomplete" } {
+  return error instanceof ConformanceLoginRequiredError
+    ? { status: "error", error: message, verdict: "incomplete" }
+    : { status: "error", error: message };
+}
+
 /** Setup's result belongs to its first run only; reruns resolve a fresh connection. */
 export function useConformanceRunVersion(
   server: ServerWithName,
@@ -57,6 +83,8 @@ export function useConformanceRunVersion(
           );
         return result.protocolVersion;
       }
+      if (result.status === "auth-required")
+        throw new ConformanceLoginRequiredError(result.message);
       throw new Error(
         result.status === "unsupported"
           ? `The server doesn't support MCP protocol version ${result.protocolVersion}.${

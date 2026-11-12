@@ -98,6 +98,7 @@ export default defineConfig({
     include: ["**/__tests__/**/*.test.ts", "**/*.test.ts"],
     exclude: ["node_modules", "dist"],
     setupFiles: ["./test/setup.ts"],
+    globalSetup: [path.join(rootDir, "server/test/__tests__/plugin-shim-setup.ts")],
     testTimeout: 30000,
     hookTimeout: 30000,
     server: {

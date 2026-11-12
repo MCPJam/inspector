@@ -11,6 +11,7 @@ import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated.js";
+import { getCatalogTemplate } from "../src/host-compat/catalog.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -23,6 +24,7 @@ const ALL_IDS: HostTemplateId[] = [
   "slack",
   "cursor",
   "cursor-cli",
+  "copilot-cli",
   "codex",
   "copilot",
   "vscode",
@@ -63,9 +65,27 @@ describe("seedHostTemplate", () => {
           { mcpProfile?: { unauthorizedChallengeTrigger?: string } }
         >
       )[id]?.mcpProfile;
-      expect(seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger).toBe(
-        catalogProfile?.unauthorizedChallengeTrigger
-      );
+      expect(
+        seedHostTemplate(id).mcpProfile?.unauthorizedChallengeTrigger
+      ).toBe(catalogProfile?.unauthorizedChallengeTrigger);
+    }
+  );
+
+  // Both follow Claude's embedded-sites doc, so a client seeded here loads a
+  // view's declared frame origins exactly when a catalog-created one does.
+  it.each(["claude", "claude-desktop"] as const)(
+    "seeds the %s frame domains the bundled host catalog ships",
+    (id) => {
+      type Overrides = { cspFrameDomains?: boolean };
+      const catalogOverrides = (
+        BUNDLED_HOST_COMPAT_CATALOG.hostsById as Record<
+          string,
+          { mcpProfile?: { apps?: { mcpAppsOverrides?: Overrides } } }
+        >
+      )[id]?.mcpProfile?.apps?.mcpAppsOverrides;
+      const seeded = seedHostTemplate(id).mcpProfile?.apps?.mcpAppsOverrides;
+      expect(seeded?.cspFrameDomains).toBe(true);
+      expect(seeded?.cspFrameDomains).toBe(catalogOverrides?.cspFrameDomains);
     }
   );
 
@@ -114,6 +134,39 @@ describe("seedHostTemplate", () => {
     }
   });
 
+  it("preserves documented discovery defaults in legacy and bundled catalog creation", () => {
+    const autoHosts = new Set<HostTemplateId>([
+      "claude",
+      "claude-desktop",
+      "copilot-cli",
+    ]);
+    const onHosts = new Set<HostTemplateId>([
+      "claude-code",
+      "cursor",
+      "codex",
+      "vscode",
+      "goose",
+    ]);
+
+    for (const id of ALL_IDS) {
+      const expected = autoHosts.has(id) ? undefined : onHosts.has(id);
+      for (const config of [
+        seedHostTemplate(id),
+        getCatalogTemplate(BUNDLED_HOST_COMPAT_CATALOG, id),
+      ]) {
+        if (!config) throw new Error(`Missing host template: ${id}`);
+        expect(config.progressiveToolDiscovery, id).toBe(expected);
+        const serialized = JSON.parse(JSON.stringify(config));
+        expect(serialized.progressiveToolDiscovery, id).toBe(expected);
+        if (autoHosts.has(id)) {
+          expect(serialized, id).not.toHaveProperty(
+            "progressiveToolDiscovery"
+          );
+        }
+      }
+    }
+  });
+
   // The MCPJam persona is the inspector's own client and supports the full
   // XAA path, so it declares the enterprise-managed-authorization extension.
   // Every real-host persona must NOT — a seed refactor that leaks the key
@@ -155,10 +208,10 @@ describe("seedHostTemplate", () => {
   it("matches the documented model + style for the claude template", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     expect(config.hostStyle).toBe("claude");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
   });
 
-  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+  it("keeps Claude protocol and app capabilities faithful to the probe, with frameDomains from Claude's docs", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     const profile = config.mcpProfile;
 
@@ -180,7 +233,7 @@ describe("seedHostTemplate", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
+      cspFrameDomains: true,
       cspBaseUriDomains: false,
       requestTeardown: false,
       resourceCacheTtl: true,
@@ -197,7 +250,7 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
-    expect(config.progressiveToolDiscovery).toBe(false);
+    expect(config.progressiveToolDiscovery).toBe(true);
     // Bumped with the 2026-10-26 re-probe, from 2.1.259.
     expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.310");
   });
@@ -224,6 +277,48 @@ describe("seedHostTemplate", () => {
     const effective = canonicalizeHostConfigV2(config);
     expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+  });
+
+  // None of these profile fields may count as a native-admission gap, so the
+  // real CLI's MCP traffic can be forwarded as it sends it. The seed and the
+  // bundled catalog row it falls back to carry the same values.
+  it("seeds Cursor CLI with the bundled catalog's pass-through profile", () => {
+    const passThroughFields = (config: {
+      respectToolVisibility?: boolean;
+      connectionDefaults: { requestTimeout: number };
+      clientCapabilities: Record<string, unknown>;
+      mcpProfile?: {
+        profileVersion?: number;
+        initialize?: unknown;
+        versionNegotiation?: unknown;
+      };
+    }) => ({
+      respectToolVisibility: config.respectToolVisibility,
+      requestTimeout: config.connectionDefaults.requestTimeout,
+      clientCapabilities: config.clientCapabilities,
+      initialize: config.mcpProfile?.initialize,
+      versionNegotiation: config.mcpProfile?.versionNegotiation,
+    });
+    const seeded = seedHostTemplate("cursor-cli", { theme: "dark" });
+    expect(passThroughFields(seeded)).toEqual({
+      respectToolVisibility: false,
+      requestTimeout: 300_000,
+      clientCapabilities: {},
+      initialize: undefined,
+      // The CLI's own negotiation, which native admission counts as no pin.
+      versionNegotiation: "legacy-first",
+    });
+    expect(
+      passThroughFields(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"])
+    ).toEqual(passThroughFields(seeded));
+    expect(BUNDLED_HOST_COMPAT_CATALOG.hostsById["cursor-cli"]).toMatchObject({
+      provenance: "probe",
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+    });
+    expect(canonicalizeHostConfigV2(seeded).mcpProfile).toEqual({
+      profileVersion: 1,
+      versionNegotiation: "legacy-first",
     });
   });
 
@@ -258,6 +353,25 @@ describe("seedHostTemplate", () => {
     expect(variables["--color-background-primary"]).toBe(
       "light-dark(#ffffff, #22252a)"
     );
+  });
+
+  it("keeps desktop-only mentions and files off in the ChatGPT Web seed and bundled catalog", () => {
+    const seeded =
+      seedHostTemplate("chatgpt").mcpProfile?.apps?.pluginExtensions;
+    const bundled =
+      BUNDLED_HOST_COMPAT_CATALOG.hostsById.chatgpt.mcpProfile.apps
+        .pluginExtensions;
+    for (const extensions of [seeded, bundled]) {
+      expect(extensions).toMatchObject({
+        enabled: true,
+        capabilities: {
+          mentions: false,
+          fileResources: false,
+          fileViewers: false,
+          localFiles: false,
+        },
+      });
+    }
   });
 
   it("keeps ChatGPT raw host capabilities faithful to the probe", () => {

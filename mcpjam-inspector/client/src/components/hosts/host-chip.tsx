@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { resolveHostLogoByName } from "@/lib/host-logo";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 const hostChipLogoClass = {
   xs: "size-3",
@@ -21,13 +22,16 @@ export function HostChipLogo({
   className?: string;
 }) {
   if (logoSrc) {
+    // OpenCode's brand mark needs a 16 × 20 minimum to keep its strokes sharp.
+    const openCode = logoSrc === getHostLogoSrc("opencode", "light") ||
+      logoSrc === getHostLogoSrc("opencode", "dark");
     return (
       <img
         src={logoSrc}
         alt=""
         className={cn(
           "shrink-0 object-contain",
-          hostChipLogoClass[size],
+          openCode ? "h-5 w-4" : hostChipLogoClass[size],
           className,
         )}
       />

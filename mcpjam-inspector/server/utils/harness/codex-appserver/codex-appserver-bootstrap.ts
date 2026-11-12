@@ -19,7 +19,7 @@ import {
   CODEX_APPSERVER_BOOTSTRAP_PNPM_LOCK,
 } from "./bootstrap/generated/codex-appserver-bridge.bundled.js";
 
-/** Where the recipe lands, relative to the session working directory. */
+/** Where the recipe lands, relative to the framework's state directory. */
 export const CODEX_APPSERVER_BOOTSTRAP_DIR =
   ".harness-bootstrap/codex-appserver";
 

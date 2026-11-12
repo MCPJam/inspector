@@ -1,3 +1,4 @@
+import { commandApprovalReview } from "./command-approval-review.js";
 import { promoteLocalServerCheck } from "../../utils/local-server-check-queue.js";
 import {
   listBaseServers,
@@ -84,6 +85,7 @@ function redactServerConfig(config: unknown) {
 }
 
 const servers = new Hono();
+servers.route("/command-approval", commandApprovalReview);
 
 // List all connected servers with their status
 servers.get("/", async (c) => {

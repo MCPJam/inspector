@@ -1,5 +1,9 @@
 import { deepJsonSafe } from "../../json-safe.js";
 import {
+  blockedByDetails,
+  blockedByMessage,
+} from "../../conformance-blocked.js";
+import {
   checkTimedOutDetails,
   checkTimedOutMessage,
   isRequestTimeoutError,
@@ -92,6 +96,22 @@ export function couldNotRunResult(
   details?: Record<string, unknown>,
 ): MCPCheckResult {
   return skipped(check, "could-not-run", message, details);
+}
+
+/**
+ * The check never ran because an earlier check broke. Still `could-not-run`
+ * (the server is why it never ran), but the message names the check to look
+ * at first.
+ */
+export function blockedResult(
+  check: CheckMetadata,
+  blocker: Pick<CheckMetadata, "id" | "title">,
+  details?: Record<string, unknown>,
+): MCPCheckResult {
+  return couldNotRunResult(check, blockedByMessage(blocker.title), {
+    ...details,
+    ...blockedByDetails(blocker.id),
+  });
 }
 
 /**

@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useEffect, useRef, useState } from "react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
@@ -363,6 +364,7 @@ export function SuiteClientsSettings({
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
     projectId,
+    harnessTargets: hosts.map((host) => ({ harnessId: effectiveHarnessId(host) ?? "" })),
   });
   const environments = useProjectEnvironments(projectId, {
     includeAdhoc: true,

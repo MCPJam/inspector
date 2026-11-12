@@ -28,7 +28,7 @@ import {
 // what the framework sees.
 
 const ID = "0123456789abcdef";
-const MARKER = `/home/user/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
+const MARKER = `/home/user/.ai-sdk-harness/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
 const bakedMarker = JSON.stringify({
   bakedBy: HARNESS_BAKED_MARKER_AUTHOR,
   harnessId: "claude-code",
@@ -84,11 +84,12 @@ async function frameworkBootstrap(
     ? await provider.resumeSession!({ sessionId: "s" })
     : await provider.createSession();
   const restricted = session.restricted();
-  const marker = `${session.defaultWorkingDirectory}/${bootstrapDir}/.bootstrap-${ID}.ok`;
+  const home = "/home/user";
+  const marker = `${home}/.ai-sdk-harness/${bootstrapDir}/.bootstrap-${ID}.ok`;
   const existing = await restricted.readTextFile({ path: marker });
   if (existing !== null) return;
   await restricted.writeTextFile({
-    path: `${session.defaultWorkingDirectory}/${bootstrapDir}/package.json`,
+    path: `${home}/.ai-sdk-harness/${bootstrapDir}/package.json`,
     content: "{}",
   });
   if (options.installFails) {
@@ -192,7 +193,7 @@ describe("observeHarnessBootstrap", () => {
     expect(fake.reads).toContain(HARNESS_BAKE_MANIFEST_PATH);
   });
 
-  it("classifies a custom working directory as an INTENTIONAL fallback", async () => {
+  it("a custom working directory still hits the HOME bake", async () => {
     const fake = fakeProvider({
       cwd: "/home/user/project",
       files: { [HARNESS_BAKE_MANIFEST_PATH]: "{}" },
@@ -201,9 +202,22 @@ describe("observeHarnessBootstrap", () => {
     await frameworkBootstrap(observed);
     expect(await harnessBootstrapObservation(observed)).toMatchObject({
       outcome: "installed",
-      expectation: "custom-workdir",
+      expectation: "baked",
       bakeOnBox: "present",
       defaultWorkingDirectory: "/home/user/project",
+    });
+  });
+
+  it("classifies a marker under a different HOME as custom-workdir", async () => {
+    const otherHome = "/home/user/project";
+    const marker = `${otherHome}/.ai-sdk-harness/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`;
+    const fake = fakeProvider({ cwd: otherHome, files: {} });
+    const observed = observeHarnessBootstrap(fake.provider);
+    const session = await observed.createSession();
+    await session.restricted().writeTextFile({ path: marker, content: "" });
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "installed",
+      expectation: "custom-workdir",
     });
   });
 
