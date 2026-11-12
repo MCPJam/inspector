@@ -137,6 +137,46 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     expect(error.details.oauthRequired).toBeUndefined();
   });
 
+  it.each([
+    ["message", "credentialExportPolicy", "Export policy is deny."],
+    ["message", "hostedOnlyAccount", "This account is for hosted runs only."],
+    // A hosted-only refusal keeps the backend's sentence in either field.
+    ["error", "hostedOnlyAccount", "This account is for hosted runs only."],
+    ["error", "credentialExportPolicy", "OAuth refresh failed (403)"],
+  ])(
+    "shows the backend's sentence from `%s` for a %s refusal",
+    async (field, policy, expected) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json(
+            {
+              success: false,
+              code: "export_denied",
+              exportDenied: true,
+              policy,
+              [field]:
+                policy === "hostedOnlyAccount"
+                  ? "This account is for hosted runs only."
+                  : "Export policy is deny.",
+            },
+            { status: 403 },
+          ),
+        ),
+      );
+      const error = await forceRefreshHostedOAuthAccessToken(
+        "bearer-token",
+        "project-1",
+        "server-1",
+      ).catch((caught) => caught);
+      expect(error).toMatchObject({
+        status: 403,
+        message: expected,
+        details: { exportDenied: true, policy },
+      });
+    },
+  );
+
   it("forwards the server's refusal on refresh_token_invalid", async () => {
     vi.stubGlobal(
       "fetch",

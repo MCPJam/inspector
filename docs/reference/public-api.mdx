@@ -61,9 +61,10 @@ What you can do with it today:
   immediately, then poll status, per-iteration results (tool calls, token
   usage, latency), and full traces. Runs appear live in the hosted UI,
   tagged `source: "api"`
-- **Import OAuth tokens** — complete OAuth yourself (e.g. the SDK's
-  `runOAuthLogin`) and push the tokens; subsequent calls inject and refresh
-  them server-side
+- **Manage a server's accounts** — complete OAuth yourself (e.g. the SDK's
+  `runOAuthLogin`, or your CI's own sign-in) and upload the token to a named
+  account; list, rename, choose the default, and delete accounts. Tokens are
+  write-only: no route returns one
 - **Run a headless agent turn** — send a message history, get back the
   assistant reply, the platform operations it invoked, references to any
   resources it created (eval suites), and token usage; the model is pinned
@@ -213,8 +214,8 @@ call. The API never starts a sign-in. It reports the challenge instead:
   overwritten.
 
 `AUTH_REQUIRED` is not `UNAUTHORIZED`: your MCPJam key is fine, so a different
-key will not help. Complete the OAuth flow for that server yourself, push it to
-`POST .../oauth/import-tokens`, and call again. See
+key will not help. Complete the OAuth flow for that server yourself, upload the
+token to one of its [accounts](#server-accounts), and call again. See
 [Mid-session sign-in](/inspector/lazy-authentication).
 
 ## Rate limits
@@ -295,7 +296,8 @@ plugin pins whose version no longer exists.
 | `POST .../resources` | List the server's resources |
 | `POST .../resources/read` | Read one resource by URI |
 | `POST .../export` | One JSON snapshot of tools, resources, and prompts |
-| `POST .../oauth/import-tokens` | Store OAuth tokens you obtained yourself; later calls inject + refresh them |
+| `GET`, `PUT`, `PATCH`, `DELETE .../accounts[/{account}]` | The server's accounts. See [Server accounts](#server-accounts) |
+| `POST .../oauth/import-tokens` | **Deprecated.** Uploads to your default account; use `PUT .../accounts/{account}`. See [The deprecated import route](#the-deprecated-import-route) |
 
 **Eval runs** (`/projects/{projectId}/...`):
 
@@ -597,6 +599,125 @@ The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.
 
+## Server accounts
+
+A saved server signs in with one or more **accounts**. When your test users
+can't use the browser sign-in, for example because a password and a passkey
+are required every day, your CI can sign in itself and upload the fresh token
+to a named account before each run.
+
+| Endpoint (`/projects/{projectId}/servers/{serverId}/...`) | What it does |
+| --- | --- |
+| `GET .../accounts` | The accounts you can see: your own personal ones, or the project accounts of a server shared with the project |
+| `GET .../accounts/{account}` | One account |
+| `PUT .../accounts/{account}` | Upload a token. Creates the account (`201`) or replaces its token in place (`200`, same id) |
+| `PATCH .../accounts/{account}` | Rename it (`name`), make it the default (`isDefault: true`), or both |
+| `DELETE .../accounts/{account}` | Delete it, and ask the token's issuer to revoke the token |
+
+```bash
+curl -fsS -X PUT \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/accounts/test-automation-1" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokens": { "access_token": "'"$ACCESS_TOKEN"'", "expires_in": 3600 },
+    "clientInformation": { "clientId": "'"$CLIENT_ID"'" }
+  }'
+```
+
+Every answer is the account: its `id`, `name`, `kind`, `isDefault`,
+`needsReconnect`, `hostedOnly`, `expiresAt`, `createdAt` and `updatedAt`. No
+route returns a token, and none can.
+
+### Addressing an account
+
+`{account}` is an account id or a name. A well-formed account id is always
+read as an id: it matches that account or answers `404`, and an upload to an
+unknown id never creates one. Anything else is a name, matched ignoring case.
+A name no account has makes `PUT` create the account; on every other route it
+answers `404`. A name two accounts share answers `409` with both ids in
+`details.accountIds`.
+
+A name is letters, digits, `.`, `_` and `-`, starts with a letter or digit, and
+is at most 64 characters. One outside that rule, or one that is also a
+well-formed account id, is refused with `400`, never cleaned up. Names are
+unique on the server, ignoring case.
+
+### What an upload stores
+
+- **Nothing checks who a token belongs to.** A name is your own label, and
+  replacing a token replaces it whoever the token belongs to. Keep each name
+  for one test user.
+- **Uploaded accounts are hosted-only.** Hosted runs use them, and no local
+  app, browser or sandbox ever receives their token, the account's owner
+  included. Asking for it is refused with a message naming the rule.
+- **The token is bound to the server URL saved in the project.** The body
+  takes only `tokens` and `clientInformation`. A URL field (`serverUrl`,
+  `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token` is
+  refused with `400`, as is any field the route doesn't know.
+- **Each token field is at most 16 KB.**
+- **A refresh token is optional, and usually best left out.** When CI uploads
+  a fresh token before each run, or when the issuer rejects our refreshes, a
+  stored refresh token only adds a long-lived credential. Without one, an
+  expired account lists `needsReconnect: true` and keeps its id until the next
+  upload restores it.
+- **Uploads are budgeted** per person and server: 60, refilling at 120 an
+  hour. Past it the answer is `429` with `Retry-After`.
+
+### Who can upload
+
+An API key acts as the person who created it, with all of that person's
+access. For personal accounts, upload with the key of a dedicated member who
+is not a project admin, so a leaked CI key can't do an admin's work. On a
+server shared with the project, accounts are project accounts: only a project
+admin can upload, rename or delete them, and every member's hosted runs can
+use them.
+
+### Running evals as an account
+
+A run with no saved account choice acts as the server's **default** account.
+To run evals from CI as one account, upload its token, make it the default,
+then start the run:
+
+```bash
+curl -fsS -X PATCH \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/servers/$SERVER_ID/accounts/test-automation-1" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "isDefault": true }'
+```
+
+The default is shared by every run that key starts, so don't run the same
+key's runs at the same time with different defaults. Where your organization
+has account choice for eval suites, a suite can instead save the accounts it
+runs as, in its settings in the app; a run with a saved choice uses those
+accounts and ignores the default.
+
+### Deleting an account
+
+`DELETE` removes the account and its stored token, and asks the token's issuer
+to revoke the token where the issuer supports revocation. That is best effort,
+and it also ends any copy of the same token you still hold. The default
+account can't be deleted while other accounts exist (`409`): make another
+account the default first.
+
+### The deprecated import route
+
+`POST .../oauth/import-tokens` still works, and is removed 90 days after the
+accounts API shipped. It uploads to your default account, creating an unnamed
+one when the server has none, and keeps its old body and its old
+`{ imported, expiresAt }` answer. Every answer carries `Deprecation: true`, a
+`Sunset` date and a `Link` to `.../accounts`.
+
+An account this route creates is hosted-only. An existing default it writes
+into keeps whatever rule it had. Its `serverUrl` must be the URL saved in the
+project, or the answer is `400`. `authorizationServerUrl`, `oauthResourceUrl`
+and `tokens.id_token` are accepted and ignored. Move to
+`PUT .../accounts/{account}`, which names the account it writes.
+
+The error codes these routes add to `details.code` are listed in the
+[error code reference](/troubleshooting/error-codes#server-account-errors).
+
 ## Run evals from the API
 
 The shortest useful loop — create a run with one inline test, then poll:
@@ -731,9 +852,9 @@ to finish.
 
 If a server answers `401 OAUTH_REQUIRED`, complete the OAuth flow yourself
 (the SDK's `runOAuthLogin` handles interactive, headless, and
-client-credentials flows) and push the result to
-`POST .../oauth/import-tokens` once. Subsequent calls inject the stored token
-and refresh it server-side.
+client-credentials flows) and upload the token to one of the server's
+[accounts](#server-accounts). Subsequent runs inject the stored token, and
+refresh it server-side when you stored a refresh token.
 
 ## Reasoning effort
 
@@ -799,8 +920,8 @@ today (most exist in the hosted inspector UI):
 
 - Creating or revoking API keys (UI-only by design — see [Authentication](#authentication))
 - Chat and conformance suites
-- Browser-based OAuth flows initiated by the API (use
-  `oauth/import-tokens` after completing OAuth yourself)
+- Browser-based OAuth flows initiated by the API (complete OAuth yourself,
+  then upload the token to one of the server's [accounts](#server-accounts))
 
 If one of these blocks you, tell us on
 [Discord](https://discord.gg/JEnDtz8X6z) — it directly shapes what we
