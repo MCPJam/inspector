@@ -4,8 +4,8 @@
  * `resolveTurnSkills` takes where a turn's skills come from and the engine that
  * runs it, and returns the plan: the skills as one set, what that engine is
  * handed, and every other skill with the reason it is left out. MCPJam's agent
- * builds its skill tools from the plan (`prepareChatV2`), and an eval turn
- * records `skillsAtTurn` from it.
+ * builds its skill tools from the plan (`prepareChatV2`), and eval and swarm
+ * turns record `skillsAtTurn` from it.
  *
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
@@ -20,11 +20,7 @@
  */
 import type { PaneSkillReason } from "../../../shared/pane-skills-preview.js";
 import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
-import type {
-  PinnableSkill,
-  PinnedSkillArtifact,
-} from "../../../shared/skill-types.js";
-import { pinnedCatalogOmissions } from "../../utils/computers/cloud-skill-tools.js";
+import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { skillCatalogOmissions } from "../../utils/computers/effective-skill-tools.js";
 import {
   boxVerdicts,
@@ -37,7 +33,6 @@ import {
 import {
   pinnedSkillId,
   pinnedSkillMeta,
-  runNeedsEffectiveSkillSurface,
   type RunPinnedSkill,
 } from "../evals/run-plugin-snapshot.js";
 import {
@@ -47,10 +42,11 @@ import {
 } from "./effective-capabilities.js";
 
 /**
- * Why an engine is not handed a skill: the Compare preview's reasons, plus
- * `over-cap` (a stated cap on a turn's skills left it out; none applies today).
+ * Why an engine is not handed a skill, which the previews show as is.
+ * `over-cap`: the backend left it out of the environment because a skill scope
+ * covered more skills than its cap.
  */
-export type SkillExclusionReason = PaneSkillReason | "over-cap";
+export type SkillExclusionReason = PaneSkillReason;
 
 /** The engine that runs a turn. */
 export type TurnRuntime =
@@ -93,12 +89,11 @@ export type ServerSkillsVia =
 
 /**
  * How MCPJam's agent serves the plan, as its skill tools behave today:
- *  - `frozen`: a run's pinned skills, addressed by ref. The approval switch
- *    does not apply: they are content frozen at run start, and an eval run
- *    denies every approval. A captured server skill's load still asks on its
- *    own (`effective-skill-tools.ts`), which an eval denies.
- *  - `frozen-names`: the same for runs pinned before plugins, through the
- *    bare-name `loadSkill` over `skills`, with no file tools.
+ *  - `frozen`: a run's pinned skills, addressed by ref, whatever the run
+ *    pinned. The approval switch does not apply: they are content frozen at
+ *    run start, and eval runs and swarm sessions deny every approval. A
+ *    captured server skill's load still asks on its own
+ *    (`effective-skill-tools.ts`), which they deny.
  *  - `environment`: an environment's skills, by ref. Loads follow the switch,
  *    so a person watching their own turn gets the prompt they configured.
  *  - `live`: the skills a person has right now, by ref, under the switch, plus
@@ -111,7 +106,6 @@ export type ServerSkillsVia =
  */
 export type AgentSkillTools =
   | { kind: "frozen" }
-  | { kind: "frozen-names"; skills: PinnableSkill[] }
   | { kind: "environment" }
   | { kind: "live" };
 
@@ -140,7 +134,8 @@ export interface TurnSkillsResult {
 }
 
 /**
- * A run's frozen skills, prepared once before its first model call
+ * A run's frozen skills, prepared once before its first model call, or a
+ * swarm target's, prepared once before its first session
  * (`buildPinnedSkillSource`).
  */
 export interface PinnedSkillSource {
@@ -194,9 +189,9 @@ export function resolveTurnSkills({
     return {
       runtime,
       set:
-        source.kind === "pins"
-          ? source.set
-          : buildLiveEffectiveCapabilities({}),
+        source.kind === "none"
+          ? buildLiveEffectiveCapabilities({})
+          : source.set,
       delivered: [],
       excluded: [],
       serverSkillsVia: "none",
@@ -217,25 +212,23 @@ export function resolveTurnSkills({
   if (runtime.kind === "harness") {
     return planBox(runtime, source.set, refs, pinnedBox(source.harnessSkills));
   }
-  // Decided by what the run pinned, so every turn of a run gets one surface.
-  return runNeedsEffectiveSkillSurface(source.pins)
-    ? planAgentSet(source.set, refs, { kind: "frozen" }, modelContextTokens)
-    : planNames(source.set, [...source.pins], refs, modelContextTokens);
+  return planAgentSet(source.set, refs, { kind: "frozen" }, modelContextTokens);
 }
 
 /** A resolved environment or a client's own skills, planned for the engine
- *  that runs the turn. A skill the turn switched off stays off on both. */
+ *  that runs the turn. A skill the turn switched off, or the backend left out
+ *  of the environment, stays out on both. */
 function planSource(
   source: EnvironmentSkillSource | LiveSkillSource,
   runtime: TurnRuntime,
   modelContextTokens: number | undefined,
 ): TurnSkills {
-  const { set, refs, agent, box, disabled } = sourcePlan(source);
+  const { set, refs, agent, box, excluded } = sourcePlan(source);
   const plan =
     runtime.kind === "harness"
       ? planBox(runtime, set, refs, box)
       : planAgentSet(set, refs, agent, modelContextTokens);
-  return { ...plan, excluded: [...disabled, ...plan.excluded] };
+  return { ...plan, excluded: [...excluded, ...plan.excluded] };
 }
 
 /**
@@ -251,10 +244,9 @@ export function toSkillsAtTurn(
   );
 }
 
-/** A skill source as swarms and the chat surfaces build it until they plan
- *  with `resolveTurnSkills`. */
+/** A skill source as the chat surfaces build it until they plan with
+ *  `resolveTurnSkills`. */
 export type LegacySkillsSource =
-  | { kind: "pinned"; skills: PinnableSkill[] }
   | {
       kind: "resolved";
       capabilities: EffectiveCapabilitySet;
@@ -276,40 +268,23 @@ export function turnSkillsFromLegacySource(
   modelContextTokens?: number,
 ): TurnSkills | undefined {
   if (source?.kind === "none") return undefined;
-  if (source?.kind === "pinned") {
-    const standaloneSkills = source.skills.map((skill) => ({
-      skillId: `pin:${skill.name}`,
-      ref: skill.name,
-      name: skill.name,
-      description: skill.description,
-      content: skill.content,
-      aggregateHash: skill.contentHash,
-      files: [],
-      channels: [],
-    }));
-    return planNames(
-      buildLiveEffectiveCapabilities({ standaloneSkills }),
-      source.skills,
-      standaloneSkills.map(({ skillId, ref, name }) => ({
-        skillId,
-        ref,
-        name,
-      })),
-      modelContextTokens,
-    );
-  }
   const set = source?.capabilities ?? buildLiveEffectiveCapabilities({});
   const live = source === undefined || source.composeLiveServerSkills === true;
   return planAgentSet(
     set,
-    allEffectiveSkills(set).map(({ skillId, ref, name }) => ({
-      skillId,
-      ref,
-      name,
-    })),
+    setRefs(set),
     { kind: live ? "live" : "environment" },
     modelContextTokens,
   );
+}
+
+/** Every skill of a set a surface built itself, as the refs a plan names. */
+function setRefs(set: EffectiveCapabilitySet): SkillRef[] {
+  return allEffectiveSkills(set).map(({ skillId, ref, name }) => ({
+    skillId,
+    ref,
+    name,
+  }));
 }
 
 /** MCPJam's agent's ref-addressed tools over `set`. */
@@ -332,28 +307,6 @@ function planAgentSet(
     ),
     serverSkillsVia: "agent-tools",
     agent,
-  };
-}
-
-/** The bare-name tools, which list and load `skills` by name. A server skill
- *  pin always takes the ref-addressed tools, so none arrives here. */
-function planNames(
-  set: EffectiveCapabilitySet,
-  skills: PinnableSkill[],
-  refs: SkillRef[],
-  modelContextTokens: number | undefined,
-): TurnSkills {
-  const omitted = new Set(pinnedCatalogOmissions(skills, modelContextTokens));
-  return {
-    runtime: { kind: "agent" },
-    set,
-    ...partition(
-      refs,
-      () => null,
-      (ref) => omitted.has(ref.name),
-    ),
-    serverSkillsVia: "none",
-    agent: { kind: "frozen-names", skills },
   };
 }
 

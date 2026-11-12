@@ -198,9 +198,9 @@ describe("per-pane Skills preview", () => {
       (await preview(named, { pluginVersionIds: ["unrelated"] })).status,
     ).toBe(400);
   });
-  it("marks a skill MCPJam's agent loads but leaves out of its prompt's list", async () => {
-    // Twelve long descriptions overrun the skill list's budget for a model of
-    // unknown size, which is all a preview can assume.
+  /** Twelve long descriptions on MCPJam's agent, which overrun the prompt's
+   *  skill list for a model of unknown size. */
+  function serveManySkills() {
     const many = Array.from({ length: 12 }, (_, index) => ({
       ...skill(`many${index}`, `skill-${index}`, ["environment"]),
       description: "x".repeat(900),
@@ -211,6 +211,9 @@ describe("per-pane Skills preview", () => {
       skills: many,
       serverSkills: [],
     });
+  }
+  it("marks a skill MCPJam's agent loads but leaves out of its prompt's list", async () => {
+    serveManySkills();
     const data = await (await preview(named)).json();
     expect(data.deliveredCount).toBe(12);
     const unlisted = data.skills.filter(
@@ -222,6 +225,65 @@ describe("per-pane Skills preview", () => {
     ).toBe(true);
     expect(data.skills[0]).not.toHaveProperty("omittedFromCatalog");
   });
+  it("sizes that list for the pane's model when the request names one", async () => {
+    serveManySkills();
+    const unlisted = async (extras: object) => {
+      const data = await (await preview(named, extras)).json();
+      return data.skills.filter(
+        (row: { omittedFromCatalog?: boolean }) => row.omittedFromCatalog,
+      ).length;
+    };
+    const unknownSize = await unlisted({});
+    expect(await unlisted({ modelContextTokens: 1_000_000 })).toBe(0);
+    expect(await unlisted({ modelContextTokens: 20_000 })).toBeGreaterThan(
+      unknownSize,
+    );
+    expect((await preview(named, { modelContextTokens: 0 })).status).toBe(400);
+  });
+  it("shows the skills a scope left out, with the backend's reason", async () => {
+    serve({
+      ...spec,
+      skillScopeExclusions: [
+        {
+          skillId: "s6",
+          name: "extra",
+          description: "More",
+          reason: "over-cap",
+        },
+        {
+          skillId: "s7",
+          name: "research",
+          description: "An older copy",
+          reason: "name-collision",
+        },
+        // A reason this Inspector doesn't know is left off, not mislabeled.
+        { skillId: "s8", name: "later", description: "", reason: "newer" },
+      ],
+    });
+    const data = await (await preview(named)).json();
+    // Claude Code takes the server skill through MCPJam's skill tools, so all
+    // three environment skills are delivered and the scope's exclusions follow
+    // them.
+    expect(data.deliveredCount).toBe(3);
+    expect(data.skills.slice(3)).toEqual([
+      {
+        skillId: "s6",
+        name: "extra",
+        description: "More",
+        channels: ["project"],
+        origin: { kind: "library" },
+        reason: "over-cap",
+      },
+      {
+        skillId: "s7",
+        name: "research",
+        description: "An older copy",
+        channels: ["project"],
+        origin: { kind: "library" },
+        reason: "name-collision",
+      },
+    ]);
+  });
   it("says where each skill comes from and which revision a turn loads", async () => {
     serve({
       ...spec,
@@ -231,6 +293,10 @@ describe("per-pane Skills preview", () => {
           provenance: { projectSkillVersionNumber: 3, versionPinned: true },
         },
         { ...plugin, provenance: { projectSkillVersionNumber: 1 } },
+        {
+          ...skill("s9", "notes", ["environment"]),
+          provenance: { projectSkillVersionNumber: 4, versionPinned: false },
+        },
       ],
       serverSkills: [
         { ...spec.serverSkills[0], serverLabel: "Search", versionNumber: 2 },
@@ -238,20 +304,27 @@ describe("per-pane Skills preview", () => {
     });
     const response = await preview(named);
     expect(response.status).toBe(200);
-    expect((await response.json()).skills).toEqual([
+    const { skills } = await response.json();
+    expect(skills).toEqual([
       expect.objectContaining({
         origin: { kind: "library" },
         version: { number: 3, pinned: true },
       }),
       expect.objectContaining({
         origin: { kind: "plugin" },
-        version: { number: 1, pinned: false },
+        version: { number: 1 },
+      }),
+      expect.objectContaining({
+        origin: { kind: "library" },
+        version: { number: 4, pinned: false },
       }),
       expect.objectContaining({
         origin: { kind: "mcp-server", server: "Search" },
         version: { number: 2 },
       }),
     ]);
+    // A revision whose provenance doesn't say whether it is pinned is unknown.
+    expect(skills[1].version).not.toHaveProperty("pinned");
   });
 });
 
@@ -321,6 +394,35 @@ describe("suite Skills preview", () => {
       "projectSkills:listSkills",
       expect.anything(),
     );
+  });
+
+  it("shows the skills a scope left out of an eval run's environment", async () => {
+    const answer = query.getMockImplementation()!;
+    query.mockImplementation(
+      async (ref: string, args: Record<string, unknown>) => {
+        const result = await answer(ref, args);
+        if (ref !== "projectEnvironments:resolveEnvironmentForRuntime")
+          return result;
+        return {
+          ...result,
+          skillScopeExclusions: [
+            {
+              skillId: "s6",
+              name: "extra",
+              description: "More",
+              reason: "over-cap",
+            },
+          ],
+        };
+      },
+    );
+    const response = await suitePreview({ environmentIds: ["env1"] });
+    const { preview: run } = (await response.json()).environments[0];
+    expect(run.deliveredCount).toBe(3);
+    expect(run.skills.at(-1)).toMatchObject({
+      skillId: "s6",
+      reason: "over-cap",
+    });
   });
 
   it("requires sign-in and refuses an empty list or one over the cap", async () => {

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { buildPinnedSkillSource } from "../pinned-skill-source";
 import {
   authoredPin,
+  EVAL_PLUGIN_VERSIONS,
   pluginPin,
   preparedRunSkills,
   serverPin,
@@ -68,5 +69,38 @@ describe("buildPinnedSkillSource", () => {
     expect(run.pinnedHarnessSkills[1]?.server?.fileSizes).toEqual({
       "notes.md": 5,
     });
+  });
+
+  it("keeps the copies a swarm target passes in, stamping the server skill's on a copy of it", async () => {
+    // As the swarm runner fetches them: SKILL.md only, under the served hash,
+    // which a copy rebuilt from the pins would not carry.
+    const pins = [pluginPin(), serverPin()];
+    const copies = pins.map(({ name, description, content }) => ({
+      name,
+      description,
+      content,
+      contentHash: `served-${name}`,
+    }));
+    const run = await buildPinnedSkillSource({
+      pins,
+      harnessSkills: copies,
+      pluginVersions: EVAL_PLUGIN_VERSIONS,
+      pluginServers: [],
+      effectiveServerIds: ["srv_docs"],
+      reportsFailure: false,
+    });
+    expect(run.pinnedHarnessSkills.map((copy) => copy.contentHash)).toEqual([
+      "served-summarize",
+      "served-search",
+    ]);
+    expect(run.pinnedHarnessSkills[0]?.server).toBeUndefined();
+    expect(run.pinnedHarnessSkills[1]?.server).toMatchObject({
+      serverSkillId: "ss_docs_search",
+      serverId: "srv_docs",
+      ref: "docs/search",
+    });
+    // The caller's copy is not stamped in place: a cached fetch is shared.
+    expect(copies[1]).not.toHaveProperty("server");
+    expect(run.pinnedSkillSource.harnessSkills).toBe(run.pinnedHarnessSkills);
   });
 });

@@ -122,6 +122,104 @@ describe("resolveTurnSkills for an environment", () => {
     expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
   });
 
+  it("gives a name's box folder to its first copy", () => {
+    const { spec, attribution } = evalEnvironment();
+    const server = spec.serverSkills![0]!;
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            {
+              ...docsEnvironment().skills![0]!,
+              skillId: "sk_own_search",
+              name: server.name,
+            },
+          ],
+        },
+        attribution,
+        frozen: true,
+      },
+      runtime: harness("claude-code"),
+    });
+    // The environment's own skill takes the `search` folder. Claude Code takes
+    // the captured server skill through MCPJam's skill tools, so none of it is
+    // written to the box and it holds no folder to collide over.
+    expect(skills.delivered.map((ref) => ref.skillId)).toContain(
+      "sk_own_search",
+    );
+    expect(refs(skills)).toContain(server.ref);
+    expect(skills.excluded).toEqual([]);
+    expect(skills.serverSkillsVia).toBe("harness-tools");
+  });
+
+  it("leaves out a skill the backend left out of the environment, on every engine", () => {
+    const spec = {
+      ...docsEnvironment(),
+      skillScopeExclusions: [
+        {
+          skillId: "sk_extra",
+          name: "extra",
+          description: "",
+          reason: "over-cap",
+        },
+        {
+          skillId: "sk_twin",
+          name: "docs",
+          description: "",
+          reason: "name-collision",
+        },
+        // A reason this Inspector doesn't know is skipped, not mislabeled.
+        {
+          skillId: "sk_later",
+          name: "later",
+          description: "",
+          reason: "newer",
+        },
+      ],
+    };
+    for (const runtime of [AGENT, harness("claude-code"), harness("cursor")]) {
+      const skills = resolveTurnSkills({
+        source: { kind: "environment", spec, attribution: null },
+        runtime,
+      });
+      expect(reasons(skills).slice(0, 2)).toEqual([
+        ["extra", "over-cap"],
+        ["docs", "name-collision"],
+      ]);
+      expect(skills.excluded.map(({ ref }) => ref.skillId)).not.toContain(
+        "sk_later",
+      );
+    }
+  });
+
+  it("keeps a skill the turn takes another way, though a scope left it out", () => {
+    const mine = { ...personalSkill(), skillId: "sk_mine" };
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...docsEnvironment(),
+          skillScopeExclusions: [
+            {
+              skillId: "sk_mine",
+              name: mine.name,
+              description: "",
+              reason: "over-cap",
+            },
+          ],
+        },
+        attribution: null,
+        liveExtras: { projectSkills: [mine] },
+      },
+      runtime: AGENT,
+    });
+    expect(skills.delivered.map((ref) => ref.skillId)).toContain("sk_mine");
+    expect(skills.excluded).toEqual([]);
+  });
+
   it("takes nothing live into an eval run's plan", async () => {
     const { spec, attribution } = evalEnvironment();
     const skills = resolveTurnSkills({
