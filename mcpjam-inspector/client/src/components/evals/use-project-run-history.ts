@@ -1,5 +1,5 @@
 import { useConvex } from "convex/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   EvalIteration,
   EvalSuiteRun,
@@ -50,6 +50,30 @@ type HistoryDetail = Omit<ProjectRunHistoryDetail, "run"> & {
 };
 type ProjectHistoryEntry = { detail: HistoryDetail };
 
+/**
+ * Module-level, so a grid that unmounts (opening a result page) and mounts
+ * again (back) shows what it last read at once while the refresh runs.
+ * `SETTLED` holds settled runs by row identity, so an added page does not
+ * re-read the whole history; `LATEST` holds the last snapshot per set of run
+ * ids, active runs included. Both drop their oldest entries past a limit.
+ */
+const SETTLED = new Map<string, ProjectHistoryEntry>();
+const LATEST = new Map<string, Map<string, HistoryDetail>>();
+const SETTLED_LIMIT = 500;
+const LATEST_LIMIT = 20;
+
+function remember<V>(
+  cache: Map<string, V>,
+  key: string,
+  value: V,
+  limit: number,
+) {
+  cache.delete(key);
+  cache.set(key, value);
+  const oldest = cache.keys().next();
+  if (cache.size > limit && !oldest.done) cache.delete(oldest.value);
+}
+
 /** Read requested runs, with bounded concurrency and complete iteration pages. */
 export function useProjectRunHistory<TSnapshot extends boolean = true>(
   projectId: string,
@@ -66,9 +90,6 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
   const convex = useConvex();
   const includeRunSnapshot = options.includeRunSnapshot !== false;
   const [attempt, setAttempt] = useState(0);
-  // Settled runs already read on an earlier page. Without it every added page
-  // re-reads the whole history, because the effect below keys on all rows.
-  const settled = useRef(new Map<string, ProjectHistoryEntry>());
   const fingerprint = JSON.stringify(
     rows.map((row) => [
       row._id,
@@ -79,12 +100,19 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
     ]),
   );
   const identity = `${projectId}:${enabled}:${includeRunSnapshot}:${fingerprint}:${attempt}`;
+  const rowIds = rows.map((row) => row._id).join(",");
+  const latestKey = `${projectId}:${includeRunSnapshot}:${rowIds}`;
   const [state, setState] = useState<{
     identity: string;
     projectId: string;
     details: Map<string, HistoryDetail>;
     errors: Set<string>;
-  }>({ identity: "", projectId: "", details: new Map(), errors: new Set() });
+  }>(() => ({
+    identity: "",
+    projectId: LATEST.has(latestKey) ? projectId : "",
+    details: LATEST.get(latestKey) ?? new Map(),
+    errors: new Set(),
+  }));
 
   useEffect(() => {
     if (!enabled || rows.length === 0) return;
@@ -95,7 +123,7 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
     const pending = rows.filter((row) => {
       const baseKey = rowCacheKey(row);
       const key = baseKey ? `${includeRunSnapshot}:${baseKey}` : null;
-      const cached = key ? settled.current.get(key) : undefined;
+      const cached = key ? SETTLED.get(key) : undefined;
       if (!cached) return true;
       details.set(row._id, cached.detail);
       return false;
@@ -145,7 +173,7 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
           details.set(row._id, detail);
           const baseKey = rowCacheKey(row);
           const key = baseKey ? `${includeRunSnapshot}:${baseKey}` : null;
-          if (key) settled.current.set(key, { detail });
+          if (key) remember(SETTLED, key, { detail }, SETTLED_LIMIT);
         } catch {
           errors.add(row._id);
         }
@@ -166,6 +194,7 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
           }
           return { identity, projectId, details, errors };
         });
+      if (!cancelled) remember(LATEST, latestKey, details, LATEST_LIMIT);
       // Start the next refresh after this one finishes, even on slow histories.
       if (
         !cancelled &&
@@ -183,7 +212,6 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
   }, [convex, identity]);
 
   const current = state.identity === identity;
-  const rowIds = rows.map((row) => row._id).join(",");
   // One Map per snapshot, not per render: consumers key large `useMemo`s on
   // this identity, and the filter below is O(details x rows).
   const details = useMemo(() => {
@@ -206,7 +234,7 @@ export function useProjectRunHistory<TSnapshot extends boolean = true>(
     retry: () => {
       // A retry is for rows that failed, and a failed row was never cached —
       // but the user is asking to re-read, so nothing is served from memory.
-      settled.current.clear();
+      SETTLED.clear();
       setAttempt((value) => value + 1);
     },
   };

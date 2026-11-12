@@ -37,6 +37,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
@@ -261,6 +262,7 @@ export function IterationDetails({
   trialVerdictWord,
   syncedStepId,
   onSyncStep,
+  traceDetailPlacement,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -318,6 +320,8 @@ export function IterationDetails({
    */
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
+  /** Forwarded to the trace timeline; the iteration page passes "auto". */
+  traceDetailPlacement?: TraceDetailPlacement;
 }) {
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
@@ -1171,6 +1175,7 @@ export function IterationDetails({
               traceInsight={caseInsightSlot}
               chromeDensity={layoutMode === "full" ? "compact" : "default"}
               fillContent={layoutMode === "full"}
+              traceDetailPlacement={traceDetailPlacement}
               frame={layoutMode === "full" ? "none" : "inset"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={

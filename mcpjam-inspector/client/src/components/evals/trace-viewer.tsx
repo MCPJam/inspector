@@ -66,6 +66,7 @@ import {
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type {
   HostConfigDtoV2,
@@ -182,6 +183,8 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /** Where the trace timeline puts its span detail; see `TraceTimeline`. */
+  traceDetailPlacement?: TraceDetailPlacement;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -437,6 +440,7 @@ export function TraceViewer({
   activeHost,
   hostSnapshot,
   mcpToolResultImageRendering,
+  traceDetailPlacement = "below",
 }: TraceViewerProps) {
   const persistedRequestPayloads = useMemo(
     () => readTraceRequestPayloads(trace),
@@ -1086,6 +1090,7 @@ export function TraceViewer({
                 }
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
+                detailPlacement={traceDetailPlacement}
               />
             </div>
           </Suspense>

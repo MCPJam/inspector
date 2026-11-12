@@ -53,6 +53,10 @@ import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 import { useSpanAccountName } from "./run-accounts-context";
+import {
+  useTraceDetailDirection,
+  type TraceDetailPlacement,
+} from "./use-trace-detail-direction";
 import { ToolCallAccountTag } from "@/components/chat-v2/thread/tool-call-account";
 import {
   RecordedTraceToolbar,
@@ -1897,6 +1901,8 @@ export interface TraceTimelineProps {
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
+  /** "auto" puts the span detail beside the waterfall when there is room. */
+  detailPlacement?: TraceDetailPlacement;
 }
 
 export function TraceTimeline({
@@ -1919,7 +1925,10 @@ export function TraceTimeline({
   viewportMaxMs: viewportMaxMsProp,
   turnRuntimeByPromptIndex,
   fillContent = false,
+  detailPlacement = "below",
 }: TraceTimelineProps) {
+  const { containerRef, direction } = useTraceDetailDirection(detailPlacement);
+  const beside = direction === "horizontal";
   const projected = useMemo(
     () => projectedMessages
       ? projectChatTraceRanges(sourceSpans ?? [], transcriptMessages)
@@ -2526,13 +2535,15 @@ export function TraceTimeline({
       ) : null}
 
       <div
+        ref={containerRef}
         className={cn(
           "@container/trace-timeline min-w-0",
           fillContent && "flex min-h-0 flex-1 flex-col",
         )}
       >
         <ResizablePanelGroup
-          direction="vertical"
+          key={direction}
+          direction={direction}
           className={cn(
             "rounded-lg border border-border/50 bg-background",
             fillContent
@@ -2542,7 +2553,7 @@ export function TraceTimeline({
           style={fillContent ? undefined : { height: "auto" }}
         >
           <ResizablePanel
-            defaultSize={65}
+            defaultSize={beside ? 62 : 65}
             minSize={0}
             className="min-h-0 min-w-0 overflow-hidden"
           >
@@ -2928,8 +2939,8 @@ export function TraceTimeline({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel
-            defaultSize={35}
-            minSize={20}
+            defaultSize={beside ? 38 : 35}
+            minSize={beside ? 25 : 20}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div

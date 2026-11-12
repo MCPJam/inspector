@@ -69,3 +69,24 @@ it("folds history metrics without fetching full run snapshots", async () => {
     ),
   ).toBe(true);
 });
+
+it("shows the last snapshot at once after an unmount, while it refreshes", async () => {
+  const live = [{ _id: "live", status: "running" }];
+  mocks.query.mockImplementation(async (name: string) =>
+    name === "testSuites:getTestSuiteRun"
+      ? { ...live[0], runGroupId: "same" }
+      : { page: [], isDone: true, continueCursor: "" },
+  );
+  const first = renderHook(() => useProjectRunHistory("remount", live, true));
+  await waitFor(() => expect(first.result.current.loading).toBe(false));
+  const snapshot = first.result.current.details.get("live");
+  first.unmount();
+
+  mocks.query.mockImplementation(() => new Promise(() => {}));
+  const second = renderHook(() => useProjectRunHistory("remount", live, true));
+  expect(second.result.current.details.get("live")).toBe(snapshot);
+  expect(second.result.current.loading).toBe(true);
+  expect(mocks.query).toHaveBeenCalledWith("testSuites:getTestSuiteRun", {
+    runId: "live",
+  });
+});
