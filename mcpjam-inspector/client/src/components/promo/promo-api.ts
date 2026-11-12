@@ -18,10 +18,19 @@ export type Ready = {
   credits: number;
   cutoff: number;
   label: string;
+  /**
+   * Optional because a backend deployed before shared campaigns omits both;
+   * those campaigns are single use and always collect name and company.
+   */
+  mode?: "single_use" | "shared";
+  collectLead?: boolean;
   account: { userId: string; name: string; email: string };
   organizations: { organizationId: string; name: string }[];
 };
-export const campaignId = "agntcon-2026";
+export function collectsLead(context: Ready) {
+  return context.collectLead !== false;
+}
+
 export const contextQuery = makeFunctionReference<
   "query",
   { campaignId: string },
@@ -33,7 +42,7 @@ export const redeemMutation = makeFunctionReference<
   "mutation",
   {
     campaignId: string;
-    code: string;
+    code?: string;
     organizationId: string;
     name: string;
     company: string;
@@ -42,10 +51,10 @@ export const redeemMutation = makeFunctionReference<
 >("promoRedemption:redeem");
 
 export const refusalCopy: Record<string, string> = {
-  campaign_closed: "AGNTCon credit redemption is closed.",
-  invalid_code: "This code is not valid. Check your card and try again.",
+  campaign_closed: "This offer has ended.",
+  invalid_code: "This code is not valid. Check the code and try again.",
   already_used:
-    "This card has already been used. Check that you scanned your own card.",
+    "This code has already been used. Check that you entered your own code.",
   rate_limited: "Too many attempts. Wait a minute and try again.",
   invalid_input:
     "Enter your full name and company. Independent and Student are accepted.",

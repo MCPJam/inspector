@@ -2,7 +2,9 @@ import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -90,11 +92,14 @@ function serverCount(count: number): string {
  * servers, and its place in the lineup. Every change touches one pane. The
  * Tools sidebar follows the pane whose settings were opened last.
  */
+const NO_SERVERS: readonly string[] = [];
+
 export function useComparePaneControls({
   active,
   panes,
   resolutions,
   sharedServers,
+  connectedServers = NO_SERVERS,
   serverIdByName,
   orgConfig,
   restorePanes,
@@ -111,6 +116,8 @@ export function useComparePaneControls({
   resolutions: readonly PlaygroundClientResolution[];
   /** The composer's servers, which every pane uses unless it narrows them. */
   sharedServers: readonly string[];
+  /** Connected servers a pane can add even when the chat does not use them. */
+  connectedServers?: readonly string[];
   serverIdByName: ReadonlyMap<string, string>;
   orgConfig: OrgVisibleConfig | undefined;
   restorePanes: (panes: readonly RecoveryPane[]) => void;
@@ -129,6 +136,10 @@ export function useComparePaneControls({
   const [openPaneId, setOpenPaneId] = useState<string | null>(null);
   const publishPanes = useComparePaneStore((state) => state.publishPanes);
   const selectPane = useComparePaneStore((state) => state.selectPane);
+  const panesRef = useRef(panes);
+  useLayoutEffect(() => {
+    panesRef.current = panes;
+  }, [panes]);
   const paneDisplays = useComparePaneDisplayStore((state) => state.byPane);
   const setPaneDisplay = useComparePaneDisplayStore(
     (state) => state.setPaneDisplay,
@@ -138,18 +149,16 @@ export function useComparePaneControls({
     (state) => state.themeMode,
   ) as PaneTheme;
 
-  // A client pane that narrowed the chat's servers keeps only those still in
-  // it. An environment pane's servers are the environment's, narrowed on the
+  // An explicit client pane selection can include a server outside the chat. An environment pane's servers are the environment's, narrowed on the
   // wire (`environmentOverrides`), never the chat's.
   const paneServerNames = useCallback(
     (pane: RecoveryPane): string[] | null =>
       pane.serverIds == null || pane.target.kind === "environment"
         ? null
-        : sharedServers.filter((name) => {
-            const serverId = serverIdByName.get(name);
-            return !!serverId && pane.serverIds!.includes(serverId);
-          }),
-    [sharedServers, serverIdByName],
+        : Array.from(serverIdByName)
+            .filter(([, id]) => pane.serverIds!.includes(id))
+            .map(([name]) => name),
+    [serverIdByName],
   );
 
   const options = useMemo(
@@ -182,10 +191,40 @@ export function useComparePaneControls({
                   }
                 : { environmentId: null }),
               serverNames: paneServerNames(pane),
+              ...(pane.target.kind === "host" && pane.serverIds != null
+                ? {
+                    onServerChosen: (name: string) => {
+                      const id = serverIdByName.get(name);
+                      if (!id || pane.serverIds?.includes(id)) return;
+                      setPaneOverrides(pane.paneId, {
+                        serverIds: [...(pane.serverIds ?? []), id],
+                      });
+                      // Undo reads the pane as it is then, not as it was here.
+                      return () => {
+                        const current = panesRef.current.find(
+                          (entry) => entry.paneId === pane.paneId,
+                        )?.serverIds;
+                        if (current?.includes(id)) {
+                          setPaneOverrides(pane.paneId, {
+                            serverIds: current.filter((entry) => entry !== id),
+                          });
+                        }
+                      };
+                    },
+                  }
+                : {}),
             };
           })
         : [],
-    [active, panes, resolutions, paneServerNames, paneEnvironments],
+    [
+      active,
+      panes,
+      resolutions,
+      paneServerNames,
+      paneEnvironments,
+      serverIdByName,
+      setPaneOverrides,
+    ],
   );
   useEffect(() => publishPanes(options), [options, publishPanes]);
   useEffect(() => () => publishPanes([]), [publishPanes]);
@@ -204,13 +243,13 @@ export function useComparePaneControls({
     (pane: RecoveryPane, name: string, enabled: boolean) => {
       const current = paneServerNames(pane) ?? [...sharedServers];
       const names = enabled
-        ? sharedServers.filter(
-            (entry) => entry === name || current.includes(entry),
-          )
+        ? [...new Set([...current, name])]
         : current.filter((entry) => entry !== name);
       // Back to every server of the chat: follow it again, so servers added
       // later reach this pane too.
-      const follows = names.length === sharedServers.length;
+      const follows =
+        names.length === sharedServers.length &&
+        sharedServers.every((entry) => names.includes(entry));
       setPaneOverrides(pane.paneId, {
         serverIds: follows
           ? null
@@ -393,7 +432,7 @@ export function useComparePaneControls({
           : null
         : serverIdByName.size === 0
           ? null
-          : sharedServers
+          : [...new Set([...sharedServers, ...servers, ...connectedServers])]
               .filter((name) => serverIdByName.has(name))
               .map((name) => ({ name, enabled: servers.includes(name) }));
       const enabledServers = environment
@@ -535,6 +574,7 @@ export function useComparePaneControls({
       });
     },
     [
+      connectedServers,
       environmentServers,
       openPaneId,
       orgConfig,
