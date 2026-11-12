@@ -1750,3 +1750,31 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });
+
+it("forwards the dedicated Copilot CLI client on pass-through only", async () => {
+  const copilot = getHarnessAdapter("copilot-cli");
+  expect(copilot.forwardingRuntime).toMatchObject({
+    runtimeVersion: copilot.pinnedRuntimeVersion,
+    configurationVersion: "copilot-native-mcp-v1",
+    correlationKey: "mcpjam/toolCallId",
+    passThroughOnly: true,
+  });
+  expect(copilot.requiredForwarding).toBe("pass-through");
+  // Forwarded calls wait at MCPJam's forwarder gate, so approval holds.
+  expect(copilot.supportsMcpToolApproval).toBe(true);
+  for (const id of registeredHarnessIds())
+    if (id !== "copilot-cli")
+      expect(getHarnessAdapter(id).requiredForwarding).toBeUndefined();
+
+  const doStart = vi.fn(async () => "session");
+  const refreshed = copilot.forwardingRuntime!.refresh(
+    { doStart } as never,
+    {},
+    "digest",
+  );
+  await expect(refreshed.doStart({ continueFrom: {} } as never)).rejects.toThrow(
+    "GitHub Copilot CLI cannot continue this turn after a pause.",
+  );
+  expect(doStart).not.toHaveBeenCalled();
+  await expect(refreshed.doStart({} as never)).resolves.toBe("session");
+});

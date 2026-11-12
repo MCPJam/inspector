@@ -65,11 +65,13 @@ import {
 
 /**
  * Sections a later change adds to every pane's settings, such as its Skills.
- * `lane.environmentId` is the hidden environment the pane's card composed.
+ * `lane.environmentId` is the hidden environment the pane's card composed, and
+ * `model` the model its turns run on, once one resolves.
  */
 export type ComparePaneSections = (args: {
   pane: RecoveryPane;
   lane: ComparePaneLane;
+  model?: ModelDefinition;
 }) => ReactNode;
 
 function selectionEffort(
@@ -553,7 +555,7 @@ export function useComparePaneControls({
                 setPaneDisplay(pane.paneId, { theme: next })
               }
             />
-            {sections?.({ pane, lane })}
+            {sections?.({ pane, lane, model })}
           </ComparePaneSettings>
         ),
         summary: model ? (

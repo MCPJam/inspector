@@ -346,6 +346,40 @@ describe("ElicitationDialog", () => {
       expect(screen.queryByText("name is required")).toBeNull();
     });
 
+    it("answers cancel when the user closes the dialog with ×", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("answers cancel on Escape", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("ignores × while the actions are disabled", () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+          loading
+        />
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(onResponse).not.toHaveBeenCalled();
+    });
+
     it("disables every action while loading", () => {
       render(
         <ElicitationDialog

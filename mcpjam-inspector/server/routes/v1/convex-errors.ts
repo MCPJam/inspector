@@ -273,7 +273,7 @@ function retryAfterFromResetsAt(
 }
 
 /** Same, from a duration a token bucket measured directly. */
-function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+export function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
     return undefined;
   }
