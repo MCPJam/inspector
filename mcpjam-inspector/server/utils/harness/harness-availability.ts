@@ -43,6 +43,25 @@ import {
   harnessWireApi,
 } from "@/shared/harness-connection-api";
 import { isGatewayModelId } from "@/shared/harness-gateway-model";
+import {
+  harnessSurfaceRefusal,
+  type HarnessSurface,
+} from "@/shared/harness-descriptors";
+import {
+  requiredForwardingRefusal,
+  type HarnessMcpPlanReason,
+} from "./harness-mcp-plan.js";
+
+/** Why the planner refuses a forward-only turn on each surface that never
+ *  forwards; the Playground forwards. */
+const FORWARDING_CLOSED: Partial<Record<HarnessSurface, HarnessMcpPlanReason>> = {
+  // A v1 API turn runs on the web plane but hands the turn no host id.
+  api: "no host id",
+  evals: "eval iteration",
+  events: "eval iteration",
+  swarms: "journey run",
+  "user-testing": "scenario turn",
+};
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -462,6 +481,8 @@ export function harnessReasoningEffortRefusalReason(args: {
  * the message text made a copy edit silently change admission behaviour.
  */
 export type HarnessUnavailableKind =
+  /** The runtime's descriptor declares it does not run on this surface. */
+  | "surface-unsupported"
   | "broker-disabled"
   | "enterprise-policy"
   | "computers-unconfigured"
@@ -506,6 +527,12 @@ export function checkHarnessRuntimeAvailable(args: {
   mcpClient?: "mcpjam" | "harness";
   /** The harness this host runs — selects the capability set. */
   harnessId: HarnessId;
+  /** Where the turn runs. Guests are decided by the backend's capability map,
+   *  and `local` comes from `localExecution`. */
+  surface: Exclude<HarnessSurface, "guests" | "local">;
+  /** The host runs this runtime as another client's agent loop (VS Code or
+   *  Microsoft 365 Copilot on Copilot CLI), keeping MCPJam's MCP client. */
+  agentLoop?: boolean;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
@@ -612,6 +639,38 @@ export function checkHarnessRuntimeAvailable(args: {
   // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  // Whether the runtime runs here at all comes first: every other rule is
+  // about a turn this surface could run.
+  const surfaceRefusal =
+    harnessSurfaceRefusal(args.harnessId, args.surface) ??
+    (args.localExecution === true
+      ? harnessSurfaceRefusal(args.harnessId, "local")
+      : undefined);
+  if (surfaceRefusal) {
+    return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
+  }
+  // A dedicated client reaches its servers only through the runtime's own MCP
+  // client, which only signed-in Playground chats forward. Refused here in the
+  // planner's words, so an eval or a study is not admitted only to fail every
+  // turn.
+  if (
+    adapter.requiredForwarding === "pass-through" &&
+    args.agentLoop !== true &&
+    args.hasSelectedMcpServers
+  ) {
+    const closed =
+      args.localExecution === true
+        ? "local execution target"
+        : FORWARDING_CLOSED[args.surface];
+    if (closed) {
+      return {
+        ok: false,
+        kind: "surface-unsupported",
+        reason: requiredForwardingRefusal({ reasons: [closed], gaps: [] }, name),
+      };
+    }
+  }
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
   // authenticate on the CUSTOMER's own provider account? Three checks below
