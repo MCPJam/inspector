@@ -1007,6 +1007,48 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("shows an eval run's recorded errors next to the live App", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-saved",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+          toolRenderOverrides={{
+            "call-saved": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              recordedWidgetErrors: {
+                consoleErrors: ["TypeError: broken"],
+                blockedRequests: [],
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordedWidgetDiagnostics: expect.objectContaining({
+            consoleErrors: ["TypeError: broken"],
+          }),
+        }),
+      );
+    });
+
     // SEP-1865 `ui/notifications/request-teardown`: once the host has
     // honored the widget's teardown request, its toolCallId lands in
     // `tornDownWidgetIds` on the Thread. PartSwitch must
