@@ -6,6 +6,10 @@ import {
   readScenarioEnvironment,
   type ScenarioEnvironmentRuntime,
 } from "../../utils/scenario-runtime-config.js";
+import {
+  readScenarioServerSkills,
+  type ScenarioServerSkill,
+} from "../../utils/scenario-server-skills.js";
 import { makeFunctionReference } from "convex/server";
 import type { ProjectDefaultToolConfig } from "../../utils/built-in-tools/built-in-tool-policy.js";
 import { canProvisionHarnessBoxes } from "../../utils/harness/harness-box.js";
@@ -71,7 +75,9 @@ export async function resolveHostedChatSetup(args: {
   }
   let hostRuntimeConfig: Record<string, unknown> | null = null;
   let environmentSpec: ResolvedEnvironmentRuntime | null = null;
-  let scenarioEnvironment: ScenarioEnvironmentRuntime | null = null;
+  let scenarioEnvironment:
+    | (ScenarioEnvironmentRuntime & { serverSkills: ScenarioServerSkill[] })
+    | null = null;
   let attribution: PluginRuntimeAttribution | null = null;
   let pluginDisabled: ResolvedEnvironmentSkill[] = [];
   if (access.kind === "scenario") {
@@ -123,7 +129,10 @@ export async function resolveHostedChatSetup(args: {
     }
     hostRuntimeConfig = { ...runtime.config };
     if (read.kind === "present") {
-      scenarioEnvironment = read.environment;
+      scenarioEnvironment = {
+        ...read.environment,
+        serverSkills: readScenarioServerSkills(runtime.config),
+      };
       const pluginVersionIds = (scenarioEnvironment.pluginVersions ?? []).map(
         (p) => p.pluginVersionId,
       );

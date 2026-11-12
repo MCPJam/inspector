@@ -301,6 +301,7 @@ import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { InspectorWidgetHostProvider, useWidgetHost } from "../use-widget-host";
+import { ChatAppDisplayBehaviorProvider } from "@/contexts/chat-app-display-behavior-context";
 import {
   createThreadAppHost,
   type ThreadAppPresentation,
@@ -1916,6 +1917,99 @@ describe("MCPAppsRenderer tool input streaming", () => {
         // Its click opens the whole-window fullscreen, as before.
         fireEvent.click(card()!);
         await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+      });
+    });
+
+    // A model App the plugin host didn't wrap (no model App marker) renders on
+    // the chat's own host. The plugin host wraps model Apps only on its Forms
+    // path, and Claude's clients leave Forms off, so this is the usual Claude
+    // case.
+    describe("a model App on the chat's own host", () => {
+      const CLAUDE_RULES: DisplayBehavior = {
+        hints: "ui",
+        start: "inline-then-move",
+      };
+      beforeEach(() => {
+        vi.mocked(authFetch).mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              html: "<html><body>chat app</body></html>",
+              mimeTypeValid: true,
+              uiDisplayHints: { preferredDisplayMode: "fullscreen" },
+            }),
+          status: 200,
+          headers: new Headers(),
+        } as Response);
+      });
+      afterEach(() => {
+        mockBridge.getAppCapabilities.mockReturnValue(undefined);
+      });
+      function mountPlainChat(displayBehavior?: DisplayBehavior) {
+        const state = { mode: "inline" as string };
+        function Chat() {
+          const [mode, setMode] = React.useState<
+            "inline" | "pip" | "fullscreen"
+          >("inline");
+          const [owner, setOwner] = React.useState<string | null>(null);
+          state.mode = mode;
+          const placed = mode === "fullscreen" && owner !== null;
+          return (
+            <WidgetFullscreenPlacementContext.Provider
+              value={{
+                rect: placed ? rect : null,
+                exitLabel: "Exit full screen",
+              }}
+            >
+              <ChatAppDisplayBehaviorProvider value={displayBehavior}>
+                <HostedRenderer
+                  {...baseProps}
+                  displayMode={mode}
+                  fullscreenWidgetId={owner}
+                  onDisplayModeChange={setMode}
+                  onRequestFullscreen={setOwner}
+                  onExitFullscreen={(id) =>
+                    setOwner((current) => (current === id ? null : current))
+                  }
+                />
+              </ChatAppDisplayBehaviorProvider>
+            </WidgetFullscreenPlacementContext.Provider>
+          );
+        }
+        const { container } = render(<Chat />);
+        return { container, state };
+      }
+      const initialize = async () => {
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        mockBridge.getAppCapabilities.mockReturnValue({
+          availableDisplayModes: ["inline", "fullscreen"],
+        });
+        await act(async () => {
+          triggerReady();
+          await Promise.resolve();
+        });
+      };
+
+      it("follows the client's Claude rules: starts inline, then moves to the side panel", async () => {
+        const { container, state } = mountPlainChat(CLAUDE_RULES);
+        await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+        expect(appBridgeArgsRef.current?.options?.hostContext.displayMode).toBe(
+          "inline",
+        );
+        await initialize();
+        await vi.waitFor(() => expect(state.mode).toBe("fullscreen"));
+        expect(placedApp(container)).not.toBeNull();
+      });
+
+      it("keeps today's negotiation where the chat gives no display rules", async () => {
+        const { container, state } = mountPlainChat();
+        await initialize();
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        // `_meta.ui` hints mean nothing without Claude's rules.
+        expect(state.mode).toBe("inline");
+        expect(placedApp(container)).toBeNull();
       });
     });
   });
