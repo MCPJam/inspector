@@ -95,9 +95,12 @@ export type ServerSkillsVia =
  *  - `environment`: an environment's skills, by ref. Loads follow the switch,
  *    so a person watching their own turn gets the prompt they configured.
  *  - `live`: the skills a person has right now, by ref, under the switch, plus
- *    the connected servers' own skills, listed when the prompt is built. Only
- *    a live set adds those: an environment's server skills were captured with
- *    it, and fetching more would make the set stop describing the turn.
+ *    the connected servers' own skills. Those join the set when the prompt is
+ *    built, once the servers are connected (`withLiveServerSkills` in
+ *    `prepareChatV2`), so they are not in this plan's `delivered`. They load
+ *    under the switch, by ref or by skill URI. Only a live set adds them: an
+ *    environment's server skills were captured with it, and fetching more
+ *    would make the set stop describing the turn.
  */
 export type AgentSkillTools =
   | { kind: "frozen" }
@@ -111,7 +114,8 @@ export interface TurnSkills {
   /** The source's skills as one capability set. */
   set: EffectiveCapabilitySet;
   /** What the engine is handed, including what it can load but is not listed
-   *  in its prompt (`omittedFromCatalog`). */
+   *  in its prompt (`omittedFromCatalog`). A live plan's connected servers'
+   *  skills are listed when its prompt is built, not here (`agent`). */
   delivered: SkillRef[];
   /** What it is not handed, and why. */
   excluded: SkillExclusion[];
