@@ -85,8 +85,8 @@ export function getSupportLevel(
     }
     case "mode-set": {
       // Aggregate a set of modes into one level: all candidates present →
-      // supported, only the minimum (≤1) → neutral, some-but-not-all →
-      // partial. The matrix cell still renders the per-mode chips; this is the
+      // supported, only the baseline every host has (`kind.baseline`, default
+      // 1) → neutral, some-but-not-all → partial. The matrix cell still renders the per-mode chips; this is the
       // single-level summary used by coverage / filters / the list view.
       //
       // Count membership of the declared candidates (matching the cell's
@@ -96,7 +96,7 @@ export function getSupportLevel(
       const set = new Set(Array.isArray(value) ? (value as string[]) : []);
       const present = modes.filter((m) => set.has(m)).length;
       if (present >= modes.length) return "supported";
-      if (present <= 1) return "neutral";
+      if (present <= (field.kind.baseline ?? 1)) return "neutral";
       return "partial";
     }
     default:

@@ -13,12 +13,13 @@
 export function diskResumeState<T>(state: T): T {
   if (!state || typeof state !== "object") return state;
   const record = state as Record<string, unknown>;
+  // Cursor stores its ACP session and cold-session identity alongside the bridge.
   // Codex's thread lives in its session-data dir (CODEX_HOME rollouts), so a
   // Codex session resumes from disk the same way: the bridge is respawned and
   // `thread/resume` reads the rollout, rather than retrying a dead socket. An
   // approval continuation (`continue-turn`) for either harness is never stripped:
   // the paused call lives in the bridge and cannot be rebuilt by a respawn.
-  if ((record.harnessId !== "claude-code" && record.harnessId !== "codex") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
+  if ((record.harnessId !== "claude-code" && record.harnessId !== "codex" && record.harnessId !== "cursor") || record.type !== "resume-session" || !record.data || typeof record.data !== "object") return state;
   const { bridge: _bridge, ...data } = record.data as Record<string, unknown>;
   return { ...record, data } as T;
 }

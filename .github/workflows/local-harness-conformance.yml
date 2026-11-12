@@ -368,14 +368,14 @@ jobs:
           PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
         run: |
           set -euo pipefail
-          published=()
+          set --
           if [ -n "$PACK_VERSION" ]; then
-            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+            set -- --published "$CONFORMANCE_ROOT/published-conformance-input.json"
           fi
           node scripts/write-conformance-evidence.mjs \
             --harness claude-code --target "${{ matrix.platform_key }}" \
             --runtime "$CONFORMANCE_ROOT/runtime/claude-code" \
-            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --out "$CONFORMANCE_ROOT/evidence" "$@" \
             --scenarios "full,attended-off,delivery,no-launcher,abort,orphan"
 
       - name: Upload conformance evidence
@@ -593,14 +593,14 @@ jobs:
           PACK_VERSION: ${{ needs.plan.outputs.claude_pack_version }}
         run: |
           set -euo pipefail
-          published=()
+          set --
           if [ -n "$PACK_VERSION" ]; then
-            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+            set -- --published "$CONFORMANCE_ROOT/published-conformance-input.json"
           fi
           node scripts/write-conformance-evidence.mjs \
             --harness claude-code --target "win32-x64" \
             --runtime "$CONFORMANCE_ROOT/runtime/claude-code" \
-            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --out "$CONFORMANCE_ROOT/evidence" "$@" \
             --scenarios "full,attended-off,delivery,abort"
 
       - name: Upload conformance evidence
@@ -828,14 +828,14 @@ jobs:
           PACK_VERSION: ${{ needs.plan.outputs.codex_pack_version }}
         run: |
           set -euo pipefail
-          published=()
+          set --
           if [ -n "$PACK_VERSION" ]; then
-            published=(--published "$CONFORMANCE_ROOT/published-conformance-input.json")
+            set -- --published "$CONFORMANCE_ROOT/published-conformance-input.json"
           fi
           node scripts/write-conformance-evidence.mjs \
             --harness codex --target "${{ matrix.platform_key }}" \
             --runtime "$CONFORMANCE_ROOT/runtime/codex" \
-            --out "$CONFORMANCE_ROOT/evidence" "${published[@]}" \
+            --out "$CONFORMANCE_ROOT/evidence" "$@" \
             --scenarios attended,attended-off
 
       - name: Upload conformance evidence

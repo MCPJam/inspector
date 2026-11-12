@@ -78,7 +78,7 @@ jobs:
             node_modules
             */node_modules
             mcpjam-inspector/*/node_modules
-          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', 'mcpjam-inspector/scripts/patch-harness-approvals.mjs') }}
 
       - name: Install workspace dependencies
         if: steps.node-modules.outputs.cache-hit != 'true'
@@ -142,3 +142,10 @@ jobs:
           fi
           echo "Inspector failed to start with exit code $EXIT_CODE"
           exit "$EXIT_CODE"
+
+      # One signed-in Ask MCPJam turn through this build with no
+      # INSPECTOR_SERVICE_TOKEN, the way every npx, Docker and desktop install
+      # runs it, against a local stand-in backend and WorkOS. Release runs the
+      # same check on the packed tarball (smoke-packed-npm-packages.mjs).
+      - name: Ask MCPJam turn without a service token
+        run: node .github/scripts/ask-mcpjam-smoke.mjs

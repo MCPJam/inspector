@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 
@@ -87,19 +88,22 @@ export function useHostedOrgModelConfig({
 }): HostedOrgModelConfig | undefined {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const isUserReady = useDbUserReady();
-  const hasScope = !disabled && (!!projectId || !!organizationId);
+  // A placeholder id ("none" before a guest's project exists, or a local id)
+  // names no Convex project, and the backend rejects it.
+  const convexProjectId = shouldQueryProjectId(projectId) ? projectId : null;
+  const hasScope = !disabled && (!!convexProjectId || !!organizationId);
   // Signed in (or still finding out), but the policy cannot be read yet: the
   // sign-in is resolving, the user row is still being set up, or reads are
   // paused while the session recovers.
   const policyUnreadable =
     hasScope && (isAuthLoading || (isAuthenticated && !isUserReady));
   const shouldQuery = isAuthenticated && isUserReady && !disabled;
-  const queriesProject = shouldQuery && !!projectId;
+  const queriesProject = shouldQuery && !!convexProjectId;
   const queriesOrganization = shouldQuery && !!organizationId;
 
   const projectConfig = useQuery(
     "organizationModelProviders:getVisibleConfigForProject" as any,
-    queriesProject ? ({ projectId } as any) : "skip",
+    queriesProject ? ({ projectId: convexProjectId } as any) : "skip",
   ) as HostedOrgModelConfig | null | undefined;
 
   const organizationConfig = useQuery(

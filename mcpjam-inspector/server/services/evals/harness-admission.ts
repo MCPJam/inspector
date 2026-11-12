@@ -54,7 +54,7 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -239,25 +239,33 @@ function harnessCannotObserveWidgetsReason(
  * Only a SENTINEL host promotes. A host whose harness is external-account but
  * whose model is an ordinary id is a broken configuration, and the admission
  * gate refuses it on the host's own id — promoting that id would launder it.
+ *
+ * `externalAccount` says the host's model was promoted: the case runs on the
+ * customer's own vendor account. Billing and the case's selection read it,
+ * never whether the definition is the case's own object.
  */
 export function resolveEvalCaseModelDefinition(args: {
   hostConfig: Record<string, unknown> | null | undefined;
   localExecution?: boolean;
   /** The model the CASE names, already built into a definition. */
   caseModel: ModelDefinition;
-}): ModelDefinition {
+}): { modelDefinition: ModelDefinition; externalAccount: boolean } {
+  const caseModel = { modelDefinition: args.caseModel, externalAccount: false };
   const harness = harnessOfHostConfig(args.hostConfig);
-  if (!harness) return args.caseModel;
+  if (!harness) return caseModel;
   if (getHarnessAdapter(harness).modelAccess !== "external-account") {
-    return args.caseModel;
+    return caseModel;
   }
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
-  if (!isRuntimeChosenModelSentinel(hostModelId)) return args.caseModel;
+  if (!isRuntimeAccountModel(hostModelId)) return caseModel;
   // The same builder the swarm runner uses, so the sentinel arrives with its
   // curated label and its registered provider rather than a re-derived guess.
-  return buildSyntheticModelDefinition(hostModelId);
+  return {
+    modelDefinition: isRuntimeAccountModel(String(args.caseModel.id)) ? args.caseModel : buildSyntheticModelDefinition(hostModelId),
+    externalAccount: true,
+  };
 }
 
 export function hasSelectedMcpServersForAdmission(args: {

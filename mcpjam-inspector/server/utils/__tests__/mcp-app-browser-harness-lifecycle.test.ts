@@ -17,7 +17,7 @@ function fixture() {
       started.resolve();
       await released.promise;
     }),
-    setContent: vi.fn(),
+    goto: vi.fn(async () => null),
     addScriptTag: vi.fn(),
     video: () => ({ path: async () => "/nonexistent/widget-lifecycle.webm" }),
   };

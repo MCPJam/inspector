@@ -60,11 +60,16 @@ export function isAuthorizationRequiredCheck(check: {
  * A raw probe's recorded HTTP status was 401: the answer came from the
  * authorization layer in front of the MCP endpoint, so it says nothing about
  * the behaviour the check grades. The protocol and transport probes record it
- * as `status`, the localhost Host/Origin probes as `statusCode` — a server
- * that authenticates before it validates Host never showed us its Host rule.
+ * as `status`, the localhost Host/Origin probes as `statusCode`, the modern
+ * probes as `httpStatus` — a server that authenticates before it validates
+ * Host never showed us its Host rule.
  */
 export function isUnauthorizedProbe(
   details: Record<string, unknown> | undefined,
 ): boolean {
-  return details?.status === 401 || details?.statusCode === 401;
+  return (
+    details?.status === 401 ||
+    details?.statusCode === 401 ||
+    details?.httpStatus === 401
+  );
 }

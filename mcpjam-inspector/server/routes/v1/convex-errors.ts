@@ -118,7 +118,7 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
  * is a bug worth surviving, and three links is already more nesting than any
  * path here has.
  */
-function convexErrorData(error: unknown): ConvexErrorData | null {
+export function convexErrorData(error: unknown): ConvexErrorData | null {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current; depth += 1) {
     const data = (current as { data?: unknown }).data;
@@ -273,7 +273,7 @@ function retryAfterFromResetsAt(
 }
 
 /** Same, from a duration a token bucket measured directly. */
-function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+export function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
     return undefined;
   }

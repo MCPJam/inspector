@@ -24,6 +24,8 @@ function buildApp() {
   app.put("/api/web/browser-profiles/upload", readBody);
   app.post("/api/web/browser-profiles/commit", readBody);
   app.post("/api/web/other", readBody);
+  app.put("/api/web/apps/mcp-apps/view-admissions", readBody);
+  app.post("/api/web/apps/mcp-apps/view-admissions/other", readBody);
   app.post("/api/web/audio/transcriptions", readBody);
   return app;
 }
@@ -87,6 +89,17 @@ describe("webBodyLimit: plugin App context updates", () => {
 });
 
 describe("webBodyLimit", () => {
+  it("keeps the 1MiB limit on admission sibling paths and other methods", async () => {
+    for (const [path, method] of [
+      ["/api/web/apps/mcp-apps/view-admissions", "PUT"],
+      ["/api/web/apps/mcp-apps/view-admissions/other", "POST"],
+    ]) {
+      const response = await buildApp().request(path, { method, body: OVERSIZED });
+      expect(response.status, `${method} ${path}`).toBe(400);
+      expect(await response.json()).toMatchObject({ message: "Request body exceeds 1MB limit" });
+    }
+  });
+
   it("caps ordinary /api/web routes at 1MB", async () => {
     const res = await buildApp().request("/api/web/other", {
       method: "POST",

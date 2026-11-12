@@ -75,6 +75,8 @@ export const EGRESS_CORPUS = {
   "api-bench-results": `/api/web/bench/results/${sentinel("apibench")}`,
   "api-conformance-shared": `/api/web/conformance-shared/${sentinel("apiconf")}`,
   "api-session-token-query": `/api/mcp/servers/rpc/stream?serverId=a&_token=${sentinel("session")}`,
+  "app-view-local": `/api/apps/mcp-apps/sandbox-proxy?view_token=${sentinel("localview")}`,
+  "app-view-hosted": `/api/web/apps/mcp-apps/sandbox-proxy?view_token=${sentinel("hostedview")}`,
   "signed-artifact-link": `https://rt-http.mcpjam.com/artifact?t=${sentinel("artifact")}`,
 } as const satisfies Record<CredentialRouteId, string>;
 

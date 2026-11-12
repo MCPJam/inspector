@@ -32,6 +32,16 @@ import {
   type ManagerCallerContext,
 } from "./auth";
 import { authorizeProxyTurn } from "../../utils/harness/proxy-turn.js";
+import {
+  authorizeSessionRequest,
+  sameSessionTurn,
+} from "../../utils/harness/session-proxy-request.js";
+import { SESSION_GRANT_HEADER } from "../../utils/harness/session-grant.js";
+import {
+  cancelSessionCall,
+  trackSessionCall,
+} from "../../utils/harness/session-proxy-cancel.js";
+import { cancelledRequestId } from "../../utils/harness/forwarding/native-wire.js";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { unsealHarnessProxyToken } from "../../utils/harness/harness-proxy-policy-seal";
 import { evaluateHarnessProxyToolPolicy } from "../../utils/harness/harness-proxy-policy-enforcement";
@@ -229,17 +239,30 @@ async function handle(c: any) {
   // stays Convex's. A bare token keeps today's path byte-for-byte.
   const presentedToken = readProxyToken(c);
   const sealed = unsealHarnessProxyToken(presentedToken, serverId);
-  const claims = verifyHarnessProxyToken(
-    sealed?.token ?? presentedToken,
-    serverId
-  );
+  // A session envelope carries the lane's handle, not a turn's token: the live
+  // turn and its bound policy come from the backend on every request.
+  const sessionEnvelope = sealed?.session ? sealed : undefined;
+  const boxGrant = c.req.header(SESSION_GRANT_HEADER) || undefined;
+  const session = sessionEnvelope
+    ? await authorizeSessionRequest(sessionEnvelope, serverId, boxGrant)
+    : undefined;
+  if (session instanceof Response) return session;
+  const claims =
+    session?.claims ??
+    verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
+  const correlationId = session?.turnId ?? readScopeStepUpCorrelationId(c);
 
   const turn = sealed?.turn;
-  const checkTurn = turn ? () => authorizeProxyTurn(turn, claims) : undefined;
-  const denied = await checkTurn?.();
+  const checkTurn = turn
+    ? () => authorizeProxyTurn(turn, claims)
+    : sessionEnvelope && session
+      ? () =>
+          sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
+      : undefined;
+  const denied = turn ? await checkTurn?.() : undefined;
   if (denied) return denied;
 
   if (rateLimited(`${claims.userId}:${serverId}`)) {
@@ -308,6 +331,19 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  // A session client cancels with a separate request; it stops the call only
+  // where that call runs.
+  const cancelled = session ? cancelledRequestId(body) : undefined;
+  if (session && cancelled !== undefined) {
+    cancelSessionCall(session.laneId, serverId, cancelled);
+    return c.body("Accepted", 202);
+  }
+  const call =
+    session &&
+    body.method &&
+    (typeof body.id === "string" || typeof body.id === "number")
+      ? trackSessionCall(session.laneId, serverId, body.id)
+      : undefined;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -438,7 +474,6 @@ async function handle(c: any) {
               classification: block.marker.classification,
               at: Date.now(),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessPolicyBlock(
               correlationId,
               event,
@@ -470,6 +505,7 @@ async function handle(c: any) {
           }
         }
         return handleJsonRpc(serverId, body, manager, "adapter", {
+          ...(call ? { signal: call.signal } : {}),
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.
@@ -487,7 +523,6 @@ async function handle(c: any) {
                 ? { toolInput: context.toolInput }
                 : {}),
             };
-            const correlationId = readScopeStepUpCorrelationId(c);
             const deliveredLocally = publishHarnessScopeStepUp(
               correlationId,
               event,
@@ -563,6 +598,8 @@ async function handle(c: any) {
       },
       200
     );
+  } finally {
+    call?.done();
   }
 }
 

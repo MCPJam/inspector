@@ -46,7 +46,7 @@ import {
   shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   mergeMcpToolOriginMetadata,
   mergeMcpToolConnectionMetadata,

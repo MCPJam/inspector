@@ -735,6 +735,8 @@ export type ResumeMrtrOutcome =
       reason: string;
       /** HTTP status to surface (defaults per outcome). */
       status?: number;
+      /** The durable continuation is closed; the same receipt cannot resume. */
+      terminal?: true;
       /**
        * Present only when the MCP leg COMPLETED but the durable record could not
        * be finalized: the result is real and in hand, the store just does not
@@ -759,13 +761,13 @@ export interface ResumeMrtrDeps {
   ) => Promise<MrtrLegResult<unknown>>;
   /** Prepare authorized wire-only input before the exactly-once fence. No effects here.
    * Rechecked under the exact live pre-wire lease/version after asynchronous admission.
-   * commit is synchronous and runs only after that fence, before driving the leg. */
+   * commit refreshes permission after that fence, before driving the leg. */
   prepareLeg?: (
     state: MrtrOperationState,
     responses: InputResponses,
   ) => Promise<{
     responses: InputResponses;
-    commit: () => void;
+    commit: () => void | Promise<void>;
   }>;
   emit?: (event: MrtrContinuationEvent) => void;
   serverName?: string;
@@ -791,6 +793,8 @@ function terminalFromStatus(status: string): ResumeMrtrOutcome {
   switch (status) {
     case "completed":
       return { outcome: "completed", result: undefined };
+    case "failed":
+      return { outcome: "failed", reason: "continuation already failed", terminal: true };
     case "cancelled":
       return { outcome: "cancelled", reason: "continuation already cancelled" };
     case "expired":
@@ -1149,9 +1153,29 @@ export async function resumeMrtrContinuationLeg(
     }
   }
 
+  try {
+    await prepared?.commit();
+  } catch (error) {
+    // The durable fence precedes admission's final check, but no leg was sent.
+    // Close this attempt as a known refusal instead of claiming a lost result.
+    const finalized = await finalize(deps.bearer, {
+      continuationId,
+      leaseId,
+      expectedStateVersion: stateVersion,
+      status: "failed",
+      terminalReason: "resume_admission_refused",
+    });
+    if (!finalized.ok) return mapError(finalized);
+    emitResolved(deps, continuationId, "failed");
+    return {
+      outcome: "failed",
+      reason: error instanceof Error ? error.message : "Continuation input admission refused",
+      terminal: true,
+    };
+  }
+
   let leg: MrtrLegResult<unknown>;
   try {
-    prepared?.commit();
     leg = await deps.driveLeg(
       state,
       prepared?.responses ?? (responses as InputResponses),

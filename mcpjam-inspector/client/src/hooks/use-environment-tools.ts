@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { EnvironmentOverrides } from "@/shared/execution-target";
 import type { Tool } from "@modelcontextprotocol/client";
 import { authFetch } from "@/lib/session-token";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
@@ -54,7 +55,8 @@ export interface UseEnvironmentToolsResult {
 export function useEnvironmentTools(
   projectId: string | null,
   environmentId: string | null,
-  revision?: number | null
+  revision?: number | null,
+  overrides?: EnvironmentOverrides,
 ): UseEnvironmentToolsResult {
   const [committed, setCommitted] = useState<{
     key: string | null;
@@ -67,11 +69,12 @@ export function useEnvironmentTools(
 
   const normalizedProjectId = projectId?.trim() || null;
   const normalizedEnvironmentId = environmentId?.trim() || null;
+  const body = JSON.stringify(overrides);
   const targetKey =
     normalizedProjectId &&
     shouldQueryProjectId(normalizedProjectId) &&
     normalizedEnvironmentId
-      ? `${normalizedProjectId}::${normalizedEnvironmentId}`
+      ? JSON.stringify([normalizedProjectId, normalizedEnvironmentId, body])
       : null;
 
   useEffect(() => {
@@ -88,11 +91,14 @@ export function useEnvironmentTools(
     );
     (async () => {
       try {
-        const response = await authFetch(
-          `/api/web/environments/${encodeURIComponent(
-            normalizedEnvironmentId
-          )}/tools?projectId=${encodeURIComponent(normalizedProjectId)}`
-        );
+        const url = `/api/web/environments/${encodeURIComponent(normalizedEnvironmentId)}/tools?projectId=${encodeURIComponent(normalizedProjectId)}`;
+        const response = body
+          ? await authFetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body,
+            })
+          : await authFetch(url);
         const payload = (await response.json().catch(() => null)) as {
           servers?: EnvironmentServerTools[];
         } | null;
@@ -136,6 +142,7 @@ export function useEnvironmentTools(
     };
   }, [
     targetKey,
+    body,
     normalizedProjectId,
     normalizedEnvironmentId,
     revision,

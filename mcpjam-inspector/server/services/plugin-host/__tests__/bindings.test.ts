@@ -103,6 +103,7 @@ describe("private server binding identity", () => {
     const host = {
       hostId: "host",
       hostConfigId: "config-1",
+      configHash: "a".repeat(64),
       modelId: "model",
       systemPrompt: "",
       temperature: 0,
@@ -116,10 +117,16 @@ describe("private server binding identity", () => {
     ) => ({
       ...host,
       hostConfigId: "config-2",
+      configHash: "b".repeat(64),
       mcpProfile: { profileVersion: 1, apps, ...extra },
     });
     it("keeps the previous spelling for a config without mutable permissions", () => {
-      const { hostConfigId: _id, requireToolApproval: _a, ...bare } = host;
+      const {
+        hostConfigId: _id,
+        configHash: _hash,
+        requireToolApproval: _a,
+        ...bare
+      } = host;
       expect(pluginHostBindingDigest(bare)).toBe(pluginBindingDigest(bare));
     });
     it("ignores the client's extension and App permission toggles", () => {

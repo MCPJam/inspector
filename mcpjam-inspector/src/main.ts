@@ -192,6 +192,8 @@ let activating: Promise<void> | null = null;
 let shutdownLocalBrowserFrames: (() => void) | null = null;
 let killLocalBrowserFrames: (() => void) | null = null;
 let shutdownWebMcpFrames: (() => void) | null = null;
+let shutdownMrtrStreams: (() => void) | null = null;
+let killMrtrStreams: (() => void) | null = null;
 let killWebMcpFrames: (() => void) | null = null;
 let pendingProtocolUrl: string | null = null;
 let appBootstrapped = false;
@@ -566,6 +568,8 @@ async function startHonoServer(): Promise<number> {
     const {
       app: honoApp,
       injectWebSocket,
+      shutdownLocalMrtrStreams,
+      killLocalMrtrStreams,
       shutdownLocalComputerTerminals,
       killLocalComputerTerminals,
       shutdownWebMcpFrameSockets,
@@ -596,6 +600,8 @@ async function startHonoServer(): Promise<number> {
     // The WebMCP frame sockets are the same story: established WebSockets that
     // `server.close()` leaves attached, with a latching variant for a real quit
     // and a non-latching one for `window-all-closed`.
+    shutdownMrtrStreams = shutdownLocalMrtrStreams;
+    killMrtrStreams = killLocalMrtrStreams;
     shutdownWebMcpFrames = shutdownWebMcpFrameSockets;
     killWebMcpFrames = killWebMcpFrameSockets;
     // The agent's browser is a real Chromium this process started. Quitting the
@@ -1238,6 +1244,7 @@ app.on("window-all-closed", () => {
   // Same non-latching kill: latching here would 4503 every frame handshake
   // after the user reopened the window from the dock.
   killWebMcpFrames?.();
+  killMrtrStreams?.();
   if (server) {
     server.close?.();
     serverPort = 0;
@@ -1378,6 +1385,7 @@ app.on("before-quit", (event) => {
   recordUpdateShutdown("local_cleanup_started");
   shutdownLocalTerminals?.();
   shutdownWebMcpFrames?.();
+  shutdownMrtrStreams?.();
   shutdownLocalBrowserFrames?.();
   if (server) {
     server.close?.();

@@ -73,8 +73,8 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
  *    They bound what an App may add, not where it runs, so whatever enforces
  *    them must read the saved client's current value, never the binding. A
  *    lowered budget then refuses the next update instead of closing the App.
- *  - `hostConfigId`, the saved config's content address. It rotates on ANY
- *    saved edit, the toggles above included; the fields it summarizes are
+ *  - `hostConfigId` and `configHash`, the saved config's content addresses.
+ *    They rotate on ANY saved edit, the toggles above included; their fields are
  *    projected individually and stay bound.
  * `selectedServerIds` also leaves it, because one host is read two ways. The
  * `/web/host/runtime-config` read that chat binds against carries the host's
@@ -91,6 +91,7 @@ export function pluginHostBindingDigest(config: unknown) {
   if (!isPlainRecord(config)) return pluginBindingDigest(config);
   const {
     hostConfigId: _contentAddress,
+    configHash: _configHash,
     requireToolApproval: _approval,
     selectedServerIds: _selection,
     ...bound

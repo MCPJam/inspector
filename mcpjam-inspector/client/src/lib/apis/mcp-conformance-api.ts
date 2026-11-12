@@ -4,11 +4,9 @@ import type {
   MCPAppsCheckId,
   MCPAppsConformanceResult,
   MCPCheckId,
-  MCPLogLevel,
   MCPOAuthReadinessId,
   MCPReadinessId,
   MCPTasksCheckId,
-  MCPTasksToolCheckId,
   MCPTasksCheckOverrides,
   MCPTasksReadinessId,
   MCPTasksConformanceResult,
@@ -19,6 +17,11 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
 import { localPost } from "@/lib/apis/local-post";
+import {
+  protocolProbeFields,
+  type ConformanceProbe,
+  type ConformanceProbes,
+} from "@/shared/conformance-settings";
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -73,42 +76,7 @@ export interface OAuthStartInput extends ConformanceRunBudget {
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-/** A tool named as safe for a protocol check to call, with its arguments. */
-export interface ConformanceProbe {
-  toolName: string;
-  arguments?: Record<string, unknown>;
-  /**
-   * `logProbe` and `logLevelOverride` only: the log level the log level
-   * filtering advice asks for. Absent means the SDK's default, `warning`.
-   */
-  level?: MCPLogLevel;
-  /**
-   * `tasksProbe` only: the answers `tasks/update` sends when the task asks
-   * for input, keyed by `inputRequests` key. Absent means the update
-   * acknowledgement check is not applicable.
-   */
-  inputResponses?: Record<string, unknown>;
-}
-
-/**
- * The tools the checks that must call one may use: `logProbe` for the logging
- * check and the log level filtering advice, `inputRequiredProbe` for the
- * undeclared-capability check, `toolCallProbe` for the output-schema check,
- * `tasksProbe` for the Tasks checks that need a created task.
- */
-export interface ConformanceProbes {
-  logProbe?: ConformanceProbe;
-  inputRequiredProbe?: ConformanceProbe;
-  toolCallProbe?: ConformanceProbe;
-  tasksProbe?: ConformanceProbe;
-  tasksOverrides?: Partial<Record<MCPTasksToolCheckId, ConformanceProbe>>;
-  /**
-   * The log level filtering advice's own tool, used instead of `logProbe`.
-   * Absent means the advice uses `logProbe`. Kept on this browser, like
-   * `tasksOverrides`.
-   */
-  logLevelOverride?: ConformanceProbe;
-}
+export type { ConformanceProbe, ConformanceProbes };
 
 export async function runProtocolConformance(
   serverNameOrId: string,
@@ -127,16 +95,7 @@ export async function runProtocolConformance(
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
     ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
-    ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
-    ...(options?.probes?.logLevelOverride
-      ? { logLevelFilteringProbe: options.probes.logLevelOverride }
-      : {}),
-    ...(options?.probes?.inputRequiredProbe
-      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
-      : {}),
-    ...(options?.probes?.toolCallProbe
-      ? { toolCallProbe: options.probes.toolCallProbe }
-      : {}),
+    ...protocolProbeFields(options?.probes),
   };
   return runByMode({
     local: () =>

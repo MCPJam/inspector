@@ -20,11 +20,13 @@ const ALL_ON: HostFeatureVisibility = {
   claudeCode: true,
   codex: true,
   cursorCli: true,
+  copilotCli: true,
 };
 const ALL_OFF: HostFeatureVisibility = {
   claudeCode: false,
   codex: false,
   cursorCli: false,
+  copilotCli: false,
 };
 
 describe("which hosts are gated at all", () => {
@@ -155,7 +157,7 @@ describe("every surface reads the same map", () => {
     ]) {
       const excluded = excludedFlagGatedHostIds(visibility);
       const shown = new Set(
-        filterHostsByFeatureFlags(hosts, visibility).map((h) => h.id),
+        filterHostsByFeatureFlags([...hosts, { id: "copilot-cli" }], visibility).map((h) => h.id),
       );
       for (const id of FLAG_GATED_HOST_IDS) {
         expect(excluded.has(id), `${id} in ${JSON.stringify(visibility)}`).toBe(

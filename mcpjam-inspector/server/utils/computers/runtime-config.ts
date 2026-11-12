@@ -470,6 +470,9 @@ export type HostedBrowserVerdictRefresh =
  */
 export async function refreshHostedBrowserVerdict(): Promise<HostedBrowserVerdictRefresh> {
   if (verdictRouteMissing) return "route-missing";
+  // A backend restarting with this replica may outlast the boot retries.
+  // Reuse the bootstrap's failure cooldown so credentials recover too.
+  await initComputersRuntimeConfigBootstrap();
   const token = getInspectorServiceToken();
   const base = getConvexHttpUrl();
   if (!token || !base) return "skipped";

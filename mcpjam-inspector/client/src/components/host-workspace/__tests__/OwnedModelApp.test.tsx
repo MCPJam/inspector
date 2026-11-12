@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import {
   renderHook,
   render,
@@ -11,8 +12,10 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   close: vi.fn(async () => {}),
   renderer: vi.fn(),
+  track: vi.fn(),
   host: { environment: { draftHostContext: {} } },
 }));
+vi.mock("@/lib/analytics", () => ({ track: mocks.track }));
 vi.mock("@/lib/session-token", () => ({ authFetch: mocks.fetch }));
 vi.mock("../../chat-v2/thread/mcp-apps/use-widget-host", () => ({
   useWidgetHost: () => mocks.host,
@@ -28,6 +31,7 @@ vi.mock("../thread-app-api", () => ({
   createThreadAppApi: () => ({ invoke: mocks.invoke, close: mocks.close }),
 }));
 vi.mock("@mcpjam/widget-react", () => ({
+  UIType: { MCP_APPS: "mcp-apps", OPENAI_SDK: "openai-sdk" },
   WidgetHostProvider: ({ children }: any) => children,
   MCPAppsRenderer: (props: any) => {
     mocks.renderer(props);
@@ -335,4 +339,62 @@ it("keeps the inline preparation source stable across equivalent marker renders"
     ...intent,
     preparationToken: "b".repeat(43),
   });
+});
+
+function LaunchHealthFixture({ visible = true }: { visible?: boolean }) {
+  const workspace = useOwnedModelAppWorkspace(async () => true, { ...marker, key: "owner" }, true, false, "codex");
+  return <OwnedModelAppPortsProvider value={workspace.value}>
+    {visible && <OwnedModelApp marker={marker} renderProps={props} />}
+  </OwnedModelAppPortsProvider>;
+}
+
+it("counts model App readiness once across remounting a retained marker", async () => {
+  mocks.fetch.mockImplementation(async () => new Response(JSON.stringify(handle)));
+  const ui = render(<StrictMode><LaunchHealthFixture /></StrictMode>);
+  await screen.findByText("Owned App ready");
+  expect(mocks.track).not.toHaveBeenCalled();
+  act(() => mocks.renderer.mock.calls.at(-1)![0].onInitialRenderOutcome("ready"));
+  ui.rerender(<StrictMode><LaunchHealthFixture visible={false} /></StrictMode>);
+  ui.rerender(<StrictMode><LaunchHealthFixture /></StrictMode>);
+  await screen.findByText("Owned App ready");
+  act(() => mocks.renderer.mock.calls.at(-1)![0].onInitialRenderOutcome("ready"));
+  expect(mocks.track).toHaveBeenCalledOnce();
+  expect(mocks.track.mock.calls[0]).toEqual(["extension_launch_completed", {
+    launch_kind: "thread", host_profile: "codex", outcome: "success", failure_stage: "none", location: "host_workspace",
+  }]);
+  expect(JSON.stringify(mocks.track.mock.calls)).not.toContain(marker.instanceToken);
+});
+
+it("counts a model App rendering error and excludes explicit policy denial", async () => {
+  const ui = render(<LaunchHealthFixture />);
+  await screen.findByText("Owned App ready");
+  act(() => mocks.renderer.mock.calls.at(-1)![0].onInitialRenderOutcome("error"));
+  expect(mocks.track.mock.calls[0][1].failure_stage).toBe("rendering");
+  ui.unmount();
+  mocks.track.mockClear();
+  mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ code: "PLUGIN_EXTENSION_DISABLED" }), { status: 403 }));
+  render(<LaunchHealthFixture />);
+  await screen.findByRole("alert");
+  expect(mocks.track).not.toHaveBeenCalled();
+});
+
+it("keeps an in-flight App call and its instance when workspace presentation changes", async () => {
+  let finish!: (result: { content: [] }) => void;
+  mocks.invoke.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+  const send = async () => true;
+  function Root({ revision }: { revision: number }) {
+    const workspace = useOwnedModelAppWorkspace(send, { ...marker, key: "actor" });
+    return <OwnedModelAppPortsProvider value={{ ...workspace.value, canInvoke: () => revision === 1 }}>
+      <OwnedModelApp marker={marker} renderProps={props} />
+    </OwnedModelAppPortsProvider>;
+  }
+  const view = render(<Root revision={1} />);
+  await screen.findByText("Owned App ready");
+  const call = mocks.renderer.mock.calls.at(-1)![0].onCallTool("cad.reviewForm", {});
+  view.rerender(<Root revision={2} />);
+  expect(mocks.fetch).toHaveBeenCalledOnce();
+  expect(mocks.close).not.toHaveBeenCalled();
+  finish({ content: [] });
+  await expect(call).resolves.toEqual({ content: [] });
+  expect(mocks.invoke).toHaveBeenCalledOnce();
 });

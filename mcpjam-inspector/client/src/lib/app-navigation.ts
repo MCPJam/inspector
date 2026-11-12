@@ -644,6 +644,8 @@ export interface AppNavigateOptions {
    * failed to open". Everything else wants the inheritance.
    */
   unscoped?: boolean;
+  /** State for the new history entry; read it with `useCurrentLocationState`. */
+  state?: unknown;
 }
 
 /**
@@ -697,7 +699,10 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(target, { replace: options?.replace });
+    void router.navigate(target, {
+      replace: options?.replace,
+      state: options?.state,
+    });
     return;
   }
   if (
@@ -706,10 +711,11 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     )
   )
     return;
+  const state = options?.state ?? {};
   if (options?.replace) {
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(state, "", target);
   } else {
-    window.history.pushState({}, "", target);
+    window.history.pushState(state, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -734,9 +740,9 @@ export function useAppNavigate() {
         : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(target);
+          navigator.replace(target, options.state);
         } else {
-          navigator.push(target);
+          navigator.push(target, options?.state);
         }
         return;
       }
@@ -831,6 +837,13 @@ export function useCurrentLocationParts(): AppLocationParts {
     search: location.search || "",
     hash: location.hash || "",
   };
+}
+
+/** The current history entry's state, router-first. */
+export function useCurrentLocationState(): unknown {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  if (locationContext) return locationContext.location.state;
+  return typeof window === "undefined" ? undefined : window.history.state;
 }
 
 function getWindowFallbackLocationParts(): AppLocationParts {

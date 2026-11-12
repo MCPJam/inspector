@@ -1,4 +1,5 @@
 import { OAuthConformanceTest } from "./runner.js";
+import { captureConformanceRun } from "../telemetry.js";
 import type {
   ConformanceResult,
   OAuthConformanceConfig,
@@ -74,6 +75,7 @@ export class OAuthConformanceSuite {
   }
 
   async run(): Promise<OAuthConformanceSuiteResult> {
+    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const results: Array<ConformanceResult & { label: string }> = [];
 
@@ -85,6 +87,8 @@ export class OAuthConformanceSuite {
         ...this.config.defaults,
         ...flow,
         serverUrl: this.config.serverUrl,
+        // The suite already counted this run. Last, so no spread undoes it.
+        __suppressTelemetry: true,
       } as OAuthConformanceConfig;
       const label = deriveLabel({ ...merged, label: flow.label });
 

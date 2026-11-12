@@ -1,3 +1,6 @@
+import { serveSandboxViewDocument } from "./view-document.js";
+import { sandboxSourceReceipt } from "../../../services/sandbox-view-source.js";
+import { sandboxViewAdmissionRoutes } from "./view-admissions.js";
 import { readResourceDisplayHints } from "@mcpjam/sdk/widget-runtime";
 /**
  * MCP Apps (SEP-1865) Server Routes
@@ -13,19 +16,17 @@ import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
 import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import {
-  buildSandboxProxyFrameAncestors,
-  renderSandboxProxyHtml,
-} from "./sandbox-proxy-html";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
   canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
+  uiDisplayHintFields,
 } from "../../../utils/ui-resource-meta";
 import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
 const apps = new Hono();
+apps.route("/", sandboxViewAdmissionRoutes());
 
 /**
  * SEP-1865 mandated mimetype for MCP Apps
@@ -262,6 +263,7 @@ apps.post("/widget-content", async (c) => {
       domain: declaredDomain,
       metadataSources,
       metadataSource,
+      ...uiDisplayHints
     } = resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
@@ -334,6 +336,7 @@ apps.post("/widget-content", async (c) => {
     );
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
+      sourceReceipt: await sandboxSourceReceipt(c, { serverId, resourceUri: resolvedResourceUri, toolCallId: toolId }, html, csp),
       html,
       // Always report what the resource declared. The request's `cspMode`
       // decides whether a CSP is *injected* (`permissive` below), never what
@@ -349,6 +352,7 @@ apps.post("/widget-content", async (c) => {
       cspMode: effectiveCspMode,
       prefersBorder,
       resourceDisplayHints: readResourceDisplayHints(resourceMeta, listingMeta),
+      ...uiDisplayHintFields(uiDisplayHints),
       declaredDomain,
       // The subdomain this server's views get once per-app origins are on.
       // Optional-called: the route tests stand up managers that expose no
@@ -396,14 +400,6 @@ apps.post("/widget-content", async (c) => {
   }
 });
 
-apps.get("/sandbox-proxy", (c) => {
-  c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  // Same list the proxy pins its host origin against — see
-  // sandbox-proxy-html.ts for why these two must not drift.
-  c.header("Content-Security-Policy", buildSandboxProxyFrameAncestors());
-  c.res.headers.delete("X-Frame-Options");
-  return c.body(renderSandboxProxyHtml());
-});
+apps.get("/sandbox-proxy", serveSandboxViewDocument);
 
 export default apps;

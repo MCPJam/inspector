@@ -1,6 +1,7 @@
 import { sha256Hex } from "@mcpjam/sdk/contract";
 import { INTERNAL_TO_V1_CODE, V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
 import catalog from "./telemetry-catalog.generated.json";
+import { ONBOARDING_TURN_PHASES } from "./onboarding-trace.js";
 
 type Fields = Record<string, unknown>;
 export type StrictLogFieldRule = {
@@ -108,6 +109,7 @@ export function buildStrictLogRow(
   const event = approved(name, catalog.events) ?? "log.unknown";
   const row: Fields = { event, timestamp: new Date().toISOString() };
   copySafeLogContext(row, context, payload);
+  copyOnboardingTrace(row, event, payload);
   if (event === "model_catalog.refresh.failed") {
     row.level = "warn";
     delete row.reason;
@@ -154,6 +156,42 @@ export function buildStrictLogRow(
     row.canaryId = sha256Hex(`inspector:${row.slot}`);
   }
   return row;
+}
+
+/** Caller-supplied IDs become diagnostic hashes, never raw IDs or authority. */
+function copyOnboardingTrace(row: Fields, event: string, payload: Fields) {
+  if (
+    event !== "plugin.onboarding.turn" &&
+    event !== "plugin.onboarding.turn.stalled"
+  ) return;
+  if (
+    typeof payload.attemptId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(payload.attemptId)
+  ) row.onboardingAttemptHash = sha256Hex(`plugin.onboarding.attempt:${payload.attemptId}`);
+  if (isLogConvexIdShape(payload.pluginVersionId))
+    row.onboardingVersionHash = sha256Hex(`plugin.onboarding.version:${payload.pluginVersionId}`);
+  if (
+    event === "plugin.onboarding.turn.stalled" &&
+    typeof payload.lastPhase === "string" &&
+    ["received", ...ONBOARDING_TURN_PHASES].includes(payload.lastPhase)
+  ) row.lastPhase = payload.lastPhase;
+  if (
+    event === "plugin.onboarding.turn" &&
+    typeof payload.code === "string" &&
+    (["stream_error", "ended_without_finish"].includes(payload.code) ||
+      /^http_[1-5][0-9]{2}$/.test(payload.code))
+  ) row.code = payload.code;
+  const value = payload.phases;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const phases: Fields = {};
+  for (const phase of ONBOARDING_TURN_PHASES) {
+    const elapsed = Object.getOwnPropertyDescriptor(value, phase)?.value;
+    if (
+      typeof elapsed === "number" && Number.isInteger(elapsed) &&
+      elapsed >= 0 && elapsed <= 86_400_000
+    ) phases[phase] = elapsed;
+  }
+  if (Object.keys(phases).length) row.phases = phases;
 }
 
 function copySafeLogContext(row: Fields, context: Fields, payload: Fields) {

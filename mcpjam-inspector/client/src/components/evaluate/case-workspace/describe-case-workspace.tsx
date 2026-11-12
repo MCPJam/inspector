@@ -3,6 +3,7 @@ import { useDescribeSurface } from "@/lib/mcpjam-agent/describe-surface";
 import { useDescribeFlow } from "@/lib/mcpjam-agent/describe-flow";
 import { MessageCircle } from "lucide-react";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { isPlatformAgentEnabled } from "@/lib/runtime-config";
 import type { ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 
@@ -76,7 +77,7 @@ export function DescribeCaseWorkspace({
           )}
         </div>
       </div>
-      {!chatOpen ? (
+      {!chatOpen && isPlatformAgentEnabled() ? (
         <Button
           type="button"
           variant="outline"

@@ -372,6 +372,34 @@ describe("hosted chat: mid-session sign-in wiring", () => {
       );
     });
 
+    it("names no server when the call's server is not connected this turn", async () => {
+      store.cancel.mockResolvedValue({ ok: true, status: "cancelled" });
+      store.scrub.mockResolvedValue({ ok: true });
+      const options = await dispatch(true, "authz-abc");
+      // `whoami` belongs to a server that is not connected on this turn, so
+      // no prepared tool knows its server.
+      const answer = await options.settleSuspendedHistoryToolCall({
+        toolCallId: "call-1",
+        toolName: "whoami",
+      });
+      expect(answer).toContain(
+        'Not run: an MCP server asked the user to sign in before "whoami" could run',
+      );
+      expect(answer).not.toContain("unknown");
+    });
+
+    it("names no server in the may-have-run copy either", async () => {
+      // The replay was already claimed, so the store will not cancel it.
+      store.cancel.mockResolvedValue({ ok: true, status: "resuming" });
+      const options = await dispatch(true, "authz-abc");
+      const answer = await options.settleSuspendedHistoryToolCall({
+        toolCallId: "call-1",
+        toolName: "whoami",
+      });
+      expect(answer).toContain('"whoami" on an MCP server was retried');
+      expect(answer).not.toContain("unknown");
+    });
+
     it("answers the call even when the store no longer holds it", async () => {
       store.cancel.mockResolvedValue({
         ok: false,

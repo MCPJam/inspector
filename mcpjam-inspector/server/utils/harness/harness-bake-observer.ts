@@ -12,9 +12,10 @@ import type {
 } from "@ai-sdk/harness";
 import { logger } from "../logger.js";
 import {
-  HARNESS_BAKE_HOME,
   HARNESS_BAKE_MANIFEST_PATH,
   HARNESS_BAKED_BOOTSTRAP_DIRS,
+  HARNESS_STATE_DIRECTORY_NAME,
+  harnessBakedMarkerDirectory,
   parseBakedMarker,
 } from "./harness-bake.js";
 
@@ -52,8 +53,7 @@ export interface HarnessBootstrapObservation {
   outcome: HarnessBootstrapOutcome;
   expectation: HarnessBakeExpectation;
   bakeOnBox: HarnessBakeOnBox;
-  /** Bootstrap dir relative to the working directory, e.g.
-   *  `.harness-bootstrap/claude-code`. */
+  /** Adapter-declared bootstrap dir, e.g. `.harness-bootstrap/claude-code`. */
   bootstrapDir?: string;
   /** The recipe identity in the marker the framework looked for. */
   identity?: string;
@@ -66,6 +66,36 @@ export interface HarnessBootstrapObservation {
 }
 
 const MARKER_PATH = /^(.*)\/\.bootstrap-([0-9a-f]{16})\.ok$/;
+
+function recipeBootstrapDirFromAbsolute(
+  absoluteDir: string,
+  cwd: string,
+): string {
+  const prefix = `/${HARNESS_STATE_DIRECTORY_NAME}/`;
+  const at = absoluteDir.lastIndexOf(prefix);
+  if (at >= 0) return absoluteDir.slice(at + prefix.length);
+  return posix.relative(cwd, absoluteDir) || ".";
+}
+
+function classifyBakedBootstrapDir(
+  absoluteDir: string,
+): HarnessBakeExpectation {
+  if (
+    HARNESS_BAKED_BOOTSTRAP_DIRS.some(
+      (dir) => harnessBakedMarkerDirectory(dir) === absoluteDir,
+    )
+  ) {
+    return "baked";
+  }
+  if (
+    HARNESS_BAKED_BOOTSTRAP_DIRS.some(
+      (dir) => absoluteDir === dir || absoluteDir.endsWith(`/${dir}`),
+    )
+  ) {
+    return "custom-workdir";
+  }
+  return "unbaked-recipe";
+}
 
 /** The reduced session view the framework bootstraps through. */
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession["restricted"]>;
@@ -92,6 +122,7 @@ export function observeHarnessBootstrap(
   const state: {
     defaultWorkingDirectory?: string;
     bootstrapDir?: string;
+    absoluteBootstrapDir?: string;
     identity?: string;
     found?: "baked" | "reused";
     missed: boolean;
@@ -104,8 +135,10 @@ export function observeHarnessBootstrap(
   const noteMarker = (path: string, cwd: string) => {
     const match = MARKER_PATH.exec(path);
     if (!match) return null;
+    const absoluteDir = match[1]!;
     state.defaultWorkingDirectory = cwd;
-    state.bootstrapDir = posix.relative(cwd, match[1]!) || ".";
+    state.absoluteBootstrapDir = absoluteDir;
+    state.bootstrapDir = recipeBootstrapDirFromAbsolute(absoluteDir, cwd);
     state.identity = match[2];
     return match;
   };
@@ -182,12 +215,8 @@ export function observeHarnessBootstrap(
       ? "installed"
       : (state.found ?? (state.missed ? "install-failed" : "none"));
     let expectation: HarnessBakeExpectation = "none";
-    if (state.bootstrapDir !== undefined) {
-      expectation = !HARNESS_BAKED_BOOTSTRAP_DIRS.includes(state.bootstrapDir)
-        ? "unbaked-recipe"
-        : state.defaultWorkingDirectory !== HARNESS_BAKE_HOME
-          ? "custom-workdir"
-          : "baked";
+    if (state.absoluteBootstrapDir !== undefined) {
+      expectation = classifyBakedBootstrapDir(state.absoluteBootstrapDir);
     }
     return {
       outcome,

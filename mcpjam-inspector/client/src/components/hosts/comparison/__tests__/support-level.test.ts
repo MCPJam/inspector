@@ -191,6 +191,27 @@ describe("getSupportLevel — mode-set", () => {
     );
   });
 
+  it("counts any mode when nothing is baseline, as for Event delivery", () => {
+    const events = hostConfigField("eventsDeliveryModes");
+    const withEvents = (modes: Record<string, true>) =>
+      makeConfig({
+        mcpProfile: {
+          profileVersion: 1,
+          extensions: { "com.mcpjam/events": modes },
+        },
+      } as never);
+    expect(getSupportLevel(events, withEvents({ webhook: true }))).toBe(
+      "partial",
+    );
+    expect(
+      getSupportLevel(
+        events,
+        withEvents({ poll: true, push: true, webhook: true }),
+      ),
+    ).toBe("supported");
+    expect(getSupportLevel(events, withEvents({}))).toBe("neutral");
+  });
+
   it("counts declared-mode membership, ignoring duplicates and unknowns", () => {
     // Matches the matrix cell's Set check: dup inline + unknown 'foo' is still
     // only one declared mode present → neutral (not "supported" by length).

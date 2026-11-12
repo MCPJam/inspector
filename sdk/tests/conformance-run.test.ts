@@ -431,3 +431,31 @@ describe("conformance run reporter", () => {
     }
   });
 });
+
+describe("the run's signal", () => {
+  it("reaches every suite, so aborting it stops the run", async () => {
+    // A transport that never answers: only an abort can end a request.
+    const hang = vi.fn(
+      (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        })
+    );
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    setTimeout(() => controller.abort(new Error("stopped")), 100);
+    const report = await runConformance({
+      server: { url: "https://mcp.example.test/mcp", baseFetch: hang as never },
+      suites: ["protocol", "apps"],
+      protocolVersion: "2025-11-25",
+      protocol: { checkIds: ["server-initialize"], checkTimeout: 60_000 },
+      signal: controller.signal,
+    });
+    expect(hang).toHaveBeenCalled();
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+    expect(report.outcome).not.toBe("passed");
+  }, 60_000);
+});

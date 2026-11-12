@@ -172,6 +172,65 @@ describe("useHostedOrgModelConfig", () => {
       args: "skip",
     });
   });
+
+  // PLB-476: a new guest's active project is "none" until its project exists,
+  // and the backend rejects any id that is not a Convex project id.
+  it.each([
+    "none",
+    "null",
+    "local_abc",
+    "123e4567-e89b-12d3-a456-426614174000",
+  ])(
+    "never sends the placeholder project id %s to the backend",
+    (projectId) => {
+      mockState.isAuthLoading = true;
+      mockState.isAuthenticated = false;
+      const whileSigningIn = renderHook(() =>
+        useHostedOrgModelConfig({ projectId }),
+      ).result.current;
+      mockState.isAuthLoading = false;
+      mockState.isAuthenticated = true;
+      const signedIn = renderHook(() => useHostedOrgModelConfig({ projectId }))
+        .result.current;
+
+      expect(mockState.queryCalls).not.toContainEqual({
+        name: "organizationModelProviders:getVisibleConfigForProject",
+        args: { projectId },
+      });
+      expect(signedIn).toBeUndefined();
+      expect(whileSigningIn).toBeUndefined();
+    },
+  );
+
+  it("still reads the organization's policy when the project id is a placeholder", () => {
+    const organizationConfig = {
+      providers: [{ providerKey: "openai", enabled: true, hasSecret: true }],
+    };
+    mockState.queryResults.set(
+      "organizationModelProviders:getVisibleConfig",
+      organizationConfig,
+    );
+    const scope = { projectId: "local_abc", organizationId: "org-1" };
+    mockState.isAuthLoading = true;
+    mockState.isAuthenticated = false;
+    const whileSigningIn = renderHook(() => useHostedOrgModelConfig(scope))
+      .result.current;
+    mockState.isAuthLoading = false;
+    mockState.isAuthenticated = true;
+    const signedIn = renderHook(() => useHostedOrgModelConfig(scope)).result
+      .current;
+
+    expect(mockState.queryCalls).not.toContainEqual({
+      name: "organizationModelProviders:getVisibleConfigForProject",
+      args: { projectId: "local_abc" },
+    });
+    expect(mockState.queryCalls).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfig",
+      args: { organizationId: "org-1" },
+    });
+    expect(whileSigningIn).toBe(PENDING_ORG_MODEL_CONFIG);
+    expect(signedIn).toBe(organizationConfig);
+  });
 });
 
 describe("useHostedOrgModelConfig — organization AI key policy", () => {

@@ -557,23 +557,16 @@ describe("ResourcesTab", () => {
         <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      const refreshButton = screen.getByTitle("Refresh resources");
       await waitFor(() => {
         expect(mockListResources).toHaveBeenCalledTimes(1);
+        // The request starts before React commits the enabled control.
+        expect(refreshButton).toBeEnabled();
       });
-
-      // Find and click refresh button
-      const buttons = screen.getAllByRole("button");
-      const refreshButton = buttons.find((btn) =>
-        btn.querySelector(".lucide-refresh-cw"),
-      );
-
-      if (refreshButton) {
-        fireEvent.click(refreshButton);
-
-        await waitFor(() => {
-          expect(mockListResources).toHaveBeenCalledTimes(2);
-        });
-      }
+      fireEvent.click(refreshButton);
+      await waitFor(() => {
+        expect(mockListResources).toHaveBeenCalledTimes(2);
+      });
     });
   });
 

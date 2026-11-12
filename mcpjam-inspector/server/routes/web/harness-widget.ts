@@ -1,3 +1,5 @@
+import { SAVED_ACCOUNT_UNAVAILABLE } from "../../utils/oauth-account-sets.js";
+import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { retainedResourceProofSchema, readRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedProfileFingerprint, retainedResourceLegGate, readRetainedResourceScope } from "../../utils/harness/forwarding/retained-resources";
 import { historyProvenanceContextFor, verifyToolResult, verifyAppResourceSource } from "../../utils/history-provenance";
@@ -118,6 +120,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
       undefined,
       capabilities,
       {
+        pluginComputerRuntime: !!scope.hostConfig.computer,
         lazyConnect: true,
         ...(input ? { elicitationCallback: input.host.callback } : {}),
         initializePins,
@@ -130,7 +133,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
           organizationId: scope.organizationId,
         }),
         ...(owner.connectionId
-          ? { connectionIds: { [owner.serverId]: owner.connectionId }, onlySelectedConnections: true }
+          ? { connectionIdSets: { [owner.serverId]: [owner.connectionId] }, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE }
           : {}),
       },
     );
@@ -378,6 +381,13 @@ harnessWidgets.post("/widget-resources", async c => {
           : await authorized.manager.listResourceTemplates(serverKey, operation.cursor !== undefined ? { cursor: operation.cursor } : undefined, { signal, cacheMode: "bypass" });
     await revalidateScope();
     signal.throwIfAborted();
+    if (operation.method === "widget/content" && "html" in result && typeof result.html === "string") {
+      return c.json({ ...result, sourceReceipt: await sandboxSourceReceipt(c, {
+        serverId: owner.serverId,
+        resourceUri: operation.request.template || operation.request.resourceUri,
+        toolCallId: operation.request.toolId,
+      }, result.html, "csp" in result ? result.csp : undefined, scope.projectId) });
+    }
     return c.json(result);
 
   } catch (error) {

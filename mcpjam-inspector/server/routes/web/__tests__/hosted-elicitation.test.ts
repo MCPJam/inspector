@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessageChunk } from "ai";
 
 const mutation = vi.fn();
+const setAuth = vi.fn();
 const action = vi.fn();
 let creationFetch: typeof fetch | undefined;
 vi.mock("convex/browser", () => ({
@@ -9,7 +10,7 @@ vi.mock("convex/browser", () => ({
     constructor(_url: string, options?: { fetch?: typeof fetch }) {
       creationFetch = options?.fetch;
     }
-    setAuth = vi.fn();
+    setAuth = setAuth;
     action = (...args: unknown[]) => action(...args);
     mutation = (...args: unknown[]) => mutation(...args);
   },
@@ -87,6 +88,7 @@ function makeBridge(overrides: Partial<any> = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   creationFetch = undefined;
+  setAuth.mockReset();
   mutation.mockReset().mockResolvedValue({ ok: true });
   action.mockReset().mockResolvedValue({ ok: true });
   process.env.CONVEX_URL = "https://convex.test";
@@ -246,6 +248,20 @@ describe("HostedElicitationBridge", () => {
       chatSessionId: "sess-1",
       serverId: "srv-1",
     });
+    await bridge.dispose();
+  });
+
+  it("resolves the active bearer again for each form row without changing owner", async () => {
+    stubFetch({ "/elicitations/poll": [pollAnswered] });
+    const getConvexBearer = vi.fn().mockResolvedValueOnce("Bearer first-current").mockResolvedValueOnce("Bearer next-current");
+    const bridge = makeBridge({ delivery: "owned-chat-query", getConvexBearer });
+    for (const requestId of ["first", "second"]) {
+      const answer = bridge.callback(formRequest({ requestId }));
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(answer).resolves.toMatchObject({ action: "accept" });
+    }
+    expect(setAuth.mock.calls.map(([token]) => token)).toEqual(["first-current", "next-current"]);
+    expect(mutation.mock.calls.every(([, args]) => args.projectId === "proj-1" && args.chatSessionId === "sess-1")).toBe(true);
     await bridge.dispose();
   });
 

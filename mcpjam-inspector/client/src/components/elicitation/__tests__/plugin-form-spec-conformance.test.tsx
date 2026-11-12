@@ -140,7 +140,7 @@ describe("2. openai/elicitation/create is a superset of elicitation/create", () 
 
   it.each([
     ["Decline", "decline"],
-    ["Close", "cancel"],
+    ["Cancel form", "cancel"],
   ])("%s answers %s without content", async (name, action) => {
     const respond = card({
       type: "object",
@@ -608,9 +608,9 @@ describe("10. Legacy and MRTR forms behave the same for the user", () => {
 
   it.each([
     ["legacy", "Decline", "decline"],
-    ["legacy", "Close", "cancel"],
+    ["legacy", "Cancel form", "cancel"],
     ["mrtr", "Decline", "decline"],
-    ["mrtr", "Close", "cancel"],
+    ["mrtr", "Cancel form", "cancel"],
   ] as const)("%s: %s reaches the server as %s", async (wire, button, action) => {
     const { received } = mount(wire);
     await screen.findByLabelText(/Note/);

@@ -51,6 +51,10 @@ vi.mock("../../../services/authkit-jwt.js", async (importOriginal) => ({
 }));
 
 import v1Routes from "../index.js";
+import {
+  getHarnessAdapter,
+  registeredHarnessIds,
+} from "../../../utils/harness/registry.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -166,6 +170,22 @@ describe("v1 harness routes", () => {
         localVenue.harnesses.clear();
       }
     });
+
+    it.each(registeredHarnessIds())(
+      "reports %s's own adapter flags, not a hand-kept copy",
+      async (harnessId) => {
+        const adapter = getHarnessAdapter(harnessId);
+        expect(await capabilities(harnessId)).toMatchObject({
+          harnessId,
+          supportsNativeToolApproval: adapter.supportsNativeToolApproval,
+          supportsHostExecutedToolApproval:
+            adapter.supportsHostExecutedToolApproval,
+          supportsMcpToolApproval: adapter.supportsMcpToolApproval,
+          mcpDelivery:
+            adapter.mcpDelivery === "harness" ? "native" : "host-executed",
+        });
+      },
+    );
 
     it("404s for an unknown harness id", async () => {
       const res = await request("GET", "/api/v1/harness/pi/capabilities");

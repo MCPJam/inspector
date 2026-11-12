@@ -13,6 +13,10 @@ describe("describePluginSettingsError", () => {
     ["PLUGIN_SETTINGS_UNSUPPORTED_SCHEMA", /boolean, string/],
     ["PLUGIN_SETTINGS_LIMIT", /512 KB/],
     ["PLUGIN_SETTINGS_TOOL_DENIED", /declined/],
+    ["INSTANCE_UNAVAILABLE", /open it again/],
+    ["INSTANCE_STORE_UNAVAILABLE", /Try again/],
+    ["INSTANCE_PRIVATE_PARENT_UNAVAILABLE", /Reopen Settings/],
+    ["INVOCATION_OUTCOME_UNKNOWN", /Refresh Settings/],
     ["SOMETHING_NEW", /could not be completed/],
     [undefined, /could not be completed/],
   ])("%s", (code, expected) => {

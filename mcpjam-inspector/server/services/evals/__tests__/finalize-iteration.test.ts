@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ModelMessage } from "ai";
 import type {
   EvalTraceSpan,
@@ -874,5 +875,66 @@ describe("finalizeEvalIteration — infra errors", () => {
       (call) => call.ref === "testSuites:updateTestIteration",
     );
     expect(update?.args).not.toHaveProperty("infraError");
+  });
+});
+
+describe("finalizeEvalIteration — routing records", () => {
+  const ROUTE: HarnessMcpAtTurn = {
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: ["eval iteration"],
+    pinnedRuntimeVersion: "1.0.35",
+    plannerVersion: "harness-mcp-plan-v1",
+  };
+
+  test("sends each turn's record with its per-turn trace write", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      harnessMcpByPromptIndex: new Map([[0, ROUTE]]),
+    });
+
+    const appends = calls.filter(
+      (c) => c.ref === "testSuites:appendEvalTurnTrace",
+    );
+    expect(appends).toHaveLength(1);
+    expect(appends[0]!.args.turn).toMatchObject({
+      promptIndex: 0,
+      harnessMcpAtTurn: ROUTE,
+    });
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    expect(JSON.stringify(update!.args)).not.toContain("harnessMcp");
+  });
+
+  test("the W1 fallback leaves them out: updateTestIteration has no field for them", async () => {
+    const { client, calls } = makeClient({
+      appendThrows: new Error("fanout pre-turn failure"),
+    });
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      harnessMcpByPromptIndex: new Map([[0, ROUTE]]),
+    });
+
+    const update = calls.find(
+      (c) => c.ref === "testSuites:updateTestIteration",
+    );
+    // The W1 path ran: the transcript went with the iteration write.
+    expect(update!.args.messages).toBeDefined();
+    expect(JSON.stringify(update!.args)).not.toContain("harnessMcp");
   });
 });

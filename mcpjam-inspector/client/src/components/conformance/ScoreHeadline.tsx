@@ -2,6 +2,17 @@ import {
   describeConformanceScore,
   type ConformanceScore,
 } from "@mcpjam/sdk/browser";
+import {
+  conformanceVerdict,
+  type ConformanceVerdictTone,
+} from "@/shared/conformance-verdict";
+
+/** The verdict's color in the app, by tone. */
+export const VERDICT_TONE_CLASS: Record<ConformanceVerdictTone, string> = {
+  bad: "text-red-400",
+  warn: "text-amber-500",
+  ok: "text-green-500",
+};
 
 /**
  * The one big number, with everything that makes it honest attached to it.
@@ -32,12 +43,8 @@ export function ScoreHeadline({
   if (!score || score.score === null) return null;
 
   const hero = size === "hero";
-  const toneClass =
-    score.outcome === "failed"
-      ? "text-red-400"
-      : score.outcome === "incomplete"
-      ? "text-amber-500"
-      : "text-green-500";
+  const verdict = conformanceVerdict(score.outcome, score.advisories.length);
+  const toneClass = VERDICT_TONE_CLASS[verdict.tone];
 
   return (
     <div
@@ -63,13 +70,7 @@ export function ScoreHeadline({
         <div
           className={`font-medium ${toneClass} ${hero ? "text-sm" : "text-xs"}`}
         >
-          {score.outcome === "failed"
-            ? "Not conformant"
-            : score.outcome === "incomplete"
-            ? "Incomplete run"
-            : score.advisories.length > 0
-            ? "Conformant, with advice"
-            : "Fully conformant"}
+          {verdict.label}
         </div>
         <div
           className={`truncate text-muted-foreground ${

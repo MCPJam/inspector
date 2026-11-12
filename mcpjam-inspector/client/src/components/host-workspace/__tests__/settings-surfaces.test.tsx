@@ -27,6 +27,12 @@ vi.mock("../ServerSettingsView", () => ({
     return <div>{props.serverName} settings view</div>;
   },
 }));
+vi.mock("../../elicitation/OwnedPluginFormHost", () => ({
+  OwnedPluginFormHost: () => null,
+}));
+vi.mock("../../elicitation/HostedMrtrHost", () => ({
+  HostedMrtrHost: () => null,
+}));
 import { ServerSettingsPanel } from "../ServerSettingsPanel";
 import { useServerSettingsAvailability } from "../use-server-settings";
 import { useWorkspaceSettings } from "../use-workspace-settings";
@@ -85,6 +91,18 @@ describe("shared settings surfaces", () => {
     await act(async () => resolve(false));
     expect(view.result.current.available).toBe(true);
     expect(f.discover.mock.calls[0][1].aborted).toBe(true);
+  });
+  it("retains the discovery error description for the settings surface", async () => {
+    const { PluginSettingsRequestError } = await import("@/shared/plugin-settings");
+    f.discover.mockRejectedValueOnce(
+      new PluginSettingsRequestError("PLUGIN_SETTINGS_OUTPUT_SCHEMA_REQUIRED", false),
+    );
+    const view = renderHook(() => useServerSettingsAvailability(scope, "server"));
+    await waitFor(() => expect(view.result.current.failed).toBe(true));
+    expect(view.result.current.errorMessage).toContain("settings tools need an outputSchema");
+    act(() => view.result.current.retry());
+    await waitFor(() => expect(view.result.current.available).toBe(true));
+    expect(view.result.current.errorMessage).toBeUndefined();
   });
   it("reports discovery failures and retries without opening settings", async () => {
     f.discover.mockRejectedValueOnce(new Error("offline"));

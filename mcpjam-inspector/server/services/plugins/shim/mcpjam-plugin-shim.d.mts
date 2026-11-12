@@ -33,6 +33,7 @@ export interface JsonRpcErrorResponse {
 }
 
 export type ClientMessageKind =
+  | "response"
   | "request"
   | "notification"
   | "unsupported"

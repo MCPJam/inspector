@@ -144,6 +144,21 @@ describe("explicit saved local target", () => {
       pluginBindingDigest({ ...restored, relativePath: "foreign.cad" }),
     ).not.toBe(pluginBindingDigest(target));
   });
+  it("distinguishes oversized authorized files from denied targets without writing", async () => {
+    const { root, target } = await fixture();
+    const adapter = createLocalFileTargetAdapter(target, 8);
+    const signal = new AbortController().signal;
+    await expect(adapter.read(target.uri, signal)).rejects.toMatchObject({
+      code: "RESOURCE_TOO_LARGE",
+    });
+    await expect(adapter.read("cad://foreign", signal)).rejects.toMatchObject({
+      code: "RESOURCE_DENIED",
+    });
+    const before = await readFile(path.join(root, target.relativePath));
+    await expect(adapter.conditionalWrite!(target.uri, new Uint8Array(9), undefined, signal))
+      .rejects.toMatchObject({ code: "RESOURCE_TOO_LARGE" });
+    expect(await readFile(path.join(root, target.relativePath))).toEqual(before);
+  });
   it("reads exact bytes, saves with ETag and leaves stale writes unchanged", async () => {
     const { root, adapter } = await fixture();
     const signal = new AbortController().signal;

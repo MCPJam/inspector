@@ -109,8 +109,8 @@ export interface CloudSkillRuntimeItem {
   /**
    * Preserved Agent-Skills-spec frontmatter (license / compatibility /
    * allowed-tools / metadata). The harness `skills` param structurally can't
-   * carry it, so `materializeSkillFrontmatter` rewrites the on-box SKILL.md
-   * for skills that have it. Absent on older backends (wire-tolerant).
+   * carry it, so the box writer's SKILL.md step (`writeSkillMds`) writes it
+   * on the box. Absent on older backends (wire-tolerant).
    */
   extraFrontmatter?: SkillExtraFrontmatterInput;
 }

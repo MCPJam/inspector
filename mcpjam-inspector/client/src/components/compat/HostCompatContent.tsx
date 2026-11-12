@@ -42,6 +42,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 import { useOrgBoundTemplateSeed } from "@/hooks/use-org-bound-template-seed";
@@ -133,15 +134,17 @@ export function HostCompatContent({
   );
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   const visibleReports = useMemo(
     () =>
       filterReportsByFeatureFlags(reports, {
         claudeCode: claudeCodeEnabled,
         codex: codexEnabled,
+        copilotCli: copilotCliEnabled === true,
         cursorCli: cursorCliEnabled,
       }),
-    [reports, claudeCodeEnabled, codexEnabled, cursorCliEnabled],
+    [reports, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled],
   );
 
   // Tier-2: render the server's widget live in each host's emulation.
@@ -261,7 +264,7 @@ export function HostCompatContent({
 
   return (
     <div className="pb-4">
-      <ConformanceGate server={server} />
+      <ConformanceGate server={server} location={source} />
 
       {analysisStatus === "analyzing" ? (
         <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">

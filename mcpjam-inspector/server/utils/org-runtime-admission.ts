@@ -19,6 +19,7 @@ import {
   isOrgKeyPolicyRefusalCode,
 } from "../../shared/ai-execution-refusal.js";
 import { backendFailureText } from "./backend-failure-text.js";
+import { serviceCredentialHeaders } from "../services/service-credential.js";
 import {
   ModelResolutionRefusalError,
   type ModelRefusalCode,
@@ -165,6 +166,12 @@ export async function requestOrgProviderRuntime(
       headers: {
         "Content-Type": "application/json",
         ...inspectorAiRequestHeaders("resolve"),
+        // The backend answers a local runtime with the decrypted key, and
+        // this credential is how it knows the key goes to MCPJam's own
+        // Inspector (managed) rather than a user's process (an export, which
+        // an organization's export policy can deny). The bearer still names
+        // the user.
+        ...serviceCredentialHeaders(),
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({
