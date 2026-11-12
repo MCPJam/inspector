@@ -172,12 +172,7 @@ export function EvalSparkline({
     hoverIndex != null && tooltipValues
       ? tooltipValues[hoverIndex]
       : tooltipValues?.at(-1);
-  const tooltipLeft =
-    hoverIndex != null && points.length > 1
-      ? (bars
-          ? (hoverIndex + 0.5) / points.length
-          : hoverIndex / (points.length - 1)) * 100
-      : 100;
+  const tooltipLeft = active ? (active.x / w) * 100 : 100;
 
   return (
     <div
@@ -333,12 +328,7 @@ export function EvalDualSparkline({
       : secondaryGeometry.at(-1);
   const activeLabel =
     hoverIndex != null ? pointLabels[hoverIndex] : pointLabels.at(-1);
-  const tooltipLeft =
-    hoverIndex != null && primary.length > 1
-      ? (bars
-          ? (hoverIndex + 0.5) / primary.length
-          : hoverIndex / (primary.length - 1)) * 100
-      : 100;
+  const tooltipLeft = activePrimary ? (activePrimary.x / w) * 100 : 100;
 
   return (
     <div
@@ -379,10 +369,9 @@ export function EvalDualSparkline({
             const width = slotWidth * 0.24;
             const pairGap = slotWidth * 0.06;
             return (
-              <g
-                key={index}
-                opacity={hoverIndex == null || hoverIndex === index ? 1 : 0.6}
-              >
+              // Same rest/hover opacity as single bars. P50's fill is set so
+              // a resting pair keeps it near 0.36 alpha rather than fading out.
+              <g key={index} opacity={hoverIndex === index ? 1 : 0.6}>
                 <rect
                   data-chart-bar="p50"
                   x={point.x - pairGap / 2 - width}
@@ -390,7 +379,7 @@ export function EvalDualSparkline({
                   width={width}
                   height={h - pad - point.y}
                   rx={0.6}
-                  className="fill-primary/40"
+                  className="fill-primary/60"
                 />
                 {secondaryPoint && (
                   <rect
