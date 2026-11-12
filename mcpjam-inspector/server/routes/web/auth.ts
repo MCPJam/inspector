@@ -1537,8 +1537,8 @@ export async function createAuthorizedManager(
      * that host would send — advertising skills on an emulated Cursor persona
      * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
      * own agent turn) pass this, because they ship the fulfiller: the verified
-     * read path in `server-skills.ts`, merged into the toolset by
-     * `withServerSkills`.
+     * read path in `server-skills.ts`, which the agent's skill tools load
+     * through (`computers/effective-skill-tools.ts`).
      *
      * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
      * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set

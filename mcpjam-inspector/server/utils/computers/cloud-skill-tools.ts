@@ -6,8 +6,8 @@
  * Catalog in the prompt, load on demand: names + one-line descriptions are
  * inlined at prompt-build time (sorted + budgeted); `loadSkill` delivers the
  * full body. This matches the local-FS path and real Claude Code. Zero skills
- * → no tools, no stanza. `listSkills` is not advertised here — it remains
- * only on the SEP-2640 wrapper for MCP-server-provided skills.
+ * → no tools, no stanza. `listSkills` is not advertised here or anywhere
+ * else.
  *
  * Emulated `loadSkill` is an approximation: real Claude Code/Codex read an
  * installed SKILL.md from the filesystem with no model-callable load tool
