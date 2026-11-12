@@ -653,6 +653,18 @@ describe("the accounts surface returns no token", () => {
     for (const field of FIELDS) expect(reached).toContain(field);
   });
 
+  it("keeps a token out of the SDK's account type", () => {
+    const source = readFileSync(
+      join(REPO_ROOT, "sdk", "src", "platform", "server-account-types.ts"),
+      "utf8",
+    );
+    const start = source.indexOf("export type PlatformServerAccount = {");
+    expect(start).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf("\n};", start));
+    const keys = [...body.matchAll(/^\s+(\w+)\??:/gm)].map((match) => match[1]);
+    expect(keys.sort()).toEqual([...FIELDS].sort());
+  });
+
   it("is absent from the guest allowlist", () => {
     const source = readFileSync(
       join(import.meta.dirname, "..", "guest-allowed-paths.ts"),

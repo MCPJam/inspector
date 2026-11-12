@@ -119,6 +119,8 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
   readServerResourceOperation,
   listServerSkillsOperation,
   getServerSkillOperation,
@@ -1615,6 +1617,10 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listServerRevisionsOperation, tier: "direct" },
   { operation: getServerRevisionOperation, tier: "direct" },
   { operation: diffServerRevisionsOperation, tier: "direct" },
+  // Account metadata only, structurally without a token, like the secrets
+  // reads; the three writes are in EXCLUDED_FROM_AGENT.
+  { operation: listServerAccountsOperation, tier: "direct" },
+  { operation: getServerAccountOperation, tier: "direct" },
   { operation: listServerPromptsOperation, tier: "direct" },
   { operation: listServerResourcesOperation, tier: "direct" },
   {
@@ -2645,6 +2651,13 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as create_secret: a rotation carries the new plaintext as an argument. Available on REST/SDK/CLI.",
   delete_secret:
     "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
+  // SERVER ACCOUNT WRITES, on the same three grounds as the secrets above.
+  upload_server_account_tokens:
+    "The access token is an argument, so it would reach model context and the turn transcript before any approval could run. Available on REST and the SDK, where the caller controls where the token comes from.",
+  update_server_account:
+    "Making an account the default decides which account runs with no saved account choice sign in as. That is a person's choice, made on REST or the SDK.",
+  delete_server_account:
+    "Deletes an account and asks its issuer to revoke the token, which nothing here can undo; the agent proposes authoring, never destruction.",
   // TRACE DESTINATIONS — all ten, and the reasons split into three groups.
   //
   // The two credential-carrying writes are excluded on the same argument as

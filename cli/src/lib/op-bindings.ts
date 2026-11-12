@@ -51,6 +51,28 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_server_revisions: { command: "cloud projects servers revisions" },
   get_server_revision: { command: "cloud projects servers revision" },
   diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  // Server accounts have no `cloud server-accounts` command yet, and a binding
+  // with no Commander path fails the tree test.
+  list_server_accounts: {
+    excluded:
+      "No `cloud server-accounts` command exists yet; list accounts through the SDK or REST.",
+  },
+  get_server_account: {
+    excluded:
+      "No `cloud server-accounts show` command exists yet; read one through the SDK or REST.",
+  },
+  upload_server_account_tokens: {
+    excluded:
+      "Uploading needs a token read from a file, an environment variable or stdin, never a literal argument; no command does that yet.",
+  },
+  update_server_account: {
+    excluded:
+      "Renaming and choosing the default have no CLI command yet; use the SDK or REST.",
+  },
+  delete_server_account: {
+    excluded:
+      "No `cloud server-accounts delete` command exists yet; delete through the SDK or REST.",
+  },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
   show_servers: { command: "cloud projects status" },

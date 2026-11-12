@@ -47,6 +47,9 @@ beta; they are listed [after the table](#held-tools).
 | `list_server_revisions` | List a saved MCP server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change. | — |
 | `get_server_revision` | Read one stored revision of a saved MCP server: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent. | — |
 | `diff_server_revisions` | Compare two stored revisions of a saved MCP server: tools added, removed and changed with old and new definitions, and server info changes with values. A field in `droppedFields` was not stored on that side, so a change to it is unknown. | — |
+| `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
+| `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
+| `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
 | `render_server_widget` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. Executes the tool. | — |
 | `list_server_prompts` | List the prompts a saved MCP server exposes: names, descriptions, and arguments. | — |
