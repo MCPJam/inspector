@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { MoreHorizontal, Plus } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
+import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -22,10 +22,12 @@ import {
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
 import { useMultiAccountConnectionsEnabled } from "@/hooks/useMultiAccountConnectionsEnabled";
+import { useSignInSharing } from "@/hooks/use-sign-in-sharing";
 import {
   type ConnectionIntent,
   type OAuthConnection,
 } from "@/shared/oauth-connections";
+import { SignInSharingControl } from "./SignInSharingControl";
 
 /**
  * The account a credential reaches, named the way the server named it, with
@@ -40,6 +42,9 @@ function identityOf(connection: OAuthConnection, index: number): string {
     profile?.email ||
     profile?.name ||
     profile?.nickname ||
+    // No profile, as with a test user's uploaded token: its name is all that
+    // tells the accounts apart, and it is what suite settings call it.
+    connection.label ||
     `Account ${index + 1}`
   );
 }
@@ -71,12 +76,79 @@ export function ConnectionAccountsSection({
   onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
   onSwitch: () => void | Promise<void>;
 }) {
-  const { connections, shared, error } = useHostedOAuthConnections(
+  const { connections, shared, loaded, error } = useHostedOAuthConnections(
     projectId,
     serverId,
     enabled,
   );
   const canAddAccount = useMultiAccountConnectionsEnabled();
+  const sharing = useSignInSharing({ projectId, serverId, enabled });
+  if (!enabled || !projectId || !serverId) return null;
+  return (
+    <ConnectionAccountsList
+      connections={connections}
+      shared={loaded ? shared : undefined}
+      error={error}
+      canAddAccount={canAddAccount}
+      isAdmin={sharing.isAdmin}
+      sharingControl={
+        loaded && sharing.canShare ? (
+          <SignInSharingControl
+            shared={shared}
+            accountCount={shared ? connections.length : 0}
+            onChange={async (next) => {
+              await sharing.setSharing(next);
+              // So the live connection signs in with the new kind of account.
+              await onSwitch();
+            }}
+          />
+        ) : null
+      }
+      onAuthenticate={onAuthenticate}
+      onUpdate={async (connection, operation, label) => {
+        await updateOAuthConnection(
+          projectId,
+          serverId,
+          connection.connectionId,
+          operation,
+          label,
+        );
+        if (operation === "default" || operation === "delete") await onSwitch();
+      }}
+    />
+  );
+}
+
+/**
+ * The list itself, given its rows. On a shared server the rows are the
+ * project's accounts: admins manage them and connect more, and everyone else
+ * sees them read-only, since the backend refuses their writes.
+ */
+export function ConnectionAccountsList({
+  connections,
+  shared,
+  error,
+  canAddAccount,
+  isAdmin,
+  sharingControl,
+  onAuthenticate,
+  onUpdate,
+}: {
+  connections: OAuthConnection[];
+  /** Undefined until the server's list answers. */
+  shared: boolean | undefined;
+  error?: string;
+  canAddAccount: boolean;
+  isAdmin: boolean;
+  sharingControl?: ReactNode;
+  onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
+  onUpdate: (
+    connection: OAuthConnection,
+    operation: "label" | "default" | "delete",
+    label?: string,
+  ) => Promise<void>;
+}) {
+  const canManage = shared !== true || isAdmin;
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
   const renameRef = useRef<HTMLInputElement>(null);
@@ -89,8 +161,6 @@ export function ConnectionAccountsSection({
   const renameOnMenuClose = useRef(false);
   const [removing, setRemoving] = useState<OAuthConnection>();
 
-  if (!enabled || !projectId || !serverId) return null;
-
   const update = async (
     connection: OAuthConnection,
     operation: "label" | "default" | "delete",
@@ -98,14 +168,7 @@ export function ConnectionAccountsSection({
   ) => {
     setBusy(true);
     try {
-      await updateOAuthConnection(
-        projectId,
-        serverId,
-        connection.connectionId,
-        operation,
-        label,
-      );
-      if (operation === "default" || operation === "delete") await onSwitch();
+      await onUpdate(connection, operation, label);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not update account");
     } finally {
@@ -115,8 +178,9 @@ export function ConnectionAccountsSection({
 
   return (
     <div className="space-y-2 pt-2">
+      {sharingControl ? <div className="pb-2">{sharingControl}</div> : null}
       <p className="text-xs font-medium text-muted-foreground">
-        Connected accounts
+        {shared ? "Project accounts" : "Connected accounts"}
       </p>
 
       {error && (
@@ -124,6 +188,22 @@ export function ConnectionAccountsSection({
           {error}
         </p>
       )}
+
+      {/* Whoever has no share control still sees that the server is shared. */}
+      {shared && !sharingControl ? (
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Users aria-hidden className="mt-px size-3.5 shrink-0" />
+          Shared with the project. Your hosted runs can act as these accounts,
+          and project admins manage them.
+        </p>
+      ) : null}
+      {shared && !connections.length ? (
+        <p className="text-xs text-muted-foreground">
+          {isAdmin
+            ? "No project accounts yet. Connect one so members' hosted runs can use it."
+            : "No project accounts yet. Ask a project admin to connect one."}
+        </p>
+      ) : null}
 
       <div className="space-y-1">
         {connections.map((connection, index) => {
@@ -186,72 +266,75 @@ export function ConnectionAccountsSection({
                 )}
               </div>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    disabled={busy}
-                    // Two accounts can share an address, so the caption has
-                    // to disambiguate or both buttons read the same.
-                    aria-label={`Manage ${identity}${
-                      caption ? `: ${caption}` : ""
-                    }`}
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  onCloseAutoFocus={(event) => {
-                    if (!renameOnMenuClose.current) return;
-                    renameOnMenuClose.current = false;
-                    event.preventDefault();
-                    renameRef.current?.focus();
-                    renameRef.current?.select();
-                  }}
-                >
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      renameHeldFocus.current = false;
-                      renameOnMenuClose.current = true;
-                      setRenaming(connection.connectionId);
+              {canManage ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={busy}
+                      // Two accounts can share an address, so the caption has
+                      // to disambiguate or both buttons read the same.
+                      aria-label={`Manage ${identity}${
+                        caption ? `: ${caption}` : ""
+                      }`}
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    onCloseAutoFocus={(event) => {
+                      if (!renameOnMenuClose.current) return;
+                      renameOnMenuClose.current = false;
+                      event.preventDefault();
+                      renameRef.current?.focus();
+                      renameRef.current?.select();
                     }}
                   >
-                    Rename
-                  </DropdownMenuItem>
-                  {!connection.isDefault && (
                     <DropdownMenuItem
-                      disabled={connection.needsReauth}
-                      onSelect={() => void update(connection, "default")}
+                      onSelect={() => {
+                        renameHeldFocus.current = false;
+                        renameOnMenuClose.current = true;
+                        setRenaming(connection.connectionId);
+                      }}
                     >
-                      Set as default
+                      Rename
                     </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      void onAuthenticate({
-                        kind: "replace",
-                        credentialId: connection.connectionId,
-                      })
-                    }
-                  >
-                    Reconnect
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => setRemoving(connection)}
-                  >
-                    Remove
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    {!connection.isDefault && (
+                      <DropdownMenuItem
+                        disabled={connection.needsReauth}
+                        onSelect={() => void update(connection, "default")}
+                      >
+                        Set as default
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        void onAuthenticate({
+                          kind: "replace",
+                          credentialId: connection.connectionId,
+                        })
+                      }
+                    >
+                      Reconnect
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={() => setRemoving(connection)}
+                    >
+                      Remove
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
           );
         })}
       </div>
 
-      {!shared && canAddAccount && (
+      {/* Hidden until the list answers: adding depends on the server's mode. */}
+      {shared !== undefined && canManage && canAddAccount && (
         <button
           type="button"
           disabled={busy || connections.length >= 8}
@@ -265,7 +348,9 @@ export function ConnectionAccountsSection({
             <Plus className="size-4" />
           </span>
           <span className="text-sm text-foreground">
-            Connect another account
+            {connections.length
+              ? "Connect another account"
+              : "Connect an account"}
           </span>
         </button>
       )}
