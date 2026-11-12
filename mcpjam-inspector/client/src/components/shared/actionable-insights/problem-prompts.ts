@@ -96,7 +96,7 @@ export function buildOptionPrompt(
     ...(causes.length
       ? [
           "",
-          "## Checked cause",
+          "## Reviewed explanation",
           ...causes.map((row) => `- ${prose(row.rootCause ?? row.title)}`),
         ]
       : ["", "## Cause", "Not established for these iterations."]),
