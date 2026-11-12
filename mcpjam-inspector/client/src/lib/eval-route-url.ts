@@ -94,10 +94,15 @@ export function parseEvalRouteFromUrl(
     };
   }
 
-  if (rest.length === 1 && rest[0] === "edit") {
+  // `edit` is the old address; the router redirects it to `settings`.
+  if (
+    (rest.length === 1 && (rest[0] === "edit" || rest[0] === "settings")) ||
+    (rest.length === 2 && rest[0] === "settings" && rest[1] === "evaluators")
+  ) {
     return {
       type: "suite-edit",
       suiteId,
+      ...(rest[1] === "evaluators" ? { tab: "evaluators" as const } : {}),
       ...(params.get("fromCaseChecks")
         ? { fromCaseChecks: params.get("fromCaseChecks")! }
         : {}),

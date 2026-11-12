@@ -112,6 +112,16 @@ function AppEntryLandingRoute() {
  * `p/:projectId` and once at the root behind the legacy normalizer, so
  * nothing in this map knows about the project prefix.
  */
+/**
+ * Suite settings moved from `…/suite/:id/edit` to `…/suite/:id/settings`. Old
+ * links live in CI comments and PRs, so the old path stays as a redirect that
+ * keeps the project prefix and the query (`fromCaseChecks`).
+ */
+export function redirectSuiteEditToSettings({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  return redirect(url.pathname.replace(/\/edit\/?$/, "/settings") + url.search);
+}
+
 const ROUTE_ELEMENTS: Record<
   string,
   { element?: React.ReactElement; loader?: (args: any) => unknown }
@@ -286,7 +296,9 @@ const ROUTE_ELEMENTS: Record<
   "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
   "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
-  "evals/suite/:suiteId/edit": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/settings": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/settings/evaluators": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
   // Runs mode. `mode` comes from the route table rather than sniffing the URL
   // inside the component, so the two lenses stay one route element with one
   // billing gate.
@@ -303,7 +315,11 @@ const ROUTE_ELEMENTS: Record<
   "evals/runs/suite/:suiteId/test/:testId/edit": {
     element: <LegacyEvalCaseRedirect />,
   },
-  "evals/runs/suite/:suiteId/edit": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/settings": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/settings/evaluators": {
+    element: <EvalsRoute mode="runs" />,
+  },
+  "evals/runs/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
   // Public Evaluate routes. Legacy access above is separately flagged.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
@@ -318,7 +334,9 @@ const ROUTE_ELEMENTS: Record<
   "evaluate/suite/:suiteId/test/:testId/edit": {
     element: <EvaluateRoute />,
   },
-  "evaluate/suite/:suiteId/edit": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/settings": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/settings/evaluators": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
   // Old CI links always land in public Evaluate, with fragments intact.
   "ci-evals": { element: <LegacyEvalRedirect /> },
   "ci-evals/*": { element: <LegacyEvalRedirect /> },

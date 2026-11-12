@@ -66,7 +66,7 @@ describe("EvalsHeader", () => {
         parentCrumb={{ label: "Amazon", onClick: vi.fn() }}
         detailCrumb={[
           { label: "Test Case Evaluators", onClick: toCaseEvaluators },
-          { label: "Test Suite Evaluators" },
+          { label: "Suite settings" },
         ]}
         onCurrentCrumbClick={toCase}
       >
@@ -83,7 +83,7 @@ describe("EvalsHeader", () => {
     expect(toCaseEvaluators).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("link", {
-        name: "Test Suite Evaluators",
+        name: "Suite settings",
         current: "page",
       }),
     ).toBeInTheDocument();

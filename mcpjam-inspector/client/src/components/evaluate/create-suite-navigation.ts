@@ -58,12 +58,16 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
         { replace: options?.replace },
       );
     },
-    toSuiteEdit: (suiteId, fromCaseChecks) => {
-      applyEvaluatePath({
-        type: "suite-edit",
-        suiteId,
-        ...(fromCaseChecks ? { fromCaseChecks } : {}),
-      });
+    toSuiteEdit: (suiteId, fromCaseChecks, tab, options) => {
+      applyEvaluatePath(
+        {
+          type: "suite-edit",
+          suiteId,
+          ...(fromCaseChecks ? { fromCaseChecks } : {}),
+          ...(tab === "evaluators" ? { tab } : {}),
+        },
+        options,
+      );
     },
   };
 }

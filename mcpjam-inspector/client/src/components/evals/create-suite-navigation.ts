@@ -66,8 +66,15 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
         { replace: options?.replace }
       );
     },
-    toSuiteEdit: (suiteId) => {
-      applyPlaygroundEvalsPath({ type: "suite-edit", suiteId });
+    toSuiteEdit: (suiteId, _fromCaseChecks, tab, options) => {
+      applyPlaygroundEvalsPath(
+        {
+          type: "suite-edit",
+          suiteId,
+          ...(tab === "evaluators" ? { tab } : {}),
+        },
+        options,
+      );
     },
   };
 }

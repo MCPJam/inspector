@@ -64,6 +64,10 @@ import { cn } from "@/lib/utils";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
 import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
+import {
+  SuiteSettingsEyebrow,
+  SuiteSettingsSubtitle,
+} from "./suite-settings-tabs";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -72,6 +76,8 @@ interface SuiteHeaderProps {
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
   settingsActions?: ReactNode;
+  /** Tabbed Suite settings: the tab strip, which also adds the eyebrow and subtitle. */
+  settingsTabStrip?: ReactNode;
   onRerun: (
     suite: EvalSuite,
     opts?: {
@@ -159,6 +165,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     selectedRunDetails,
     isEditMode,
     settingsActions,
+    settingsTabStrip,
     onRerun,
     onReplayRun,
     onCancelRun,
@@ -327,6 +334,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0" data-setting-key="name">
+            {settingsTabStrip ? <SuiteSettingsEyebrow /> : null}
             {/*
             The name is the ONE setting that lives outside the sheet's
             `fieldset[disabled]`, so it needs its own lock. It became reachable
@@ -367,9 +375,11 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             {nameError ? (
               <p className="mt-1 text-xs text-destructive">{nameError}</p>
             ) : null}
+            {settingsTabStrip ? <SuiteSettingsSubtitle /> : null}
           </div>
           {settingsActions}
         </div>
+        {settingsTabStrip}
       </div>
     );
   }
