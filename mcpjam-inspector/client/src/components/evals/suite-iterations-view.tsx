@@ -113,6 +113,10 @@ import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
+import {
+  RunResultPage,
+  type RunResultCrumbs,
+} from "../evaluate/run-result-pages/run-result-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -507,6 +511,7 @@ export function SuiteIterationsView({
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
   onGeneratingChange,
+  onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -688,6 +693,8 @@ export function SuiteIterationsView({
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
   ) => void;
+  /** Breadcrumbs for an open run result page; see {@link RunResultPage}. */
+  onResultCrumbsChange?: (crumbs: RunResultCrumbs | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -2329,6 +2336,39 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : route.type === "run-detail" &&
+              route.resultPage &&
+              suiteDetailOverview ? (
+              <RunResultPage
+                key={`${contentKey}-result`}
+                suiteId={suite._id}
+                runId={route.runId}
+                resultPage={route.resultPage}
+                run={selectedRunDetails ?? null}
+                runs={runs}
+                allIterations={allIterations}
+                hostNamesById={hostNamesById}
+                // Every launch run's rows, so a sibling column resolves.
+                loading={
+                  (!selectedRunDetails && !selectedRunState.isUnavailable) ||
+                  detailRunIds.some(
+                    (id) =>
+                      !detailRows.byRun.has(id) &&
+                      !detailRows.failedRunIds.has(id),
+                  )
+                }
+                projectId={projectId}
+                decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                onEditCase={
+                  editingDisabled
+                    ? undefined
+                    : (testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                }
+                onCrumbsChange={onResultCrumbsChange}
+              />
             ) : selectedRunId && selectedRunState.isLoading ? (
               <RowsLoading key={contentKey} label="Loading run..." />
             ) : selectedRunId && selectedRunState.isUnavailable ? (

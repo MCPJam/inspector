@@ -616,6 +616,18 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId/cases/:caseId",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
+  {
+    path: "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId",
+    kind: "screen",
+    surfaceId: "evaluate",
+    scope: "project",
+  },
   // The run page's "Compare runs" destination. `buildEvalRoutePath` has
   // emitted this path and `parseEvalRouteFromUrl` has parsed it back to
   // `comparison: true` since the compare page landed, but nothing registered

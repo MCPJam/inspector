@@ -56,6 +56,7 @@ import { CombinedRunContent } from "./combined-run-content";
 import { launchRuns } from "./run-results-matrix-model";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
+import { useCaseResultLinks } from "./run-result-pages/result-page-links";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -368,6 +369,7 @@ export function SingleRunContent({
     [onOpenIteration, iterations],
   );
 
+  const caseResultLinks = useCaseResultLinks(run);
   const inRunPageHeader = useEvaluateRunPageHeaderActions(
     canOpenFailingTrace || improvePrompt
       ? {
@@ -439,6 +441,7 @@ export function SingleRunContent({
         <RunResultsMatrix
           onEditCase={onEditCase}
           onEditEvaluator={onEditEvaluator}
+          {...caseResultLinks}
           key={run._id}
           run={run}
           suiteName={suiteName}
