@@ -280,6 +280,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
 
   it("forces the initial progressive-discovery step to search tools", async () => {
     let prepareStepReturn: any;
+    const requests: any[] = [];
     streamTextMock.mockImplementationOnce((options: any) => {
       prepareStepReturn = options.prepareStep({ stepNumber: 0 });
       return defaultStreamTextReturn();
@@ -318,6 +319,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         ],
         totalTokenEstimate: 100,
       } as any,
+      traceEvents: { onRequestPayload: (request: any) => requests.push(request) },
       discoveryState: {
         loadedToolIds: new Set<string>(),
         newlyLoadedToolIds: new Set<string>(),
@@ -334,7 +336,116 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       ]),
       toolChoice: { type: "tool", toolName: "search_mcp_tools" },
     });
-    expect((await prepareStepReturn).activeTools).not.toContain("show_squad");
+    // The model is shown only the meta-tools. `show_squad` stays active so the
+    // AI SDK accepts it if the model loads and calls it in this same step.
+    expect(Object.keys(requests[0].tools)).not.toContain("show_squad");
+    expect((await prepareStepReturn).activeTools).toContain("show_squad");
+  });
+
+  describe("a tool loaded and called in the same step", () => {
+    const squadSchema = {
+      type: "object",
+      properties: { team: { type: "string" } },
+      required: ["team"],
+    };
+    const runTurn = async () => {
+      let options: any;
+      streamTextMock.mockImplementationOnce((streamOptions: any) => {
+        options = streamOptions;
+        return defaultStreamTextReturn();
+      });
+      const discoveryState = {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      };
+      const handle = runDirectChatTurn({
+        llmModel: { id: "mock" } as any,
+        modelId: "claude-haiku-4-5",
+        messageHistory: [{ role: "user", content: "show me barca" } as any],
+        systemPrompt: "s",
+        tools: {
+          search_mcp_tools: { description: "", execute: async () => ({}) },
+          load_mcp_tools: { description: "", execute: async () => ({}) },
+          show_squad: { description: "", execute: async () => "squad" },
+        } as any,
+        progressivePlan: {
+          enabled: true,
+          reasons: [],
+          policy: {
+            thresholdPct: 0.03,
+            maxToolTokens: 10_000,
+            maxToolCount: 30,
+            searchLimit: 8,
+          },
+          catalog: [
+            {
+              toolId: "sports::show_squad",
+              modelName: "show_squad",
+              serverId: "sports",
+              originalName: "show_squad",
+              description: "",
+              fields: [],
+              inputSchema: squadSchema,
+              tokenEstimate: 100,
+            },
+          ],
+          totalTokenEstimate: 100,
+        } as any,
+        discoveryState: discoveryState as any,
+      });
+      await consumeDirectChatTurnHeadless(handle);
+      // A later step: the model has searched, and is shown only the meta-tools.
+      await options.prepareStep({ stepNumber: 1 });
+      return { options, discoveryState };
+    };
+    const callShowSquad = (options: any, input: unknown) =>
+      options.tools.show_squad.execute(input, {
+        toolCallId: "call-1",
+        messages: [],
+      });
+
+    it("runs the call when an earlier load in the step loaded it", async () => {
+      const { options, discoveryState } = await runTurn();
+      const refine = options.experimental_refineToolInput;
+
+      refine.load_mcp_tools({ names: ["show_squad"] });
+      refine.show_squad({ team: "Barcelona" });
+
+      expect([...discoveryState.newlyLoadedToolIds]).toEqual([
+        "sports::show_squad",
+      ]);
+      await expect(
+        callShowSquad(options, { team: "Barcelona" }),
+      ).resolves.toBe("squad");
+    });
+
+    it("still fails the call when its input does not fit the tool", async () => {
+      const { options, discoveryState } = await runTurn();
+      const refine = options.experimental_refineToolInput;
+
+      refine.load_mcp_tools({ names: ["show_squad"] });
+      refine.show_squad({});
+
+      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
+      await expect(callShowSquad(options, {})).rejects.toThrow(
+        /not loaded in this step/,
+      );
+    });
+
+    it("still fails the call when no earlier load in the step asked for it", async () => {
+      const { options, discoveryState } = await runTurn();
+      const refine = options.experimental_refineToolInput;
+
+      refine.show_squad({ team: "Barcelona" });
+      refine.load_mcp_tools({ names: ["show_squad"] });
+
+      // The load still takes effect for the next step, through its own run.
+      expect(discoveryState.newlyLoadedToolIds.size).toBe(0);
+      await expect(
+        callShowSquad(options, { team: "Barcelona" }),
+      ).rejects.toThrow(/not loaded in this step/);
+    });
   });
 
   it("preserves explicit toolChoice instead of forcing initial progressive search", async () => {

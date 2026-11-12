@@ -41,9 +41,11 @@ import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
+  META_TOOL_LOAD,
   META_TOOL_SEARCH,
   resolveActiveToolNames,
   shouldForceInitialToolSearch,
+  toolIdLoadedEarlierInStep,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
@@ -59,6 +61,7 @@ import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
 import { withProviderSafeToolNames } from "@mcpjam/sdk";
+import { inputMatchesSchema, withModelVisibleToolsOnly } from "./same-step-load";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
@@ -738,12 +741,68 @@ export function runDirectChatTurn(
     });
   };
 
+  // Loaded and called in the same step: run the call after the load instead of
+  // refusing it, when its input fits the tool's schema (the hosted path does
+  // the same in `mcpjam-stream-handler.ts`). The AI SDK refuses any call to a
+  // tool outside `activeTools`, so every tool stays active while the model is
+  // shown only the loaded ones; a call it was never shown and did not load
+  // first still fails, at the loaded-tools gate above.
+  const sameStepLoad =
+    progressivePlan?.enabled === true &&
+    discoveryState !== undefined &&
+    !prepareAdvertisedTools &&
+    typeof llmModel !== "string"
+      ? { plan: progressivePlan, state: discoveryState }
+      : undefined;
+  let modelVisibleToolNames: ReadonlySet<string> | null = null;
+  // This step's successful `load_mcp_tools` calls, in the order they parsed.
+  const loadCallsThisStep: Array<{
+    type: "tool-call";
+    toolName: string;
+    input: unknown;
+  }> = [];
+  const sameStepLoadRefinement = sameStepLoad
+    ? Object.fromEntries([
+        [
+          META_TOOL_LOAD,
+          (input: unknown) => {
+            loadCallsThisStep.push({
+              type: "tool-call",
+              toolName: META_TOOL_LOAD,
+              input,
+            });
+            return input;
+          },
+        ],
+        ...sameStepLoad.plan.catalog.map((entry) => [
+          entry.modelName,
+          (input: unknown) => {
+            if (modelVisibleToolNames?.has(entry.modelName)) return input;
+            const toolId = toolIdLoadedEarlierInStep(
+              sameStepLoad.plan.catalog,
+              entry.modelName,
+              loadCallsThisStep,
+            );
+            if (toolId && inputMatchesSchema(entry.inputSchema, input)) {
+              sameStepLoad.state.newlyLoadedToolIds.add(toolId);
+            }
+            return input;
+          },
+        ]),
+      ])
+    : undefined;
+
   // A synchronous stream setup failure must release the abort listener because
   // the SSE caller has no handle to clean it up before this function returns.
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: providerReadyModel(llmModel),
+    model: sameStepLoad
+      ? withModelVisibleToolsOnly(
+          providerReadyModel(llmModel),
+          () => modelVisibleToolNames,
+        )
+      : providerReadyModel(llmModel),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -753,6 +812,9 @@ export function runDirectChatTurn(
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,
     tools: executableTools,
+    ...(sameStepLoadRefinement
+      ? { experimental_refineToolInput: sameStepLoadRefinement }
+      : {}),
     stopWhen: [
       stepCountIs(resolvedMaxSteps),
       () => shouldPauseAfterStep?.() === true,
@@ -829,7 +891,13 @@ export function runDirectChatTurn(
         stepOptions.messages = presentedMessages;
       }
       if (activeToolNames !== undefined) {
-        stepOptions.activeTools = activeToolNames;
+        if (sameStepLoad) {
+          modelVisibleToolNames = new Set(activeToolNames);
+          loadCallsThisStep.length = 0;
+          stepOptions.activeTools = Object.keys(tools);
+        } else {
+          stepOptions.activeTools = activeToolNames;
+        }
       }
       if (
         toolChoice === undefined &&

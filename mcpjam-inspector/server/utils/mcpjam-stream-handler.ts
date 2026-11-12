@@ -4,7 +4,7 @@ import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
-import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
+import { inputMatchesSchema } from "./same-step-load.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
 import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
@@ -1696,32 +1696,6 @@ interface RejectedToolCall {
 function historyNameForRejectedToolCall(toolName: string): string {
   if (/^[a-zA-Z0-9_-]{1,64}$/.test(toolName)) return toolName;
   return toolName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown_tool";
-}
-
-/**
- * Whether `input` is an object its tool's JSON Schema accepts. The check for a
- * call the model made before it saw that schema: such a call runs only when
- * its guess is right.
- */
-function inputMatchesSchema(
-  schema: Record<string, unknown>,
-  input: unknown,
-): boolean {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
-    return false;
-  }
-  try {
-    // An unknown dialect is not validated at all, so it must not admit a guess.
-    return new DialectAwareJsonSchemaValidator({
-      onUnknownDialect: () => {
-        throw new Error("Unsupported JSON Schema dialect");
-      },
-    }).getValidator(
-      schema as Parameters<DialectAwareJsonSchemaValidator["getValidator"]>[0],
-    )(input).valid;
-  } catch {
-    return false;
-  }
 }
 
 /**
