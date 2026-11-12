@@ -51,7 +51,6 @@ import {
   runFrozenSkillOptions,
   streamTestCase,
   throwIfEvalToolSnapshotFailed,
-  type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
 import {
@@ -115,6 +114,7 @@ import {
   buildPinnedSkillSource,
   type BuiltPinnedSkillSource,
 } from "../../services/evals/pinned-skill-source.js";
+import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
@@ -3131,7 +3131,7 @@ export async function prepareEvalRun(
   // Everything here happens BEFORE `execute()`, which is the whole point: a
   // setup failure must precede model execution and name the component that
   // caused it.
-  let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  let pinnedSkillSource: PinnedSkillSource | undefined;
   /**
    * The run's frozen skills in HARNESS shape (materialized on box), built here
    * rather than per iteration because the supporting-file download is I/O that
@@ -3904,7 +3904,7 @@ function isTerminalIteration(iteration: unknown): boolean {
 function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   committedQuickRunIterationIds?: string[];
   projectEnvironmentId?: string;
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
   const environment = prepared.environment;

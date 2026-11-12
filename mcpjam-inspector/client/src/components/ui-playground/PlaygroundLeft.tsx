@@ -7,7 +7,7 @@
  * - Device/display mode controls at bottom
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { PlaygroundAuthChallengeCards } from "@/components/auth-challenge/PlaygroundAuthChallengeCards";
 import type { Tool } from "@modelcontextprotocol/client";
 import { useAppToolRun } from "@/components/playground/use-app-tool-run";
@@ -76,6 +76,7 @@ interface PlaygroundLeftProps {
   hasConnectedServer?: boolean;
   /** Connect a server from the empty state without leaving the surface. */
   onAddServerRequested?: () => void;
+  connectServerControl?: ReactNode;
 }
 
 export function PlaygroundLeft({
@@ -104,6 +105,7 @@ export function PlaygroundLeft({
   previewedHarnessId,
   hasConnectedServer = true,
   onAddServerRequested,
+  connectServerControl,
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -284,6 +286,7 @@ export function PlaygroundLeft({
           onSelectBrowser={handleSelectBrowser}
           hasConnectedServer={hasConnectedServer}
           onAddServerRequested={onAddServerRequested}
+          connectServerControl={connectServerControl}
         />
       ) : app.detailProps ? (
         <BuiltinToolDetailView

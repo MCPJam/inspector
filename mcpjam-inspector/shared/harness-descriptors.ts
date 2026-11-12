@@ -19,8 +19,11 @@ const LOOP_CONTROLS: Record<
     // Claude Code pauses on all three surfaces: its own built-ins, its
     // host-executed tools, and — under `approvalPermissionMode: "allow-reads"`
     // — the MCP tools its in-sandbox client calls. The interposition point is
-    // the adapter bridge's `canUseTool`, which every tool call passes through
-    // before the CLI may run it; MCP tool names fall into its "edit" default,
+    // the adapter bridge's `canUseTool`, which the CLI calls only for a call
+    // its own permission check would ask about. It allows MCPJam's host tools
+    // (they run on the host, which gates them) and read-only kinds (Read,
+    // Glob, Grep, WebFetch, WebSearch, ReadMcpResource, Skill, …) without
+    // asking. An MCP tool name falls into its kind table's "edit" default,
     // which "allow-reads" gates. This entry previously read `enforced: false`
     // on the belief that MCP tools were unreachable, and a turn on an approval
     // host with any server selected was REFUSED outright. It isn't anymore.

@@ -407,14 +407,13 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the skill
- * family that uses the form (`server-skill-tools`) declares it UNCONDITIONALLY
- * and answers `false`. Reading "unevaluable" as "asks" refused every
- * local-runtime turn that carried a skill tool, switch or no switch, where
- * before it ran. `streamText` evaluates the function per call, exactly as it
- * did before the declaration was unified; a call that does answer `true` still
- * reaches the unsupported resume, which is the pre-existing gap this guard
- * never covered.
+ * here — this runs before the model has produced an input. Skill tools
+ * declare `never`; the form's one user is the acting-skill gate below.
+ * Reading "unevaluable" as "asks" refused every local-runtime turn that
+ * carried a skill tool, switch or no switch, where before it ran.
+ * `streamText` evaluates the function per call, exactly as it did before the
+ * declaration was unified; a call that does answer `true` still reaches the
+ * unsupported resume, which is the pre-existing gap this guard never covered.
  *
  * The acting-skill gate (`server-skill-acting-gate.ts`) wraps `bash` and
  * `read_server_resource` in a function on every turn. The guard reads the

@@ -28,6 +28,12 @@
  * pair with files from another). No extra network round-trip to Convex happens
  * here — only the `_storage` GET for a file the model actually asked for.
  *
+ * A live turn's set also carries its connected servers' own skills (SEP-2640,
+ * `live-server-skills.ts`). They are listed after the set's own, loaded by ref
+ * or by skill URI from the server that serves them and verified on every
+ * load, and their files are read only under the manifest they were loaded
+ * with (`server-skill-held-entry.ts`).
+ *
  * No tool here asks for approval, whatever the switch says or wherever the
  * skill came from: reading a skill acts on nothing. What a server's skill then
  * leads the model to do is gated where it acts (`server-skill-acting-gate.ts`).
@@ -57,6 +63,13 @@ import {
   renderBudgetedSkillCatalog,
   skillMetadataBudgetChars,
 } from "./skill-metadata-budget.js";
+import {
+  LIVE_SERVER_SKILLS_PROMPT,
+  liveLoadSkillTool,
+  liveServerSkillCatalogEntry,
+  liveServerSkillFiles,
+  type LiveServerSkills,
+} from "./live-server-skills.js";
 
 type EffectiveSkill =
   | RuntimePluginSkill
@@ -254,19 +267,23 @@ function buildListing(
   skills: EffectiveSkill[],
   pluginRefs: Set<string>,
   serverRefs: Set<string>,
+  live: LiveServerSkills | undefined,
   modelContextTokens: number | undefined
 ): { text: string; omittedRefs: string[] } {
   const budgetChars = skillMetadataBudgetChars(modelContextTokens);
   const { lines, omittedRefs } = renderBudgetedSkillCatalog(
-    skills.map((skill) => ({
-      ref: skill.ref,
-      description: skill.description,
-      origin: originLabel(
-        skill,
-        pluginRefs.has(skill.ref),
-        serverRefs.has(skill.ref)
-      ),
-    })),
+    [
+      ...skills.map((skill) => ({
+        ref: skill.ref,
+        description: skill.description,
+        origin: originLabel(
+          skill,
+          pluginRefs.has(skill.ref),
+          serverRefs.has(skill.ref),
+        ),
+      })),
+      ...(live?.skills ?? []).map(liveServerSkillCatalogEntry),
+    ],
     budgetChars
   );
   return {
@@ -275,46 +292,87 @@ function buildListing(
   };
 }
 
+function catalogOf(
+  capabilities: EffectiveCapabilitySet,
+  modelContextTokens: number | undefined
+) {
+  const skills = allEffectiveSkills(capabilities);
+  const pluginRefs = new Set(
+    capabilities.pluginSkills.map((skill) => skill.ref)
+  );
+  const serverRefs = new Set(
+    capabilities.serverSkills.map((skill) => skill.ref)
+  );
+  const listing = buildListing(
+    skills,
+    pluginRefs,
+    serverRefs,
+    capabilities.liveServerSkills,
+    modelContextTokens
+  );
+  return { skills, pluginRefs, listing };
+}
+
+/**
+ * The refs the prompt's skill list leaves out to stay within this model's
+ * budget. It is the list `getEffectiveSkillToolsAndPrompt` builds, so a turn's
+ * plan and its prompt agree on which skills the model can see.
+ */
+export function skillCatalogOmissions(
+  capabilities: EffectiveCapabilitySet,
+  modelContextTokens?: number
+): string[] {
+  return catalogOf(capabilities, modelContextTokens).listing.omittedRefs;
+}
+
 export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
   /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
   pluginRefs: Set<string>;
   signal?: AbortSignal;
+  /** A live turn's server skills. Loading one never asks, like any skill. */
+  live?: LiveServerSkills;
 }) {
   const lookup = buildLookup(args.skills);
   const readFiles = makeFileReader();
+  const serverFiles = args.live ? liveServerSkillFiles(args.live) : undefined;
+
+  async function loadFromSet(name: string): Promise<string> {
+    const resolved = resolveRef(lookup, name);
+    if (!resolved.ok) return resolved.error;
+    const { skill } = resolved;
+    try {
+      // A server-origin skill is tagged with its origin at the point it
+      // enters context, exactly as the live path tags it; the local
+      // template below would present it as a filesystem skill.
+      const server = serverOf(skill);
+      if (server) return await loadCapturedServerSkill(server);
+      return `# Skill: ${skill.ref}\n\n${await readContent(skill)}`;
+    } catch (error) {
+      return `Error loading "${skill.ref}": ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`;
+    }
+  }
 
   return {
     loadSkill: {
-      ...tool({
-        description:
-          "Load a skill's full instructions by reference. Use when a task matches a skill's purpose.",
-        inputSchema: z.object({
-          name: z
-            .string()
-            .describe(
-              "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing')."
-            ),
-        }),
-        execute: async ({ name }) => {
-          const resolved = resolveRef(lookup, name);
-          if (!resolved.ok) return resolved.error;
-          const { skill } = resolved;
-          try {
-            // A server-origin skill is tagged with its origin at the point it
-            // enters context, exactly as the live path tags it; the local
-            // template below would present it as a filesystem skill.
-            const server = serverOf(skill);
-            if (server) return await loadCapturedServerSkill(server);
-            return `# Skill: ${skill.ref}\n\n${await readContent(skill)}`;
-          } catch (error) {
-            return `Error loading "${skill.ref}": ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`;
-          }
-        },
-      }),
-      // Floor: never, for every origin. See the header.
+      ...(args.live
+        ? liveLoadSkillTool(args.live, loadFromSet)
+        : tool({
+            description:
+              "Load a skill's full instructions by reference. Use when a task matches a skill's purpose.",
+            inputSchema: z.object({
+              name: z
+                .string()
+                .describe(
+                  "The skill reference from the skills list above — a bare name ('pdf-processing') or a plugin reference ('my-plugin/pdf-processing').",
+                ),
+            }),
+            execute: ({ name }) => loadFromSet(name),
+          })),
+      // Floor: never, for every origin, live server skills included. See the
+      // header.
       needsApproval: needsApprovalFor("never", false),
     },
 
@@ -325,7 +383,9 @@ export function createEffectiveSkillTools(args: {
         name: z.string().describe("The skill reference."),
       }),
       needsApproval: needsApprovalFor("never", false),
-      execute: async ({ name }) => {
+      execute: async ({ name }, options) => {
+        const fromServer = await serverFiles?.list(name, options);
+        if (fromServer !== undefined) return fromServer;
         const resolved = resolveRef(lookup, name);
         if (!resolved.ok) return resolved.error;
         const { skill } = resolved;
@@ -360,7 +420,9 @@ export function createEffectiveSkillTools(args: {
               "Relative path within the skill (e.g., 'scripts/fill.py')."
             ),
         }),
-        execute: async ({ name, path }) => {
+        execute: async ({ name, path }, options) => {
+          const fromServer = await serverFiles?.read(name, path, options);
+          if (fromServer !== undefined) return fromServer;
           const resolved = resolveRef(lookup, name);
           if (!resolved.ok) return resolved.error;
           const { skill } = resolved;
@@ -453,6 +515,10 @@ const EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE =
  * sentence is advertised only when the set actually contains a file-bearing
  * skill: promising tools for files that do not exist invites the model to go
  * looking for them.
+ *
+ * A live set whose servers serve skills but listed none gets the tools and no
+ * stanza: a skill URI can reach the model in a server's instructions, and
+ * only `loadSkill` resolves one.
  */
 export function getEffectiveSkillToolsAndPrompt(
   capabilities: EffectiveCapabilitySet,
@@ -461,54 +527,47 @@ export function getEffectiveSkillToolsAndPrompt(
   tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
 } {
-  const skills = allEffectiveSkills(capabilities);
-  if (skills.length === 0) {
-    return { tools: {}, systemPromptSection: "" };
-  }
-  const pluginRefs = new Set(
-    capabilities.pluginSkills.map((skill) => skill.ref)
-  );
-  const serverRefs = new Set(
-    capabilities.serverSkills.map((skill) => skill.ref)
-  );
-  const listing = buildListing(
-    skills,
-    pluginRefs,
-    serverRefs,
+  const { skills, pluginRefs, listing } = catalogOf(
+    capabilities,
     options?.modelContextTokens
   );
+  const live = capabilities.liveServerSkills;
+  const listed = skills.length + (live?.skills.length ?? 0);
+  if (listed === 0 && !live) {
+    return { tools: {}, systemPromptSection: "" };
+  }
   if (listing.omittedRefs.length > 0) {
     logger.warn(
       "[effective-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
       {
         omitted: listing.omittedRefs,
-        total: skills.length,
+        total: listed,
       }
     );
   }
+  const tools = createEffectiveSkillTools({
+    skills,
+    pluginRefs,
+    ...(options?.signal ? { signal: options.signal } : {}),
+    ...(live ? { live } : {}),
+  });
+  if (listed === 0) return { tools, systemPromptSection: "" };
   // A lazy origin has not listed its files yet, so `files.length` cannot
   // answer this. Advertising on the possibility is the right way round:
   // withholding the tools would hide files that do exist, while offering
   // them for a skill with none costs one refusal the model can read.
-  const hasFiles = skills.some(
-    (skill) => skill.files.length > 0 || skill.listFiles !== undefined
-  );
-  const parts = [
-    "## Skills",
-    "",
-    EFFECTIVE_SKILLS_TRIGGER,
-    "",
-    listing.text,
-  ];
+  const hasFiles =
+    skills.some(
+      (skill) => skill.files.length > 0 || skill.listFiles !== undefined,
+    ) ||
+    (live?.skills ?? []).some((entry) =>
+      entry.resources.some((file) => file.uri !== entry.skillUri),
+    );
+  const parts = ["## Skills", "", EFFECTIVE_SKILLS_TRIGGER, ""];
+  if (live?.skills.length) parts.push(LIVE_SERVER_SKILLS_PROMPT, "");
+  parts.push(listing.text);
   if (hasFiles) {
     parts.push("", EFFECTIVE_SKILLS_FILE_TOOLS_SENTENCE);
   }
-  return {
-    tools: createEffectiveSkillTools({
-      skills,
-      pluginRefs,
-      ...(options?.signal ? { signal: options.signal } : {}),
-    }),
-    systemPromptSection: `\n\n${parts.join("\n")}`,
-  };
+  return { tools, systemPromptSection: `\n\n${parts.join("\n")}` };
 }

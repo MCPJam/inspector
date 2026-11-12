@@ -52,15 +52,19 @@ import { buildBrowserTools } from "../built-in-tools/browser";
 import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
 import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
-import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
-import type {
-  RuntimePluginSkill,
-  RuntimeServerSkill,
-  RuntimeStandaloneSkill,
+import {
+  createEffectiveSkillTools,
+  getEffectiveSkillToolsAndPrompt,
+} from "../computers/effective-skill-tools";
+import {
+  buildLiveEffectiveCapabilities,
+  withLiveServerSkills,
+  type RuntimePluginSkill,
+  type RuntimeServerSkill,
+  type RuntimeStandaloneSkill,
 } from "../../services/environments/effective-capabilities";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
 import { applyActingServerSkillGate } from "../server-skill-acting-gate";
-import { withServerSkills } from "../server-skill-tools";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner";
 import { convertToMcpjamModelMessages } from "../mcp-tool-result-model-output";
 import type { BrowserSessionHandle } from "../../services/browserd/browser-session";
@@ -341,33 +345,35 @@ function effectiveSkillTools(): ToolSet {
 }
 
 /**
- * The live SEP-2640 compose over those tools, with one connected server
- * serving one skill. "Live Billing" slugs to the ref below.
+ * A live turn's skill tools with one connected server's skill in the set.
+ * "Live Billing" slugs to the ref below.
  */
 const LIVE_SERVER_SKILL_REF = "live-billing/refunds";
 function liveServerSkillTools(): ToolSet {
   const uri = "skill://live/refunds/SKILL.md";
-  const manager = {
-    getSkillsSupport: () => ({
-      declared: true,
-      advertised: true,
-      directoryRead: false,
-      active: true,
-    }),
-    listServerSkills: vi.fn(async () => ({
-      skills: [
-        {
-          uri,
-          frontmatter: { name: "refunds", description: "Refunds." },
-          resources: [{ uri, digest: `sha256:${"a".repeat(64)}` }],
-        },
-      ],
-    })),
-  };
-  return withServerSkills(effectiveSkillTools(), {
-    manager: manager as never,
-    servers: [{ serverId: "srv_live", serverLabel: "Live Billing" }],
-  }).tools;
+  const set = withLiveServerSkills(buildLiveEffectiveCapabilities({}), {
+    manager: {} as never,
+    providers: [
+      {
+        serverId: "srv_live",
+        serverLabel: "Live Billing",
+        serverSlug: "live-billing",
+      },
+    ],
+    skills: [
+      {
+        serverId: "srv_live",
+        skillUri: uri,
+        name: "refunds",
+        description: "Refunds.",
+        frontmatter: { name: "refunds", description: "Refunds." },
+        resources: [{ uri, digest: `sha256:${"a".repeat(64)}` }],
+        ref: LIVE_SERVER_SKILL_REF,
+        serverLabel: "Live Billing",
+      },
+    ],
+  });
+  return getEffectiveSkillToolsAndPrompt(set).tools as ToolSet;
 }
 
 interface MatrixRow {
@@ -805,8 +811,9 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
-    // A FUNCTION, which records the manifest digest set and then defers to
-    // the base skill tool's declaration.
+    // A connected server's own skill on a live turn: SEP-2640 asks for origin
+    // tagging on a load (the banner), not a prompt, so its load is free like a
+    // Library skill's.
     family: "live server skill ref",
     name: "loadSkill",
     input: { name: LIVE_SERVER_SKILL_REF },
@@ -897,18 +904,6 @@ describe("tool approval matrix — family × engine × switch", () => {
       });
     }
   }
-
-  it("the live server skill row reaches the server's skill, not the base tool", async () => {
-    // Without this, a listing the compose rejected would leave that row
-    // reading the base tool's declaration and passing for the wrong reason.
-    const tools = liveServerSkillTools() as Record<string, any>;
-    const listing = await tools.listSkills.execute(
-      {},
-      { toolCallId: "call-list", messages: [] },
-    );
-    expect(listing).toContain(`**${LIVE_SERVER_SKILL_REF}**`);
-    expect(listing).not.toContain("unverifiable");
-  });
 });
 
 /**
@@ -932,9 +927,8 @@ describe("one mechanism", () => {
       it(`${row.family} · switch ${label} → both engines answer the same`, async () => {
         // A FRESH toolset per engine, as production gives each turn. Sharing
         // one would hand the same function-form declaration to two readers
-        // under the same `toolCallId`, and a second evaluation of the SEP-2640
-        // gate re-fetches the manifest and can overwrite the binding it exists
-        // to check — the hazard the memoisation test next door is about.
+        // under the same `toolCallId` — the case the memoisation test next
+        // door is about.
         const [mcpjam, byok] = [
           await mcpjamVerdict({
             name: row.name,
@@ -1377,11 +1371,10 @@ describe("toolCallNeedsApproval — the MCPJam gate", () => {
   });
 
   it("evaluates a function ONCE per tool call, however often it is asked", async () => {
-    // Not an optimization. The SEP-2640 declaration RECORDS the manifest
-    // digest `execute` re-checks, and this engine asks about the same call
-    // three times (emit gate, unresolved re-scan, auto-deny re-scan). A second
-    // evaluation would re-fetch the manifest and could overwrite the binding
-    // it exists to check.
+    // Not an optimization. A function-form declaration answers from the
+    // call's messages, and this engine asks about the same call three times
+    // (emit gate, unresolved re-scan, auto-deny re-scan). Each ask must get
+    // the answer the pill was sent, or not sent, on.
     let calls = 0;
     const tools = {
       loadSkill: {
