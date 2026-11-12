@@ -71,28 +71,34 @@ export function GatewayDialog({
     () => hostedModelDefinitionsFromSnapshot().map((model) => String(model.id)),
     [],
   );
-  /** The admin's name for a new provider; null keeps the one from the host. */
+  /** The admin's name for a new provider; null keeps the suggested one. */
   const [renamed, setRenamed] = useState<string | null>(null);
-  // Once a Test passes, its settings stay on screen while the admin edits the
-  // URL or key. The edit clears the stale result, not the settings it filled.
+  // The name taken from the host when a Test first answers. It stays put as
+  // the URL is edited, so the provider saves under the name the admin saw.
+  const [suggested, setSuggested] = useState<string | null>(null);
+  // Once a Test answers, its settings stay on screen while the admin edits the
+  // URL, key or runtime. The edit clears the stale result, not what it filled.
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     if (!open) return;
     setRenamed(null);
+    setSuggested(null);
     setRevealed(false);
   }, [open]);
   useEffect(() => {
-    if (draft.passed) setRevealed(true);
-  }, [draft.passed]);
+    if (!draft.answered) return;
+    setRevealed(true);
+    setSuggested((current) => current ?? suggestedGatewayName(draft.baseUrl));
+  }, [draft.answered, draft.baseUrl]);
 
   const { baseUrl, runtime, apis, models, keyProblem, outcome } = draft;
   const trimmedName = (
     editProvider
       ? editProvider.displayName ||
         editProvider.providerKey.replace(/^custom:/, "")
-      : (renamed ?? suggestedGatewayName(baseUrl))
+      : (renamed ?? suggested ?? "")
   ).trim();
-  const showDetails = !!editProvider || draft.passed || revealed;
+  const showDetails = !!editProvider || draft.answered || revealed;
   const nameProblem = /[/:]/.test(trimmedName)
     ? "Use a name without slashes or colons."
     : !editProvider &&

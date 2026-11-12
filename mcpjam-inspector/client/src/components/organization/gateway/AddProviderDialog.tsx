@@ -23,7 +23,7 @@ import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
 import { GatewayConnectionFields, GatewayTestAlert } from "./GatewayFormParts";
 import { GatewayAddModel } from "./GatewayModelTable";
 import { GatewayApiList } from "./GatewayReadiness";
-import { suggestedGatewayName } from "./gateway-test-outcome";
+import { apisFromTest, suggestedGatewayName } from "./gateway-test-outcome";
 import { useGatewayDraft } from "./use-gateway-draft";
 
 /** The slug a new provider is saved under. */
@@ -58,7 +58,7 @@ export function AddProviderDialog({
     if (open) setRenamed(null);
   }, [open]);
 
-  const { outcome, passed, models, apis } = draft;
+  const { outcome, tested, models, apis } = draft;
   const trimmedName = (renamed ?? suggestedGatewayName(draft.baseUrl)).trim();
   const nameProblem = !trimmedName
     ? "Enter a name."
@@ -67,11 +67,17 @@ export function AddProviderDialog({
       : existingProviderKeys.includes(providerKeyFor(trimmedName))
         ? `A custom provider named "${trimmedName}" already exists. Choose another name.`
         : null;
-  // The provider answered but listed nothing, so no API could be tried
-  // either: the admin names a model and the APIs it serves.
-  const listedNone = passed && draft.tested?.models.length === 0;
+  // An answer the admin can finish by hand: anything but a rejected key,
+  // which has to be fixed first. A provider that serves chat with no model
+  // list (a 404 on /models) or lists models no API answered for is usable.
+  const keyRefused = tested?.status === 401 || tested?.status === 403;
+  const usable = draft.answered && !keyRefused;
+  // With no model listed no API could be tried either, so the admin names a
+  // model and its APIs; with no API answering, just the APIs.
+  const listedNone = usable && tested?.models.length === 0;
+  const noApiAnswered = usable && !!tested && apisFromTest(tested).length === 0;
   const canSave =
-    passed && !nameProblem && apis.length > 0 && models.length > 0;
+    usable && !nameProblem && apis.length > 0 && models.length > 0;
 
   const save = () =>
     void onSave({
@@ -123,7 +129,7 @@ export function AddProviderDialog({
           />
         ) : null}
 
-        {passed ? (
+        {usable ? (
           <div className="min-w-0 space-y-3">
             {outcome?.tone === "success" ? (
               <PassedLine models={models.length} apis={apis.length} />
@@ -175,16 +181,21 @@ export function AddProviderDialog({
                 </Button>
               </p>
             )}
-            {listedNone ? (
+            {listedNone || noApiAnswered ? (
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <GatewayAddModel models={models} onChange={draft.setModels} />
-                  {models.length > 0 ? (
-                    <p className="font-mono text-xs text-muted-foreground">
-                      {models.map((model) => model.nativeModelId).join(", ")}
-                    </p>
-                  ) : null}
-                </div>
+                {listedNone ? (
+                  <div className="space-y-2">
+                    <GatewayAddModel
+                      models={models}
+                      onChange={draft.setModels}
+                    />
+                    {models.length > 0 ? (
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {models.map((model) => model.nativeModelId).join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <GatewayApiList
                   selected={apis}
                   results={draft.results}

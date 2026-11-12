@@ -167,6 +167,90 @@ describe("GatewayDialog", () => {
     expect(screen.getByText("Works with")).toBeInTheDocument();
   });
 
+  it("lets a provider that answers without a model list be added by hand", async () => {
+    testConnection.mockResolvedValue({
+      reachable: true,
+      origin: "backend",
+      status: 404,
+      message: "The provider has nothing at https://chat-only.acme.example/v1/models. Check the base URL and the APIs this connection serves.",
+      apis: { chatCompletions: { result: "ok", status: 200 } },
+      models: [],
+    });
+    renderDialog();
+    type("gateway-base-url", "https://chat-only.acme.example/v1");
+    submitTest();
+    expect(await screen.findByText("Works with")).toBeInTheDocument();
+    expect(field("gateway-name").value).toBe("chat-only");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
+      target: { value: "house-model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const add = screen.getByRole("button", { name: "Add provider" });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerKey: "custom:chat-only",
+        apis: ["chatCompletions"],
+        models: [{ nativeModelId: "house-model" }],
+      }),
+    );
+  });
+
+  it("drops the Test answer when the runtime changes, and keeps hand-added models on the re-test", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    type("gateway-secret", "sk-test");
+    submitTest();
+    expect(await screen.findByText("Tested from MCPJam's servers")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
+      target: { value: "team-extra" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    fireEvent.click(screen.getByRole("radio", { name: /Each user's Inspector/ }));
+    expect(screen.queryByText("Tested from MCPJam's servers")).not.toBeInTheDocument();
+
+    testConnection.mockResolvedValue({ ...PASSED, origin: "inspector" });
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+    expect(testConnection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runtimeLocation: "local" }),
+    );
+    expect(await screen.findByText("Tested from your Inspector")).toBeInTheDocument();
+    expect(screen.getAllByText("team-extra")).not.toHaveLength(0);
+  });
+
+  it("keeps the name the first Test suggested when the URL is corrected", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    await screen.findByText("Works with");
+    expect(field("gateway-name").value).toBe("litellm");
+    type("gateway-base-url", "https://llm.acme.example/v1");
+    expect(field("gateway-name").value).toBe("litellm");
+  });
+
+  it("stops showing a saved provider's last API results once its URL changes", () => {
+    renderDialog({
+      providerKey: "custom:litellm",
+      displayName: "litellm",
+      enabled: true,
+      hasSecret: true,
+      baseUrl: "https://litellm.acme.example/v1",
+      runtimeLocation: "cloud",
+      apis: ["chatCompletions"],
+      models: [{ nativeModelId: "claude-sonnet-4.5", modelId: "anthropic/claude-sonnet-4.5", mappingSource: "name" }],
+      lastTest: { at: 1, origin: "backend", ok: true, apis: { chatCompletions: "ok" } },
+    } as OrgModelProvider);
+    expect(screen.getByText("Answered")).toBeInTheDocument();
+    type("gateway-base-url", "https://gw.other.example/v1");
+    expect(screen.queryByText("Answered")).not.toBeInTheDocument();
+  });
+
   it("moves focus to the key and quotes the gateway when it rejects the key", async () => {
     const message = 'The provider rejected the API key: "Invalid proxy server token passed". Check the key and test again.';
     testConnection.mockResolvedValue({ ...PASSED, status: 401, message, apis: {}, models: [] });
