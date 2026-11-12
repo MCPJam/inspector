@@ -53,7 +53,7 @@ import {
 import type { GuestSessionRefusalReason } from "@/lib/guest-session";
 
 /** The sign-in action reads "Connect" once non-OAuth auth is chosen. */
-const AUTHORIZE = /^(Continue to sign-in|Connect)$/;
+const SIGN_IN = "Continue to sign-in";
 
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
@@ -681,7 +681,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByPlaceholderText("Optional scopes separated by spaces"),
     ).toHaveValue("read write");
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: SIGN_IN }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "custom-client",
@@ -740,7 +740,7 @@ describe("FirstRunOnboardingOverlay", () => {
       }
       fireEvent.click(
         screen.getByRole("button", {
-          name: status === "failed" ? "Try again" : AUTHORIZE,
+          name: status === "failed" ? "Try again" : SIGN_IN,
         }),
       );
       const submit =
@@ -832,7 +832,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
       target: { value: "new-client" },
     });
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: SIGN_IN }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "new-client",
@@ -861,9 +861,9 @@ describe("FirstRunOnboardingOverlay", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: AUTHORIZE })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: SIGN_IN })).toBeEnabled(),
     );
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: SIGN_IN }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "saved-client",
@@ -945,7 +945,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "new-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1061,7 +1061,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(onAuthorizeConnection).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -1092,9 +1092,15 @@ describe("FirstRunOnboardingOverlay", () => {
       error: "401 Unauthorized",
     });
 
+    expect(
+      screen.getByRole("button", { name: "Continue to sign-in" }),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    expect(
+      screen.queryByRole("button", { name: "Continue to sign-in" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     const tokenInput = screen.getByPlaceholderText("Enter your bearer token");
     expect(tokenInput).toHaveFocus();
@@ -1120,7 +1126,7 @@ describe("FirstRunOnboardingOverlay", () => {
       },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: SIGN_IN }));
 
     const clientId = screen.getByPlaceholderText(
       "Client ID registered with the server's authorization server",
@@ -1153,7 +1159,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       await screen.findByText("Cross-App Access (XAA)"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: SIGN_IN }));
 
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1267,7 +1273,7 @@ describe("FirstRunOnboardingOverlay", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The sample server didn't respond",
+      "Details from the failed connection",
     );
     expect(screen.getByText("Service unavailable")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));

@@ -21,6 +21,115 @@ export interface FirstRunToolPreview {
   description?: string;
 }
 
+function ServerUrlForm({
+  serverUrlOrCommand,
+  serverUrlError,
+  onServerUrlOrCommandChange,
+  onSubmit,
+  disabled,
+}: {
+  serverUrlOrCommand: string;
+  serverUrlError: string | null;
+  onServerUrlOrCommandChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  disabled: boolean;
+}) {
+  return (
+    <form className="mt-9" onSubmit={onSubmit}>
+      <Label htmlFor="first-run-server-url" className="text-sm">
+        {HOSTED_MODE ? "Server URL" : "Server URL or command"}
+      </Label>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <div className="relative flex min-w-0 flex-[1_1_20rem] items-center">
+          <Link2
+            className="pointer-events-none absolute left-4 size-4.5 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            id="first-run-server-url"
+            className="h-12 bg-card pl-11 font-mono md:text-base"
+            placeholder="https://mcp.example.com/mcp"
+            spellCheck={false}
+            autoComplete="off"
+            value={serverUrlOrCommand}
+            aria-invalid={serverUrlError ? true : undefined}
+            aria-describedby="first-run-server-url-hint"
+            onChange={(event) => onServerUrlOrCommandChange(event.target.value)}
+          />
+        </div>
+        <Button type="submit" size="xl" disabled={disabled}>
+          Connect
+        </Button>
+      </div>
+      {serverUrlError ? (
+        <p
+          id="first-run-server-url-hint"
+          className="mt-2.5 text-sm text-destructive"
+          role="alert"
+        >
+          {serverUrlError}
+        </p>
+      ) : (
+        <p
+          id="first-run-server-url-hint"
+          className="mt-2.5 text-sm text-muted-foreground"
+        >
+          {HOSTED_MODE
+            ? "Works with Streamable HTTP and SSE servers."
+            : "Works with Streamable HTTP, SSE, and local stdio commands."}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function SampleServerCard({
+  onConnectDemo,
+  disabled,
+}: {
+  onConnectDemo: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <section className="mt-14" aria-labelledby="first-run-sample-heading">
+      <h2
+        id="first-run-sample-heading"
+        className="text-sm font-medium text-foreground"
+      >
+        Or start with a sample server
+      </h2>
+      <div className="mt-3 flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card p-4">
+        <div
+          aria-hidden
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground"
+        >
+          <PenLine className="size-5" />
+        </div>
+        <div className="min-w-0 flex-[1_1_16rem]">
+          <div className="flex items-center gap-2">
+            <span className="text-base font-semibold">Excalidraw</span>
+            <Badge variant="outline">MCP App</Badge>
+          </div>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            Draws diagrams from chat. A quick way to see how an MCP App renders
+            in each client.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="lg"
+          disabled={disabled}
+          aria-label="Try the Excalidraw sample server"
+          onClick={onConnectDemo}
+        >
+          Try it
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function FirstRunConnectScreen({
   serverUrlOrCommand,
   serverUrlError,
@@ -51,104 +160,20 @@ export function FirstRunConnectScreen({
             : "Paste a server URL or a local command. MCPJam checks the connection, loads your tools, and opens the Playground."
         }
       />
-
       {guestSessionRefusal ? (
         <GuestSessionRefusalNotice
           reason={guestSessionRefusal}
           onSignIn={onSignIn}
         />
       ) : null}
-
-      <form className="mt-9" onSubmit={onSubmit}>
-        <Label htmlFor="first-run-server-url" className="text-sm">
-          {HOSTED_MODE ? "Server URL" : "Server URL or command"}
-        </Label>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <div className="relative flex min-w-0 flex-[1_1_20rem] items-center">
-            <Link2
-              className="pointer-events-none absolute left-4 size-4.5 text-muted-foreground"
-              aria-hidden
-            />
-            <Input
-              id="first-run-server-url"
-              className="h-13 bg-card pl-11 font-mono md:text-base"
-              placeholder="https://mcp.example.com/mcp"
-              spellCheck={false}
-              autoComplete="off"
-              value={serverUrlOrCommand}
-              aria-invalid={serverUrlError ? true : undefined}
-              aria-describedby="first-run-server-url-hint"
-              onChange={(event) =>
-                onServerUrlOrCommandChange(event.target.value)
-              }
-            />
-          </div>
-          <Button
-            type="submit"
-            size="lg"
-            disabled={disabled}
-            className="h-13 font-semibold"
-          >
-            Connect
-          </Button>
-        </div>
-        {serverUrlError ? (
-          <p
-            id="first-run-server-url-hint"
-            className="mt-2.5 text-sm text-destructive"
-            role="alert"
-          >
-            {serverUrlError}
-          </p>
-        ) : (
-          <p
-            id="first-run-server-url-hint"
-            className="mt-2.5 text-sm text-muted-foreground"
-          >
-            {HOSTED_MODE
-              ? "Works with Streamable HTTP and SSE servers."
-              : "Works with Streamable HTTP, SSE, and local stdio commands."}
-          </p>
-        )}
-      </form>
-
-      <section className="mt-14" aria-labelledby="first-run-sample-heading">
-        <h2
-          id="first-run-sample-heading"
-          className="text-sm font-medium text-foreground"
-        >
-          Or start with a sample server
-        </h2>
-        <div className="mt-3 flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card p-4">
-          <div
-            aria-hidden
-            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-foreground"
-          >
-            <PenLine className="size-5" />
-          </div>
-          <div className="min-w-0 flex-[1_1_16rem]">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-semibold">Excalidraw</span>
-              <Badge variant="outline">MCP App</Badge>
-            </div>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Draws diagrams from chat. A quick way to see how an MCP App
-              renders in each client.
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            disabled={disabled}
-            aria-label="Try the Excalidraw sample server"
-            onClick={onConnectDemo}
-          >
-            Try it
-          </Button>
-        </div>
-      </section>
-
+      <ServerUrlForm
+        serverUrlOrCommand={serverUrlOrCommand}
+        serverUrlError={serverUrlError}
+        onServerUrlOrCommandChange={onServerUrlOrCommandChange}
+        onSubmit={onSubmit}
+        disabled={disabled}
+      />
+      <SampleServerCard onConnectDemo={onConnectDemo} disabled={disabled} />
       <FirstRunSkipRow onSkip={onSkip} />
     </>
   );
@@ -217,8 +242,7 @@ export function FirstRunConnectedScreen({
       <div className="mt-7 flex flex-wrap items-center gap-4">
         <Button
           type="button"
-          size="lg"
-          className="h-12 font-semibold"
+          size="xl"
           onClick={onOpenPlayground}
           disabled={isOpeningPlayground}
         >
@@ -251,23 +275,17 @@ export function FirstRunDemoFailedScreen({
         description="MCPJam couldn't reach the Excalidraw sample server. Try again, or connect your own server."
       />
       <ConnectionFailureNotice
-        title="The sample server didn't respond"
+        title="Details from the failed connection"
         error={error}
       />
       <div className="mt-8 flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="lg"
-          className="h-12 font-semibold"
-          onClick={onRetry}
-        >
+        <Button type="button" size="xl" onClick={onRetry}>
           Try again
         </Button>
         <Button
           type="button"
           variant="ghost"
-          size="lg"
-          className="h-12"
+          size="xl"
           onClick={onConnectOwnServer}
         >
           Connect my own server

@@ -596,9 +596,9 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
 }));
 
 /** First-run onboarding's server-details heading, after a failure or an edit. */
-const SERVER_DETAILS_HEADING = /^(Couldn't connect to .+|Edit server details)$/;
+const ANY_SERVER_DETAILS_HEADING = /^(Couldn't connect to .+|Edit server details)$/;
 /** First-run sign-in reads "Connect" once non-OAuth auth is chosen. */
-const FIRST_RUN_AUTHORIZE = /^(Continue to sign-in|Connect)$/;
+const FIRST_RUN_SIGN_IN = "Continue to sign-in";
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
@@ -4365,7 +4365,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: SERVER_DETAILS_HEADING }),
+        screen.getByRole("heading", { name: "Couldn't connect to Example" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Details from the failed connection",
@@ -4424,10 +4424,10 @@ describe("App hosted OAuth callback handling", () => {
       name: "Sign in to Multiaccount",
     });
     expect(
-      screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }),
+      screen.getByRole("button", { name: FIRST_RUN_SIGN_IN }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_SIGN_IN }));
 
     await expect(authorizationResult).resolves.toEqual(
       expect.objectContaining({ authMethod: "auto" }),
@@ -4469,7 +4469,7 @@ describe("App hosted OAuth callback handling", () => {
       screen.getByRole("button", { name: "Edit server details" }),
     );
     await expect(authorizationResult).resolves.toBe(false);
-    await screen.findByRole("heading", { name: SERVER_DETAILS_HEADING });
+    await screen.findByRole("heading", { name: "Edit server details" });
     expect(
       screen.getByRole("combobox", { name: "Authentication" }),
     ).toHaveTextContent("Auto");
@@ -4522,7 +4522,7 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     await expect(authorizationResult).resolves.toBe(false);
     await waitFor(() =>
@@ -4589,7 +4589,7 @@ describe("App hosted OAuth callback handling", () => {
     await userEvent.click(
       screen.getByRole("option", { name: "No Authentication" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     await waitFor(() =>
       expect(appState.handleConnect).toHaveBeenCalledTimes(2),
@@ -4890,7 +4890,7 @@ describe("App hosted OAuth callback handling", () => {
       screen.getByText("Tools can finish loading in the Playground."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: SERVER_DETAILS_HEADING }),
+      screen.queryByRole("heading", { name: ANY_SERVER_DETAILS_HEADING }),
     ).not.toBeInTheDocument();
     expect(
       JSON.parse(
@@ -5438,7 +5438,7 @@ describe("App hosted OAuth callback handling", () => {
       target: { value: "replacement-token" },
     });
     expect(appState.clearAutoOAuthEscalation).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
     // Authorize clears any Auto marker this page left pending, or the retry
@@ -5467,7 +5467,7 @@ describe("App hosted OAuth callback handling", () => {
       screen.getByText(/This server needs authorization/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: SERVER_DETAILS_HEADING }),
+      screen.queryByRole("heading", { name: ANY_SERVER_DETAILS_HEADING }),
     ).not.toBeInTheDocument();
   });
 

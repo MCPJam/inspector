@@ -107,7 +107,7 @@ import {
   markFirstRunServerChoiceConnected,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
-  markFirstRunServerChoiceWelcomeShown,
+  markFirstRunServerChoiceShown,
   readFirstRunServerChoiceState,
 } from "./lib/onboarding-state";
 import {
@@ -7081,7 +7081,7 @@ export default function App() {
                 onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}
                 isOpeningPlayground={isOpeningFirstRunPlayground}
-                onShown={markFirstRunServerChoiceWelcomeShown}
+                onShown={markFirstRunServerChoiceShown}
                 onSkip={dismissFirstRunOverlay}
                 guestSessionRefusal={guestSessionRefusal?.reason ?? null}
                 organizationId={activeOrganizationId}

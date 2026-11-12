@@ -9,15 +9,7 @@ import {
 } from "react";
 import { useReducedMotion } from "framer-motion";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { ExternalLink } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import { Dialog, DialogPortal } from "@mcpjam/design-system/dialog";
-import { Input } from "@mcpjam/design-system/input";
-import { Label } from "@mcpjam/design-system/label";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@mcpjam/design-system/toggle-group";
 import {
   trackFirstRunConnectionFailed,
   trackFirstRunOnboardingEntered,
@@ -27,18 +19,12 @@ import {
 } from "@/lib/first-run-onboarding-analytics";
 import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-return";
 import type { GuestSessionRefusalReason } from "@/lib/guest-session";
-import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 import {
-  AuthorizationProgress,
-  ConnectionProgress,
-} from "./FirstRunConnectionProgress";
-import {
-  FirstRunFrame,
-  FirstRunHeading,
-  FirstRunSkipRow,
-  ServerTile,
-} from "./FirstRunFrame";
-import { ConnectionFailureNotice } from "./FirstRunNotices";
+  FirstRunAuthorizingScreen,
+  FirstRunConnectingScreen,
+  FirstRunServerDetailsScreen,
+} from "./FirstRunConnectionScreens";
+import { FirstRunFrame } from "./FirstRunFrame";
 import {
   FirstRunConnectedScreen,
   FirstRunConnectScreen,
@@ -490,61 +476,28 @@ export function FirstRunOnboardingOverlay({
       serverAuthentication === "oauth" ||
       serverAuthentication === "xaa");
 
+  const changeServerUrlOrCommand = (value: string) => {
+    setServerUrlOrCommand(value);
+    if (serverUrlError) setServerUrlError(null);
+  };
+
   let content: ReactNode;
   if (
     step === "authorizing" &&
     connectionState.status === "authorization-required"
   ) {
     content = (
-      <>
-        <FirstRunHeading
-          tile={<ServerTile name={connectionState.serverName} />}
-          title={`Sign in to ${connectionState.serverName}`}
-          description={serverTarget}
-        />
-        <p className="mt-7 max-w-prose text-base leading-relaxed">
-          {signsInWithOAuth
-            ? "This server needs authorization. MCPJam takes you to its sign-in page, then finishes connecting when you come back."
-            : "This server needs authorization. Add your credentials below, then connect."}
-        </p>
-        {connectionState.error ? (
-          <ConnectionFailureNotice
-            title="Authorization didn't finish"
-            error={connectionState.error}
-          />
-        ) : null}
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="lg"
-            className="h-12 font-semibold"
-            onClick={authorizeWithSelectedSettings}
-          >
-            {signsInWithOAuth ? "Continue to sign-in" : "Connect"}
-            {signsInWithOAuth ? <ExternalLink aria-hidden /> : null}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="lg"
-            className="h-12"
-            onClick={() => cancelToStep("server-details")}
-          >
-            Edit server details
-          </Button>
-        </div>
-        {serverTransport === "http" ? (
-          <div className="mt-8 rounded-lg bg-card">
-            {authenticationSection}
-          </div>
-        ) : null}
-        {xaaConfigurationError ? (
-          <p className="mt-3 text-sm text-destructive" role="alert">
-            {xaaConfigurationError}
-          </p>
-        ) : null}
-        <AuthorizationProgress />
-      </>
+      <FirstRunAuthorizingScreen
+        serverName={connectionState.serverName}
+        serverTarget={serverTarget}
+        signsInWithOAuth={signsInWithOAuth}
+        error={connectionState.error}
+        onAuthorize={authorizeWithSelectedSettings}
+        onEditDetails={() => cancelToStep("server-details")}
+        serverTransport={serverTransport}
+        authenticationSection={authenticationSection}
+        xaaConfigurationError={xaaConfigurationError}
+      />
     );
   } else if (
     step === "connecting" &&
@@ -553,52 +506,17 @@ export function FirstRunOnboardingOverlay({
       connectionState.status === "loading-tools" ||
       (connectionState.status === "connected" && !isConnectedPresentationReady))
   ) {
-    content = guestSessionRefusal ? (
-      <>
-        <FirstRunHeading
-          title="Sign in to continue"
-          description={guestSessionRefusalCopy(guestSessionRefusal).summary}
-        />
-        <Button
-          type="button"
-          size="lg"
-          className="mt-8 h-12 font-semibold"
-          onClick={onSignIn}
-        >
-          Sign in
-        </Button>
-      </>
-    ) : (
-      <>
-        {connectionState.status === "preparing" ? (
-          <FirstRunHeading
-            title="Preparing your MCPJam workspace"
-            description="Getting your project ready to connect to an MCP server."
-          />
-        ) : (
-          <FirstRunHeading
-            tile={<ServerTile name={connectionState.serverName} />}
-            title={`Connecting to ${connectionState.serverName}`}
-            description={serverTarget}
-          />
-        )}
-        <ConnectionProgress
-          status={connectionState.status}
-          prefersReducedMotion={prefersReducedMotion}
-          completedSteps={visibleCompletedConnectionSteps}
-        />
-        {connectionState.status !== "connected" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="lg"
-            className="mt-6 h-12"
-            onClick={() => cancelToStep("choose")}
-          >
-            Cancel
-          </Button>
-        ) : null}
-      </>
+    content = (
+      <FirstRunConnectingScreen
+        status={connectionState.status}
+        serverName={connectionState.serverName}
+        serverTarget={serverTarget}
+        prefersReducedMotion={prefersReducedMotion}
+        completedSteps={visibleCompletedConnectionSteps}
+        guestSessionRefusal={guestSessionRefusal}
+        onSignIn={onSignIn}
+        onCancel={() => cancelToStep("choose")}
+      />
     );
   } else if (step === "connected" && connectionState.status === "connected") {
     content = (
@@ -622,130 +540,36 @@ export function FirstRunOnboardingOverlay({
     );
   } else if (step === "server-details") {
     content = (
-      <form onSubmit={submitServerDetails}>
-        <FirstRunHeading
-          title={
-            connectionState.status === "failed"
-              ? `Couldn't connect to ${connectionState.serverName}`
-              : "Edit server details"
-          }
-          description={
-            connectionState.status === "failed"
-              ? "Check the details below and try again."
-              : "Change how MCPJam connects to your server."
-          }
-        />
-        {connectionState.status === "failed" ? (
-          <ConnectionFailureNotice
-            title="Details from the failed connection"
-            error={connectionState.error}
-          />
-        ) : null}
-
-        <div className="mt-8 grid gap-5">
-          <div className="grid gap-2">
-            <Label htmlFor="first-run-server-details-url" className="text-sm">
-              Server URL or command
-            </Label>
-            <Input
-              id="first-run-server-details-url"
-              className="h-12 bg-card font-mono md:text-base"
-              spellCheck={false}
-              value={serverUrlOrCommand}
-              aria-invalid={serverUrlError ? true : undefined}
-              onChange={(event) => {
-                setServerUrlOrCommand(event.target.value);
-                if (serverUrlError) setServerUrlError(null);
-              }}
-            />
-            {serverUrlError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {serverUrlError}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="first-run-server-name" className="text-sm">
-                Name
-              </Label>
-              <Input
-                id="first-run-server-name"
-                className="h-11 bg-card md:text-base"
-                value={serverName}
-                onChange={(event) => setServerName(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label id="first-run-transport-label" className="text-sm">
-                Transport
-              </Label>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="lg"
-                className="w-full bg-card"
-                aria-labelledby="first-run-transport-label"
-                value={serverTransport}
-                onValueChange={(value) => {
-                  if (value === "http" || value === "stdio") {
-                    setServerTransport(value);
-                  }
-                }}
-              >
-                <ToggleGroupItem value="http">HTTP / SSE</ToggleGroupItem>
-                <ToggleGroupItem value="stdio">stdio</ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-          </div>
-
-          {serverTransport === "http" ? (
-            <div className="rounded-lg bg-card">
-              {authenticationSection}
-            </div>
-          ) : null}
-          {xaaConfigurationError ? (
-            <p className="text-sm text-destructive" role="alert">
-              {xaaConfigurationError}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="mt-8 flex flex-wrap items-center gap-2">
-          <Button type="submit" size="lg" className="h-12 font-semibold">
-            Try again
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="lg"
-            className="h-12"
-            onClick={returnToChoice}
-          >
-            Start over
-          </Button>
-          <Button
-            type="button"
-            variant="link"
-            className="ml-auto px-0 text-sm"
-            onClick={onConnectDemo}
-          >
-            Try the sample server instead
-          </Button>
-        </div>
-        <FirstRunSkipRow onSkip={setUpLater} />
-      </form>
+      <FirstRunServerDetailsScreen
+        failure={
+          connectionState.status === "failed"
+            ? {
+                serverName: connectionState.serverName,
+                error: connectionState.error,
+              }
+            : null
+        }
+        onSubmit={submitServerDetails}
+        serverUrlOrCommand={serverUrlOrCommand}
+        serverUrlError={serverUrlError}
+        onServerUrlOrCommandChange={changeServerUrlOrCommand}
+        serverName={serverName}
+        onServerNameChange={setServerName}
+        serverTransport={serverTransport}
+        onServerTransportChange={setServerTransport}
+        authenticationSection={authenticationSection}
+        xaaConfigurationError={xaaConfigurationError}
+        onStartOver={returnToChoice}
+        onConnectDemo={onConnectDemo}
+        onSkip={setUpLater}
+      />
     );
   } else {
     content = (
       <FirstRunConnectScreen
         serverUrlOrCommand={serverUrlOrCommand}
         serverUrlError={serverUrlError}
-        onServerUrlOrCommandChange={(value) => {
-          setServerUrlOrCommand(value);
-          if (serverUrlError) setServerUrlError(null);
-        }}
+        onServerUrlOrCommandChange={changeServerUrlOrCommand}
         onSubmit={connectWithInitialDefaults}
         onConnectDemo={onConnectDemo}
         onSkip={setUpLater}
