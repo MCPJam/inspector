@@ -104,25 +104,31 @@ function toEnvironmentDto(row: EnvironmentRow) {
 const ENVIRONMENT_NOT_FOUND =
   "Environment or project not found, or you do not have access to it.";
 
-function translateConvexWriteError(error: unknown): WebRouteError {
+/**
+ * For the reads only. The mutations keep the write translator, whose timeout
+ * and transport branches still read a status error's body as before.
+ */
+function translateConvexReadFailure(error: unknown): WebRouteError {
   return (
     translateConvexStatusError(error, {
       scope: "v1.images",
       notFoundMessage: ENVIRONMENT_NOT_FOUND,
-    }) ??
-    translateConvexError(error, {
-      resource: "Environment",
-      // Convex collapses "project missing", "not a member", "env missing", and
-      // the shared-env admin gate into generic errors; keep the v1 message
-      // neutral rather than leaking which.
-      notFoundMessage: ENVIRONMENT_NOT_FOUND,
-      fallbackMessage: "Environment write rejected by the platform",
-      // The admin gate here also guards SHARED environments, so answering 403
-      // would confirm the resource exists to someone who cannot otherwise see
-      // it.
-      adminFailureIsForbidden: false,
-    })
+    }) ?? translateConvexWriteError(error)
   );
+}
+
+function translateConvexWriteError(error: unknown): WebRouteError {
+  return translateConvexError(error, {
+    resource: "Environment",
+    // Convex collapses "project missing", "not a member", "env missing", and
+    // the shared-env admin gate into generic errors; keep the v1 message
+    // neutral rather than leaking which.
+    notFoundMessage: ENVIRONMENT_NOT_FOUND,
+    fallbackMessage: "Environment write rejected by the platform",
+    // The admin gate here also guards SHARED environments, so answering 403
+    // would confirm the resource exists to someone who cannot otherwise see it.
+    adminFailureIsForbidden: false,
+  });
 }
 
 /**
@@ -151,7 +157,7 @@ async function readEnvironmentInProject(
     // translator's terminal 500 (MJ-021).
     throw (
       redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
-      translateConvexWriteError(error)
+      translateConvexReadFailure(error)
     );
   }
   if (!env || env.projectId !== projectId) {
@@ -270,7 +276,7 @@ images.get("/projects/:projectId/images", async (c) => {
     // Project-scoped list: same masked-refusal reading as the detail read.
     throw (
       redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
-      translateConvexWriteError(error)
+      translateConvexReadFailure(error)
     );
   }
   return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
@@ -320,7 +326,7 @@ images.post("/projects/:projectId/images/validate", async (c) => {
     // scopes the path's project id: same reading as the list (MJ-021).
     throw (
       redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
-      translateConvexWriteError(error)
+      translateConvexReadFailure(error)
     );
   }
   return v1Resource(c, result);
@@ -395,7 +401,7 @@ images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
       { environmentId } as any,
     )) as BuildRow[] | null | undefined;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    throw translateConvexReadFailure(error);
   }
   return v1PageJson(c, (rows ?? []).map(toBuildDto));
 });

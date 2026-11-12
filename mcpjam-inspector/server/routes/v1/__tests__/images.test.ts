@@ -200,26 +200,49 @@ describe("v1 images routes", () => {
       );
     });
 
+    const P = "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images";
     it.each([
+      ["list", "GET", P, undefined, "computerEnvironments:listEnvironments"],
       [
-        "a Convex 401 as 401",
-        new ConvexHttpStatusError(401, "Unauthorized"),
-        401,
-      ],
-      [
-        "a proxy's 500 as 502",
-        new ConvexHttpStatusError(500, "500 Internal Server Error"),
-        502,
-      ],
-    ])("answers %s, read from the status", async (_label, error, status) => {
-      // By body text the write translator reads these as 404 and 500.
-      convexQueryMock.mockRejectedValueOnce(error);
-      const res = await request(
+        "detail",
         "GET",
-        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images",
-      );
-      expect(res.status).toBe(status);
-    });
+        `${P}/env1`,
+        undefined,
+        "computerEnvironments:getEnvironment",
+      ],
+      [
+        "validate",
+        "POST",
+        `${P}/validate`,
+        { blueprint: "b" },
+        "computerEnvironments:validateBlueprint",
+      ],
+      [
+        "builds list",
+        "GET",
+        `${P}/env1/builds`,
+        undefined,
+        "computerEnvironments:listEnvironmentBuilds",
+      ],
+    ])(
+      "answers a status error on the %s read by its status",
+      async (_label, method, path, body, failing) => {
+        // By body text the write translator reads these as 404 and 500.
+        for (const [error, status] of [
+          [new ConvexHttpStatusError(401, "Unauthorized"), 401],
+          [new ConvexHttpStatusError(500, "500 Internal Server Error"), 502],
+        ] as const) {
+          convexQueryMock.mockImplementation(async (fn: string) => {
+            if (fn === failing) throw error;
+            return fn === "computerEnvironments:getEnvironment"
+              ? ENV_ROW
+              : null;
+          });
+          const res = await request(method, path, { body });
+          expect(res.status).toBe(status);
+        }
+      },
+    );
 
     it("404s a missing environment", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": null });
@@ -431,6 +454,22 @@ describe("v1 images routes", () => {
         buildId: "b2",
         reused: false,
       });
+    });
+
+    it("answers a gateway timeout on a build through the write translator, as before", async () => {
+      const answer = async (error: Error) => {
+        mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
+        convexMutationMock.mockRejectedValueOnce(error);
+        const res = await request(
+          "POST",
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images/env1/build",
+        );
+        return { status: res.status, body: await res.json() };
+      };
+      const body = "upstream request timeout";
+      expect(await answer(new ConvexHttpStatusError(504, body))).toEqual(
+        await answer(new Error(body)),
+      );
     });
 
     // Locks BOTH sides of the naming boundary: the PUBLIC response says

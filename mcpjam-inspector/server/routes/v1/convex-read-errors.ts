@@ -208,9 +208,9 @@ export class ConvexHttpStatusError extends Error {
 }
 
 /**
- * The `fetch` for the Convex clients that `createConvexClient`,
- * `createConvexClients` and the evals read client build. The client turns a
- * non-2xx answer into `new Error(body)` and drops the status, and Sentry keeps
+ * The `fetch` for the Convex clients that `createConvexClient` and
+ * `createConvexClients` build. The client turns a non-2xx answer into
+ * `new Error(body)` and drops the status, and Sentry keeps
  * neither the body nor the log message, so the only record of the failure was
  * the word "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads
  * the response, keeps the status for the upstream report.

@@ -5687,6 +5687,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
     }
+    // An undeployed action answers 422 whatever status carried the refusal.
+    if (isConvexFunctionMissing(error)) throw translateConvexWriteError(error);
     // Translated rather than rethrown. The action refuses a malformed
     // baseline selection with a structured `ConvexError` code, and a raw
     // rethrow would land on the v1 error boundary as a 500 + INTERNAL_ERROR
