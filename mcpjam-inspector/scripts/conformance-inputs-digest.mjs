@@ -24,6 +24,7 @@
 // on Windows or an untracked file cannot move it.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -140,15 +141,16 @@ export function normalizePackageJson(text, workspaceNames) {
 }
 
 /**
- * The lockfile's resolved third-party tree. Workspace entries carry the
- * versions a release bumps, and their links point back at sources the digest
- * already covers file by file.
+ * The lockfile's installed tree: every third-party package, and every
+ * workspace link (which names its folder and carries no version). Workspace
+ * entries themselves carry the versions a release bumps, and their sources
+ * are covered file by file.
  */
 export function normalizePackageLock(text) {
   const lock = JSON.parse(text);
   const packages = {};
   for (const [key, entry] of Object.entries(lock.packages ?? {})) {
-    if (!key.includes("node_modules/") || entry?.link === true) continue;
+    if (!key.includes("node_modules/")) continue;
     packages[key] = entry;
   }
   return JSON.stringify({ lockfileVersion: lock.lockfileVersion, packages });
@@ -198,6 +200,21 @@ export function computeConformanceInputsDigest({ cwd = REPO_ROOT, rev = "HEAD" }
   return `sha256:${hash.digest("hex")}`;
 }
 
+/**
+ * A node_modules cache key that a version PR leaves alone: the lockfile's
+ * third-party tree and the approval patch `npm ci` applies. The darwin-x64
+ * conformance legs restore node_modules by it, because `npm ci` under
+ * Rosetta took five to eight minutes.
+ */
+export function dependencyKey({ cwd = REPO_ROOT } = {}) {
+  return createHash("sha256")
+    .update(normalizePackageLock(readFileSync(join(cwd, "package-lock.json"), "utf8")))
+    .update(readFileSync(join(cwd, "mcpjam-inspector/scripts/patch-harness-approvals.mjs")))
+    .digest("hex");
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  process.stdout.write(`${computeConformanceInputsDigest()}\n`);
+  process.stdout.write(
+    process.argv.includes("--dependency-key") ? `key=${dependencyKey()}\n` : `${computeConformanceInputsDigest()}\n`,
+  );
 }

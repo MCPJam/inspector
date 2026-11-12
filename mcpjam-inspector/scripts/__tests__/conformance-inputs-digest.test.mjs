@@ -7,6 +7,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   computeConformanceInputsDigest,
+  dependencyKey,
   globToRegExp,
   isConformanceInput,
 } from "../conformance-inputs-digest.mjs";
@@ -134,14 +135,17 @@ test("a version bump leaves the digest alone; a dependency or a server change mo
   try {
     execFileSync("git", ["init", "-q"], { cwd: repo.dir });
     repo.release("1.0.0", "3.0.0");
+    repo.write("mcpjam-inspector/scripts/patch-harness-approvals.mjs", "// patch\n");
     repo.write("mcpjam-inspector/server/supervisor.ts", "export const a = 1;\n");
     repo.write("mcpjam-inspector/client/App.tsx", "export const b = 1;\n");
     const base = repo.commit();
+    const dependencies = dependencyKey({ cwd: repo.dir });
 
     repo.release("1.1.0", "3.1.0");
     repo.write("sdk/CHANGELOG.md", "## 1.1.0\n");
     repo.write(".changeset/next.md", "---\n---\n");
     assert.equal(repo.commit(), base, "versions, changelogs and changesets are not inputs");
+    assert.equal(dependencyKey({ cwd: repo.dir }), dependencies, "a version bump keeps the dependency cache");
 
     repo.write("mcpjam-inspector/client/App.tsx", "export const b = 2;\n");
     assert.equal(repo.commit(), base, "the browser UI is not an input");
@@ -149,6 +153,7 @@ test("a version bump leaves the digest alone; a dependency or a server change mo
     repo.release("1.1.0", "3.1.0", "3.0.1");
     const bumped = repo.commit();
     assert.notEqual(bumped, base, "a third-party dependency is an input");
+    assert.notEqual(dependencyKey({ cwd: repo.dir }), dependencies, "and it moves the dependency cache");
 
     repo.write("mcpjam-inspector/server/supervisor.ts", "export const a = 2;\n");
     assert.notEqual(repo.commit(), bumped, "the server is an input");

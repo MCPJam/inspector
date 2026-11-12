@@ -269,13 +269,39 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
+      # Under Rosetta `npm ci` is the slowest step of the slowest leg, five to
+      # eight minutes, so the x64 legs restore node_modules instead. The key
+      # is the lockfile's installed tree, which a version PR leaves alone.
+      # Pull requests never run these legs, and the evidence run, the push run
+      # and releases save it on main themselves: it is not one of the `nm-*`
+      # caches pull requests restore and only warm-node-modules.yml saves.
+      - name: Key the x64 dependency cache
+        id: deps_key
+        if: matrix.node_arch == 'x64'
+        run: node mcpjam-inspector/scripts/conformance-inputs-digest.mjs --dependency-key >> "$GITHUB_OUTPUT"
+      - name: Restore x64 dependencies
+        id: deps
+        if: matrix.node_arch == 'x64'
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: conformance-x64-modules-${{ runner.os }}-node${{ steps.toolchain.outputs.node }}-${{ steps.deps_key.outputs.key }}
+
       # From the REPO ROOT: this is an npm workspace, so dependencies install
       # and hoist there. Installing inside the package produces a second,
       # partial tree and the adapter ends up in neither place the build looks.
       - name: Install workspace dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+      # What `npm ci` writes outside node_modules: the telemetry catalogs.
+      - name: Run the install-time generators
+        if: steps.deps.outputs.cache-hit == 'true'
+        run: npm run prepare
 
       - name: Download the bundled Node runtime
         run: |
@@ -740,10 +766,30 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
 
+      # As in `scenarios`: the x64 legs restore node_modules.
+      - name: Key the x64 dependency cache
+        id: deps_key
+        if: matrix.node_arch == 'x64'
+        run: node mcpjam-inspector/scripts/conformance-inputs-digest.mjs --dependency-key >> "$GITHUB_OUTPUT"
+      - name: Restore x64 dependencies
+        id: deps
+        if: matrix.node_arch == 'x64'
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: conformance-x64-modules-${{ runner.os }}-node${{ steps.toolchain.outputs.node }}-${{ steps.deps_key.outputs.key }}
+
       - name: Install workspace dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm ci --legacy-peer-deps
+      - name: Run the install-time generators
+        if: steps.deps.outputs.cache-hit == 'true'
+        run: npm run prepare
 
       # Windows only: the Job Object launcher goes inside the pack, as in the
       # Claude Code `windows` job. Without it the pack cannot prove whole-tree

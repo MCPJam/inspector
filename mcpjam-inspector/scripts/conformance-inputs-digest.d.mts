@@ -6,3 +6,4 @@ export declare function isConformanceInput(path: string): boolean;
 export declare function normalizePackageJson(text: string, workspaceNames: Set<string>): string;
 export declare function normalizePackageLock(text: string): string;
 export declare function computeConformanceInputsDigest(options?: { cwd?: string; rev?: string }): string;
+export declare function dependencyKey(options?: { cwd?: string }): string;
