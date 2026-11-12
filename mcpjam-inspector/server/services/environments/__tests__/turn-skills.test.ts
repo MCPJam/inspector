@@ -24,6 +24,21 @@ const refs = (skills: TurnSkills) => skills.delivered.map((ref) => ref.ref);
 const reasons = (skills: TurnSkills) =>
   skills.excluded.map(({ ref, reason }) => [ref.ref, reason]);
 
+const LIVE_SET = buildLiveEffectiveCapabilities({
+  standaloneSkills: [
+    {
+      skillId: "sk_deploy",
+      ref: "deploy",
+      name: "deploy",
+      description: "Deploy.",
+      content: "# Deploy",
+      aggregateHash: "h",
+      files: [],
+      channels: [],
+    },
+  ],
+});
+
 describe("resolveTurnSkills", () => {
   it("plans no skills for a turn without a source, on either engine", () => {
     for (const runtime of [AGENT, harness("claude-code")]) {
@@ -64,26 +79,21 @@ describe("resolveTurnSkills", () => {
     ]);
   });
 
-  it("keeps the bare-name tools for a run whose pins predate plugins", async () => {
+  it("serves bare-name pins from before plugins through the same ref tools", async () => {
     const run = await preparedRunSkills([namePin("deploy"), namePin("triage")]);
     const skills = resolveTurnSkills({
       source: run.pinnedSkillSource,
       runtime: AGENT,
     });
-    expect(skills.agent).toEqual({
-      kind: "frozen-names",
-      skills: run.pinnedSkillSource.pins,
-    });
+    expect(skills.agent).toEqual({ kind: "frozen" });
     expect(refs(skills)).toEqual(["deploy", "triage"]);
-    expect(skills.serverSkillsVia).toBe("none");
-    expect(await agentReceives(skills)).toEqual({
-      listed: ["deploy", "triage"],
-      tools: ["loadSkill"],
-    });
+    expect(skills.serverSkillsVia).toBe("agent-tools");
+    const received = await agentReceives(skills);
+    expect(received.listed).toEqual(["deploy", "triage"]);
+    expect(received.tools).toContain("loadSkill");
   });
 
   it("reports a pin another skill's ref already holds as a name collision", async () => {
-    // The file sends the run to the ref tools, where one ref is one skill.
     const run = await preparedRunSkills([
       authoredPin(),
       namePin("release-notes", { skillId: "sk_other_release_notes" }),
@@ -114,7 +124,7 @@ describe("resolveTurnSkills", () => {
 
     // The model is not told about a skill the list leaves out, but its tools
     // load it when named, as when the person asks for it or picks it with `/`.
-    it("still delivers the skills the bare-name list leaves out", async () => {
+    it("still delivers the skills the list leaves out", async () => {
       const run = await preparedRunSkills(pins);
       const skills = resolveTurnSkills({
         source: run.pinnedSkillSource,
@@ -130,7 +140,7 @@ describe("resolveTurnSkills", () => {
       );
     });
 
-    it("still delivers the skills the ref list leaves out", async () => {
+    it("still delivers a skill with files that the list leaves out", async () => {
       const run = await preparedRunSkills([
         ...pins,
         authoredPin({ description: longDescription }),
@@ -197,6 +207,29 @@ describe("resolveTurnSkills", () => {
     });
     expect(skills.delivered.map((ref) => ref.name)).toEqual(["deploy"]);
     expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
+  });
+
+  it("serves a live set to MCPJam's agent, with the connected servers' skills", () => {
+    const skills = resolveTurnSkills({
+      source: { kind: "live", set: LIVE_SET },
+      runtime: AGENT,
+    });
+    expect(skills.agent).toEqual({ kind: "live" });
+    expect(skills.set).toBe(LIVE_SET);
+    expect(refs(skills)).toEqual(["deploy"]);
+  });
+
+  it("hands a harness nothing from a live set, which its box fetches itself", () => {
+    const skills = resolveTurnSkills({
+      source: { kind: "live", set: LIVE_SET },
+      runtime: harness("claude-code"),
+    });
+    expect(skills).toMatchObject({
+      agent: null,
+      delivered: [],
+      excluded: [],
+      serverSkillsVia: "none",
+    });
   });
 
   it("reports every skill on a harness that takes none", async () => {
@@ -292,20 +325,7 @@ describe("turnRuntime", () => {
 });
 
 describe("turnSkillsFromLegacySource", () => {
-  const set = buildLiveEffectiveCapabilities({
-    standaloneSkills: [
-      {
-        skillId: "sk_deploy",
-        ref: "deploy",
-        name: "deploy",
-        description: "Deploy.",
-        content: "# Deploy",
-        aggregateHash: "h",
-        files: [],
-        channels: [],
-      },
-    ],
-  });
+  const set = LIVE_SET;
 
   it("gives a turn that says none no plan", () => {
     expect(turnSkillsFromLegacySource({ kind: "none" })).toBeUndefined();
@@ -329,22 +349,5 @@ describe("turnSkillsFromLegacySource", () => {
     });
     expect(live?.agent).toEqual({ kind: "live" });
     expect(live && refs(live)).toEqual(["deploy"]);
-  });
-
-  it("serves a surface's bare-name pins through the bare-name tools", () => {
-    const pinned = [
-      {
-        name: "deploy",
-        description: "Deploy.",
-        content: "# D",
-        contentHash: "h",
-      },
-    ];
-    const skills = turnSkillsFromLegacySource({
-      kind: "pinned",
-      skills: pinned,
-    });
-    expect(skills?.agent).toEqual({ kind: "frozen-names", skills: pinned });
-    expect(skills && refs(skills)).toEqual(["deploy"]);
   });
 });

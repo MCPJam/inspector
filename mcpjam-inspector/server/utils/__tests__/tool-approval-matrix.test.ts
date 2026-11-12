@@ -51,7 +51,6 @@ import { buildMcpjamTool } from "../built-in-tools/mcpjam";
 import { buildBrowserTools } from "../built-in-tools/browser";
 import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
-import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
 import {
   createEffectiveSkillTools,
   getEffectiveSkillToolsAndPrompt,
@@ -752,24 +751,8 @@ const MATRIX: MatrixRow[] = [
   },
   // Floor: never, for every skill tool whatever the skill's origin. Reading a
   // skill acts on nothing; acting on a server's skill is gated where it acts
-  // ("a server skill in use", below).
-  {
-    family: "pinned skill tool",
-    name: "loadSkill",
-    input: { name: "pdf-processing" },
-    tools: () =>
-      createPinnedSkillTools([
-        {
-          name: "pdf-processing",
-          description: "PDFs",
-          content: "BODY",
-        } as never,
-      ]) as unknown as ToolSet,
-    expected: {
-      mcpjam: { on: "free", off: "free" },
-      byok: { on: "free", off: "free" },
-    },
-  },
+  // ("a server skill in use", below). A run's pinned skills get these same
+  // tools, so the rows below cover them too.
   {
     family: "Library skill tool",
     name: "loadSkill",

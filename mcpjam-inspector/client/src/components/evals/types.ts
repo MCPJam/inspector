@@ -924,7 +924,7 @@ export type EvalSuiteRunSummary = {
  */
 export type EvalRunAccount = {
   serverId: string;
-  /** A person's own account, the project's shared connection, or an XAA identity. */
+  /** A person's own account, a shared server's project account, or an XAA identity. */
   kind: "account" | "shared" | "xaa";
   connectionId?: string;
   name: string;

@@ -144,6 +144,7 @@ import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidenti
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
+  hostedCredentialDeliveryHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
@@ -618,8 +619,14 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthCredentialAuthorizedAt?: number;
   oauthConnections?: AuthorizedOAuthConnection[];
   /** How the backend answered `connectionIdSets`; see `oauth-account-sets.ts`. */
-  oauthAccountSet?: "applied" | "shared";
+  oauthAccountSet?: "applied";
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
+  /**
+   * Which rule withheld the token, sent with `credential_export_denied`.
+   * `hostedOnlyAccount` is the account's own rule, which no organization
+   * admin can change.
+   */
+  oauthUnavailablePolicy?: "credentialExportPolicy" | "hostedOnlyAccount";
   /**
    * How long to wait before retrying, when the reason is transient. Sent with
    * `refresh_in_progress` — the lease the other refresh holds expires after
@@ -725,12 +732,19 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
   };
 }
 
+/**
+ * Headers for a call from this server to the backend. In hosted mode they
+ * also carry the service token that marks a credential request as managed
+ * delivery (see {@link hostedCredentialDeliveryHeaders}). No caller passes
+ * the backend's tokens on to its own client, so every call carries it.
+ */
 export function buildConvexAuthHeaders(
   caller: ManagerCallerContext,
   originalBearer: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
   };
   if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
@@ -2023,13 +2037,18 @@ export async function createAuthorizedManager(
         !(auth.oauthAccessToken ?? callerToken) &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
       ) {
+        // A hosted-only account is refused by its own rule, which no admin
+        // can change, so the copy names that rule instead of the policy.
+        const hostedOnly = auth.oauthUnavailablePolicy === "hostedOnlyAccount";
         throw new WebRouteError(
           403,
           ErrorCode.FORBIDDEN,
-          `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+          hostedOnly
+            ? `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`
+            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
           {
             exportDenied: true,
-            policy: "credentialExportPolicy",
+            policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
             serverId,
             serverName: serverNamesById?.[serverId] ?? null,
             serverUrl: auth.serverConfig.url,

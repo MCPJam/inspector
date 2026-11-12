@@ -13,6 +13,7 @@ import {
   parseErrorMessage,
 } from "../routes/web/errors.js";
 import { HOSTED_MODE } from "../config.js";
+import { hostedCredentialDeliveryHeaders } from "../services/service-credential.js";
 import {
   refreshTokensAgainstPrivateAuthorizationServer,
   type PrivateAuthorizationServerRefreshMaterial,
@@ -230,6 +231,7 @@ export async function forceRefreshHostedOAuthAccessToken(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${bearerToken}`,
+        ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
       },
       body: JSON.stringify({
         projectId,
@@ -286,7 +288,14 @@ export async function forceRefreshHostedOAuthAccessToken(
     // reveal routes use, so the client names the policy (or opens the moved
     // server) instead of offering a reconnect that cannot help.
     if (body?.exportDenied === true || body?.secretOriginMismatch === true) {
-      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, message, {
+      // A hosted-only account is refused by a rule no admin can change, so
+      // the backend's sentence is shown, whichever field carries it.
+      const sentence =
+        body.policy === "hostedOnlyAccount"
+          ? ([body.message, body.error].find((v) => typeof v === "string") ??
+            message)
+          : message;
+      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, sentence, {
         ...(body.exportDenied === true
           ? {
               exportDenied: true,

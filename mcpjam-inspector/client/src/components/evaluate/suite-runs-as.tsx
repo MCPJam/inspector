@@ -8,9 +8,9 @@ import { NeedsReconnectTag } from "../evals/suite-accounts-row";
 import type { EvalSuite } from "../evals/types";
 
 /**
- * "Runs as you · Asana Dummy": the person's own accounts a run of this suite
- * will use, one server after another. Nothing when no server signs in with
- * the person's own account.
+ * "Runs as you · Asana Dummy": the accounts a run of this suite will use for
+ * the person, one server after another: their own, or the project accounts
+ * they chose on a shared server. Nothing when no server has such a choice.
  */
 export function RunsAsLine({
   entries,

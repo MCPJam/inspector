@@ -6,10 +6,7 @@ import {
   getEffectiveSkillToolsAndPrompt,
 } from "../computers/effective-skill-tools";
 import { listLiveServerSkills } from "../computers/live-server-skills";
-import {
-  createCloudSkillTools,
-  createPinnedSkillTools,
-} from "../computers/cloud-skill-tools";
+import { createCloudSkillTools } from "../computers/cloud-skill-tools";
 import {
   buildLiveEffectiveCapabilities,
   withLiveServerSkills,
@@ -65,14 +62,22 @@ it("tags live cloud tools and records real pinned skill loading as builtin", asy
     expect(definition).toHaveProperty("_toolOrigin", "builtin");
   const context = createAiSdkEvalTraceContext(Date.now());
   registerAiSdkPrepareStep(context, 0);
-  const pinned = createPinnedSkillTools([
-    {
-      name: "example",
-      description: "Example",
-      content: "Instructions",
-      contentHash: "hash",
-    },
-  ]);
+  const pinned = createEffectiveSkillTools({
+    skills: [
+      {
+        skillId: "sk_example",
+        ref: "example",
+        name: "example",
+        description: "Example",
+        content: "Instructions",
+        aggregateHash: "hash",
+        channels: [],
+        files: [],
+      },
+    ],
+    pluginRefs: new Set(),
+    serverRefs: new Set(),
+  });
   const traced = wrapToolSetForEvalTrace(pinned, context);
   expect(
     await traced.loadSkill.execute(
