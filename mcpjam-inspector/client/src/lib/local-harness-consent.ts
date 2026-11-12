@@ -27,6 +27,12 @@
  * returns a tilde-shortened display root and nothing else.
  */
 import { authFetch } from "@/lib/session-token";
+import {
+  DEFAULT_LOCAL_HARNESS_ID,
+  LOCAL_HARNESS_IDS,
+  type LocalHarnessId,
+} from "@/shared/harness-descriptors";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 
 const STORAGE_PREFIX = "mcp-local-harness-consent-v1";
 const EVENT_NAME = "local-harness-consent-changed";
@@ -77,34 +83,34 @@ export interface StoredLocalHarnessConsent {
  */
 export function localHarnessConsentStorageKey(
   projectId: string,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): string {
-  // Claude Code keeps the key it always had, so an existing record survives;
-  // every other harness has its own, because its consent is its own (D5).
-  return harnessId === "claude-code"
+  // The default runtime keeps the key it always had, so an existing record
+  // survives; every other harness has its own, because its consent is its own.
+  return harnessId === DEFAULT_LOCAL_HARNESS_ID
     ? `${STORAGE_PREFIX}:${projectId}`
     : `${STORAGE_PREFIX}:${harnessId}:${projectId}`;
 }
 
-/** The local harnesses this client can set up. */
-export type LocalHarnessClientId = "claude-code" | "codex";
+/** The local harnesses this client can set up: every runtime that declares
+ *  no `local` exception (`shared/harness-descriptors.ts`). */
+export type LocalHarnessClientId = LocalHarnessId;
 
-/** What a user reads about each one. */
-export const LOCAL_HARNESS_CLIENT_NAMES: Readonly<Record<LocalHarnessClientId, string>> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-};
+/** What a user reads about each one: the runtime's product name. */
+export const LOCAL_HARNESS_CLIENT_NAMES = Object.fromEntries(
+  LOCAL_HARNESS_IDS.map((id) => [id, harnessDisplayName(id)]),
+) as Readonly<Record<LocalHarnessClientId, string>>;
 
 /** Narrow an untrusted harness id to one with a local runtime, or null. */
 export function asLocalHarnessClientId(
   value: string | null | undefined,
 ): LocalHarnessClientId | null {
-  return value === "claude-code" || value === "codex" ? value : null;
+  return LOCAL_HARNESS_IDS.find((id) => id === value) ?? null;
 }
 
-/** `harnessId=<id>` for every harness but Claude Code, whose routes predate it. */
+/** `harnessId=<id>` for every harness but the default, whose routes predate it. */
 function harnessQuery(harnessId: LocalHarnessClientId): string {
-  return harnessId === "claude-code" ? "" : `harnessId=${encodeURIComponent(harnessId)}`;
+  return harnessId === DEFAULT_LOCAL_HARNESS_ID ? "" : `harnessId=${encodeURIComponent(harnessId)}`;
 }
 
 /**
@@ -115,7 +121,7 @@ function harnessQuery(harnessId: LocalHarnessClientId): string {
  */
 export function readLocalHarnessConsentSnapshot(
   projectId: string | null | undefined,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): string | null {
   if (!projectId) return null;
   try {
@@ -127,7 +133,7 @@ export function readLocalHarnessConsentSnapshot(
 
 export function loadStoredLocalHarnessConsent(
   projectId: string,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): StoredLocalHarnessConsent | null {
   try {
     const raw = localStorage.getItem(localHarnessConsentStorageKey(projectId, harnessId));
@@ -180,7 +186,7 @@ export function parseStoredLocalHarnessConsent(
 function persist(
   projectId: string,
   consent: StoredLocalHarnessConsent | null,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): boolean {
   try {
     if (consent) {
@@ -376,7 +382,7 @@ export type LocalHarnessAvailabilityResult =
 
 export async function fetchLocalHarnessAvailability(
   projectId?: string | null,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): Promise<LocalHarnessAvailabilityResult> {
   let response: Response;
   try {
@@ -418,7 +424,7 @@ export async function fetchLocalHarnessRuntimeStatus(
   try {
     const query = [
       ...(options.verify === true ? ["verify=1"] : []),
-      ...(harnessQuery(options.harnessId ?? "claude-code") ? [harnessQuery(options.harnessId ?? "claude-code")] : []),
+      ...(harnessQuery(options.harnessId ?? DEFAULT_LOCAL_HARNESS_ID) ? [harnessQuery(options.harnessId ?? DEFAULT_LOCAL_HARNESS_ID)] : []),
     ].join("&");
     response = await localHarnessRequest(
       `runtime/status${query ? `?${query}` : ""}`,
@@ -473,7 +479,7 @@ export async function startLocalHarnessRuntimeInstall(args: {
   let response: Response;
   try {
     response = await localHarnessRequest("runtime/install", {
-      ...(args.harnessId && args.harnessId !== "claude-code" ? { harnessId: args.harnessId } : {}),
+      ...(args.harnessId && args.harnessId !== DEFAULT_LOCAL_HARNESS_ID ? { harnessId: args.harnessId } : {}),
       ...(args.expectedPack ? { expectedPack: args.expectedPack } : {}),
     });
   } catch (error) {
@@ -538,13 +544,13 @@ export async function registerLocalHarnessWorkspace(
   selection: { path: string } | { useSuggested: true },
   // The harness whose setup is choosing the folder: the server checks THAT
   // harness's rollout before it records a grant.
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): Promise<RegisterWorkspaceResult> {
   let response: Response;
   try {
     response = await localHarnessRequest("workspace-grant", {
       ...selection,
-      ...(harnessId !== "claude-code" ? { harnessId } : {}),
+      ...(harnessId !== DEFAULT_LOCAL_HARNESS_ID ? { harnessId } : {}),
     });
   } catch (error) {
     return NETWORK_ERROR(
@@ -608,7 +614,7 @@ export async function mintLocalHarnessConsent(args: {
   let response: Response;
   try {
     response = await localHarnessRequest("consent/grant", {
-      ...(args.harnessId && args.harnessId !== "claude-code" ? { harnessId: args.harnessId } : {}),
+      ...(args.harnessId && args.harnessId !== DEFAULT_LOCAL_HARNESS_ID ? { harnessId: args.harnessId } : {}),
       projectId: args.projectId,
       workspaceGrantId: args.workspaceGrantId,
       ...(args.expect ? { expect: args.expect } : {}),
@@ -669,7 +675,7 @@ export async function mintLocalHarnessConsent(args: {
 export function persistLocalHarnessConsent(
   projectId: string,
   consent: StoredLocalHarnessConsent,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): boolean {
   return persist(projectId, consent, harnessId);
 }
@@ -684,7 +690,7 @@ export function persistLocalHarnessConsent(
  */
 export async function revokeLocalHarnessConsent(
   projectId: string,
-  harnessId: LocalHarnessClientId = "claude-code",
+  harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID,
 ): Promise<void> {
   const stored = loadStoredLocalHarnessConsent(projectId, harnessId);
   // The server's "forget" revokes the project's authorization for every local
@@ -733,11 +739,11 @@ export async function stopAllLocalHarnessSessions(): Promise<boolean> {
 }
 
 /** Durable authorization lives on the server; this cache is only a launch credential. */
-export async function ensureLocalHarnessReady(projectId: string, setup = false, signal?: AbortSignal, onProgress?: (message: string) => void, harnessId: LocalHarnessClientId = "claude-code"): Promise<StoredLocalHarnessConsent> {
+export async function ensureLocalHarnessReady(projectId: string, setup = false, signal?: AbortSignal, onProgress?: (message: string) => void, harnessId: LocalHarnessClientId = DEFAULT_LOCAL_HARNESS_ID): Promise<StoredLocalHarnessConsent> {
   const name = LOCAL_HARNESS_CLIENT_NAMES[harnessId];
   const response = await authFetch(`/api/mcp/local-harness/${setup ? "setup" : "readiness"}`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, ...(harnessId !== "claude-code" ? { harnessId } : {}), ...(setup ? { accepted: true } : {}) }),
+    body: JSON.stringify({ projectId, ...(harnessId !== DEFAULT_LOCAL_HARNESS_ID ? { harnessId } : {}), ...(setup ? { accepted: true } : {}) }),
     signal,
   });
   const result = await response.json();

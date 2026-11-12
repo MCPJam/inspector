@@ -1,5 +1,7 @@
 import { shouldUseLocalHarness, isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js";
-import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, LOCAL_HARNESS_DISPLAY_NAMES, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
+import { setupLocalHarness, ensureLocalHarnessTarget, localHarnessAccountEnabled, LocalRuntimePreparingError, verifyLocalHarnessMember } from "../../utils/harness/local/readiness.js";
+import { DEFAULT_LOCAL_HARNESS_ID, localRuntimeOf } from "../../utils/harness/local/runtimes/index.js";
+import { harnessDisplayName } from "../../../shared/harness-model-support.js";
 import { revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, readLocalHarnessAuthorization, acknowledgeLocalHarnessAutoApprove } from "../../utils/harness/local/authorization.js";
 /**
  * Local-harness control routes — `/api/mcp/local-harness/*`.
@@ -89,7 +91,7 @@ const localHarness = new Hono();
  * id this build has no local runtime for is refused rather than defaulted.
  */
 function harnessIdOf(value: unknown): SupportedLocalHarnessId | null {
-  if (value === undefined || value === null || value === "") return "claude-code";
+  if (value === undefined || value === null || value === "") return DEFAULT_LOCAL_HARNESS_ID;
   return typeof value === "string" &&
     (SUPPORTED_LOCAL_HARNESS_IDS as readonly string[]).includes(value)
     ? (value as SupportedLocalHarnessId)
@@ -133,7 +135,7 @@ localHarness.use("/*", async (c, next) => {
   }
   if (c.req.method === "POST" && /\/(runtime\/install|workspace-grant|consent\/grant)$/.test(c.req.path) &&
       !(await localHarnessAccountEnabled(c.req.header("authorization"), undefined, harnessId))) {
-    return c.json({ error: `Local ${LOCAL_HARNESS_DISPLAY_NAMES[harnessId]} is unavailable for this account or rollout verification is temporarily unavailable` }, 403);
+    return c.json({ error: `Local ${harnessDisplayName(harnessId)} is unavailable for this account or rollout verification is temporarily unavailable` }, 403);
   }
   return next();
 });
@@ -157,7 +159,7 @@ for (const path of ["/setup", "/readiness"] as const) {
       return c.json({ state: "ready", target: { ...target, harnessId }, serverAuthorized: true, expiresAt: ready.expiresAt, grantId: ready.grantId, workspaceDisplayRoot: ready.workspaceDisplayRoot, runtime: ready.runtime, grantedAt: new Date().toISOString() });
     } catch (error) {
       if (error instanceof LocalRuntimePreparingError) return c.json({ state: "installing" }, 202);
-      return c.json({ error: error instanceof Error ? error.message : `${LOCAL_HARNESS_DISPLAY_NAMES[harnessId]} setup failed` }, 409);
+      return c.json({ error: error instanceof Error ? error.message : `${harnessDisplayName(harnessId)} setup failed` }, 409);
     }
   });
 }
@@ -166,14 +168,15 @@ for (const path of ["/setup", "/readiness"] as const) {
 localHarness.post("/consent/auto-approve", async (c) => {
   if (!isAllowedRequestOrigin(c.req.header("origin"))) return c.json({ error: "Origin not allowed" }, 403);
   const body = await c.req.json().catch(() => null);
-  if (!body || typeof body.projectId !== "string" || !body.projectId || !["claude-code", "codex"].includes(body.harnessId)) {
+  const runtime = localRuntimeOf(body?.harnessId);
+  if (!body || typeof body.projectId !== "string" || !body.projectId || !runtime) {
     return c.json({ error: "projectId and a supported harnessId are required" }, 400);
   }
   const actor = await resolveConsentActor(c);
   if (!actor.ok) return c.json({ error: actor.message }, actor.status);
   try {
     await verifyLocalHarnessMember(c.req.header("authorization") ?? "", body.projectId);
-    await acknowledgeLocalHarnessAutoApprove({ userId: actor.actor.userId, machineId: await getLocalMachineId(), projectId: body.projectId, harnessId: body.harnessId });
+    await acknowledgeLocalHarnessAutoApprove({ userId: actor.actor.userId, machineId: await getLocalMachineId(), projectId: body.projectId, harnessId: runtime.harnessId });
     return c.json({ autoApproveAcknowledged: true });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : "Consent could not be recorded" }, 409);
@@ -312,7 +315,7 @@ localHarness.get("/availability", async (c) => {
   const preferredVenue = projectId && await shouldUseLocalHarness(harnessId, c.req.header("authorization"), projectId) ? "local" : "hosted";
 
   const actor = projectId ? await resolveConsentActor(c) : null;
-  const authorization = actor?.ok && machineId && projectId && (harnessId === "claude-code" || harnessId === "codex")
+  const authorization = actor?.ok && machineId && projectId
     ? await readLocalHarnessAuthorization(actor.actor.userId, machineId, projectId, harnessId)
     : null;
   return c.json({
@@ -464,8 +467,8 @@ localHarness.post("/runtime/install", async (c) => {
     );
   }
 
-  // Claude Code keeps its original URL; another harness names itself.
-  const statusUrl = `/api/mcp/local-harness/runtime/status${harnessId === "claude-code" ? "" : `?harnessId=${harnessId}`}`;
+  // The default runtime keeps its original URL; another names itself.
+  const statusUrl = `/api/mcp/local-harness/runtime/status${harnessId === DEFAULT_LOCAL_HARNESS_ID ? "" : `?harnessId=${harnessId}`}`;
   c.header("Location", statusUrl);
   // Seconds. Long enough not to hammer a machine that is also downloading
   // 200 MB, short enough that a percentage looks live.

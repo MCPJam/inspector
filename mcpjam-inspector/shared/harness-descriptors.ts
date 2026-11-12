@@ -187,6 +187,32 @@ export const LOCAL_HARNESS_IDS = HARNESS_IDS.filter(
   (id): id is HarnessIdOn<"local"> => !harnessSurfaceRefusal(id, "local"),
 );
 
+/** A runtime that runs on the member's own computer. */
+export type LocalHarnessId = (typeof LOCAL_HARNESS_IDS)[number];
+
+/**
+ * The local runtime a caller means when it names none. Claude Code was the
+ * only one when the local routes, the install CLI, the stores and the client's
+ * saved consent were written, so a request without a harness id still means it.
+ */
+export const DEFAULT_LOCAL_HARNESS_ID = "claude-code" satisfies LocalHarnessId;
+
+/** The PostHog flag that rolls a runtime out on members' computers. */
+export type LocalHarnessRolloutFlag =
+  | "local-harness-enabled"
+  | `local-${Exclude<LocalHarnessId, "claude-code">}-enabled`;
+
+/**
+ * Each local runtime rolls out on its own flag, named after it. Claude Code's
+ * predates the others and keeps the name it shipped under. A flag's cohort
+ * should sit inside the runtime's hosted flag: the backend refuses a client
+ * for a runtime the member cannot use, so a member enabled here but not there
+ * could set the runtime up and then fail to create the client.
+ */
+export function localHarnessRolloutFlag(id: LocalHarnessId): LocalHarnessRolloutFlag {
+  return id === "claude-code" ? "local-harness-enabled" : `local-${id}-enabled`;
+}
+
 /** The harness a client config runs: its agent loop when set, else its harness. */
 export function effectiveHarnessId(
   config: { agentLoop?: string | null; harness?: string | null } | null | undefined,
