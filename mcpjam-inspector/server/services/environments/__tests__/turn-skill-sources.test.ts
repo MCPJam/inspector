@@ -122,7 +122,27 @@ describe("resolveTurnSkills for an environment", () => {
     expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
   });
 
-  it("gives a name's box folder to its first copy", () => {
+  it("gives a name's box folder to its first skill", () => {
+    const spec = docsEnvironment();
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            { ...spec.skills![0]!, skillId: "sk_docs_again" },
+          ],
+        },
+        attribution: null,
+      },
+      runtime: harness("claude-code"),
+    });
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_docs"]);
+    expect(reasons(skills)).toEqual([["docs", "name-collision"]]);
+  });
+
+  it("takes a captured server skill through tools on Claude Code, so it holds no box folder", () => {
     const { spec, attribution } = evalEnvironment();
     const server = spec.serverSkills![0]!;
     const skills = resolveTurnSkills({
