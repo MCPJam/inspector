@@ -122,7 +122,7 @@ export async function fetchRuntimeSkillFiles(
  * order-independent (sorted by skillId). Changes on add / remove / rename / edit.
  * Empty list ⇒ stable sentinel (distinct from "no skills dimension").
  */
-export function skillsFingerprint(skills: RuntimeSkill[]): string {
+export function skillsFingerprint(skills: readonly RuntimeSkill[]): string {
   // Empty list ⇒ "" so it equals an omitted hash (a no-skills project and a
   // transient fetch failure both leave the runtime fingerprint unchanged).
   if (skills.length === 0) return "";

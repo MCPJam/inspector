@@ -5,8 +5,9 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
  * The Playground's HIDDEN environment on a harness (`live_plus`): a client
  * turn that runs the project's plugins through an ad-hoc environment keeps the
  * project's skill pool. The pool AND the environment's own skills reach the
- * box, each with its supporting files, in one pass — and a failed project-wide
- * fetch delivers nothing new rather than deleting the pool's skill folders.
+ * box through the box writer, each with its supporting files, in one pass —
+ * and a failed project-wide fetch delivers nothing new rather than deleting
+ * the pool's skill folders.
  */
 
 const harnessState = vi.hoisted(() => ({
@@ -60,13 +61,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: true,
-    skillsBaseDir: "/home/user/.claude/skills",
-    skillsWriteOptions: { trailingNewline: true },
-    prepareSkills: (skills: Array<{ name: string }>) => ({
-      payload: skills,
-      delivered: skills,
-      skipped: [],
-    }),
+    skills: HARNESS_SKILLS["claude-code"],
     mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
@@ -104,6 +99,7 @@ const passes = vi.hoisted(() => ({
   materializeSkillFiles: vi.fn(async (_args: unknown) => ({
     written: 0,
     skipped: 0,
+    failed: new Map<string, string>(),
   })),
 }));
 
@@ -117,12 +113,14 @@ vi.mock("../materialize-skill-files.js", () => ({
 }));
 
 vi.mock("../preseed-adapter-skills.js", () => ({
+  clearAdapterSkills: vi.fn(async () => {}),
   handOffLegacySkillDirs: vi.fn(async () => {}),
   preseedAdapterSkills: vi.fn(async () => {}),
 }));
 
-vi.mock("../materialize-skill-frontmatter.js", () => ({
-  materializeSkillFrontmatter: vi.fn(async () => {}),
+vi.mock("../materialize-skill-frontmatter.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../materialize-skill-frontmatter.js")>()),
+  materializeSkillFrontmatter: vi.fn(async () => ({ rewritten: 0, skipped: 0, removed: new Map() })),
 }));
 
 vi.mock("../adopt-sandbox-skills.js", () => ({
@@ -169,6 +167,7 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { skillsFingerprint } from "../runtime-skills";
+import { HARNESS_SKILLS } from "../skills-descriptor";
 import { logger } from "../../logger";
 import { resolveEffectiveCapabilities } from "../../../services/environments/effective-capabilities";
 import {

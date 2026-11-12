@@ -1,5 +1,6 @@
 /**
- * Cleanup-only reconciliation of on-box skill directories.
+ * Cleanup-only reconciliation of on-box skill directories: the box writer's
+ * record of the folders MCPJam manages (`box-skills-writer.ts` calls it).
  *
  * In the host-agnostic design the harness ADAPTER writes skills (Claude Code →
  * `~/.claude/skills/<name>/SKILL.md`, Codex → `~/.agents/skills/<name>/SKILL.md`,
@@ -19,7 +20,6 @@
  */
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
 /** Minimal structural view of the harness sandbox session. */
@@ -104,14 +104,12 @@ async function removeManagedSkillDir(
  */
 export async function reconcileSkillDirs(args: {
   session: ReconcileSession;
-  skills: ReconcileSkill[];
+  skills: readonly ReconcileSkill[];
   skillsHash: string;
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
-  signal?: AbortSignal;
+  /** The skills folder, absolute. */
+  skillsBase: string;
 }): Promise<ReconcileResult> {
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { skillsBase } = args;
   const result: ReconcileResult = { removed: 0, managed: 0 };
   try {
     const manifest = await readManifest(args.session, skillsBase);
@@ -124,9 +122,12 @@ export async function reconcileSkillDirs(args: {
       next.skills[s.skillId] = { skillId: s.skillId, name: s.name };
     }
     result.managed = currentBySkillId.size;
+    const listed = Object.keys(manifest.skills).length;
+    // A folder MCPJam never wrote to stays untouched, manifest included.
+    if (listed === 0 && currentBySkillId.size === 0) return result;
     if (
       manifest.skillsHash === next.skillsHash &&
-      Object.keys(manifest.skills).length === currentBySkillId.size &&
+      listed === currentBySkillId.size &&
       [...currentBySkillId].every(
         ([id, skill]) =>
           manifest.skills[id]?.skillId === id &&
@@ -179,11 +180,11 @@ export async function reconcileSkillDirs(args: {
 export async function appendManagedSkills(args: {
   session: ReconcileSession;
   skills: ReconcileSkill[];
-  /** The RUNTIME's skills root; must match the `reconcileSkillDirs` root. */
-  skillsBase?: string;
+  /** The runtime's skills folder; must match the `reconcileSkillDirs` one. */
+  skillsBase: string;
 }): Promise<{ appended: number }> {
   if (args.skills.length === 0) return { appended: 0 };
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { skillsBase } = args;
   try {
     const manifest = await readManifest(args.session, skillsBase);
     let appended = 0;

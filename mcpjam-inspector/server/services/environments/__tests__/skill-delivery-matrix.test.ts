@@ -7,8 +7,9 @@
  * hand-written answer: once for the surface's plan (`resolveTurnSkills`), and
  * once for what reaches the engine, read through the code the engine runs:
  * MCPJam's agent's prompt and tools from `prepareChatV2`, a harness's box from
- * the skill path its turn takes. Checking the plan against the engine alone
- * would pass if both were wrong the same way.
+ * the box writer, on a box earlier turns of other runtimes left skills on.
+ * Checking the plan against the engine alone would pass if both were wrong the
+ * same way.
  *
  * A preview plans a turn it does not run, so its engine check reads the turn
  * it previews: the eval run for the Evaluate page, a live turn for Compare.
@@ -30,7 +31,7 @@ import {
   EVAL_PLUGIN_VERSIONS,
   evalEnvironment,
   evalRunPins,
-  liveBoxReceives,
+  liveTurnSource,
   personalRuntimeSkill,
   personalSkill,
   preparedRunSkills,
@@ -61,8 +62,8 @@ interface Expected {
 interface PlannedTurn {
   skills: TurnSkills;
   skillsAtTurn?: Array<Record<string, unknown>>;
-  /** The skill folders a harness turn on this surface writes to its box. */
-  box: string[];
+  /** A harness turn's box on this surface; MCPJam's agent has none. */
+  box: Awaited<ReturnType<typeof boxReceives>> | null;
 }
 
 interface Surface {
@@ -119,8 +120,10 @@ const runtimeOf = (engine: Engine): TurnRuntime =>
     : { kind: "harness", harnessId: engine };
 
 /** The box of a harness turn; MCPJam's agent has none. */
-const harnessBox = (engine: Engine, box: () => string[]) =>
-  engine === "mcpjam-agent" ? [] : box();
+const harnessBox = (
+  engine: Engine,
+  source: Parameters<typeof boxReceives>[1],
+) => (engine === "mcpjam-agent" ? null : boxReceives(engine, source));
 
 /** A preview records nothing: it plans a turn it does not run. */
 function previewing(rows: Record<Engine, Expected>): Record<Engine, Expected> {
@@ -142,9 +145,9 @@ const EVAL: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: harnessBox(engine, () =>
-        boxReceives(engine, run.pinnedHarnessSkills),
-      ),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
     };
   },
   expected: PINNED,
@@ -168,9 +171,9 @@ const REPLAY: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: harnessBox(engine, () =>
-        boxReceives(engine, run.pinnedHarnessSkills),
-      ),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
     };
   },
   expected: PINNED,
@@ -189,9 +192,9 @@ const swarm =
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: harnessBox(engine, () =>
-        boxReceives(engine, [...target.harnessSkills]),
-      ),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: [...target.harnessSkills],
+      }),
     };
   };
 
@@ -227,9 +230,9 @@ const EVALUATE_PREVIEW: Surface = {
         source: { kind: "environment", spec, attribution, frozen: true },
         runtime: runtimeOf(engine),
       }),
-      box: harnessBox(engine, () =>
-        boxReceives(engine, run.pinnedHarnessSkills),
-      ),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
     };
   },
   expected: previewing(EVAL.expected),
@@ -272,7 +275,7 @@ const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
         source: { kind: "environment", spec, attribution },
         runtime: runtimeOf(engine),
       }),
-      box: harnessBox(engine, () => liveBoxReceives(engine, spec)),
+      box: await harnessBox(engine, liveTurnSource(spec)),
     };
   },
   expected: liveRows([]),
@@ -295,8 +298,9 @@ const COMPARE_CLIENT_PREVIEW: Surface = {
         },
         runtime: runtimeOf(engine),
       }),
-      box: harnessBox(engine, () =>
-        liveBoxReceives(engine, spec, [personalRuntimeSkill()]),
+      box: await harnessBox(
+        engine,
+        liveTurnSource(spec, [personalRuntimeSkill()]),
       ),
     };
   },
@@ -345,13 +349,27 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
         expected.delivered.length > 0,
       );
     } else {
-      expect([...box].sort()).toEqual([...expected.delivered].sort());
+      // Every folder the runtime reads holds exactly these, whatever earlier
+      // turns of other runtimes left on the box.
+      expect([...box!.folders].sort()).toEqual([...expected.delivered].sort());
       // A harness gets its skills on its box, never as agent tools too.
       expect((await agentReceives(skills, { harness: engine })).tools).toEqual(
         [],
       );
     }
   });
+
+  it.skipIf(isAgent)(
+    "the box writer reports the delivery it made",
+    async () => {
+      const { written } = (await surface.plan(engine)).box!;
+      expect(written.delivered.map((skill) => skill.name)).toEqual(
+        expected.delivered,
+      );
+      expect(written.notDelivered).toEqual([]);
+      expect(written.failed).toEqual([]);
+    },
+  );
 
   it("records the skills the engine was handed", async () => {
     const { skillsAtTurn } = await surface.plan(engine);

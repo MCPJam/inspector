@@ -84,10 +84,11 @@ describe("materializeSkillFiles", () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [],
       skillNamesById: new Map(),
     });
-    expect(res).toEqual({ written: 0, skipped: 0 });
+    expect(res).toEqual({ written: 0, skipped: 0, failed: new Map() });
     expect(session.writeBinaryFile).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -96,6 +97,7 @@ describe("materializeSkillFiles", () => {
     const { session, writes } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({})],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -107,6 +109,7 @@ describe("materializeSkillFiles", () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ skillId: "unknown" })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -129,6 +132,7 @@ describe("materializeSkillFiles", () => {
     ]);
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [
         // Delivered by the environment.
         file({ skillId: "sk_env", path: "scripts/run.py" }),
@@ -157,6 +161,7 @@ describe("materializeSkillFiles", () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ path: "../../etc/evil" })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -168,6 +173,7 @@ describe("materializeSkillFiles", () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ url: null })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -178,6 +184,7 @@ describe("materializeSkillFiles", () => {
     const { session } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ size: 21 * 1024 * 1024 })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -209,6 +216,7 @@ describe("materializeSkillFiles", () => {
     const { session, writes } = fakeSession();
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [
         file({ path: "large.bin", size: almostBudget }),
         file({ path: "understated.bin", size: 1 }),
@@ -218,7 +226,7 @@ describe("materializeSkillFiles", () => {
     expect(writes).toEqual([
       { path: `${SKILLS_BASE}/pdf-tools/large.bin`, bytes: almostBudget },
     ]);
-    expect(res).toEqual({ written: 1, skipped: 1 });
+    expect(res).toMatchObject({ written: 1, skipped: 1 });
   });
 
   it("prunes stale on-box supporting files not in the current set", async () => {
@@ -230,6 +238,7 @@ describe("materializeSkillFiles", () => {
     ]);
     await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ path: "scripts/run.py" })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -247,11 +256,12 @@ describe("materializeSkillFiles", () => {
     ]);
     const res = await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
     expect(removed).toEqual([`${base}/scripts/orphan.py`]);
-    expect(res).toEqual({ written: 0, skipped: 0 });
+    expect(res).toEqual({ written: 0, skipped: 0, failed: new Map() });
   });
 
   it("never prunes an undelivered (foreign / hand-placed) skill dir", async () => {
@@ -260,6 +270,7 @@ describe("materializeSkillFiles", () => {
     const { session, removed } = fakeSession([`${other}/scripts/keep.py`]);
     await materializeSkillFiles({
       session,
+      skillsBase: SKILLS_BASE,
       files: [file({ path: "scripts/run.py" })],
       skillNamesById: new Map([["sk_1", "pdf-tools"]]),
     });
@@ -273,6 +284,7 @@ describe("materializeSkillFiles", () => {
       const { session } = fakeSession();
       await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})],
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
       });
@@ -283,6 +295,7 @@ describe("materializeSkillFiles", () => {
       const { session, writes } = fakeSession();
       const res = await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})], // 5 bytes from the fetch stub
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
         computerId: "computers_1",
@@ -300,6 +313,7 @@ describe("materializeSkillFiles", () => {
       const { session } = fakeSession([], { [target]: 2 });
       await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})],
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
         computerId: "computers_1",
@@ -315,6 +329,7 @@ describe("materializeSkillFiles", () => {
       const { session, writes } = fakeSession([], { [target]: 5 });
       const res = await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})],
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
         computerId: "computers_1",
@@ -334,6 +349,7 @@ describe("materializeSkillFiles", () => {
       const { session, writes } = fakeSession();
       const res = await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})],
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
         computerId: "computers_1",
@@ -352,6 +368,7 @@ describe("materializeSkillFiles", () => {
       const { session, writes } = fakeSession();
       const res = await materializeSkillFiles({
         session,
+        skillsBase: SKILLS_BASE,
         files: [file({})],
         skillNamesById: new Map([["sk_1", "pdf-tools"]]),
         computerId: "computers_1",
@@ -359,5 +376,50 @@ describe("materializeSkillFiles", () => {
       expect(res.written).toBe(1);
       expect(writes).toHaveLength(1);
     });
+  });
+});
+
+describe("materializeSkillFiles reports which skills are missing a file", () => {
+  it("names the skill and the file for a failed write, a failed download and an escaping path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/2")
+          ? { ok: true, arrayBuffer: async () => new Uint8Array([1]).buffer }
+          : { ok: false, status: 403 },
+      ),
+    );
+    const { session } = fakeSession();
+    session.writeBinaryFile.mockRejectedValueOnce(new Error("disk full"));
+    const res = await materializeSkillFiles({
+      session,
+      skillsBase: SKILLS_BASE,
+      files: [
+        file({ skillId: "sk_2", path: "notes.md", url: "https://blob/2" }),
+        file({}),
+        file({ skillId: "sk_3", path: "../escape.md" }),
+      ],
+      skillNamesById: new Map([
+        ["sk_1", "pdf-tools"],
+        ["sk_2", "notes"],
+        ["sk_3", "escape"],
+      ]),
+    });
+    expect([...res.failed]).toEqual([
+      ["notes", "notes.md: disk full"],
+      ["pdf-tools", "scripts/run.py: download failed (HTTP 403)"],
+      ["escape", "../escape.md: path escapes the skill folder"],
+    ]);
+  });
+
+  it("leaves a file with no link off the failures: the box keeps its copy", async () => {
+    const { session } = fakeSession();
+    const res = await materializeSkillFiles({
+      session,
+      skillsBase: SKILLS_BASE,
+      files: [file({ url: null })],
+      skillNamesById: new Map([["sk_1", "pdf-tools"]]),
+    });
+    expect(res.failed).toEqual(new Map());
   });
 });
