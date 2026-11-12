@@ -45,7 +45,7 @@ function args(
 
 type Call = { url: string; body: unknown; headers: Headers };
 
-function mockBackend(uploadUrlAnswer: Record<string, unknown>) {
+function mockBackend(beginAnswer: Record<string, unknown>) {
   const calls: Call[] = [];
   globalThis.fetch = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -56,13 +56,10 @@ function mockBackend(uploadUrlAnswer: Record<string, unknown>) {
           ? init.body
           : JSON.parse(String(init?.body));
       calls.push({ url, body, headers });
-      if (url.endsWith("/snapshot/upload-url")) {
-        return Response.json({ ok: true, ...uploadUrlAnswer });
+      if (url.endsWith("/snapshot/begin")) {
+        return Response.json({ ok: true, ...beginAnswer });
       }
-      if (url === "https://storage.example.com/upload") {
-        return Response.json({ storageId: "kg2abc" });
-      }
-      if (url.endsWith("/snapshot/commit")) {
+      if (url.endsWith("/snapshot/save")) {
         return Response.json({ ok: true, saved: true });
       }
       return new Response("not found", { status: 404 });
@@ -70,6 +67,8 @@ function mockBackend(uploadUrlAnswer: Record<string, unknown>) {
   ) as typeof fetch;
   return calls;
 }
+
+const RESERVED = { enabled: true, key: "k1", maxBytes: 1_000_000 };
 
 beforeEach(() => {
   process.env.CONVEX_HTTP_URL = "https://convex.example.com";
@@ -81,28 +80,30 @@ afterEach(() => {
 });
 
 describe("saveSessionSnapshot", () => {
-  it("uploads the gzipped session files and commits them for the turn's version", async () => {
-    const calls = mockBackend({
-      enabled: true,
-      uploadUrl: "https://storage.example.com/upload",
-      key: "k1",
-      contentType: "application/gzip;harness-session-snapshot=k1",
-      maxBytes: 1_000_000,
-    });
+  it("asks first, then posts the gzipped session files under the reserved key", async () => {
+    const calls = mockBackend(RESERVED);
 
     expect(await saveSessionSnapshot(args())).toBe("saved");
 
-    const [begin, upload, commit] = calls;
+    const [begin, save] = calls;
+    expect(begin!.url).toBe(
+      "https://convex.example.com/web/harness/session-state/snapshot/begin",
+    );
     expect(begin!.body).toMatchObject({
       ...OWNER,
       harnessSessionId: "hs-1",
       stateVersion: 3,
     });
-    expect(upload!.headers.get("content-type")).toBe(
-      "application/gzip;harness-session-snapshot=k1",
+    expect(save!.url).toBe(
+      "https://convex.example.com/web/harness/session-state/snapshot/save",
     );
+    expect(save!.headers.get("authorization")).toBe("Bearer token");
+    expect(JSON.parse(save!.headers.get("x-mcpjam-snapshot")!)).toEqual({
+      ...OWNER,
+      key: "k1",
+    });
     const bundle = JSON.parse(
-      gunzipSync(upload!.body as Uint8Array).toString("utf8"),
+      gunzipSync(save!.body as Uint8Array).toString("utf8"),
     );
     expect(bundle.files).toEqual([
       {
@@ -110,11 +111,6 @@ describe("saveSessionSnapshot", () => {
         content: '{"type":"user"}\n',
       },
     ]);
-    expect(commit!.body).toMatchObject({
-      ...OWNER,
-      key: "k1",
-      storageId: "kg2abc",
-    });
   });
 
   it("reads nothing off the box when the backend says snapshots are off", async () => {
@@ -125,18 +121,29 @@ describe("saveSessionSnapshot", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("does not upload a bundle larger than the backend accepts", async () => {
-    const calls = mockBackend({
-      enabled: true,
-      uploadUrl: "https://storage.example.com/upload",
-      key: "k1",
-      contentType: "application/gzip;harness-session-snapshot=k1",
-      maxBytes: 10,
-    });
-    expect(await saveSessionSnapshot(args())).toBe("too-large");
+  it("keeps no copy of a session a delivered secret reached", async () => {
+    const calls = mockBackend(RESERVED);
+    const leaky: SnapshotFileSession = {
+      ...box,
+      readTextFile: async () => '{"out":"KEY=sk_live_abcdefgh123"}\n',
+    };
+    expect(
+      await saveSessionSnapshot(
+        args({
+          session: leaky,
+          secrets: [{ name: "KEY", value: "sk_live_abcdefgh123" }],
+        }),
+      ),
+    ).toBe("has-secret");
     expect(calls.map((call) => call.url)).toEqual([
-      "https://convex.example.com/web/harness/session-state/snapshot/upload-url",
+      "https://convex.example.com/web/harness/session-state/snapshot/begin",
     ]);
+  });
+
+  it("does not post a bundle larger than the backend accepts", async () => {
+    const calls = mockBackend({ ...RESERVED, maxBytes: 10 });
+    expect(await saveSessionSnapshot(args())).toBe("too-large");
+    expect(calls).toHaveLength(1);
   });
 });
 
