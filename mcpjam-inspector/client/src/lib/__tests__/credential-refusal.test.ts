@@ -166,3 +166,38 @@ describe("withCredentialRefusal", () => {
     expect(withCredentialRefusal(failed, "Docs")).toBe(failed);
   });
 });
+
+describe("a hosted-only account's refusal", () => {
+  const SENTENCE =
+    '"Docs" uses an account that only MCPJam-hosted runs can use, so its token can\'t be used from here. Run it as a hosted run, or connect a separate account for local use.';
+
+  it("is its own kind, on a local envelope and a hosted result", () => {
+    expect(
+      readCredentialRefusal({ exportDenied: true, policy: "hostedOnlyAccount" }),
+    ).toEqual({ kind: "hosted_only" });
+    expect(
+      readCredentialRefusal({ credentialRefusal: { kind: "hosted_only" } }),
+    ).toEqual({ kind: "hosted_only" });
+  });
+
+  it("keeps the server's sentence instead of pointing at the export policy", () => {
+    const result = withCredentialRefusal(
+      {
+        success: false,
+        error: SENTENCE,
+        exportDenied: true,
+        policy: "hostedOnlyAccount",
+      },
+      "Docs",
+    ) as { error: string; normalized: NormalizedError };
+    expect(result.error).toBe(SENTENCE);
+    expect(result.error).not.toMatch(/organization admin/);
+    expect(result.normalized.title).toBe("Account for hosted runs only");
+  });
+
+  it("names the rule itself when the result carries no sentence", () => {
+    const message = credentialRefusalMessage({ kind: "hosted_only" }, "Docs");
+    expect(message).toMatch(/hosted runs only/);
+    expect(message).not.toMatch(/organization admin/);
+  });
+});

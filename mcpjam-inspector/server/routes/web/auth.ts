@@ -622,6 +622,12 @@ export type ConvexBatchAuthorizeSuccess = {
   oauthAccountSet?: "applied" | "shared";
   oauthUnavailableReason?: ConvexOAuthUnavailableReason;
   /**
+   * Which rule withheld the token, sent with `credential_export_denied`.
+   * `hostedOnlyAccount` is the account's own rule, which no organization
+   * admin can change.
+   */
+  oauthUnavailablePolicy?: "credentialExportPolicy" | "hostedOnlyAccount";
+  /**
    * How long to wait before retrying, when the reason is transient. Sent with
    * `refresh_in_progress` — the lease the other refresh holds expires after
    * roughly this long.
@@ -2031,13 +2037,18 @@ export async function createAuthorizedManager(
         !(auth.oauthAccessToken ?? callerToken) &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
       ) {
+        // A hosted-only account is refused by its own rule, which no admin
+        // can change, so the copy names that rule instead of the policy.
+        const hostedOnly = auth.oauthUnavailablePolicy === "hostedOnlyAccount";
         throw new WebRouteError(
           403,
           ErrorCode.FORBIDDEN,
-          `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+          hostedOnly
+            ? `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`
+            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
           {
             exportDenied: true,
-            policy: "credentialExportPolicy",
+            policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
             serverId,
             serverName: serverNamesById?.[serverId] ?? null,
             serverUrl: auth.serverConfig.url,
