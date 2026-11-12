@@ -109,7 +109,9 @@ function readAccessToken(options: TokenOptions): string {
 
 /** Flags are checked before stdin is read, so a refusal never consumes it. */
 function buildUploadInput(options: SetOptions): UploadServerAccountTokensInput {
-  if (options.accessToken === "-" && options.refreshTokenFile === "-") {
+  const accessTokenFromStdin =
+    options.accessToken === "-" || options.accessTokenFile === "-";
+  if (accessTokenFromStdin && options.refreshTokenFile === "-") {
     throw usageError(
       "Only one token can come from stdin. Read the refresh token from a file with --refresh-token-file <path>.",
     );

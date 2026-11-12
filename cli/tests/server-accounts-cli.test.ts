@@ -232,6 +232,17 @@ test("set refuses both tokens from stdin", async () => {
     run("set", [...SET, "--access-token", "-", "--refresh-token-file", "-"]),
     assertUsageError(/Only one token can come from stdin/),
   );
+  // `--access-token-file -` reads stdin too.
+  await assert.rejects(
+    run("set", [
+      ...SET,
+      "--access-token-file",
+      "-",
+      "--refresh-token-file",
+      "-",
+    ]),
+    assertUsageError(/Only one token can come from stdin/),
+  );
   assert.deepEqual(requests, []);
 });
 
