@@ -433,6 +433,137 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       );
     });
 
+    it("runs the call through the real AI SDK stream", async () => {
+      // The real `streamText`: the call must survive the SDK's own parsing
+      // and tool execution, not only our hooks.
+      const ai = await vi.importActual<typeof import("ai")>("ai");
+      const { MockLanguageModelV4, convertArrayToReadableStream } =
+        await import("ai/test");
+      const { createProgressiveMetaTools } = await import("@mcpjam/sdk");
+      const usage = {
+        inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+        outputTokens: { total: 1, text: 1, reasoning: 0 },
+      };
+      const steps = [
+        // The first step is forced to search.
+        [
+          {
+            type: "tool-call",
+            toolCallId: "search-1",
+            toolName: "search_mcp_tools",
+            input: JSON.stringify({ query: "squad" }),
+          },
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: undefined },
+            usage,
+          },
+        ],
+        [
+          {
+            type: "tool-call",
+            toolCallId: "load-1",
+            toolName: "load_mcp_tools",
+            input: JSON.stringify({ names: ["show_squad"] }),
+          },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "show_squad",
+            input: JSON.stringify({ team: "Barcelona" }),
+          },
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: undefined },
+            usage,
+          },
+        ],
+        [
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: "Here is Barca." },
+          { type: "text-end", id: "t1" },
+          {
+            type: "finish",
+            finishReason: { unified: "stop", raw: undefined },
+            usage,
+          },
+        ],
+      ];
+      const model = new MockLanguageModelV4({
+        doStream: async () => ({
+          stream: convertArrayToReadableStream(steps.shift() as any[]),
+        }),
+      });
+      const catalog = [
+        {
+          toolId: "sports::show_squad",
+          modelName: "show_squad",
+          serverId: "sports",
+          originalName: "show_squad",
+          description: "Show a team's squad",
+          fields: [],
+          inputSchema: squadSchema,
+          tokenEstimate: 100,
+        },
+      ];
+      const discoveryState = {
+        loadedToolIds: new Set<string>(),
+        newlyLoadedToolIds: new Set<string>(),
+        pendingApprovalToolIds: new Set<string>(),
+      };
+      const showSquad = vi.fn(async () => "squad");
+      streamTextMock.mockImplementationOnce((options: any) =>
+        ai.streamText({ ...options, stopWhen: ai.stepCountIs(4) }),
+      );
+
+      const handle = runDirectChatTurn({
+        llmModel: model,
+        modelId: "claude-haiku-4-5",
+        messageHistory: [{ role: "user", content: "show me barca" } as any],
+        systemPrompt: "s",
+        tools: {
+          ...createProgressiveMetaTools({
+            getCatalog: () => catalog as any,
+            state: discoveryState as any,
+          } as any),
+          show_squad: ai.tool({
+            inputSchema: ai.jsonSchema(squadSchema as any),
+            execute: showSquad,
+          }),
+        } as any,
+        progressivePlan: {
+          enabled: true,
+          reasons: [],
+          policy: {
+            thresholdPct: 0.03,
+            maxToolTokens: 10_000,
+            maxToolCount: 30,
+            searchLimit: 8,
+          },
+          catalog,
+          totalTokenEstimate: 100,
+        } as any,
+        discoveryState: discoveryState as any,
+      });
+      const result = await consumeDirectChatTurnHeadless(handle);
+
+      expect(showSquad).toHaveBeenCalledWith(
+        { team: "Barcelona" },
+        expect.anything(),
+      );
+      const toolResults = (result.messages as any[])
+        .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+        .filter((part) => part.type === "tool-result");
+      expect(
+        toolResults.find((part) => part.toolCallId === "call-1")?.output,
+      ).toMatchObject({ type: "text", value: "squad" });
+      // The model was shown only the meta-tools in the step that loaded it.
+      expect(
+        model.doStreamCalls[1].tools?.map((tool) => tool.name),
+      ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
+      expect(discoveryState.loadedToolIds.has("sports::show_squad")).toBe(true);
+    });
+
     it("still fails the call when no earlier load in the step asked for it", async () => {
       const { options, discoveryState } = await runTurn();
       const refine = options.experimental_refineToolInput;
