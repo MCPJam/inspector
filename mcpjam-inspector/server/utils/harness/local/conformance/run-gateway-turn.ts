@@ -253,20 +253,29 @@ async function main() {
   if (!turns.probe.text.includes("PROBE_OK:conformance")) failures.push("the host tool's result did not come back through the model");
 
   const tree = [bridgePid, ...(await descendants(bridgePid))];
-  const environments = (await Promise.all(tree.map(processEnvironment))).join("\n");
-  if (environments.includes(UPSTREAM_KEY_CANARY)) failures.push("the upstream model key reached a child process's environment");
+  const environments = await Promise.all(tree.map(processEnvironment));
+  if (environments.some((env) => env?.includes(UPSTREAM_KEY_CANARY))) failures.push("the upstream model key reached a child process's environment");
+  if (process.platform === "win32") {
+    say("child environments cannot be read on Windows; the upstream key check did not run");
+  } else if (environments.includes(null)) {
+    failures.push("a supervised process's environment could not be read, so the upstream key check proved nothing");
+  }
   const offLoopback = (await Promise.all(tree.map(listeners))).flat().filter((listener) => !isLoopbackListener(listener));
   if (offLoopback.length > 0) failures.push(`a supervised process listened off loopback: ${JSON.stringify(offLoopback)}`);
 
   const resumeState = await session.detach();
   session = await agent.createSession({ sessionId, resumeFrom: resumeState });
   turns.count = await runTurn("count-after-resume", agent, session, "COUNT");
+  // HELLO, MCPPROBE and this COUNT: an earlier turn missing after the resume
+  // shows as a lower count.
   const seen = Number(/USER_TURNS=(\d+)/.exec(turns.count.text)?.[1] ?? 0);
-  if (seen < 2) failures.push(`after resume the model saw ${seen} scenario turns, expected at least 2`);
+  if (seen < 3) failures.push(`after resume the model saw ${seen} scenario turns, expected 3`);
 
   const stopAndCheck = async (current: HarnessAgentSession, label: string) => {
     const tree = [bridgePid, ...(await descendants(bridgePid))];
-    await current.stop().catch((error: unknown) => say(`${label}: stop() threw: ${String(error)}`));
+    // The supervisor below reaps the tree either way; a Stop that throws has
+    // still failed the member.
+    await current.stop().catch((error: unknown) => failures.push(`${label}: stop() threw: ${String(error)}`));
     await supervisor.stopSession(sessionId);
     const survivors: number[] = [];
     for (const pid of tree) if (await running(pid)) survivors.push(pid);
@@ -281,7 +290,7 @@ async function main() {
   session = await agent.createSession({ sessionId, resumeFrom: diskResumeState(resumeState) });
   turns.afterStop = await runTurn("after-stop", agent, session, "COUNT");
   const continued = Number(/USER_TURNS=(\d+)/.exec(turns.afterStop.text)?.[1] ?? 0);
-  if (continued <= seen) failures.push(`after Stop the next message saw ${continued} scenario turns, expected more than ${seen}`);
+  if (continued < seen + 1) failures.push(`after Stop the next message saw ${continued} scenario turns, expected ${seen + 1}`);
   await stopAndCheck(session, "the second Stop");
   owned = null;
   for (const [label, turn] of Object.entries(turns)) {

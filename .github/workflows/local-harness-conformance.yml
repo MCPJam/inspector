@@ -58,6 +58,13 @@ on:
         required: false
         type: string
         default: ""
+      # In a called workflow `github.event_name` is the CALLER's event, so a
+      # call is told apart by this input, which only a call has.
+      reusable_call:
+        description: Set on every call; plans the call's legs rather than its caller's.
+        required: false
+        type: boolean
+        default: true
       candidate:
         description: >-
           The named version is a pack the publication pipeline has just
@@ -150,7 +157,7 @@ jobs:
       - uses: actions/checkout@v7
       - id: plan
         env:
-          EVENT: ${{ github.event_name }}
+          EVENT: ${{ inputs.reusable_call && 'workflow_call' || github.event_name }}
           CLAUDE_INPUT: ${{ inputs.published_pack_version }}
           CODEX_INPUT: ${{ inputs.codex_published_pack_version }}
           RUNTIME_INPUT: ${{ inputs.runtime_pack_versions }}

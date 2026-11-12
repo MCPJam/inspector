@@ -302,6 +302,14 @@ describe("pack release boundaries", () => {
     expect(finalizeFiles).toContain("runtime-contract");
   });
 
+  it("plans a call as a call: a called workflow's own event name is its caller's", () => {
+    const { on, jobs } = workflow("local-harness-conformance");
+    expect(on.workflow_call.inputs.reusable_call).toMatchObject({ type: "boolean", default: true });
+    expect(on.workflow_dispatch.inputs.reusable_call).toBeUndefined();
+    const plan = jobs.plan.steps.find((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""));
+    expect(plan.env.EVENT).toBe("${{ inputs.reusable_call && 'workflow_call' || github.event_name }}");
+  });
+
   it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
     const { jobs } = workflow("local-harness-conformance");
     expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);

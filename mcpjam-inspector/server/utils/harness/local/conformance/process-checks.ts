@@ -60,15 +60,20 @@ export async function descendants(pid: number): Promise<number[]> {
   return out;
 }
 
-/** A process's environment: /proc on Linux, `ps -E` where that exists. */
-export async function processEnvironment(pid: number): Promise<string> {
+/**
+ * A process's environment: /proc on Linux, `ps -E` on macOS. `null` when it
+ * cannot be read, which is every process on Windows: nothing short of reading
+ * another process's memory shows its environment there.
+ */
+export async function processEnvironment(pid: number): Promise<string | null> {
+  if (WIN) return null;
   try {
     return (await readFile(`/proc/${pid}/environ`, "utf8")).replace(/\0/g, "\n");
   } catch {
     try {
       return (await execFileP("ps", ["-E", "-o", "command=", "-p", String(pid)])).stdout;
     } catch {
-      return "";
+      return null;
     }
   }
 }
