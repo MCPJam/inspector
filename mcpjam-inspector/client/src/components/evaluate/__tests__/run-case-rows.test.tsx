@@ -1,252 +1,290 @@
-/**
- * What a case row shows, and what it refuses to colour.
- *
- * The model decides all of this; these tests pin that the view does not undo
- * it — most importantly that a row with no verdict gets no verdict glyph, and
- * that the iteration fraction never stands in for one.
- */
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { renderWithProviders, screen, userEvent, within } from "@/test";
+import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
+import { buildRunResultsMatrix } from "../run-results-matrix-model";
+import { RunTestRuns, testRunVerdict } from "../run-case-rows";
 
-import { RunCaseRows } from "../run-case-rows";
-import type { EvaluateCaseRow } from "../evaluate-case-row-model";
-
-function row(overrides: Partial<EvaluateCaseRow> = {}): EvaluateCaseRow {
+function iteration(
+  overrides: Partial<EvalIteration> & { _id: string },
+): EvalIteration {
   return {
-    key: "g1",
-    title: "Draw and share a diagram",
-    testCaseId: "tc_1",
-    iterations: { passed: 6, total: 10 },
-    verdict: { kind: "matched", variants: [] },
-    mark: "failed",
-    break: { kind: "brokeAt", stage: "selection", reason: "missingToolCall" },
-    cells: Array.from({ length: 10 }, (_, index) => ({
-      iterationId: `it_${index}`,
-      outcome: index % 3 === 0 ? "failed" : "passed",
-      stage: index % 3 === 0 ? "selection" : null,
-    })),
-    coverage: {
-      total: 10,
-      loaded: 10,
-      breaksByStage: {
-        connection: 0,
-        discovery: 0,
-        selection: 3,
-        call: 1,
-        response: 0,
-        userValue: 0,
-      },
-      stageStates: {
-        connection: { kind: "passed", count: 10 },
-        discovery: { kind: "passed", count: 10 },
-        selection: { kind: "failed", count: 3 },
-        call: {
-          kind: "partial",
-          passed: 6,
-          notReached: 3,
-          notMeasured: 1,
-          notApplicable: 0,
-        },
-        response: {
-          kind: "partial",
-          passed: 6,
-          notReached: 4,
-          notMeasured: 0,
-          notApplicable: 0,
-        },
-        userValue: { kind: "notMeasured", count: 10 },
-      },
-      withheld: 0,
-      note: null,
+    createdBy: "u1",
+    createdAt: 1,
+    updatedAt: 2,
+    iterationNumber: 1,
+    status: "completed",
+    result: "passed",
+    resultSource: "reported",
+    actualToolCalls: [],
+    tokensUsed: 10,
+    suiteRunId: "run-1",
+    testCaseId: "case-1",
+    testCaseSnapshot: {
+      title: "Draw a rectangle",
+      query: "Draw",
+      provider: "openai",
+      model: "gpt-5-mini",
+      expectedToolCalls: [],
     },
-    p50Ms: 13800,
-    opensIterationId: "it_0",
-    diagnostic: null,
     ...overrides,
-  } as EvaluateCaseRow;
+  };
 }
 
-afterEach(cleanup);
+const results = (...list: EvalIteration["result"][]) =>
+  list.map((result, index) =>
+    iteration({
+      _id: `i${index}`,
+      result,
+      status: result === "pending" ? "running" : "completed",
+    }),
+  );
 
-describe("RunCaseRows", () => {
-  it("names the case, the break and the iteration fraction", () => {
-    render(<RunCaseRows rows={[row()]} defaultOpenKey={null} />);
-
-    const rendered = screen.getByTestId("run-case-row-g1");
-    expect(rendered).toHaveTextContent("Draw and share a diagram");
-    expect(rendered).toHaveTextContent(
-      "Broke at Selection: an expected tool call was never made",
-    );
-    expect(rendered).toHaveTextContent("6/10");
+describe("testRunVerdict", () => {
+  it.each<
+    [string, EvalIteration[], number | null, ReturnType<typeof testRunVerdict>]
+  >([
+    ["every iteration passed", results("passed", "passed"), 0.7, "passed"],
+    [
+      "flaky at the threshold",
+      results("passed", "passed", "passed", "failed"),
+      0.75,
+      "flaky",
+    ],
+    [
+      "flaky above the threshold",
+      results("passed", "passed", "passed", "failed"),
+      0.7,
+      "flaky",
+    ],
+    ["failed below the threshold", results("passed", "failed"), 0.7, "failed"],
+    [
+      "running while any is pending",
+      results("passed", "pending"),
+      0.7,
+      "pending",
+    ],
+    [
+      "cancelled when nothing decided",
+      results("cancelled", "cancelled"),
+      0.7,
+      "cancelled",
+    ],
+    [
+      "no threshold counts as 100%",
+      results("passed", "passed", "failed"),
+      null,
+      "failed",
+    ],
+    ["nothing to judge", [], 0.7, null],
+  ])("%s", (_, items, threshold, expected) => {
+    expect(testRunVerdict(items, threshold)).toBe(expected);
   });
 
-  it("paints a verdict glyph only when a verdict was read", () => {
-    render(
-      <RunCaseRows
-        rows={[
-          row(),
-          row({
-            key: "g2",
-            title: "Draw a rectangle",
-            mark: null,
-            verdict: { kind: "legacyRun" },
-            iterations: { passed: 1, total: 1 },
-            cells: [{ iterationId: "x", outcome: "passed", stage: null }],
-            break: { kind: "none" },
-          }),
-        ]}
-        defaultOpenKey={null}
+  it("leaves cancelled iterations out of the passed share", () => {
+    expect(testRunVerdict(results("passed", "passed", "cancelled"), 1)).toBe(
+      "passed",
+    );
+    expect(
+      testRunVerdict(
+        results("passed", "passed", "passed", "failed", "cancelled"),
+        0.75,
+      ),
+    ).toBe("flaky");
+  });
+});
+
+function run(id: string, model: string): EvalSuiteRun {
+  return {
+    _id: id,
+    suiteId: "suite-1",
+    createdBy: "u1",
+    runNumber: 4,
+    configRevision: "1",
+    configSnapshot: { tests: [], environment: { servers: [] } },
+    status: "completed",
+    createdAt: 1,
+    namedHostId: "host-1",
+    effectiveModelId: model,
+  };
+}
+
+function caseRows(
+  runId: string,
+  model: string,
+  title: string,
+  testCaseId: string | undefined,
+  outcomes: EvalIteration["result"][],
+) {
+  return outcomes.map((result, index) =>
+    iteration({
+      _id: `${runId}-${title}-${index}`,
+      suiteRunId: runId,
+      result,
+      testCaseId,
+      testCaseSnapshot: {
+        title,
+        query: title,
+        provider: "openai",
+        model,
+        expectedToolCalls: [],
+      },
+    }),
+  );
+}
+
+function matrixOf(iterations: EvalIteration[], models = ["gpt-5-mini"]) {
+  const runs = models.map((model, index) => ({
+    ...run(`run-${index + 1}`, model),
+    runGroupId: "g",
+  }));
+  return buildRunResultsMatrix({
+    run: runs[0],
+    runs,
+    iterations,
+    hostNamesById: new Map([["host-1", "MCPJam"]]),
+  });
+}
+
+const titles = () =>
+  screen
+    .getAllByTestId("test-run-row")
+    .map((row) => within(row).getAllByRole("button")[0].textContent);
+
+describe("RunTestRuns", () => {
+  const mixed = [
+    ...caseRows("run-1", "gpt-5-mini", "Draw a rectangle", "case-a", [
+      "passed",
+      "passed",
+    ]),
+    ...caseRows("run-1", "gpt-5-mini", "Sketch a two-node flow", "case-b", [
+      "passed",
+      "failed",
+      "failed",
+      "failed",
+    ]),
+    ...caseRows("run-1", "gpt-5-mini", "Add a label", "case-c", [
+      "passed",
+      "passed",
+      "passed",
+      "failed",
+    ]),
+    ...caseRows("run-1", "gpt-5-mini", "Legacy case", undefined, ["pending"]),
+  ];
+
+  function renderList(
+    matrix = matrixOf(mixed),
+    props: Partial<Parameters<typeof RunTestRuns>[0]> = {},
+  ) {
+    const onOpen = vi.fn();
+    const onEdit = vi.fn();
+    renderWithProviders(
+      <RunTestRuns
+        rows={matrix.rows}
+        targets={matrix.targets}
+        passThreshold={0.7}
+        onOpen={onOpen}
+        onEdit={onEdit}
+        {...props}
       />,
     );
+    return { onOpen, onEdit };
+  }
 
-    expect(
-      within(screen.getByTestId("run-case-row-g1")).getByLabelText(
-        "Case verdict: failed",
-      ),
-    ).toBeInTheDocument();
+  it("sorts failed, flaky, running, passed, then by title, with the count", () => {
+    renderList();
+    expect(titles()).toEqual([
+      "Sketch a two-node flow",
+      "Add a label",
+      "Legacy case",
+      "Draw a rectangle",
+    ]);
+    expect(screen.getByRole("region", { name: "Test runs" })).toHaveTextContent(
+      "Test runs4",
+    );
+  });
 
-    const legacy = screen.getByTestId("run-case-row-g2");
+  it("labels each cell's verdict and count", () => {
+    renderList();
+    const [failed, flaky, running, passed] =
+      screen.getAllByTestId("test-run-cell");
+    expect(failed).toHaveTextContent("Fail1/4");
+    expect(failed).toHaveClass("text-destructive");
+    expect(flaky).toHaveTextContent("Flaky3/4");
+    expect(running).toHaveTextContent("Running0/1");
+    expect(passed).toHaveTextContent("Pass2/2");
+    expect(screen.getByLabelText("1 of 4 iterations passed")).toBeTruthy();
+  });
+
+  it("searches titles and filters by status", async () => {
+    const user = userEvent.setup();
+    renderList();
+    await user.type(
+      screen.getByRole("textbox", { name: "Find a test run" }),
+      "draw",
+    );
+    expect(titles()).toEqual(["Draw a rectangle"]);
+    await user.clear(screen.getByRole("textbox", { name: "Find a test run" }));
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    await user.click(screen.getByRole("option", { name: "Flaky" }));
+    expect(titles()).toEqual(["Add a label"]);
+    await user.type(
+      screen.getByRole("textbox", { name: "Find a test run" }),
+      "zzz",
+    );
+    expect(screen.getByText("No test runs match.")).toBeVisible();
+  });
+
+  it("opens and edits through the row's buttons, and offers no edit without a case id", async () => {
+    const user = userEvent.setup();
+    const { onOpen, onEdit } = renderList();
+    await user.click(screen.getByRole("button", { name: "Draw a rectangle" }));
+    await user.click(
+      screen.getByRole("button", { name: "Open test run: Draw a rectangle" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Edit Test Case: Draw a rectangle" }),
+    );
+    expect(onOpen.mock.calls).toEqual([["case-a"], ["case-a"]]);
+    expect(onEdit).toHaveBeenCalledWith("case-a");
     expect(
-      within(legacy).queryByLabelText("No verdict read for this case"),
+      screen.getByRole("button", { name: "Open test run: Legacy case" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Edit Test Case: Legacy case" }),
     ).toBeNull();
-    expect(within(legacy).queryByLabelText(/Case verdict/)).toBeNull();
-    // And it says why, so the missing mark is an answer rather than a gap.
-    expect(legacy).toHaveTextContent("counted in iterations");
-    expect(
-      within(legacy).getByRole("button", { name: /Draw a rectangle/ }),
-    ).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("hides the fraction for a case that ran once", () => {
-    // 1/1 alongside 10/10 invites reading them as equally strong evidence.
-    render(
-      <RunCaseRows
-        rows={[
-          row({
-            iterations: { passed: 1, total: 1 },
-            cells: [{ iterationId: "x", outcome: "passed", stage: null }],
-          }),
-        ]}
-        defaultOpenKey={null}
-      />,
-    );
-    expect(screen.getByTestId("run-case-row-g1")).not.toHaveTextContent("1/1");
-  });
-
-  it("opens the row the model nominated", () => {
-    render(<RunCaseRows rows={[row()]} defaultOpenKey="g1" />);
-    expect(screen.getByTestId("run-case-row-body")).toBeInTheDocument();
-  });
-
-  it("states partial chain coverage instead of implying clean stages", () => {
-    render(
-      <RunCaseRows
-        rows={[
-          row({
-            coverage: {
-              ...row().coverage,
-              loaded: 8,
-              note: "chains loaded for 8 of 10 iterations",
-            },
-          }),
-        ]}
-        defaultOpenKey={null}
-      />,
-    );
-    expect(screen.getByTestId("run-case-row-g1")).toHaveTextContent(
-      "chains loaded for 8 of 10 iterations",
+    // The sliding label is decoration; the name lives on the button.
+    expect(screen.getAllByText("Open test run")[0]).toHaveAttribute(
+      "aria-hidden",
+      "true",
     );
   });
 
-  it("offers the iteration link only with somewhere to send the reader", () => {
-    const onOpenIteration = vi.fn();
-    render(
-      <RunCaseRows
-        rows={[row({ testCaseId: null })]}
-        defaultOpenKey="g1"
-        onOpenIteration={onOpenIteration}
-      />,
+  it("names each model in a header row and shows — where a model has no iteration", () => {
+    const two = matrixOf(
+      [
+        ...caseRows("run-1", "gpt-5-mini", "Draw a rectangle", "case-a", [
+          "passed",
+        ]),
+        ...caseRows("run-2", "claude-haiku-4.5", "Draw a rectangle", "case-a", [
+          "passed",
+        ]),
+        ...caseRows("run-2", "claude-haiku-4.5", "Only on Claude", "case-z", [
+          "failed",
+        ]),
+      ],
+      ["gpt-5-mini", "claude-haiku-4.5"],
     );
-    expect(screen.queryByText("Open this iteration")).toBeNull();
+    renderList(two);
+    expect(screen.getByText("Test run")).toBeTruthy();
+    expect(screen.getByText("gpt-5-mini")).toBeTruthy();
+    expect(screen.getByText("claude-haiku-4.5")).toBeTruthy();
+    const onlyClaude = screen.getAllByTestId("test-run-row")[0];
+    expect(onlyClaude).toHaveTextContent("Only on Claude");
+    expect(onlyClaude).toHaveTextContent("—");
   });
 
-  it("never paints a stage green that the run did not reach", () => {
-    // The bug this replaced: any stage with zero breaks rendered solid green,
-    // so a case that stopped at Selection showed Call, Response and User value
-    // as passing — three stages it never measured.
-    render(
-      <RunCaseRows
-        rows={[
-          row({
-            coverage: {
-              ...row().coverage,
-              stageStates: {
-                connection: { kind: "passed", count: 1 },
-                discovery: { kind: "passed", count: 1 },
-                selection: { kind: "failed", count: 1 },
-                call: { kind: "notReached", count: 1 },
-                response: { kind: "notReached", count: 1 },
-                userValue: { kind: "notMeasured", count: 1 },
-              },
-            },
-          }),
-        ]}
-        defaultOpenKey={null}
-      />,
-    );
-
-    expect(screen.getByTitle("Tool call: never reached")).toBeInTheDocument();
-    expect(screen.getByTitle("Response: never reached")).toBeInTheDocument();
-    expect(screen.getByTitle("User value: not measured")).toBeInTheDocument();
-    // And nothing claims a pass for them.
-    expect(screen.queryByTitle(/Tool call: passed/)).toBeNull();
-  });
-
-  it("splits a stage some iterations reached and others did not", () => {
-    render(<RunCaseRows rows={[row()]} defaultOpenKey={null} />);
-    // The three non-passing shapes stay apart: a chain that arrived and
-    // decided nothing is a different fact from one that stopped earlier, and
-    // summing them into "never reached it" asserts the wrong one about three.
-    expect(
-      screen.getByTitle(
-        "Tool call: passed in 6 of 10, 3 never reached it, 1 not measured",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTitle("Response: passed in 6 of 10, 4 never reached it"),
-    ).toBeInTheDocument();
-  });
-
-  it("opens the failing row when the nomination arrives after first render", async () => {
-    // The rows land only once the decision read resolves, so the FIRST render
-    // has no failing row to nominate. `useState` would keep that initial null
-    // forever and the failing case would render closed on every real run.
-    const { rerender } = render(
-      <RunCaseRows rows={[row()]} defaultOpenKey={null} />,
-    );
-    expect(screen.queryByTestId("run-case-row-body")).toBeNull();
-
-    rerender(<RunCaseRows rows={[row()]} defaultOpenKey="g1" />);
-    await screen.findByTestId("run-case-row-body");
-  });
-
-  it("says so plainly when a run has no cases", () => {
-    render(<RunCaseRows rows={[]} defaultOpenKey={null} />);
-    expect(
-      screen.getByText("This run has no cases to show."),
-    ).toBeInTheDocument();
-  });
-
-  it("renders a route line under the break text when one is supplied", () => {
-    render(
-      <RunCaseRows
-        rows={[row()]}
-        defaultOpenKey={null}
-        routeLines={new Map([["g1", "7 took `search→get` · 2 called nothing"]])}
-      />,
-    );
-    expect(screen.getByTestId("route-line-g1")).toHaveTextContent(
-      "7 took `search→get` · 2 called nothing",
-    );
+  it("has no header row with one model", () => {
+    renderList();
+    expect(screen.queryByText("Test run")).toBeNull();
   });
 });

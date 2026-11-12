@@ -1,7 +1,11 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { SuiteHealth, buildSuiteHealth } from "../suite-health";
+import {
+  SuiteHealth,
+  SuiteHealthBars,
+  buildSuiteHealth,
+} from "../suite-health";
 import type { ProjectRunRow } from "../../evals/project-runs-table";
 import type { ProjectRunHistoryDetail } from "../../evals/use-project-run-history";
 
@@ -247,5 +251,57 @@ describe("Suite Health", () => {
     const result = buildSuiteHealth(rows, details, "s1", "style:claude");
     expect(result.points.map((point) => point.key)).toEqual(["run:old"]);
     expect(result.average).toBe(100);
+  });
+});
+
+describe("SuiteHealthBars", () => {
+  const points = [
+    {
+      key: "a",
+      runNumber: 1,
+      date: Date.UTC(2026, 9, 26),
+      rate: 40,
+      target: { suiteId: "s", runId: "a" },
+    },
+    {
+      key: "b",
+      runNumber: 2,
+      date: Date.UTC(2026, 9, 27),
+      rate: 90,
+      target: null,
+    },
+  ];
+
+  it("draws one bar per point at its rate, with a date under each", () => {
+    render(<SuiteHealthBars points={points} threshold={null} />);
+    const bars = screen.getAllByTestId("suite-health-bar");
+    expect(bars.map((bar) => bar.style.height)).toEqual(["40%", "90%"]);
+    expect(screen.getAllByTestId("suite-health-bar-date")).toHaveLength(2);
+    expect(screen.queryByTestId("suite-health-threshold")).toBeNull();
+  });
+
+  it("draws the threshold line and label only for a valid threshold", () => {
+    const { rerender } = render(
+      <SuiteHealthBars points={points} threshold={70} />,
+    );
+    expect(screen.getByTestId("suite-health-threshold")).toBeInTheDocument();
+    expect(screen.getByText("70%")).toBeInTheDocument();
+    rerender(<SuiteHealthBars points={points} threshold={140} />);
+    expect(screen.queryByTestId("suite-health-threshold")).toBeNull();
+  });
+
+  it("disables a bar with no target and opens one with a target", () => {
+    const onSelectRun = vi.fn();
+    render(
+      <SuiteHealthBars
+        points={points}
+        threshold={null}
+        onSelectRun={onSelectRun}
+      />,
+    );
+    const [first, second] = screen.getAllByTestId("suite-health-bar");
+    expect(second).toBeDisabled();
+    fireEvent.click(first);
+    expect(onSelectRun).toHaveBeenCalledWith({ suiteId: "s", runId: "a" });
   });
 });

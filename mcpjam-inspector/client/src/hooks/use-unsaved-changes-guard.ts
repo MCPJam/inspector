@@ -16,6 +16,13 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useBlocker } from "react-router";
 
+/** The part of a router location the guard compares. */
+export type GuardLocation = {
+  pathname: string;
+  search?: string;
+  hash?: string;
+};
+
 export function useUnsavedChangesGuard(
   hasUnsavedChanges: boolean,
   /**
@@ -30,6 +37,11 @@ export function useUnsavedChangesGuard(
   onDiscard?: () => void,
   message = "You have unsaved settings. Leave without saving?",
   pendingSave = false,
+  /**
+   * Lets one navigation through without a prompt while the draft stays, for a
+   * move that keeps the same draft on screen (a tab of the same page).
+   */
+  allow?: (current: GuardLocation, next: GuardLocation) => boolean,
 ) {
   // Stable across renders that do not change the answer: react-router
   // re-registers the blocker whenever this function's identity moves, and this
@@ -39,14 +51,15 @@ export function useUnsavedChangesGuard(
       currentLocation,
       nextLocation,
     }: {
-      currentLocation: { pathname: string; search?: string; hash?: string };
-      nextLocation: { pathname: string; search?: string; hash?: string };
+      currentLocation: GuardLocation;
+      nextLocation: GuardLocation;
     }) =>
       hasUnsavedChanges &&
       (currentLocation.pathname !== nextLocation.pathname ||
         currentLocation.search !== nextLocation.search ||
-        currentLocation.hash !== nextLocation.hash),
-    [hasUnsavedChanges],
+        currentLocation.hash !== nextLocation.hash) &&
+      !allow?.(currentLocation, nextLocation),
+    [hasUnsavedChanges, allow],
   );
   const blocker = useBlocker(shouldBlock);
 

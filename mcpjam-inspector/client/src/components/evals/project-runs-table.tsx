@@ -70,7 +70,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useConvex, usePaginatedQuery, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { readRunGroupSummaries } from "./use-run-group-summaries";
-import { ChevronDown, GitBranch, Loader2 } from "lucide-react";
+import { ChevronDown, GitBranch, Loader2, Search } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   TableBody,
@@ -250,8 +250,11 @@ export function ProjectRunsTable({
   emptyState,
   onDeleteRun,
   canDeleteRun,
+  navLanding = false,
 }: {
   projectId: string;
+  /** Evaluate's Nav Runs tab: no Suite Health chart; an "All runs" search box takes the "Runs" heading's place. */
+  navLanding?: boolean;
   /**
    * Evaluate layout only: adds a delete button to each row the caller may
    * delete. A row is one launch, so it deletes every run in it.
@@ -336,6 +339,8 @@ export function ProjectRunsTable({
   );
   const [branchFilter, setBranchFilter] = useState(ALL_EVAL_FILTER_VALUES);
   const [commitFilter, setCommitFilter] = useState("");
+  const [runQuery, setRunQuery] = useState("");
+  const runNeedle = runQuery.trim().toLowerCase();
   const [hoveredHealthRun, setHoveredHealthRun] = useState<string | null>(null);
 
   // Keep the loaded feed stable so each facet can offer alternatives excluded
@@ -639,14 +644,20 @@ export function ProjectRunsTable({
       branchFilter !== ALL_EVAL_FILTER_VALUES ||
       Boolean(commitFilter.trim());
     const showGitContext = sourceFilter.has("github");
+    const clientName = (row: ProjectRunRow) =>
+      historyRows.get(row._id)?.client ??
+      runClientIdentity(
+        { client: row.client, namedHostId: row.namedHostId ?? undefined },
+        hostNamesById,
+      ).name;
     const matching = sourceAndSuiteRows.filter(
       (row) =>
+        (!runNeedle ||
+          `${row.suiteName ?? ""} #${row.runNumber} ${clientName(row)}`
+            .toLowerCase()
+            .includes(runNeedle)) &&
         (clientFilter === ALL_EVAL_FILTER_VALUES ||
-          (historyRows.get(row._id)?.client ??
-            runClientIdentity(
-              { client: row.client, namedHostId: row.namedHostId ?? undefined },
-              hostNamesById,
-            ).name) === clientFilter) &&
+          clientName(row) === clientFilter) &&
         (serverFilter === ALL_EVAL_FILTER_VALUES ||
           runServers.get(row._id)?.includes(serverFilter)) &&
         (repositoryFilter === ALL_EVAL_FILTER_VALUES ||
@@ -799,6 +810,7 @@ export function ProjectRunsTable({
     repositoryFilter,
     branchFilter,
     commitFilter,
+    runNeedle,
   ]);
   const isSuiteExpanded = (suiteId: string) =>
     suiteExpansion.get(suiteId) ?? true;
@@ -888,10 +900,11 @@ export function ProjectRunsTable({
     <div
       className={cn(
         "flex min-w-0 flex-col",
-        !embedded && "h-full min-h-0 overflow-y-auto px-6 pb-6 pt-5",
+        !embedded && "h-full min-h-0 overflow-y-auto px-6 pb-6",
+        !embedded && (navLanding ? "pt-6" : "pt-5"),
       )}
     >
-      {evaluateLayout && (
+      {evaluateLayout && !navLanding && (
         <SuiteHealth
           key={projectId}
           rows={rows}
@@ -932,21 +945,42 @@ export function ProjectRunsTable({
         <div
           className={
             evaluateLayout
-              ? "flex flex-wrap items-center justify-between gap-3 pb-3"
+              ? cn(
+                  "flex flex-wrap items-center justify-between pb-3",
+                  navLanding ? "gap-2" : "gap-3",
+                )
               : runHistoryToolbarClass
           }
         >
-          <div className="flex flex-wrap items-center gap-3">
-            {embedded && !historyMetricsEnabled ? (
-              <h2 className="text-xs font-semibold text-secondary-foreground">
-                Run history
-              </h2>
-            ) : (
-              <h2 className="text-xs font-semibold text-foreground">
-                {evaluateLayout ? "Runs" : "All Runs"}
-              </h2>
-            )}
-          </div>
+          {navLanding ? (
+            <div className="relative min-w-0 flex-1 basis-56">
+              <Search
+                aria-hidden
+                className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                type="search"
+                value={runQuery}
+                onChange={(event) => setRunQuery(event.target.value)}
+                placeholder="All runs"
+                aria-label="Search runs"
+                className="h-8 w-full border-border/50 bg-transparent pl-8 text-sm shadow-none"
+                data-testid="nav-run-search"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              {embedded && !historyMetricsEnabled ? (
+                <h2 className="text-xs font-semibold text-secondary-foreground">
+                  Run history
+                </h2>
+              ) : (
+                <h2 className="text-xs font-semibold text-foreground">
+                  {evaluateLayout ? "Runs" : "All Runs"}
+                </h2>
+              )}
+            </div>
+          )}
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
             {isFiltering && (
               <Button
@@ -1281,7 +1315,9 @@ export function ProjectRunsTable({
                     (clientFilter !== ALL_EVAL_FILTER_VALUES ||
                       serverFilter !== ALL_EVAL_FILTER_VALUES)
                       ? "Loading matching runs…"
-                      : "No runs match these filters."}
+                      : runNeedle && !isFiltering
+                        ? `No runs match “${runQuery.trim()}”.`
+                        : "No runs match these filters."}
                   </TableCell>
                 </TableRow>
               ) : evaluateLayout ? (

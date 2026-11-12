@@ -2,6 +2,14 @@ import { useEffect, useRef } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
+/** The tab strip's classes, shared with tab navs that need richer labels. */
+export const VIEW_MODE_NAV_CLASSNAME =
+  "order-3 flex w-full justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch] md:order-2 md:w-auto md:max-w-full md:py-0";
+export const VIEW_MODE_TAB_CLASSNAME =
+  "relative min-h-10 shrink-0 px-4 py-2 text-sm font-medium transition-colors duration-200 sm:min-h-11 sm:px-5 sm:text-base md:min-h-10 md:px-4 lg:px-6";
+export const VIEW_MODE_INDICATOR_CLASSNAME =
+  "absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary sm:inset-x-4 md:inset-x-3 lg:inset-x-6";
+
 export type ViewModeSelectorOption<T extends string> = {
   value: T;
   label: string;
@@ -44,10 +52,7 @@ export function ViewModeSelector<T extends string>({
 
   return (
     <nav
-      className={cn(
-        "order-3 flex w-full justify-center gap-1 overflow-x-auto [-webkit-overflow-scrolling:touch] md:order-2 md:w-auto md:max-w-full md:py-0",
-        className,
-      )}
+      className={cn(VIEW_MODE_NAV_CLASSNAME, className)}
       aria-label={ariaLabel}
     >
       {options.map((option) => {
@@ -61,7 +66,7 @@ export function ViewModeSelector<T extends string>({
             aria-current={active ? "page" : undefined}
             onClick={() => onChange(option.value)}
             className={cn(
-              "relative min-h-10 shrink-0 px-4 py-2 text-sm font-medium transition-colors duration-200 sm:min-h-11 sm:px-5 sm:text-base md:min-h-10 md:px-4 lg:px-6",
+              VIEW_MODE_TAB_CLASSNAME,
               active
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground",
@@ -73,7 +78,7 @@ export function ViewModeSelector<T extends string>({
               <motion.span
                 layoutId={layoutId}
                 aria-hidden="true"
-                className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-primary sm:inset-x-4 md:inset-x-3 lg:inset-x-6"
+                className={VIEW_MODE_INDICATOR_CLASSNAME}
                 transition={
                   reduceMotion
                     ? { duration: 0 }

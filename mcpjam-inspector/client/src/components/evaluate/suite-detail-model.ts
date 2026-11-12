@@ -619,6 +619,7 @@ export function suiteRunBlockedReason({
   isReplaying,
   runningTestCase,
   evalRunsDisabledReason,
+  nav = false,
 }: {
   caseCount: number;
   draftCount?: number;
@@ -628,6 +629,8 @@ export function suiteRunBlockedReason({
   isReplaying: boolean;
   runningTestCase: boolean;
   evalRunsDisabledReason?: string | null;
+  /** Cases are added in Suite settings on the new pages, so the copy points there. */
+  nav?: boolean;
 }): string | null {
   if (evalRunsDisabledReason) return evalRunsDisabledReason;
   if (!isEnvironmentSuite && !hasServersConfigured) {
@@ -637,8 +640,12 @@ export function suiteRunBlockedReason({
     return draftCount > 0
       ? `${draftCount} generated ${
           draftCount === 1 ? "draft is" : "drafts are"
-        } waiting to be added. Use “Add all to suite” on the suite page before running.`
-      : "Add a test case first.";
+        } waiting to be added. Use “Add all to suite” ${
+          nav ? "in Suite settings › Test cases" : "on the suite page"
+        } before running.`
+      : nav
+        ? "Add a test case in Suite settings first."
+        : "Add a test case first.";
   }
   if (isRerunning || isReplaying) {
     return "A suite or replay is already in progress.";

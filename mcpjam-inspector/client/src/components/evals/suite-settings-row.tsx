@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -17,6 +18,10 @@ import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
+import {
+  SettingInfoPill,
+  SuiteSettingsCompactContext,
+} from "./suite-settings-compact";
 import {
   suiteSettingsChainSectionClass,
   SuiteSettingsChainNode,
@@ -177,6 +182,7 @@ export function SuiteSettingsRow({
   ...rest
 }: SuiteSettingsRowProps) {
   const resolvedLabel = label ?? MANIFEST_LABEL[settingKey];
+  const compact = useContext(SuiteSettingsCompactContext);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const isControlled = openProp !== undefined;
   const isOpen = collapsible
@@ -260,6 +266,31 @@ export function SuiteSettingsRow({
   const sectionChrome = chained ? (
     <SuiteSettingsChainNode />
   ) : null;
+
+  if (!collapsible && compact) {
+    return (
+      <section
+        className="grid scroll-mt-6 gap-x-6 gap-y-2 border-t border-border/50 py-3 first:border-t-0 first:pt-0 sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-start"
+        data-setting-key={settingKey}
+        {...(isDisabled ? { "data-disabled-reason": disabledReason } : {})}
+        {...restAttrs}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <h3 className="text-sm font-medium text-foreground">
+            {resolvedLabel}
+          </h3>
+          {hint ? <SettingInfoPill label={resolvedLabel} hint={hint} /> : null}
+          {accessory}
+        </div>
+        <div ref={bodyRef} id={contentId} className="min-w-0 space-y-2">
+          {isDisabled ? (
+            <p className="text-sm text-muted-foreground">{disabledReason}</p>
+          ) : null}
+          {wrap(children)}
+        </div>
+      </section>
+    );
+  }
 
   if (!collapsible) {
     return (

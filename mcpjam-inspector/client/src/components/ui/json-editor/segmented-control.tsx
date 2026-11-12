@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 interface SegmentedControlOption<T extends string> {
   value: T;
-  label: string;
+  label: React.ReactNode;
   icon?: React.ReactNode;
   /** Native tooltip describing what selecting this option does. */
   title?: string;

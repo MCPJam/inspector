@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { EvalsHeader } from "../evals-header";
+import { EvalNavLandingHeader, EvalsHeader } from "../evals-header";
 
 describe("EvalsHeader", () => {
   it("offers run setup and creation actions on Runs", async () => {
@@ -269,5 +269,40 @@ describe("EvalsHeader", () => {
     expect(
       screen.getByRole("link", { name: "Pay invoice", current: "page" }),
     ).toBeTruthy();
+  });
+});
+
+describe("EvalNavLandingHeader", () => {
+  it("shows Suites then Runs, Create suite and a ⋮ menu with Tutorial", async () => {
+    const user = userEvent.setup();
+    const onTabChange = vi.fn();
+    const onCreateSuite = vi.fn();
+    const onOpenTutorial = vi.fn();
+    render(
+      <EvalNavLandingHeader
+        tab="suites"
+        onTabChange={onTabChange}
+        onCreateSuite={onCreateSuite}
+        onOpenTutorial={onOpenTutorial}
+      />,
+    );
+    const tabs = within(screen.getByTestId("evals-header-tabs"));
+    expect(tabs.getAllByRole("button").map((tab) => tab.textContent)).toEqual([
+      "Suites",
+      "Runs",
+    ]);
+    expect(screen.queryByText("Setup Run")).toBeNull();
+    expect(screen.queryByText("Overview")).toBeNull();
+    await user.click(tabs.getByRole("button", { name: "Runs" }));
+    expect(onTabChange).toHaveBeenCalledWith("runs");
+    await user.click(screen.getByRole("button", { name: "Create suite" }));
+    expect(onCreateSuite).toHaveBeenCalledOnce();
+    const more = screen.getByRole("button", { name: "More options" });
+    expect(more).toHaveAttribute("title", "More options");
+    await user.click(more);
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Tutorial"]);
+    await user.click(items[0]);
+    expect(onOpenTutorial).toHaveBeenCalledOnce();
   });
 });

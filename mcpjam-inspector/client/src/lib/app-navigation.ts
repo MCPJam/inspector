@@ -23,6 +23,11 @@ import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
 import type { EvalRoutePrefix } from "./eval-route-url";
+import {
+  buildEvalNavPath,
+  isEvalNavRoute,
+  legacyEvalRouteFor,
+} from "./eval-nav-routes";
 import { normalizeHostedHashTab } from "./hosted-tab-policy";
 import { isProjectScopedRoutePath } from "./app-routes";
 import {
@@ -513,17 +518,19 @@ export function buildOrganizationPath(
  * Build a Suites route; test cases always open Ding Dong.
  */
 export function buildEvalsPath(route: EvalRoute): string {
+  const target = isEvalNavRoute(route) ? legacyEvalRouteFor(route) : route;
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evals, route,
+    target.type === "test-edit" || target.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evals, target,
   );
 }
 
 /** Build a Runs route; test cases always open Ding Dong. */
 export function buildEvalsRunsPath(route: EvalRoute): string {
+  const target = isEvalNavRoute(route) ? legacyEvalRouteFor(route) : route;
   return buildEvalRoutePath(
-    route.type === "test-edit" || route.type === "test-detail"
-      ? routePaths.evaluate : routePaths.evalsRuns, route,
+    target.type === "test-edit" || target.type === "test-detail"
+      ? routePaths.evaluate : routePaths.evalsRuns, target,
   );
 }
 
@@ -532,18 +539,22 @@ export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
-/** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
+/** Retired Evaluate URLs preserve artifact context; Runs roots and commits open the Runs tab. */
 export function legacyEvalPathToEvaluatePath(
   pathname: string,
   search = "",
   hash = "",
 ): string {
+  const runsTab = buildEvaluatePath({ type: "evaluate-runs" });
   if (/^\/(?:evals\/runs|ci-evals)\/commit\/[^/]+\/*$/i.test(pathname)) {
     const params = new URLSearchParams(search);
     const project = params.get("project");
     const query = new URLSearchParams();
     if (project) query.set("project", project);
-    return `${routePaths.evaluate}${query.size ? `?${query}` : ""}`;
+    return `${runsTab}${query.size ? `?${query}` : ""}`;
+  }
+  if (/^\/(?:evals\/runs|ci-evals)\/*$/i.test(pathname)) {
+    return `${runsTab}${search}${hash}`;
   }
   const rewritten = pathname.replace(
     /^\/(?:evals(?:\/runs)?|ci-evals)(?=\/|$)/i,
@@ -631,6 +642,18 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
         query ? `?${query}` : ""
       }`;
     }
+    // Per-layer pages exist only on /evaluate; other prefixes get today's page.
+    case "evaluate-runs":
+    case "suite-settings":
+    case "case-new":
+    case "case-settings":
+    case "case-evaluators":
+    case "test-run":
+    case "iteration":
+    case "test-run-edit":
+      return prefix === routePaths.evaluate
+        ? buildEvalNavPath(route)
+        : buildEvalRoutePath(prefix, legacyEvalRouteFor(route));
   }
 }
 

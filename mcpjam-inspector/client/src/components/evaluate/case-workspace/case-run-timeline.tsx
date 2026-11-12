@@ -50,7 +50,8 @@ const UNKNOWN_MODEL = "Unknown model";
 const ALL_FILTER = "__all__";
 const RUN_TABLE_GRID =
   "grid grid-cols-[2.5rem_4rem_minmax(7rem,1fr)_4rem_4rem_3rem_2.5rem_5.5rem_6.5rem]";
-const age = (ts: number) => {
+/** How long ago a run started, in whole minutes, hours or days ("13d ago"). */
+export const age = (ts: number) => {
   const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
   return minutes < 1
     ? "just now"
