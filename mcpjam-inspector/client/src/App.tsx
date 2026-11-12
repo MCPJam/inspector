@@ -3083,9 +3083,6 @@ export default function App() {
     isInitialFirstRunOAuthReturn && !firstRunOverlayDismissed;
   const [firstRunOverlaySessionStarted, setFirstRunOverlaySessionStarted] =
     useState(isInitialFirstRunOAuthReturn);
-  const skipFirstRunWelcome = Boolean(
-    initialFirstRunServerChoiceState?.shownAt,
-  );
   const shouldRepairFirstRunStartedState =
     initialFirstRunServerChoiceState?.status === "started";
   const [firstRunConnectionState, setFirstRunConnectionState] =
@@ -4536,6 +4533,9 @@ export default function App() {
             serverName,
             serverKind,
             toolCount: tools.length,
+            toolPreview: tools
+              .slice(0, 4)
+              .map(({ name, description }) => ({ name, description })),
           });
         })
         .catch(() => {
@@ -7072,7 +7072,6 @@ export default function App() {
               </HostedShellGate>
               <FirstRunOnboardingOverlay
                 open={shouldShowFirstRunOverlay}
-                skipWelcome={skipFirstRunWelcome}
                 connectionState={firstRunConnectionState}
                 recoveryServerDraft={firstRunRecoveryServerDraft}
                 onConnectOwnServer={openFirstRunServerConnection}
@@ -7082,7 +7081,7 @@ export default function App() {
                 onReturnToChoice={returnToFirstRunChoice}
                 onOpenPlayground={openFirstRunPlayground}
                 isOpeningPlayground={isOpeningFirstRunPlayground}
-                onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
+                onShown={markFirstRunServerChoiceWelcomeShown}
                 onSkip={dismissFirstRunOverlay}
                 guestSessionRefusal={guestSessionRefusal?.reason ?? null}
                 organizationId={activeOrganizationId}

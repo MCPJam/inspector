@@ -595,6 +595,11 @@ vi.mock("../components/hosted/ScenarioChatPage", () => ({
   getScenarioPathTokenFromLocation: () => null,
 }));
 
+/** First-run onboarding's server-details heading, after a failure or an edit. */
+const SERVER_DETAILS_HEADING = /^(Couldn't connect to .+|Edit server details)$/;
+/** First-run sign-in reads "Connect" once non-OAuth auth is chosen. */
+const FIRST_RUN_AUTHORIZE = /^(Continue to sign-in|Connect)$/;
+
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
     projectTransitionRecovery.clear();
@@ -3783,7 +3788,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -3842,7 +3847,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -3850,7 +3855,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("shows Welcome once and resumes at server choice after a refresh", async () => {
+  it("records onboarding as shown and resumes it after a refresh", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -3863,7 +3868,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     await waitFor(() => {
       expect(
         JSON.parse(
@@ -3894,16 +3899,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await screen.findByRole("heading", {
-      name: "Connect to your MCP server",
+      name: "Connect an MCP server",
     });
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Connect to your MCP server" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
-    expect(
-      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
-    ).not.toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
   });
 
@@ -4043,10 +4045,10 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Connected to Excalidraw (App)",
+        name: "Excalidraw (App) is connected",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("6 tools ready to use")).toBeInTheDocument();
   });
 
   it("keeps onboarding open when a saved server hydrates after Welcome", async () => {
@@ -4062,7 +4064,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
 
     appState.projectServers = {
       savedServer: {
@@ -4080,7 +4082,7 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
   });
@@ -4098,21 +4100,17 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
 
     window.history.replaceState({}, "", "/tools");
     view.rerender(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
-    ).not.toBeInTheDocument();
   });
 
   it("shows first-run onboarding from a project-scoped Home route", async () => {
@@ -4140,7 +4138,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -4178,7 +4176,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByText("Servers Tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -4218,7 +4216,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await screen.findByTestId("app-shell");
     expect(
-      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+      screen.queryByRole("heading", { name: "Connect an MCP server" }),
     ).not.toBeInTheDocument();
     expect(window.location.pathname).toBe(
       "/p/k57missing000000000000000001/servers",
@@ -4256,7 +4254,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await screen.findByTestId("app-shell");
     expect(
-      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+      screen.queryByRole("heading", { name: "Connect an MCP server" }),
     ).not.toBeInTheDocument();
   });
 
@@ -4276,7 +4274,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -4301,11 +4299,10 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://mcp.example.com/mcp" },
     });
@@ -4368,10 +4365,10 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Set up your server" }),
+        screen.getByRole("heading", { name: SERVER_DETAILS_HEADING }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Failed to connect to MCP server",
+        "Connection error",
       );
     });
     expect(mockTrack).toHaveBeenCalledWith(
@@ -4417,21 +4414,20 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     await screen.findByRole("heading", {
-      name: "Connecting to Multiaccount",
+      name: "Sign in to Multiaccount",
     });
     expect(
-      screen.getByRole("button", { name: "Authorize" }),
+      screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
 
     await expect(authorizationResult).resolves.toEqual(
       expect.objectContaining({ authMethod: "auto" }),
@@ -4463,8 +4459,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://multiaccount.example/mcp" },
     });
@@ -4474,12 +4469,12 @@ describe("App hosted OAuth callback handling", () => {
       screen.getByRole("button", { name: "Edit server details" }),
     );
     await expect(authorizationResult).resolves.toBe(false);
-    await screen.findByRole("heading", { name: "Set up your server" });
+    await screen.findByRole("heading", { name: SERVER_DETAILS_HEADING });
     expect(
       screen.getByRole("combobox", { name: "Authentication" }),
     ).toHaveTextContent("Auto");
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() =>
       expect(appState.handleConnect).toHaveBeenCalledTimes(2),
     );
@@ -4515,20 +4510,19 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
-    await screen.findByRole("heading", { name: "Connecting to Secure" });
+    await screen.findByRole("heading", { name: "Sign in to Secure" });
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
 
     await expect(authorizationResult).resolves.toBe(false);
     await waitFor(() =>
@@ -4578,14 +4572,13 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://secure.example/mcp" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
-    await screen.findByRole("heading", { name: "Connecting to Secure" });
+    await screen.findByRole("heading", { name: "Sign in to Secure" });
     appState.projectServers.Secure = {
       name: "Secure",
       config: { url: "https://secure.example/mcp" },
@@ -4596,7 +4589,7 @@ describe("App hosted OAuth callback handling", () => {
     await userEvent.click(
       screen.getByRole("option", { name: "No Authentication" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
 
     await waitFor(() =>
       expect(appState.handleConnect).toHaveBeenCalledTimes(2),
@@ -4627,8 +4620,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: 'node server.js --config "My Files/config.json" ""' },
     });
@@ -4681,13 +4673,12 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+      screen.getByRole("button", { name: /Try the Excalidraw sample/ }),
     );
 
     await waitFor(() => {
@@ -4727,7 +4718,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(
         screen.getByRole("heading", {
-          name: "Connected to Excalidraw (App)",
+          name: "Excalidraw (App) is connected",
         }),
       ).toBeInTheDocument();
     });
@@ -4735,7 +4726,7 @@ describe("App hosted OAuth callback handling", () => {
       serverId: "Excalidraw (App)",
       refresh: true,
     });
-    expect(screen.getByText("6 tools ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("6 tools ready to use")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/home");
     expect(
       JSON.parse(
@@ -4773,7 +4764,7 @@ describe("App hosted OAuth callback handling", () => {
     );
     expect(
       screen.getByRole("heading", {
-        name: "Connected to Excalidraw (App)",
+        name: "Excalidraw (App) is connected",
       }),
     ).toBeInTheDocument();
     expect(
@@ -4788,7 +4779,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(
         screen.queryByRole("heading", {
-          name: "Connected to Excalidraw (App)",
+          name: "Excalidraw (App) is connected",
         }),
       ).not.toBeInTheDocument();
     });
@@ -4830,8 +4821,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
@@ -4853,13 +4843,13 @@ describe("App hosted OAuth callback handling", () => {
     view.rerender(<App />);
 
     await screen.findByRole("heading", {
-      name: "Connected to Personal",
+      name: "Personal is connected",
     });
     expect(mockListTools).toHaveBeenCalledWith({
       serverId: "Personal",
       refresh: true,
     });
-    expect(screen.getByText("2 tools ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("2 tools ready to use")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/home");
   });
 
@@ -4877,8 +4867,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     const view = render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://personal.example/mcp" },
     });
@@ -4896,12 +4885,12 @@ describe("App hosted OAuth callback handling", () => {
     };
     view.rerender(<App />);
 
-    await screen.findByRole("heading", { name: "Connected to Personal" });
+    await screen.findByRole("heading", { name: "Personal is connected" });
     expect(
-      screen.getByText("Connected. Tools can finish loading in Playground."),
+      screen.getByText("Tools can finish loading in the Playground."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Set up your server" }),
+      screen.queryByRole("heading", { name: SERVER_DETAILS_HEADING }),
     ).not.toBeInTheDocument();
     expect(
       JSON.parse(
@@ -4939,10 +4928,9 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+      screen.getByRole("button", { name: /Try the Excalidraw sample/ }),
     );
     await screen.findByRole("heading", {
       name: "Connecting to Excalidraw (App)",
@@ -4967,7 +4955,7 @@ describe("App hosted OAuth callback handling", () => {
     );
     expect(appState.clearPendingDashboardOAuth).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
     expect(
       JSON.parse(
@@ -4999,10 +4987,9 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockReturnValue(appState);
 
     render(<App />);
-    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await screen.findByRole("heading", { name: "Connect an MCP server" });
     fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+      screen.getByRole("button", { name: /Try the Excalidraw sample/ }),
     );
     await screen.findByRole("heading", {
       name: "Connecting to Excalidraw (App)",
@@ -5013,7 +5000,7 @@ describe("App hosted OAuth callback handling", () => {
       false,
     );
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", {
@@ -5041,13 +5028,12 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+      screen.getByRole("button", { name: /Try the Excalidraw sample/ }),
     );
 
     await waitFor(() => {
@@ -5103,12 +5089,11 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(
-      screen.getByRole("button", { name: /Try the Excalidraw demo/ }),
+      screen.getByRole("button", { name: /Try the Excalidraw sample/ }),
     );
 
     await waitFor(() => {
@@ -5150,12 +5135,11 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -5192,7 +5176,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -5232,7 +5216,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 
@@ -5359,9 +5343,9 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Connected to OAuth server" }),
+      await screen.findByRole("heading", { name: "OAuth server is connected" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("1 tool ready to use")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Open Playground" }),
     ).toBeInTheDocument();
@@ -5431,13 +5415,13 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Connecting to OAuth server",
+        name: "Sign in to OAuth server",
       }),
     ).toBeInTheDocument();
     expect(sonnerToast.error).not.toHaveBeenCalled();
     expect(sonnerToast.success).not.toHaveBeenCalled();
     expect(
-      screen.getByText("Your server needs authorization to connect."),
+      screen.getByText(/This server needs authorization/),
     ).toBeInTheDocument();
     expect(screen.getByText("Authentication")).toBeInTheDocument();
     expect(
@@ -5454,7 +5438,7 @@ describe("App hosted OAuth callback handling", () => {
       target: { value: "replacement-token" },
     });
     expect(appState.clearAutoOAuthEscalation).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: FIRST_RUN_AUTHORIZE }));
 
     await waitFor(() => expect(appState.handleConnect).toHaveBeenCalledOnce());
     // Authorize clears any Auto marker this page left pending, or the retry
@@ -5476,14 +5460,14 @@ describe("App hosted OAuth callback handling", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Connecting to OAuth server",
+        name: "Sign in to OAuth server",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Your server needs authorization to connect."),
+      screen.getByText(/This server needs authorization/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Set up your server" }),
+      screen.queryByRole("heading", { name: SERVER_DETAILS_HEADING }),
     ).not.toBeInTheDocument();
   });
 
@@ -5541,7 +5525,7 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Connect to your MCP server",
+        name: "Connect an MCP server",
       }),
     ).toBeInTheDocument();
     expect(appState.clearPendingDashboardOAuth).toHaveBeenCalled();
@@ -5611,10 +5595,10 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Connected to OAuth server",
+        name: "OAuth server is connected",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("1 tool ready to use")).toBeInTheDocument();
     expect(appState.connectServerWithResult).not.toHaveBeenCalled();
     expect(appState.reconnectServerWithResult).not.toHaveBeenCalled();
     expect(sonnerToast.success).not.toHaveBeenCalled();
@@ -5703,12 +5687,12 @@ describe("App hosted OAuth callback handling", () => {
         });
       });
       if (reconnectStatus === "reauth") {
-        await screen.findByText("Your server needs authorization to connect.");
+        await screen.findByText(/This server needs authorization/);
       }
       if (reconnectStatus === "superseded") {
         // A newer connect owns the outcome: keep waiting, no false error.
         expect(
-          screen.queryByText("Your server needs authorization to connect."),
+          screen.queryByText(/This server needs authorization/),
         ).not.toBeInTheDocument();
         expect(
           screen.getByRole("heading", { name: "Connecting to OAuth server" }),
@@ -5989,7 +5973,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("home-tab")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Welcome to MCPJam" }),
+        screen.getByRole("heading", { name: "Connect an MCP server" }),
       ).toBeInTheDocument();
     });
 

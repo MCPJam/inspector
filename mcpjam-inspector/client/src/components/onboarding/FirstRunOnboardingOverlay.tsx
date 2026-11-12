@@ -9,27 +9,15 @@ import {
 } from "react";
 import { useReducedMotion } from "framer-motion";
 import { Dialog as DialogPrimitive } from "radix-ui";
+import { ExternalLink } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@mcpjam/design-system/cn";
-import {
-  Dialog,
-  DialogDescription,
-  DialogHeader,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
+import { Dialog, DialogPortal } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { HOSTED_MODE } from "@/lib/config";
 import {
-  AlertCircle,
-  Check,
-  ChevronDown,
-  Circle,
-  Loader2,
-  X,
-} from "lucide-react";
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
 import {
   trackFirstRunConnectionFailed,
   trackFirstRunOnboardingEntered,
@@ -41,18 +29,33 @@ import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-retur
 import type { GuestSessionRefusalReason } from "@/lib/guest-session";
 import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 import {
+  AuthorizationProgress,
+  ConnectionProgress,
+} from "./FirstRunConnectionProgress";
+import {
+  FirstRunFrame,
+  FirstRunHeading,
+  FirstRunSkipRow,
+  ServerTile,
+} from "./FirstRunFrame";
+import { ConnectionFailureNotice } from "./FirstRunNotices";
+import {
+  FirstRunConnectedScreen,
+  FirstRunConnectScreen,
+  FirstRunDemoFailedScreen,
+  type FirstRunToolPreview,
+} from "./FirstRunScreens";
+import {
   useFirstRunServerForm,
   type FirstRunServerDraft,
 } from "./use-first-run-server-form";
 
 export type { FirstRunServerDraft } from "./use-first-run-server-form";
+export type { FirstRunToolPreview } from "./FirstRunScreens";
 
-/** Time the welcome splash remains visible before it advances to server choice. */
-export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
 export const FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS = 800;
 
 type FirstRunOverlayStep =
-  | "welcome"
   | "choose"
   | "connecting"
   | "authorizing"
@@ -80,6 +83,8 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       toolCount: number | null;
+      /** The first few tools, when discovery returned them this session. */
+      toolPreview?: readonly FirstRunToolPreview[];
     }
   | {
       status: "failed";
@@ -114,7 +119,6 @@ function analyticsScreenForStep(
   step: FirstRunOverlayStep,
   connectionState: FirstRunConnectionState,
 ): FirstRunOnboardingScreen {
-  if (step === "choose") return "server_choice";
   if (step === "connected") return "connected";
   if (step === "demo-failed") return "demo_failure";
   if (step === "server-details") return "personal_server_details";
@@ -123,12 +127,11 @@ function analyticsScreenForStep(
     if (connectionState.status === "loading-tools") return "loading_tools";
     return "connecting";
   }
-  return "welcome";
+  return "server_choice";
 }
 
 interface FirstRunOnboardingOverlayProps {
   open: boolean;
-  skipWelcome?: boolean;
   connectionState: FirstRunConnectionState;
   recoveryServerDraft?: FirstRunServerDraft;
   onConnectOwnServer: (draft: FirstRunServerDraft) => void;
@@ -138,7 +141,8 @@ interface FirstRunOnboardingOverlayProps {
   onReturnToChoice: () => void;
   onOpenPlayground: () => void;
   isOpeningPlayground?: boolean;
-  onWelcomeShown: () => void;
+  /** Called while onboarding is visible, so a reload resumes it. */
+  onShown: () => void;
   onSkip: () => void;
   /** Why the backend refused a guest session, or null while one is allowed. */
   guestSessionRefusal?: GuestSessionRefusalReason | null;
@@ -148,15 +152,14 @@ interface FirstRunOnboardingOverlayProps {
 }
 
 /**
- * The Home-mounted shell for first-run onboarding.
+ * The Home-mounted, full-page shell for first-run onboarding.
  *
- * It owns the welcome, initial URL capture, and editable failure recovery.
+ * It owns initial URL capture, sign-in, and editable failure recovery.
  * The parent sends each draft through the existing save-and-connect path, then
  * reports the real connection outcome back here for the next visible state.
  */
 export function FirstRunOnboardingOverlay({
   open,
-  skipWelcome = false,
   connectionState,
   recoveryServerDraft,
   onConnectOwnServer,
@@ -166,21 +169,16 @@ export function FirstRunOnboardingOverlay({
   onReturnToChoice,
   onOpenPlayground,
   isOpeningPlayground = false,
-  onWelcomeShown,
+  onShown,
   onSkip,
   guestSessionRefusal = null,
   onSignIn,
   organizationId,
   isSignedIn,
 }: FirstRunOnboardingOverlayProps) {
-  const guestSessionRefused = guestSessionRefusal !== null;
   const prefersReducedMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
-  const [step, setStep] = useState<FirstRunOverlayStep>(() =>
-    skipWelcome ? "choose" : "welcome",
-  );
-  const [isWelcomeCountdownRunning, setIsWelcomeCountdownRunning] =
-    useState(false);
+  const [step, setStep] = useState<FirstRunOverlayStep>("choose");
   const [visibleCompletedConnectionSteps, setVisibleCompletedConnectionSteps] =
     useState(connectionState.status === "connected" ? 3 : 0);
   const [isConnectedPresentationReady, setIsConnectedPresentationReady] =
@@ -219,13 +217,10 @@ export function FirstRunOnboardingOverlay({
     isSignedIn,
     contentRef,
   });
-  useEffect(() => {
-    if (open && step === "welcome") onWelcomeShown();
-  }, [onWelcomeShown, open, step]);
 
-  const continueToChoice = useCallback(() => {
-    setStep("choose");
-  }, []);
+  useEffect(() => {
+    if (open) onShown();
+  }, [onShown, open]);
 
   const returnToChoice = useCallback(() => {
     onReturnToChoice();
@@ -261,7 +256,14 @@ export function FirstRunOnboardingOverlay({
         authentication: "auto",
       });
     },
-    [onConnectOwnServer, serverUrlOrCommand],
+    [
+      onConnectOwnServer,
+      serverUrlOrCommand,
+      setServerName,
+      setServerTransport,
+      setServerUrlError,
+      setServerUrlOrCommand,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -312,6 +314,8 @@ export function FirstRunOnboardingOverlay({
       serverName,
       serverTransport,
       serverUrlOrCommand,
+      setServerUrlError,
+      setServerUrlOrCommand,
       validateSelectedAuthentication,
     ],
   );
@@ -375,9 +379,9 @@ export function FirstRunOnboardingOverlay({
   }, [connectionState.status, open, resetServerDraft]);
 
   // A fast local or cached connection can otherwise jump from one spinner
-  // straight to the success card. Pace only the presentation: the real
+  // straight to the success screen. Pace only the presentation: the real
   // handshake and tool discovery continue at full speed underneath. This also
-  // keeps the same modal mounted across an OAuth return.
+  // keeps the same page mounted across an OAuth return.
   useEffect(() => {
     if (!open || connectionState.status === "idle") return;
     const serverName = connectionState.serverName;
@@ -468,601 +472,305 @@ export function FirstRunOnboardingOverlay({
     onSkip();
   }, [onSkip]);
 
-  useEffect(() => {
-    if (!open || step !== "welcome" || prefersReducedMotion) return;
-    const timeoutId = window.setTimeout(
-      continueToChoice,
-      FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
+  const cancelToStep = (destination: "choose" | "server-details") => {
+    idleDestinationRef.current = destination;
+    onCancelConnection();
+    setStep(destination);
+  };
+
+  const serverTarget =
+    serverUrlOrCommand.trim() ||
+    recoveryServerDraft?.urlOrCommand ||
+    (connectionState.status !== "idle" && connectionState.serverKind === "demo"
+      ? "Excalidraw sample server"
+      : "Your MCP server");
+  const signsInWithOAuth =
+    serverTransport === "http" &&
+    (serverAuthentication === "auto" ||
+      serverAuthentication === "oauth" ||
+      serverAuthentication === "xaa");
+
+  let content: ReactNode;
+  if (
+    step === "authorizing" &&
+    connectionState.status === "authorization-required"
+  ) {
+    content = (
+      <>
+        <FirstRunHeading
+          tile={<ServerTile name={connectionState.serverName} />}
+          title={`Sign in to ${connectionState.serverName}`}
+          description={serverTarget}
+        />
+        <p className="mt-7 max-w-prose text-base leading-relaxed">
+          {signsInWithOAuth
+            ? "This server needs authorization. MCPJam takes you to its sign-in page, then finishes connecting when you come back."
+            : "This server needs authorization. Add your credentials below, then connect."}
+        </p>
+        {connectionState.error ? (
+          <ConnectionFailureNotice
+            title="Authorization didn't finish"
+            error={connectionState.error}
+          />
+        ) : null}
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="lg"
+            className="h-12 font-semibold"
+            onClick={authorizeWithSelectedSettings}
+          >
+            {signsInWithOAuth ? "Continue to sign-in" : "Connect"}
+            {signsInWithOAuth ? <ExternalLink aria-hidden /> : null}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            className="h-12"
+            onClick={() => cancelToStep("server-details")}
+          >
+            Edit server details
+          </Button>
+        </div>
+        {serverTransport === "http" ? (
+          <div className="mt-8 rounded-lg bg-card">
+            {authenticationSection}
+          </div>
+        ) : null}
+        {xaaConfigurationError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {xaaConfigurationError}
+          </p>
+        ) : null}
+        <AuthorizationProgress />
+      </>
     );
-    return () => window.clearTimeout(timeoutId);
-  }, [continueToChoice, open, prefersReducedMotion, step]);
+  } else if (
+    step === "connecting" &&
+    (connectionState.status === "preparing" ||
+      connectionState.status === "connecting" ||
+      connectionState.status === "loading-tools" ||
+      (connectionState.status === "connected" && !isConnectedPresentationReady))
+  ) {
+    content = guestSessionRefusal ? (
+      <>
+        <FirstRunHeading
+          title="Sign in to continue"
+          description={guestSessionRefusalCopy(guestSessionRefusal).summary}
+        />
+        <Button
+          type="button"
+          size="lg"
+          className="mt-8 h-12 font-semibold"
+          onClick={onSignIn}
+        >
+          Sign in
+        </Button>
+      </>
+    ) : (
+      <>
+        {connectionState.status === "preparing" ? (
+          <FirstRunHeading
+            title="Preparing your MCPJam workspace"
+            description="Getting your project ready to connect to an MCP server."
+          />
+        ) : (
+          <FirstRunHeading
+            tile={<ServerTile name={connectionState.serverName} />}
+            title={`Connecting to ${connectionState.serverName}`}
+            description={serverTarget}
+          />
+        )}
+        <ConnectionProgress
+          status={connectionState.status}
+          prefersReducedMotion={prefersReducedMotion}
+          completedSteps={visibleCompletedConnectionSteps}
+        />
+        {connectionState.status !== "connected" ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            className="mt-6 h-12"
+            onClick={() => cancelToStep("choose")}
+          >
+            Cancel
+          </Button>
+        ) : null}
+      </>
+    );
+  } else if (step === "connected" && connectionState.status === "connected") {
+    content = (
+      <FirstRunConnectedScreen
+        serverName={connectionState.serverName}
+        toolCount={connectionState.toolCount}
+        toolPreview={connectionState.toolPreview}
+        animate={!prefersReducedMotion}
+        isOpeningPlayground={isOpeningPlayground}
+        onOpenPlayground={onOpenPlayground}
+      />
+    );
+  } else if (step === "demo-failed" && connectionState.status === "failed") {
+    content = (
+      <FirstRunDemoFailedScreen
+        error={connectionState.error}
+        onRetry={onConnectDemo}
+        onConnectOwnServer={returnToChoice}
+        onSkip={setUpLater}
+      />
+    );
+  } else if (step === "server-details") {
+    content = (
+      <form onSubmit={submitServerDetails}>
+        <FirstRunHeading
+          title={
+            connectionState.status === "failed"
+              ? `Couldn't connect to ${connectionState.serverName}`
+              : "Edit server details"
+          }
+          description={
+            connectionState.status === "failed"
+              ? "Check the details below and try again."
+              : "Change how MCPJam connects to your server."
+          }
+        />
+        {connectionState.status === "failed" ? (
+          <ConnectionFailureNotice
+            title="Connection error"
+            error={connectionState.error}
+          />
+        ) : null}
 
-  // Start the CSS transition in a later browser task so the countdown paints at
-  // full width before it begins shrinking. The same duration drives the visual
-  // cue and the auto-advance timeout above.
-  useEffect(() => {
-    setIsWelcomeCountdownRunning(false);
-    if (!open || step !== "welcome" || prefersReducedMotion) return;
+        <div className="mt-8 grid gap-5">
+          <div className="grid gap-2">
+            <Label htmlFor="first-run-server-details-url" className="text-sm">
+              Server URL or command
+            </Label>
+            <Input
+              id="first-run-server-details-url"
+              className="h-12 bg-card font-mono md:text-base"
+              spellCheck={false}
+              value={serverUrlOrCommand}
+              aria-invalid={serverUrlError ? true : undefined}
+              onChange={(event) => {
+                setServerUrlOrCommand(event.target.value);
+                if (serverUrlError) setServerUrlError(null);
+              }}
+            />
+            {serverUrlError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {serverUrlError}
+              </p>
+            ) : null}
+          </div>
 
-    const startId = window.setTimeout(() => {
-      setIsWelcomeCountdownRunning(true);
-    }, 0);
-    return () => window.clearTimeout(startId);
-  }, [open, prefersReducedMotion, step]);
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="first-run-server-name" className="text-sm">
+                Name
+              </Label>
+              <Input
+                id="first-run-server-name"
+                className="h-11 bg-card md:text-base"
+                value={serverName}
+                onChange={(event) => setServerName(event.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label id="first-run-transport-label" className="text-sm">
+                Transport
+              </Label>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="lg"
+                className="w-full bg-card"
+                aria-labelledby="first-run-transport-label"
+                value={serverTransport}
+                onValueChange={(value) => {
+                  if (value === "http" || value === "stdio") {
+                    setServerTransport(value);
+                  }
+                }}
+              >
+                <ToggleGroupItem value="http">HTTP / SSE</ToggleGroupItem>
+                <ToggleGroupItem value="stdio">stdio</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          </div>
 
-  useEffect(() => {
-    if (!open || step !== "welcome") return;
+          {serverTransport === "http" ? (
+            <div className="rounded-lg bg-card">
+              {authenticationSection}
+            </div>
+          ) : null}
+          {xaaConfigurationError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {xaaConfigurationError}
+            </p>
+          ) : null}
+        </div>
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      continueToChoice();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [continueToChoice, open, step]);
+        <div className="mt-8 flex flex-wrap items-center gap-2">
+          <Button type="submit" size="lg" className="h-12 font-semibold">
+            Try again
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            className="h-12"
+            onClick={returnToChoice}
+          >
+            Start over
+          </Button>
+          <Button
+            type="button"
+            variant="link"
+            className="ml-auto px-0 text-sm"
+            onClick={onConnectDemo}
+          >
+            Try the sample server instead
+          </Button>
+        </div>
+        <FirstRunSkipRow onSkip={setUpLater} />
+      </form>
+    );
+  } else {
+    content = (
+      <FirstRunConnectScreen
+        serverUrlOrCommand={serverUrlOrCommand}
+        serverUrlError={serverUrlError}
+        onServerUrlOrCommandChange={(value) => {
+          setServerUrlOrCommand(value);
+          if (serverUrlError) setServerUrlError(null);
+        }}
+        onSubmit={connectWithInitialDefaults}
+        onConnectDemo={onConnectDemo}
+        onSkip={setUpLater}
+        guestSessionRefusal={guestSessionRefusal}
+        onSignIn={onSignIn}
+      />
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onSkip()}>
       <DialogPortal>
-        <DialogOverlay
-          className={
-            step === "welcome"
-              ? "dark bg-background bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)] bg-[size:auto,24px_24px] duration-700"
-              : "backdrop-blur-sm"
-          }
-        />
         <DialogPrimitive.Content
           ref={contentRef}
-          className={cn(
-            "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg outline-none duration-200 sm:max-w-lg",
-            // Each step's width keeps the base 1rem gutter on a phone; a bare
-            // `max-w-[420px]` replaced it, and the welcome ran edge to edge.
-            step === "welcome"
-              ? "dark max-w-[min(420px,calc(100%-2rem))] gap-0 border-0 bg-transparent p-1 text-left shadow-none"
-              : "max-h-[calc(100vh-2rem)] max-w-[min(408px,calc(100%-2rem))] gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-none",
-          )}
+          className="fixed inset-0 z-50 outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:duration-200"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             contentRef.current?.focus({ preventScroll: true });
           }}
           onEscapeKeyDown={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => {
-            event.preventDefault();
-            if (step === "welcome") continueToChoice();
-          }}
         >
-          {step === "welcome" ? (
-            <>
-              <DialogHeader className="gap-0 text-left">
-                <div className="flex items-center gap-4">
-                  <img
-                    src="/mcp_jam.svg"
-                    alt=""
-                    aria-hidden
-                    className="size-14 shrink-0"
-                  />
-                  <DialogTitle className="max-w-[12ch] pb-0 text-[2rem] leading-[1.12] font-semibold tracking-[-0.038em] text-foreground">
-                    Welcome to MCPJam
-                  </DialogTitle>
-                </div>
-                <span
-                  className="mt-4 block h-px w-[72px] bg-primary"
-                  aria-hidden
-                />
-                <DialogDescription className="mt-4 max-w-[42ch] text-[14.5px] leading-[1.5] text-foreground">
-                  Test and evaluate your MCP server for every user, across every
-                  major AI client.
-                </DialogDescription>
-              </DialogHeader>
-              <Button
-                type="button"
-                className="mt-7 h-auto justify-self-start rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                onClick={continueToChoice}
-              >
-                Get started
-              </Button>
-              {!prefersReducedMotion ? (
-                <div
-                  className="mt-6 h-px w-full overflow-hidden bg-border"
-                  data-testid="welcome-countdown"
-                  aria-hidden
-                >
-                  <div
-                    className="h-full w-full origin-left bg-primary transition-transform ease-linear motion-reduce:hidden"
-                    data-testid="welcome-countdown-bar"
-                    style={{
-                      transform: isWelcomeCountdownRunning
-                        ? "scaleX(0)"
-                        : "scaleX(1)",
-                      transitionDuration: `${FIRST_RUN_WELCOME_AUTO_ADVANCE_MS}ms`,
-                    }}
-                  />
-                </div>
-              ) : null}
-            </>
-          ) : step === "choose" ? (
-            <>
-              <DialogPrimitive.Close
-                className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-xs text-muted-foreground opacity-70 transition-opacity hover:text-foreground hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden"
-                aria-label="Close onboarding"
-              >
-                <X className="size-4" aria-hidden />
-              </DialogPrimitive.Close>
-              <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Connect to your MCP server
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  Add your MCP server to get started, or start testing with our
-                  demo server.
-                </DialogDescription>
-              </DialogHeader>
-
-              {guestSessionRefusal ? (
-                <GuestSessionRefusalNotice
-                  reason={guestSessionRefusal}
-                  onSignIn={onSignIn}
-                />
-              ) : null}
-
-              <form className="mt-[18px]" onSubmit={connectWithInitialDefaults}>
-                <Label
-                  htmlFor="first-run-server-url"
-                  className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
-                >
-                  {HOSTED_MODE ? "Server URL" : "Server URL or command"}
-                </Label>
-                <Input
-                  id="first-run-server-url"
-                  className="mt-1.5 h-10 border-border bg-card font-mono text-[11.5px] shadow-none"
-                  placeholder="https://mcp.example.com/mcp"
-                  spellCheck={false}
-                  autoComplete="off"
-                  value={serverUrlOrCommand}
-                  aria-invalid={serverUrlError ? true : undefined}
-                  onChange={(event) => {
-                    setServerUrlOrCommand(event.target.value);
-                    if (serverUrlError) setServerUrlError(null);
-                  }}
-                />
-                {serverUrlError ? (
-                  <p
-                    className="mt-1.5 text-[10.5px] text-destructive"
-                    role="alert"
-                  >
-                    {serverUrlError}
-                  </p>
-                ) : (
-                  <p className="mt-1.5 text-[10.5px] text-muted-foreground">
-                    {HOSTED_MODE
-                      ? "Connect an HTTP or SSE server."
-                      : "HTTP, SSE, and stdio all work."}
-                  </p>
-                )}
-                <Button
-                  type="submit"
-                  disabled={guestSessionRefused}
-                  className="mt-3 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                >
-                  Connect
-                </Button>
-              </form>
-
-              <div className="grid gap-0">
-                <div
-                  className="flex items-center gap-3 py-4 text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
-                  role="separator"
-                >
-                  or
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-auto w-full bg-card px-4 py-2.5 text-[12.5px] font-semibold shadow-none hover:border-primary hover:bg-card hover:text-foreground"
-                  onClick={() => onConnectDemo()}
-                  disabled={guestSessionRefused}
-                >
-                  Try the Excalidraw demo server
-                </Button>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                onClick={setUpLater}
-              >
-                Set up later
-              </Button>
-            </>
-          ) : step === "authorizing" &&
-            connectionState.status === "authorization-required" ? (
-            <div className="py-1">
-              <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Connecting to {connectionState.serverName}
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  Checking the connection before MCPJam opens the playground.
-                </DialogDescription>
-              </DialogHeader>
-              <ConnectionProgress
-                status="authorization-required"
-                prefersReducedMotion={prefersReducedMotion}
-              >
-                <p className="text-[11.5px] leading-[1.5] text-muted-foreground">
-                  Your server needs authorization to connect.
-                </p>
-                {connectionState.error ? (
-                  <div className="mt-3">
-                    <ConnectionFailureNotice error={connectionState.error} />
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  className="mt-3 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                  onClick={authorizeWithSelectedSettings}
-                >
-                  Authorize
-                </Button>
-                <div className="mt-3 border-t border-border pt-3">
-                  {serverTransport === "http" ? authenticationSection : null}
-                  {xaaConfigurationError ? (
-                    <p className="mt-2 text-xs text-destructive" role="alert">
-                      {xaaConfigurationError}
-                    </p>
-                  ) : null}
-                </div>
-              </ConnectionProgress>
-
-              <Button
-                type="button"
-                variant="ghost"
-                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                onClick={() => {
-                  idleDestinationRef.current = "server-details";
-                  onCancelConnection();
-                  setStep("server-details");
-                }}
-              >
-                Edit server details
-              </Button>
-            </div>
-          ) : step === "connecting" &&
-            (connectionState.status === "preparing" ||
-              connectionState.status === "connecting" ||
-              connectionState.status === "loading-tools" ||
-              (connectionState.status === "connected" &&
-                !isConnectedPresentationReady)) ? (
-            <div className="py-1">
-              <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  {guestSessionRefused
-                    ? "Sign in to continue"
-                    : connectionState.status === "preparing"
-                      ? "Preparing your MCPJam workspace"
-                      : "Connecting to "}
-                  {!guestSessionRefused &&
-                  connectionState.status !== "preparing"
-                    ? connectionState.serverName
-                    : null}
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  {guestSessionRefusal
-                    ? guestSessionRefusalCopy(guestSessionRefusal).summary
-                    : connectionState.status === "preparing"
-                      ? "Getting your project ready to connect to an MCP server."
-                      : "Checking the connection before MCPJam opens the playground."}
-                </DialogDescription>
-              </DialogHeader>
-              {guestSessionRefused ? (
-                <Button
-                  type="button"
-                  className="mt-5 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                  onClick={onSignIn}
-                >
-                  Sign in
-                </Button>
-              ) : (
-                <ConnectionProgress
-                  status={connectionState.status}
-                  prefersReducedMotion={prefersReducedMotion}
-                  completedSteps={visibleCompletedConnectionSteps}
-                />
-              )}
-              {!guestSessionRefused &&
-              connectionState.status !== "connected" ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="mx-auto mt-4 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                  onClick={() => {
-                    idleDestinationRef.current = "choose";
-                    onCancelConnection();
-                    setStep("choose");
-                  }}
-                >
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-          ) : step === "connected" && connectionState.status === "connected" ? (
-            <div className="py-2 text-center">
-              <div
-                className={cn(
-                  "mx-auto flex size-12 items-center justify-center rounded-full border border-success bg-success text-success-foreground",
-                  !prefersReducedMotion &&
-                    "animate-in fade-in zoom-in-50 duration-500",
-                )}
-                data-testid="first-run-success-indicator"
-                aria-hidden
-              >
-                <span
-                  className={cn(
-                    "flex",
-                    !prefersReducedMotion &&
-                      "animate-in fade-in zoom-in-50 delay-150 duration-300",
-                  )}
-                >
-                  <Check className="size-6" strokeWidth={2.25} />
-                </span>
-              </div>
-              <DialogHeader className="mt-5 gap-0 !text-center">
-                <DialogTitle className="text-center text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Connected to{" "}
-                  <span className="text-card-foreground">
-                    {connectionState.serverName}
-                  </span>
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-center text-[12.5px] leading-[1.55] text-muted-foreground">
-                  {connectionState.toolCount === null
-                    ? "Connected. Tools can finish loading in Playground."
-                    : `${connectionState.toolCount} ${
-                        connectionState.toolCount === 1 ? "tool" : "tools"
-                      } ready to use.`}
-                </DialogDescription>
-              </DialogHeader>
-              <Button
-                type="button"
-                className="mt-5 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                onClick={onOpenPlayground}
-                disabled={isOpeningPlayground}
-              >
-                {isOpeningPlayground
-                  ? "Opening Playground…"
-                  : "Open Playground"}
-              </Button>
-            </div>
-          ) : step === "demo-failed" && connectionState.status === "failed" ? (
-            <div>
-              <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Demo server unavailable
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  MCPJam couldn&apos;t reach the Excalidraw demo server. You can
-                  try again or connect your own server instead.
-                </DialogDescription>
-              </DialogHeader>
-              <ConnectionFailureNotice
-                key={connectionState.error}
-                error={connectionState.error}
-              />
-              <Button
-                type="button"
-                className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-                onClick={onConnectDemo}
-              >
-                Try demo again
-              </Button>
-              <div className="flex justify-center">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                  onClick={returnToChoice}
-                >
-                  Connect my own server
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <form onSubmit={submitServerDetails}>
-              <DialogHeader className="gap-0 text-left">
-                <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
-                  Set up your server
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  MCPJam couldn&apos;t connect with the default settings. Update
-                  the details and try again.
-                </DialogDescription>
-              </DialogHeader>
-
-              {connectionState.status === "failed" ? (
-                <ConnectionFailureNotice
-                  key={connectionState.error}
-                  error={connectionState.error}
-                />
-              ) : null}
-
-              <div className="mt-[18px] grid gap-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
-                    <Label
-                      htmlFor="first-run-server-name"
-                      className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
-                    >
-                      Name
-                    </Label>
-                    <Input
-                      id="first-run-server-name"
-                      className="h-10 border-border bg-card text-[12px] shadow-none"
-                      value={serverName}
-                      onChange={(event) => setServerName(event.target.value)}
-                    />
-                  </div>
-                  <label className="grid gap-1.5 font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase">
-                    Transport
-                    <select
-                      className="h-10 rounded-md border border-border bg-card px-3 font-sans text-[12px] tracking-normal text-foreground normal-case shadow-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      value={serverTransport}
-                      onChange={(event) =>
-                        setServerTransport(
-                          event.target.value as "http" | "stdio",
-                        )
-                      }
-                    >
-                      <option value="http">HTTP / SSE</option>
-                      <option value="stdio">stdio</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="grid gap-1.5">
-                  <Label
-                    htmlFor="first-run-server-details-url"
-                    className="font-mono text-[9.5px] tracking-[0.1em] text-muted-foreground uppercase"
-                  >
-                    Server URL or command
-                  </Label>
-                  <Input
-                    id="first-run-server-details-url"
-                    className="h-10 border-border bg-card font-mono text-[11.5px] shadow-none"
-                    spellCheck={false}
-                    value={serverUrlOrCommand}
-                    aria-invalid={serverUrlError ? true : undefined}
-                    onChange={(event) => {
-                      setServerUrlOrCommand(event.target.value);
-                      if (serverUrlError) setServerUrlError(null);
-                    }}
-                  />
-                  {serverUrlError ? (
-                    <p className="text-[10.5px] text-destructive" role="alert">
-                      {serverUrlError}
-                    </p>
-                  ) : null}
-                </div>
-
-                {serverTransport === "http" ? authenticationSection : null}
-                {xaaConfigurationError ? (
-                  <p className="text-xs text-destructive" role="alert">
-                    {xaaConfigurationError}
-                  </p>
-                ) : null}
-              </div>
-
-              <Button
-                type="submit"
-                className="mt-4 h-auto w-full rounded-md px-4 py-2.5 text-[12.5px] font-semibold shadow-none"
-              >
-                Connect server
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="mx-auto mt-3 h-auto px-2 py-1 text-[11px] font-normal text-foreground"
-                onClick={returnToChoice}
-              >
-                Back
-              </Button>
-            </form>
-          )}
+          <FirstRunFrame>{content}</FirstRunFrame>
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
-  );
-}
-
-function GuestSessionRefusalNotice({
-  reason,
-  onSignIn,
-}: {
-  reason: GuestSessionRefusalReason;
-  onSignIn?: () => void;
-}) {
-  const copy = guestSessionRefusalCopy(reason);
-  return (
-    <div
-      role="alert"
-      className="mt-4 rounded-md border border-warning/30 bg-warning/10 p-3"
-    >
-      <div className="flex items-start gap-2.5">
-        <AlertCircle
-          className="mt-0.5 size-4 shrink-0 text-warning"
-          aria-hidden
-        />
-        <div className="min-w-0">
-          <p className="text-[12px] font-semibold text-card-foreground">
-            {copy.title}
-          </p>
-          <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
-            {copy.detail}
-          </p>
-        </div>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        className="mt-3 w-full"
-        onClick={onSignIn}
-      >
-        Sign in
-      </Button>
-    </div>
-  );
-}
-
-function ConnectionFailureNotice({ error }: { error: string }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const detailsId = "first-run-connection-error-details";
-
-  return (
-    <div
-      className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3"
-      role="alert"
-    >
-      <div className="flex items-start gap-2.5">
-        <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
-          aria-hidden
-        >
-          <AlertCircle className="size-4" strokeWidth={2} />
-        </span>
-        <div className="min-w-0 flex-1 pt-0.5">
-          <p className="text-[12px] leading-4 font-semibold text-card-foreground">
-            Failed to connect to MCP server
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
-            aria-expanded={isExpanded}
-            aria-controls={detailsId}
-            onClick={() => setIsExpanded((current) => !current)}
-          >
-            {isExpanded ? "Hide technical details" : "View technical details"}
-            <ChevronDown
-              className={cn(
-                "size-3 transition-transform",
-                isExpanded && "rotate-180",
-              )}
-              aria-hidden
-            />
-          </Button>
-        </div>
-      </div>
-      {isExpanded ? (
-        <div className="mt-3 border-t border-destructive/15 pt-3">
-          <p
-            id={detailsId}
-            className="break-words font-mono text-[10.5px] leading-[1.5] text-muted-foreground"
-          >
-            {error}
-          </p>
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -1072,111 +780,4 @@ function deriveServerName(urlOrCommand: string): string {
   const hostname = firstToken.split("/")[0].replace(/^mcp\./i, "");
   const name = hostname.split(".")[0].replace(/[-_]+/g, " ");
   return name ? name.charAt(0).toUpperCase() + name.slice(1) : "Server";
-}
-
-const CONNECTION_PROGRESS_STEPS = [
-  "Connect server",
-  "Negotiate MCP compatibility",
-  "Load tools",
-] as const;
-
-function ConnectionProgress({
-  status,
-  prefersReducedMotion,
-  completedSteps,
-  children,
-}: {
-  status:
-    | "preparing"
-    | "connecting"
-    | "loading-tools"
-    | "authorization-required"
-    | "connected";
-  prefersReducedMotion: boolean | null;
-  completedSteps?: number;
-  children?: ReactNode;
-}) {
-  const [isAuthorizationExpanded, setIsAuthorizationExpanded] = useState(true);
-  const completedThrough =
-    completedSteps === undefined
-      ? status === "loading-tools"
-        ? 1
-        : -1
-      : completedSteps - 1;
-  const activeIndex = completedThrough >= 2 ? -1 : completedThrough + 1;
-
-  return (
-    <ol className="mt-5 grid gap-2.5" aria-label="Connection progress">
-      {CONNECTION_PROGRESS_STEPS.map((label, index) => {
-        const isComplete = index <= completedThrough;
-        const isActive = index === activeIndex;
-        const isAuthorizationFailure =
-          status === "authorization-required" && index === 0;
-        return (
-          <li
-            key={label}
-            className="rounded-md border border-border bg-muted/25 px-3 py-2.5 text-left"
-          >
-            {isAuthorizationFailure ? (
-              <button
-                type="button"
-                className="flex w-full items-center gap-3 text-left"
-                aria-expanded={isAuthorizationExpanded}
-                onClick={() =>
-                  setIsAuthorizationExpanded((isExpanded) => !isExpanded)
-                }
-              >
-                <span className="flex size-5 shrink-0 items-center justify-center">
-                  <X className="size-4 text-destructive" aria-hidden />
-                </span>
-                <span className="text-[12px] leading-5 font-medium text-destructive">
-                  {label}
-                </span>
-                <ChevronDown
-                  className={cn(
-                    "ml-auto size-3 text-muted-foreground transition-transform",
-                    !isAuthorizationExpanded && "-rotate-90",
-                  )}
-                  aria-hidden
-                />
-              </button>
-            ) : (
-              <div className="flex items-center gap-3">
-                <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
-                  {isComplete ? (
-                    <Check className="size-4 text-success" aria-hidden />
-                  ) : isActive ? (
-                    <Loader2
-                      className={cn(
-                        "size-4 text-primary",
-                        !prefersReducedMotion && "animate-spin",
-                      )}
-                      aria-hidden
-                    />
-                  ) : (
-                    <Circle className="size-3" aria-hidden />
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    "text-[12px] leading-5",
-                    isComplete || isActive
-                      ? "font-medium text-card-foreground"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {label}
-                </span>
-              </div>
-            )}
-            {isAuthorizationFailure && isAuthorizationExpanded && children ? (
-              <div className="mt-3 border-t border-border pt-3 pl-8">
-                {children}
-              </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ol>
-  );
 }

@@ -46,16 +46,17 @@ vi.mock("@/lib/first-run-onboarding-analytics", () => ({
 
 import {
   FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS,
-  FIRST_RUN_WELCOME_AUTO_ADVANCE_MS,
   FirstRunOnboardingOverlay,
   type FirstRunConnectionState,
   type FirstRunServerDraft,
 } from "../FirstRunOnboardingOverlay";
 import type { GuestSessionRefusalReason } from "@/lib/guest-session";
 
+/** The sign-in action reads "Connect" once non-OAuth auth is chosen. */
+const AUTHORIZE = /^(Continue to sign-in|Connect)$/;
+
 function renderOverlay(
   connectionState: FirstRunConnectionState = { status: "idle" },
-  skipWelcome = false,
   recoveryServerDraft?: FirstRunServerDraft,
   guestSessionRefusal: GuestSessionRefusalReason | null = null,
 ) {
@@ -65,13 +66,12 @@ function renderOverlay(
   const onCancelConnection = vi.fn();
   const onReturnToChoice = vi.fn();
   const onOpenPlayground = vi.fn();
-  const onWelcomeShown = vi.fn();
+  const onShown = vi.fn();
   const onSkip = vi.fn();
   const onSignIn = vi.fn();
   const view = render(
     <FirstRunOnboardingOverlay
       open
-      skipWelcome={skipWelcome}
       connectionState={connectionState}
       recoveryServerDraft={recoveryServerDraft}
       onConnectOwnServer={onConnectOwnServer}
@@ -80,7 +80,7 @@ function renderOverlay(
       onCancelConnection={onCancelConnection}
       onReturnToChoice={onReturnToChoice}
       onOpenPlayground={onOpenPlayground}
-      onWelcomeShown={onWelcomeShown}
+      onShown={onShown}
       onSkip={onSkip}
       guestSessionRefusal={guestSessionRefusal}
       onSignIn={onSignIn}
@@ -94,7 +94,7 @@ function renderOverlay(
     onCancelConnection,
     onReturnToChoice,
     onOpenPlayground,
-    onWelcomeShown,
+    onShown,
     onSkip,
     onSignIn,
     rerenderWithConnectionState: (
@@ -103,7 +103,6 @@ function renderOverlay(
       view.rerender(
         <FirstRunOnboardingOverlay
           open
-          skipWelcome={skipWelcome}
           connectionState={nextConnectionState}
           recoveryServerDraft={recoveryServerDraft}
           onConnectOwnServer={onConnectOwnServer}
@@ -112,7 +111,7 @@ function renderOverlay(
           onCancelConnection={onCancelConnection}
           onReturnToChoice={onReturnToChoice}
           onOpenPlayground={onOpenPlayground}
-          onWelcomeShown={onWelcomeShown}
+          onShown={onShown}
           onSkip={onSkip}
           guestSessionRefusal={guestSessionRefusal}
           onSignIn={onSignIn}
@@ -136,7 +135,6 @@ describe("FirstRunOnboardingOverlay", () => {
   it("surfaces a refused guest session inside server choice", async () => {
     const { onConnectDemo, onConnectOwnServer, onSignIn } = renderOverlay(
       { status: "idle" },
-      true,
       undefined,
       "rate_limited",
     );
@@ -144,7 +142,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(screen.getByText("Guest session limit reached")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Try the Excalidraw demo server" }),
+      screen.getByRole("button", { name: "Try the Excalidraw sample server" }),
     ).toBeDisabled();
 
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -156,7 +154,6 @@ describe("FirstRunOnboardingOverlay", () => {
   it("tells the visitor guest access is off when the deployment issues no guests", async () => {
     const { onSignIn } = renderOverlay(
       { status: "idle" },
-      true,
       undefined,
       "guest_access_disabled",
     );
@@ -169,14 +166,11 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onSignIn).toHaveBeenCalledOnce();
   });
 
-  it("records the welcome when it is shown and can resume at server choice", () => {
-    const { onWelcomeShown } = renderOverlay();
-    expect(onWelcomeShown).toHaveBeenCalledOnce();
-
-    cleanup();
-    renderOverlay({ status: "idle" }, true);
+  it("records that onboarding was shown and opens on the connect step", () => {
+    const { onShown } = renderOverlay();
+    expect(onShown).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
@@ -187,10 +181,7 @@ describe("FirstRunOnboardingOverlay", () => {
     const { rerenderWithConnectionState } = renderOverlay();
 
     expect(analyticsState.entered).toHaveBeenCalledOnce();
-    expect(analyticsState.entered).toHaveBeenCalledWith("welcome");
-    expect(analyticsState.screenViewed).toHaveBeenLastCalledWith("welcome");
-
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    expect(analyticsState.entered).toHaveBeenCalledWith("server_choice");
     expect(analyticsState.screenViewed).toHaveBeenLastCalledWith(
       "server_choice",
     );
@@ -250,7 +241,7 @@ describe("FirstRunOnboardingOverlay", () => {
   ] as const)(
     "records only the %s screen when resuming a restored connection",
     (expectedScreen, connectionState) => {
-      renderOverlay(connectionState, true);
+      renderOverlay(connectionState);
 
       expect(analyticsState.entered.mock.calls).toEqual([[expectedScreen]]);
       expect(analyticsState.screenViewed.mock.calls).toEqual([
@@ -261,69 +252,32 @@ describe("FirstRunOnboardingOverlay", () => {
 
   it("tracks setup-later without form contents", () => {
     const { onSkip } = renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://private.example/mcp" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
 
     expect(analyticsState.setupLater).toHaveBeenCalledOnce();
     expect(analyticsState.setupLater).toHaveBeenCalledWith();
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
-  it("advances from the welcome card with Get started", () => {
+  it("renders as a full page in the linen frame, not a floating modal", () => {
     renderOverlay();
 
+    const page = screen.getByRole("dialog");
+    expect(page).toHaveClass("fixed", "inset-0");
     expect(
-      document.querySelector('img[src="/mcp_jam.svg"]'),
-    ).toBeInTheDocument();
-    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
-      "bg-background",
-      "bg-[radial-gradient(ellipse_at_center,var(--background)_0%,var(--background)_42%,transparent_72%),radial-gradient(circle,var(--primary)_1px,transparent_1px)]",
-      "bg-[size:auto,24px_24px]",
-      "duration-700",
+      document.querySelector('[data-slot="dialog-overlay"]'),
+    ).not.toBeInTheDocument();
+    expect(page.querySelector(".bg-sidebar")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute(
+      "href",
+      "https://docs.mcpjam.com",
     );
-    expect(
-      screen.getByText(
-        "Test and evaluate your MCP server for every user, across every major AI client.",
-      ),
-    ).toHaveClass("text-foreground");
-    const continueButton = screen.getByRole("button", { name: "Get started" });
-    expect(continueButton).toHaveClass(
-      "justify-self-start",
-      "bg-primary",
-      "text-primary-foreground",
-    );
-    expect(continueButton).not.toHaveClass("underline");
-    expect(continueButton).not.toHaveClass(
-      "focus-visible:!border-0",
-      "focus-visible:!ring-0",
-    );
-
-    fireEvent.click(continueButton);
-    expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
-    ).toBeInTheDocument();
-    expect(document.querySelector('[data-slot="dialog-overlay"]')).toHaveClass(
-      "backdrop-blur-sm",
-    );
-  });
-
-  it("keeps a side gutter on a phone, on the welcome and the server choice", () => {
-    renderOverlay();
-    // The base dialog leaves 1rem each side; a step's own width must not
-    // drop it, or a 390px phone runs the content into the screen edge.
-    expect(screen.getByRole("dialog")).toHaveClass(
-      "max-w-[min(420px,calc(100%-2rem))]",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-
-    expect(screen.getByRole("dialog")).toHaveClass(
-      "max-w-[min(408px,calc(100%-2rem))]",
-    );
+    // The content column keeps a 1rem gutter on a phone.
+    expect(page.querySelector(".max-w-xl")).toHaveClass("px-4");
   });
 
   it("keeps its current step if eligibility briefly flickers", () => {
@@ -334,13 +288,12 @@ describe("FirstRunOnboardingOverlay", () => {
       onCancelConnection,
       onReturnToChoice,
       onOpenPlayground,
-      onWelcomeShown,
+      onShown,
       onSkip,
     } = renderOverlay();
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
 
     const renderWithOpen = (open: boolean) => (
@@ -352,7 +305,7 @@ describe("FirstRunOnboardingOverlay", () => {
         onCancelConnection={onCancelConnection}
         onReturnToChoice={onReturnToChoice}
         onOpenPlayground={onOpenPlayground}
-        onWelcomeShown={onWelcomeShown}
+        onShown={onShown}
         onSkip={onSkip}
       />
     );
@@ -361,47 +314,8 @@ describe("FirstRunOnboardingOverlay", () => {
     view.rerender(renderWithOpen(true));
 
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("advances from the welcome card with Enter", () => {
-    renderOverlay();
-    fireEvent.keyDown(window, { key: "Enter" });
-    expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
-    ).toBeInTheDocument();
-  });
-
-  it("automatically advances unless reduced motion is requested", () => {
-    vi.useFakeTimers();
-    renderOverlay();
-
-    expect(screen.getByTestId("welcome-countdown-bar")).toHaveStyle({
-      transitionDuration: `${FIRST_RUN_WELCOME_AUTO_ADVANCE_MS}ms`,
-    });
-
-    act(() => vi.advanceTimersByTime(FIRST_RUN_WELCOME_AUTO_ADVANCE_MS - 1));
-    expect(
-      screen.getByRole("heading", { name: "Welcome to MCPJam" }),
-    ).toBeInTheDocument();
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
-    ).toBeInTheDocument();
-
-    cleanup();
-    motionState.reduced = true;
-    renderOverlay();
-    act(() => vi.advanceTimersByTime(FIRST_RUN_WELCOME_AUTO_ADVANCE_MS));
-    expect(
-      screen.getByRole("heading", { name: "Welcome to MCPJam" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByTestId("welcome-countdown")).not.toBeInTheDocument();
   });
 
   it("delegates both connection paths and the explicit skip", () => {
@@ -412,7 +326,6 @@ describe("FirstRunOnboardingOverlay", () => {
       onSkip,
       rerenderWithConnectionState,
     } = renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://mcp.example.com/mcp" },
@@ -432,30 +345,24 @@ describe("FirstRunOnboardingOverlay", () => {
       error: "Connection refused",
     });
     expect(
-      screen.getByRole("heading", { name: "Set up your server" }),
+      screen.getByRole("heading", { name: "Couldn't connect to Example" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
+      "Connection error",
     );
-    expect(screen.queryByText("Connection refused")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View technical details" }),
-    );
-    expect(screen.getByText("Connection refused")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Hide technical details" }),
-    ).toHaveAttribute("aria-expanded", "true");
+    // The raw error is visible without a disclosure.
+    expect(screen.getByText("Connection refused")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "   " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(screen.getByText("Enter a server URL or command.")).toBeVisible();
     expect(onConnectOwnServer).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "  https://mcp.example.com/mcp  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledTimes(2);
     expect(onConnectOwnServer).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -466,31 +373,19 @@ describe("FirstRunOnboardingOverlay", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
     expect(onReturnToChoice).toHaveBeenCalledOnce();
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Try the Excalidraw demo server",
+        name: "Try the Excalidraw sample server",
       }),
     );
     expect(onConnectDemo).toHaveBeenCalledOnce();
 
-    const setUpLaterButton = screen.getByRole("button", {
-      name: "Set up later",
-    });
-    expect(setUpLaterButton).toHaveClass("text-foreground");
-    expect(setUpLaterButton).not.toHaveClass("underline");
-    fireEvent.click(setUpLaterButton);
-    expect(onSkip).toHaveBeenCalledOnce();
-  });
-
-  it("dismisses the server-choice modal from its close control", () => {
-    const { onSkip } = renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close onboarding" }));
-
+    const skipButton = screen.getByRole("button", { name: "Skip for now" });
+    expect(skipButton).toHaveClass("text-foreground", "underline");
+    fireEvent.click(skipButton);
     expect(onSkip).toHaveBeenCalledOnce();
   });
 
@@ -530,17 +425,18 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("heading", { name: "Connecting to My server" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Connect server")).toBeInTheDocument();
-    expect(screen.getByText("Negotiate MCP compatibility")).toBeInTheDocument();
+    expect(screen.getByText("Reach the server")).toBeInTheDocument();
+    expect(screen.getByText("Complete the MCP handshake")).toBeInTheDocument();
     expect(screen.getByText("Load tools")).toBeInTheDocument();
+    expect(screen.getByText("Reach the server").closest("li")).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
 
-    const cancelButton = screen.getByRole("button", { name: "Cancel" });
-    expect(cancelButton).toHaveClass("text-foreground");
-    expect(cancelButton).not.toHaveClass("underline");
-    fireEvent.click(cancelButton);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancelConnection).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("heading", { name: "Connect to your MCP server" }),
+      screen.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeInTheDocument();
 
     rerenderWithConnectionState({
@@ -548,33 +444,39 @@ describe("FirstRunOnboardingOverlay", () => {
       serverName: "My server",
       serverKind: "personal",
     });
-    expect(screen.getByText("Load tools").closest("li")).toHaveClass(
-      "text-left",
+    expect(screen.getByText("Load tools").closest("li")).toHaveAttribute(
+      "aria-current",
+      "step",
     );
     expect(
-      screen.getByText("Connect server").parentElement?.querySelector("svg"),
+      screen.getByText("Reach the server").closest("li")?.querySelector("svg"),
     ).toHaveClass("text-success");
 
     rerenderWithConnectionState({
       status: "connected",
       serverName: "My server",
       serverKind: "personal",
-      toolCount: 3,
+      toolCount: 6,
+      toolPreview: [
+        { name: "search_orders", description: "Find orders by status" },
+        { name: "get_order" },
+      ],
     });
     act(() => {
       vi.advanceTimersByTime(FIRST_RUN_CONNECTION_SUCCESS_REVEAL_MS);
     });
     expect(
-      screen.getByRole("heading", { name: "Connected to My server" }),
+      screen.getByRole("heading", { name: "My server is connected" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("My server")).toHaveClass("text-card-foreground");
     expect(screen.getByTestId("first-run-success-indicator")).toHaveClass(
-      "border-success",
       "bg-success",
-      "text-success-foreground",
       "animate-in",
     );
-    expect(screen.getByText("3 tools ready to use.")).toBeInTheDocument();
+    expect(screen.getByText("6 tools ready to use")).toBeInTheDocument();
+    expect(screen.getByText("search_orders")).toBeInTheDocument();
+    expect(screen.getByText("Find orders by status")).toBeInTheDocument();
+    expect(screen.getByText("get_order")).toBeInTheDocument();
+    expect(screen.getByText("and 4 more")).toBeInTheDocument();
 
     rerenderWithConnectionState({
       status: "connected",
@@ -583,14 +485,15 @@ describe("FirstRunOnboardingOverlay", () => {
       toolCount: null,
     });
     expect(
-      screen.getByText("Connected. Tools can finish loading in Playground."),
+      screen.getByText("Tools can finish loading in the Playground."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Tools" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Playground" }));
     expect(onOpenPlayground).toHaveBeenCalledOnce();
     vi.useRealTimers();
   });
 
-  it("expands OAuth authorization recovery within connection progress", () => {
+  it("asks for sign-in with the shared auth settings in view", () => {
     const {
       onAuthorizeConnection,
       onCancelConnection,
@@ -604,32 +507,24 @@ describe("FirstRunOnboardingOverlay", () => {
     });
 
     expect(
-      screen.getByRole("heading", {
-        name: "Connecting to Multiaccount",
-      }),
+      screen.getByRole("heading", { name: "Sign in to Multiaccount" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Your server needs authorization to connect."),
+      screen.getByText(/MCPJam takes you to its sign-in page/),
     ).toBeInTheDocument();
-    expect(screen.getByText("Connect server")).toHaveClass("text-destructive");
-    expect(screen.getByText("Authentication")).toBeInTheDocument();
-    const failedConnectionStep = screen.getByRole("button", {
-      name: "Connect server",
-    });
-    expect(failedConnectionStep).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(failedConnectionStep);
-    expect(screen.queryByText("Authentication")).not.toBeInTheDocument();
-    fireEvent.click(failedConnectionStep);
+    expect(screen.getByText("Sign in").closest("li")).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
     expect(screen.getByText("Authentication")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Advanced Settings" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Bearer token")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Edit server details" }),
-    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue to sign-in" }),
+    );
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         authentication: "auto",
@@ -644,7 +539,7 @@ describe("FirstRunOnboardingOverlay", () => {
     );
     expect(onCancelConnection).toHaveBeenCalledOnce();
     expect(
-      screen.getByRole("heading", { name: "Set up your server" }),
+      screen.getByRole("heading", { name: "Edit server details" }),
     ).toBeInTheDocument();
   });
 
@@ -655,7 +550,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Multiaccount",
         serverKind: "personal",
       },
-      true,
       {
         name: "Multiaccount",
         transport: "http",
@@ -682,7 +576,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Multiaccount",
         serverKind: "personal",
       },
-      true,
       {
         name: "Multiaccount",
         transport: "http",
@@ -701,7 +594,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("combobox", { name: "Authentication" }),
     ).toHaveTextContent("Bearer Token");
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       screen.getByText("Enter a bearer token to continue."),
     ).toBeInTheDocument();
@@ -709,7 +602,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         urlOrCommand: "https://multiaccount.example/mcp",
@@ -726,7 +619,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Multiaccount",
         serverKind: "personal",
       },
-      true,
       {
         name: "Multiaccount",
         transport: "http",
@@ -746,7 +638,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByRole("combobox", { name: "Authentication" }),
     ).toHaveTextContent("Bearer Token");
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       screen.getByText("Enter a bearer token to continue."),
     ).toBeInTheDocument();
@@ -754,7 +646,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         authentication: "bearer",
@@ -770,7 +662,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Multiaccount",
         serverKind: "personal",
       },
-      true,
       {
         name: "Multiaccount",
         transport: "http",
@@ -790,7 +681,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       screen.getByPlaceholderText("Optional scopes separated by spaces"),
     ).toHaveValue("read write");
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "custom-client",
@@ -809,7 +700,6 @@ describe("FirstRunOnboardingOverlay", () => {
           serverKind: "personal",
           ...(status === "failed" ? { error: "Connection refused" } : {}),
         },
-        true,
         {
           name: "Secure",
           transport: "http",
@@ -850,7 +740,7 @@ describe("FirstRunOnboardingOverlay", () => {
       }
       fireEvent.click(
         screen.getByRole("button", {
-          name: status === "failed" ? "Connect server" : "Authorize",
+          name: status === "failed" ? "Try again" : AUTHORIZE,
         }),
       );
       const submit =
@@ -862,15 +752,12 @@ describe("FirstRunOnboardingOverlay", () => {
   );
 
   it("clears hidden preregistered credentials when details switch to automatic registration", async () => {
-    const { onConnectOwnServer } = renderOverlay(
-      {
-        status: "failed",
-        serverName: "Secure",
-        serverKind: "personal",
-        error: "Connection refused",
-      },
-      true,
-    );
+    const { onConnectOwnServer } = renderOverlay({
+      status: "failed",
+      serverName: "Secure",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
     });
@@ -901,7 +788,7 @@ describe("FirstRunOnboardingOverlay", () => {
       screen.queryByPlaceholderText("Your OAuth Client ID"),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         authentication: "oauth",
@@ -920,7 +807,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Secure",
         serverKind: "personal",
       },
-      true,
       {
         name: "Secure",
         transport: "http",
@@ -946,7 +832,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
       target: { value: "new-client" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "new-client",
@@ -963,7 +849,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Secure",
         serverKind: "personal",
       },
-      true,
       {
         name: "Secure",
         transport: "http",
@@ -976,9 +861,9 @@ describe("FirstRunOnboardingOverlay", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Authorize" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: AUTHORIZE })).toBeEnabled(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "saved-client",
@@ -990,15 +875,12 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("keeps newly entered credentials after switching registration modes", async () => {
-    const { onConnectOwnServer } = renderOverlay(
-      {
-        status: "failed",
-        serverName: "Secure",
-        serverKind: "personal",
-        error: "Connection refused",
-      },
-      true,
-    );
+    const { onConnectOwnServer } = renderOverlay({
+      status: "failed",
+      serverName: "Secure",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
     });
@@ -1028,7 +910,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client Secret"), {
       target: { value: "new-secret" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: "new-client",
@@ -1045,7 +927,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Secure",
         serverKind: "personal",
       },
-      true,
       {
         name: "Secure",
         transport: "http",
@@ -1064,7 +945,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "new-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
 
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1077,15 +958,12 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("requires a valid client ID before connecting with preregistered OAuth", async () => {
-    const { onConnectOwnServer } = renderOverlay(
-      {
-        status: "failed",
-        serverName: "Secure",
-        serverKind: "personal",
-        error: "Connection refused",
-      },
-      true,
-    );
+    const { onConnectOwnServer } = renderOverlay({
+      status: "failed",
+      serverName: "Secure",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
     });
@@ -1104,7 +982,7 @@ describe("FirstRunOnboardingOverlay", () => {
       screen.getByRole("option", { name: /Preregistration/ }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       screen.getByText("Client ID is required when using custom credentials"),
     ).toBeVisible();
@@ -1113,7 +991,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
       target: { value: "ab" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       screen.getByText("Client ID must be at least 3 characters"),
     ).toBeVisible();
@@ -1122,7 +1000,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Your OAuth Client ID"), {
       target: { value: "abc" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({ authentication: "oauth", clientId: "abc" }),
     );
@@ -1135,7 +1013,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Notion",
         serverKind: "personal",
       },
-      true,
       {
         name: "Notion",
         transport: "http",
@@ -1148,7 +1025,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Edit server details" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
 
     expect(screen.getByLabelText("Server URL or command")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
@@ -1166,7 +1043,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
   it("can select bearer authentication through the shared auth settings", async () => {
     const { onAuthorizeConnection, rerenderWithConnectionState } =
-      renderOverlay({ status: "idle" }, true);
+      renderOverlay({ status: "idle" });
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
@@ -1184,7 +1061,7 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "secret-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
 
     expect(onAuthorizeConnection).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -1196,13 +1073,13 @@ describe("FirstRunOnboardingOverlay", () => {
       }),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
+      "Authorization didn't finish",
     );
   });
 
   it("keeps authorization in place until a selected bearer token is provided", async () => {
     const { onAuthorizeConnection, rerenderWithConnectionState } =
-      renderOverlay({ status: "idle" }, true);
+      renderOverlay({ status: "idle" });
 
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "https://secure.example/mcp" },
@@ -1217,7 +1094,7 @@ describe("FirstRunOnboardingOverlay", () => {
 
     await userEvent.click(screen.getByRole("combobox"));
     await userEvent.click(screen.getByRole("option", { name: "Bearer Token" }));
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
 
     const tokenInput = screen.getByPlaceholderText("Enter your bearer token");
     expect(tokenInput).toHaveFocus();
@@ -1234,7 +1111,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverKind: "personal",
         error: "XAA credentials are required",
       },
-      true,
       {
         name: "Enterprise",
         transport: "http",
@@ -1244,7 +1120,7 @@ describe("FirstRunOnboardingOverlay", () => {
       },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
 
     const clientId = screen.getByPlaceholderText(
       "Client ID registered with the server's authorization server",
@@ -1264,7 +1140,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverKind: "personal",
         error: "XAA credentials are required",
       },
-      true,
       {
         name: "Enterprise",
         transport: "http",
@@ -1278,7 +1153,7 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(
       await screen.findByText("Cross-App Access (XAA)"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Authorize" }));
+    fireEvent.click(screen.getByRole("button", { name: AUTHORIZE }));
 
     expect(onAuthorizeConnection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1296,7 +1171,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Enterprise",
         serverKind: "personal",
       },
-      true,
       {
         name: "Enterprise",
         transport: "http",
@@ -1319,7 +1193,7 @@ describe("FirstRunOnboardingOverlay", () => {
         "Client ID registered with the server's authorization server",
       ),
     ).toHaveValue("client-123");
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         authentication: "xaa",
@@ -1336,7 +1210,6 @@ describe("FirstRunOnboardingOverlay", () => {
         serverName: "Enterprise",
         serverKind: "personal",
       },
-      true,
       {
         name: "Enterprise",
         transport: "http",
@@ -1350,15 +1223,12 @@ describe("FirstRunOnboardingOverlay", () => {
   });
 
   it("hides HTTP authentication for STDIO retries and drops stale bearer input", async () => {
-    const { onConnectOwnServer } = renderOverlay(
-      {
-        status: "failed",
-        serverName: "Local",
-        serverKind: "personal",
-        error: "Connection refused",
-      },
-      true,
-    );
+    const { onConnectOwnServer } = renderOverlay({
+      status: "failed",
+      serverName: "Local",
+      serverKind: "personal",
+      error: "Connection refused",
+    });
     fireEvent.change(screen.getByLabelText("Server URL or command"), {
       target: { value: "node server.js" },
     });
@@ -1369,12 +1239,10 @@ describe("FirstRunOnboardingOverlay", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter your bearer token"), {
       target: { value: "unused-token" },
     });
-    fireEvent.change(screen.getByLabelText("Transport"), {
-      target: { value: "stdio" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "stdio" }));
 
     expect(screen.queryByText("Authentication")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Connect server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectOwnServer).toHaveBeenCalledWith(
       expect.objectContaining({
         transport: "stdio",
@@ -1384,7 +1252,7 @@ describe("FirstRunOnboardingOverlay", () => {
     );
   });
 
-  it("keeps demo failures out of the personal-server credential form", () => {
+  it("keeps sample-server failures out of the personal-server credential form", () => {
     const { onConnectDemo, onReturnToChoice, rerenderWithConnectionState } =
       renderOverlay();
     rerenderWithConnectionState({
@@ -1395,27 +1263,14 @@ describe("FirstRunOnboardingOverlay", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Demo server unavailable" }),
+      screen.getByRole("heading", { name: "Sample server unavailable" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Set up your server" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Connect my own server" }),
-    ).toHaveTextContent("Connect my own server");
-    expect(
-      screen.getByRole("button", { name: "Connect my own server" })
-        .parentElement,
-    ).toHaveClass("flex", "justify-center");
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to connect to MCP server",
+      "The sample server didn't respond",
     );
-    expect(screen.queryByText("Service unavailable")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "View technical details" }),
-    );
-    expect(screen.getByText("Service unavailable")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try demo again" }));
+    expect(screen.getByText("Service unavailable")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onConnectDemo).toHaveBeenCalledOnce();
     fireEvent.click(
       screen.getByRole("button", { name: "Connect my own server" }),
@@ -1423,25 +1278,17 @@ describe("FirstRunOnboardingOverlay", () => {
     expect(onReturnToChoice).toHaveBeenCalledOnce();
   });
 
-  it("uses the prototype's welcome and server-choice copy", () => {
+  it("explains the connect step and offers the sample server", () => {
     renderOverlay();
 
     expect(
-      screen.getByText(
-        /Test and evaluate your MCP server for every user, across every major AI client/i,
-      ),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
-
-    expect(
-      screen.getByText(
-        /Add your MCP server to get started, or start testing with our demo server/i,
-      ),
+      screen.getByText(/MCPJam checks the connection, loads your tools/i),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("No setup · nothing to install"),
-    ).not.toBeInTheDocument();
+      screen.getByRole("heading", { name: "Or start with a sample server" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("MCP App")).toBeInTheDocument();
+    expect(screen.getByText("Not ready to connect a server?")).toBeVisible();
   });
 
   it("offers the shared authentication choices in editable server details", async () => {
@@ -1483,7 +1330,6 @@ describe("FirstRunOnboardingOverlay", () => {
 
   it("requires a server URL or command before opening the details sheet", () => {
     renderOverlay();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -1493,8 +1339,6 @@ describe("FirstRunOnboardingOverlay", () => {
       { serverKind: "personal" },
       "validation",
     );
-    expect(
-      screen.queryByRole("heading", { name: "Set up your server" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,6 @@
 import { track } from "./analytics";
 
 export type FirstRunOnboardingScreen =
-  | "welcome"
   | "server_choice"
   | "project_preparing"
   | "connecting"

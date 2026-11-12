@@ -165,9 +165,9 @@ export function markFirstRunServerChoiceStarted(
 }
 
 /**
- * Records that the one-time welcome was rendered. A completed state
+ * Records that first-run onboarding was rendered. A completed state
  * without this marker came from an older automatic flow, so it must not hide
- * the explicit welcome screen.
+ * the explicit onboarding page.
  */
 export function markFirstRunServerChoiceWelcomeShown(): void {
   const current = readFirstRunServerChoiceState();

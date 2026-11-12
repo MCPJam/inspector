@@ -20,14 +20,14 @@ describe("first-run onboarding analytics", () => {
   afterEach(() => trackMock.mockReset());
 
   it("captures the approved screen-only entry and impression payloads", () => {
-    trackFirstRunOnboardingEntered("welcome");
+    trackFirstRunOnboardingEntered("server_choice");
     trackFirstRunOnboardingScreenViewed("server_choice");
     trackFirstRunSetupLater();
 
     expect(trackMock.mock.calls).toEqual([
       [
         "first_run_onboarding_entered",
-        { location: "first_run_onboarding", screen: "welcome" },
+        { location: "first_run_onboarding", screen: "server_choice" },
       ],
       [
         "first_run_onboarding_screen_viewed",
