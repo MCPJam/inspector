@@ -11,6 +11,7 @@ import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated.js";
+import { getCatalogTemplate } from "../src/host-compat/catalog.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -115,6 +116,39 @@ describe("seedHostTemplate", () => {
     }
   });
 
+  it("preserves documented discovery defaults in legacy and bundled catalog creation", () => {
+    const autoHosts = new Set<HostTemplateId>([
+      "claude",
+      "claude-desktop",
+      "copilot-cli",
+    ]);
+    const onHosts = new Set<HostTemplateId>([
+      "claude-code",
+      "cursor",
+      "codex",
+      "vscode",
+      "goose",
+    ]);
+
+    for (const id of ALL_IDS) {
+      const expected = autoHosts.has(id) ? undefined : onHosts.has(id);
+      for (const config of [
+        seedHostTemplate(id),
+        getCatalogTemplate(BUNDLED_HOST_COMPAT_CATALOG, id),
+      ]) {
+        if (!config) throw new Error(`Missing host template: ${id}`);
+        expect(config.progressiveToolDiscovery, id).toBe(expected);
+        const serialized = JSON.parse(JSON.stringify(config));
+        expect(serialized.progressiveToolDiscovery, id).toBe(expected);
+        if (autoHosts.has(id)) {
+          expect(serialized, id).not.toHaveProperty(
+            "progressiveToolDiscovery"
+          );
+        }
+      }
+    }
+  });
+
   // The MCPJam persona is the inspector's own client and supports the full
   // XAA path, so it declares the enterprise-managed-authorization extension.
   // Every real-host persona must NOT — a seed refactor that leaks the key
@@ -198,7 +232,7 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
-    expect(config.progressiveToolDiscovery).toBe(false);
+    expect(config.progressiveToolDiscovery).toBe(true);
     // Bumped with the 2026-10-26 re-probe, from 2.1.259.
     expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.310");
   });
