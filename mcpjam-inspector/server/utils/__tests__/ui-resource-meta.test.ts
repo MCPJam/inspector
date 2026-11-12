@@ -158,11 +158,10 @@ describe("resolveUiResourceMeta — preferredDisplayMode", () => {
     });
   });
 
-  it("lets the content item win and falls back to the listing", () => {
+  it("reads the content item only, never the listing", () => {
     expect(resolve("inline", "fullscreen").preferredDisplayMode).toBe("inline");
-    expect(resolve(undefined, "fullscreen").preferredDisplayMode).toBe(
-      "fullscreen",
-    );
+    expect(resolve(undefined, "fullscreen").preferredDisplayMode).toBeUndefined();
+    expect(uiDisplayHintFields(resolve(undefined, "fullscreen"))).toEqual({});
     expect(resolve().preferredDisplayMode).toBeUndefined();
     expect(uiDisplayHintFields(resolve())).toEqual({});
   });
@@ -184,19 +183,15 @@ describe("resolveUiResourceMeta — preferredDisplayMode", () => {
     });
   });
 
-  it("reports a malformed content value and still reads the listing", () => {
+  it("reports a malformed content value without falling back to the listing", () => {
     const resolved = resolve("side-panel", "fullscreen");
-    expect(resolved.preferredDisplayMode).toBe("fullscreen");
+    expect(resolved.preferredDisplayMode).toBeUndefined();
     expect(resolved.ignoredPreferredDisplayMode).toBe('"side-panel"');
   });
 
-  it("reports a malformed listing value only when the content declares none", () => {
-    expect(resolve("inline", "bogus").ignoredPreferredDisplayMode).toBe(
-      undefined,
-    );
-    expect(resolve(undefined, "bogus").ignoredPreferredDisplayMode).toBe(
-      '"bogus"',
-    );
+  it("never reports a listing value", () => {
+    expect(resolve("inline", "bogus").ignoredPreferredDisplayMode).toBeUndefined();
+    expect(resolve(undefined, "bogus").ignoredPreferredDisplayMode).toBeUndefined();
   });
 
   it("shortens a long declaration", () => {

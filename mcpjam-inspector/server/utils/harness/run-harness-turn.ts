@@ -848,8 +848,8 @@ export async function runHarnessTurn(
     scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
-    includeProjectSkills,
     effectiveCapabilities,
+    liveTurn,
     environmentId,
     environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
@@ -1854,8 +1854,8 @@ export async function runHarnessTurn(
       const turnSkills = await harnessTurnSkills({
         pinnedHarnessSkills,
         runtimeSkillsOverride,
-        ...(includeProjectSkills ? { includeProjectSkills } : {}),
         ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+        liveTurn,
         // The turn already refused to start without both.
         project: {
           skills: () => fetchRuntimeSkills(authHeader, projectId, executionScope),

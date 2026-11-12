@@ -82,7 +82,7 @@ export function sessionTurnSkills(args: {
   // box fetches the project's skills itself, which this plan does not see.
   const live: LiveSkillSource | undefined =
     args.liveSkills && runtime.kind === "agent"
-      ? { kind: "live", liveExtras: { projectSkills: args.liveSkills } }
+      ? { kind: "live", projectSkills: args.liveSkills }
       : undefined;
   const skills = resolveTurnSkills({
     source: withheld

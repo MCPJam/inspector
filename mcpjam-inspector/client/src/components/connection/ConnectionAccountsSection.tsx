@@ -76,11 +76,8 @@ export function ConnectionAccountsSection({
   onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
   onSwitch: () => void | Promise<void>;
 }) {
-  const { connections, shared, loaded, error } = useHostedOAuthConnections(
-    projectId,
-    serverId,
-    enabled,
-  );
+  const { connections, shared, loaded, error, refetch } =
+    useHostedOAuthConnections(projectId, serverId, enabled);
   const canAddAccount = useMultiAccountConnectionsEnabled();
   const sharing = useSignInSharing({ projectId, serverId, enabled });
   if (!enabled || !projectId || !serverId) return null;
@@ -89,6 +86,7 @@ export function ConnectionAccountsSection({
       connections={connections}
       shared={loaded ? shared : undefined}
       error={error}
+      onReload={refetch}
       canAddAccount={canAddAccount}
       isAdmin={sharing.isAdmin}
       sharingControl={
@@ -99,7 +97,15 @@ export function ConnectionAccountsSection({
             onChange={async (next) => {
               await sharing.setSharing(next);
               // So the live connection signs in with the new kind of account.
-              await onSwitch();
+              // The sharing change is saved either way, so a failed reconnect
+              // gets its own message instead of failing the change.
+              try {
+                await onSwitch();
+              } catch {
+                toast.error(
+                  "Sharing changed, but the server could not reconnect. Reconnect it to use the new accounts.",
+                );
+              }
             }}
           />
         ) : null
@@ -133,6 +139,7 @@ export function ConnectionAccountsList({
   connections,
   shared,
   error,
+  onReload,
   canAddAccount,
   isAdmin,
   sharingControl,
@@ -143,6 +150,8 @@ export function ConnectionAccountsList({
   /** Undefined until the server's list answers. */
   shared: boolean | undefined;
   error?: string;
+  /** Loads the list again after it failed to load. */
+  onReload?: () => void;
   canAddAccount: boolean;
   isAdmin: boolean;
   sharingControl?: ReactNode;
@@ -193,9 +202,16 @@ export function ConnectionAccountsList({
       </p>
 
       {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
+        <div className="flex items-center gap-2">
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+          {onReload ? (
+            <Button variant="ghost" size="sm" onClick={onReload}>
+              Reload accounts
+            </Button>
+          ) : null}
+        </div>
       )}
 
       {/* Whoever has no share control still sees that the server is shared. */}

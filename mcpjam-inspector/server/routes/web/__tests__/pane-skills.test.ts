@@ -153,17 +153,35 @@ describe("per-pane Skills preview", () => {
     );
     expect((await preview(bare)).status).toBe(404);
   });
-  it("merges the native live pool with plugin pins by folder and deduplicates IDs", async () => {
+  it("previews a client from its hidden environment, resolved in the client's selection", async () => {
+    // The backend's scope puts the client's own skills in the environment, so
+    // the preview reads exactly what the turn will: no pool beside it.
     serve({ ...spec, environmentOrigin: "adhoc" });
     const response = await preview({ ...bare, environmentId: "env1" });
     expect(response.status).toBe(200);
     const data = await response.json();
-    expect(data.deliveredCount).toBe(3);
-    expect(data.skills).toHaveLength(5);
-    expect(data.skills[3]).toMatchObject({
-      skillId: "s4",
-      reason: "name-collision",
-    });
+    expect(data.skills.map((row: { skillId: string }) => row.skillId)).toEqual([
+      "s1",
+      "s2",
+      "s3",
+    ]);
+    expect(data.deliveredCount).toBe(2);
+    expect(query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForRuntime",
+      expect.objectContaining({ skillScope: "visible" }),
+    );
+    expect(
+      query.mock.calls.some(([ref]) =>
+        String(ref).startsWith("projectSkills:"),
+      ),
+    ).toBe(false);
+  });
+  it("asks a named setup's preview for no scope", async () => {
+    await preview(named);
+    expect(query).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForRuntime",
+      expect.not.objectContaining({ skillScope: "visible" }),
+    );
   });
   it("refuses to read another pane's live pool using a named setup or a mismatched client", async () => {
     expect((await preview({ ...bare, environmentId: "env1" })).status).toBe(

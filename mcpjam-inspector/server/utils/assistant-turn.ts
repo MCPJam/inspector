@@ -300,12 +300,12 @@ export interface RunAssistantTurnOptions {
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
   /**
-   * Resolved Project-Environment skills for this turn (Phase 1.4).
-   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
-   * delivers exactly these and skips the live project-wide fetch. Ranks below
-   * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
+   * This turn's environment skills, and whether they are a client's live turn.
+   * Pass-through to `runHarnessTurn`: set (even empty), the box gets exactly
+   * these. Ranks below `pinnedHarnessSkills`; see `harness/skill-delivery.ts`.
    */
   runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  liveTurn?: MCPJamHandlerOptions["liveTurn"];
 
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
@@ -552,12 +552,12 @@ function buildHandlerOptions(
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
     ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
-    // Environment skill override: same presence-is-semantic rule as pinned —
-    // an empty resolved set means "this environment delivers no skills", never
-    // "fall back to the project pool".
+    // Environment skills: presence is semantic, as for pinned. An empty set
+    // means "this environment delivers no skills", never "use the project's".
     ...(opts.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
       : {}),
+    ...(opts.liveTurn ? { liveTurn: true } : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the
     // external-account credential check asks whether a BROKERED secret is
     // selected into THIS environment, and an absent id means "no grant" rather

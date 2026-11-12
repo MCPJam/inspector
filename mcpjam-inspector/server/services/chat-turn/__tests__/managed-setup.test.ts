@@ -74,7 +74,9 @@ function hostedSetup(
     environmentSpec: null,
     scenarioEnvironment: null,
     effectiveCapabilities: null,
-    usesLiveSkills: true,
+    clientTurn: mode === "interactive",
+    attribution: null,
+    pluginDisabled: [],
     authoritativeConnectionPolicy: mode === "recorded",
     pinsEnvironment: false,
     authoritativeCapabilities: mode === "recorded",
@@ -112,7 +114,16 @@ describe("managed setup local runtime policy", () => {
     m.builtInPolicy.mockResolvedValue({ ids: [], dropped: [] });
     m.useLocalHarness.mockResolvedValue(false);
     m.localSkills.mockResolvedValue([
-      { ref: "machine-skill", skillId: "local:machine-skill" },
+      {
+        ref: "local/machine-skill",
+        skillId: "local:machine-skill",
+        name: "machine-skill",
+        description: "A skill on this machine.",
+        content: "# Machine skill",
+        aggregateHash: "agg",
+        files: [],
+        directory: "/machine/machine-skill",
+      },
     ]);
   });
 
@@ -184,13 +195,39 @@ describe("managed setup local runtime policy", () => {
     });
   });
 
-  it("gives an interactive turn this machine's skills", async () => {
-    m.hostedSetup.mockResolvedValue(hostedSetup("interactive"));
+  const clientEnvironment = {
+    environmentRef: { environmentId: "env_chat", name: "Chat", revision: 1 },
+    environmentOrigin: "adhoc",
+    host: { hostId: "host_1", runtimeConfig: {} },
+    servers: { effectiveServerIds: [] },
+    skills: [],
+  };
+
+  it("gives a client's turn this machine's skills", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive"),
+      environmentSpec: clientEnvironment,
+    });
     const { setup } = await resolveSetup({});
     expect(m.localSkills).toHaveBeenCalled();
-    expect(setup.value?.liveProjectCapabilities?.localSkills).toEqual([
-      expect.objectContaining({ ref: "machine-skill" }),
+    expect(setup.value?.turnSkills.skills.delivered).toEqual([
+      expect.objectContaining({ ref: "local/machine-skill" }),
     ]);
+    // Live: the client's servers are connected now.
+    expect(setup.value?.turnSkills.skills.agent).toEqual({ kind: "live" });
+  });
+
+  it("gives a named environment's turn neither this machine's skills nor its servers' own", async () => {
+    m.hostedSetup.mockResolvedValue({
+      ...hostedSetup("interactive"),
+      environmentSpec: { ...clientEnvironment, environmentOrigin: "named" },
+      clientTurn: false,
+    });
+    const { setup } = await resolveSetup({});
+    expect(m.localSkills).not.toHaveBeenCalled();
+    expect(setup.value?.turnSkills.skills.agent).toEqual({
+      kind: "environment",
+    });
   });
 
   it("never gives a recorded scenario turn this machine's skills", async () => {
@@ -201,9 +238,7 @@ describe("managed setup local runtime policy", () => {
     });
     expect(setup.value?.turnMode).toBe("recorded");
     expect(m.localSkills).not.toHaveBeenCalled();
-    expect(setup.value?.liveProjectCapabilities?.localSkills ?? []).toEqual(
-      [],
-    );
+    expect(setup.value?.turnSkills.skills.set.localSkills).toEqual([]);
   });
 });
 

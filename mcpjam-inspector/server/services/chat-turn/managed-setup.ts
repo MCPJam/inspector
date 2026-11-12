@@ -60,7 +60,7 @@ import {
   externalAccountHostModelRefusalReason,
   harnessUnavailableHttpStatus,
 } from "../../utils/harness/harness-availability.js";
-import { harnessSupportsSkills, harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import { orgKeyHarnessSurfaceError } from "../../utils/harness/org-key-surfaces.js";
 import {
   LOCAL_HARNESS_GRANT_HEADER,
@@ -72,16 +72,10 @@ import { createConvexClient } from "../evals/route-helpers.js";
 import {
   runtimeServerIds,
   runtimeServerNames,
-  runtimeSkills as environmentRuntimeSkills,
-  turnSkillProvenance,
-  type EnvironmentSkillDelivery,
 } from "../environments/runtime.js";
-import {
-  buildLiveEffectiveCapabilities,
-  pluginOriginByServerId,
-  withLiveProjectSkills,
-  type EffectiveCapabilitySet,
-} from "../environments/effective-capabilities.js";
+import { pluginOriginByServerId } from "../environments/effective-capabilities.js";
+import { environmentTurnSkills } from "../environments/live-turn-skills.js";
+import { resolveTurnSkills, turnRuntime } from "../environments/turn-skills.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { HOSTED_APP_HANDLERS, qualifyHarnessHostCapabilities } from "../../../shared/harness-host-capabilities.js";
 import { resolveTurnBuiltInToolIds } from "../../utils/built-in-tools/built-in-tool-policy.js";
@@ -176,7 +170,9 @@ export async function resolveManagedTurnSetup(args: {
     environmentSpec,
     scenarioEnvironment,
     effectiveCapabilities: resolvedCapabilities,
-    usesLiveSkills,
+    clientTurn,
+    attribution,
+    pluginDisabled,
     authoritativeConnectionPolicy,
     pinsEnvironment,
     authoritativeCapabilities: isHostAuthoritative,
@@ -206,6 +202,7 @@ export async function resolveManagedTurnSetup(args: {
     signal: c.req.raw.signal,
     getClient: async () =>
       createConvexClient(await getConvexBearerForRequest(c), c.req.raw.signal),
+    hiddenEnvironment: rawBody.includeProjectSkills === true,
   });
   let requiredNativeDiscoveryPin = false;
   if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
@@ -258,11 +255,6 @@ export async function resolveManagedTurnSetup(args: {
       ? environmentServerNameList
       : undefined
     : selectedServerNames;
-  const environmentSkills = environmentSpec
-    ? environmentRuntimeSkills(environmentSpec)
-    : scenarioEnvironment
-      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-      : undefined;
   const hostPins =
     authoritativeConnectionPolicy && hostRuntimeConfig
       ? buildHostConnectionPins(hostRuntimeConfig, WEB_STREAM_TIMEOUT_MS)
@@ -312,22 +304,6 @@ export async function resolveManagedTurnSetup(args: {
     if (loopVerdict)
       return { response: refuseAgentLoop(c, loopVerdict, "chat_v2") };
   }
-  const skillDeliveryMode: EnvironmentSkillDelivery = !resolvedExecution.harness
-    ? "emulated"
-    : harnessSupportsSkills(resolvedExecution.harness)
-      ? "harness"
-      : "unsupported";
-  const turnProvenance = environmentSpec
-    ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
-    : scenarioEnvironment
-      ? turnSkillProvenance(
-          {
-            environmentRef: scenarioEnvironment.environmentRef,
-            skills: scenarioEnvironment.skills ?? [],
-          },
-          { delivery: skillDeliveryMode },
-        )
-      : undefined;
   for (const entry of resolvedExecution.drift) {
     if (entry.field === "requireToolApproval") {
       logger.warn(
@@ -661,44 +637,32 @@ export async function resolveManagedTurnSetup(args: {
   )?.computer?.workdir;
   const harnessComputerWorkdir =
     typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
-  const requestedProjectSkills =
-    turnMode === "interactive" &&
-    (usesLiveSkills ||
-      (rawBody as Record<string, unknown>).includeProjectSkills === true);
-  const includeProjectSkills =
-    requestedProjectSkills && environmentSpec?.environmentOrigin === "adhoc";
-  if (requestedProjectSkills && !includeProjectSkills) {
-    logger.warn(
-      "[chat-v2] includeProjectSkills ignored: not an ad-hoc environment",
-      {
-        environmentId: environmentSpec?.environmentRef.environmentId ?? null,
-        projectId: hostedBody.projectId ?? null,
-        environmentOrigin: environmentSpec?.environmentOrigin ?? null,
-      },
-    );
-  }
-  const cloudSkillsEnabled =
-    (!environmentServers || includeProjectSkills) &&
-    shouldEnableCloudSkillTools({
-      isGuest: Boolean(c.get("guestId")),
-      harness: resolvedExecution.harness,
-      modelId: String(modelDefinition.id),
-      provider: modelDefinition.provider,
-      hosted: modelDefinition.hosted,
-      ...(routingSelection ? { selection: routingSelection } : {}),
-      hasProjectId: Boolean(hostedBody.projectId),
-    });
-  let liveProjectCapabilities: EffectiveCapabilitySet | undefined;
+  // One skill plan for this turn's engine, from the environment the turn
+  // resolved. A client's turn in the local app hands MCPJam's agent this
+  // machine's skills too. Every project turn resolves an environment; a study
+  // whose scenario predates environments has none, so a member's turn on
+  // MCPJam's agent reads the project's pool and a harness reads its own.
+  const runtime = turnRuntime({ harness: resolvedExecution.harness });
   let projectSkillReadFailed = false;
-  if (cloudSkillsEnabled && hostedBody.projectId) {
-    try {
-      liveProjectCapabilities = buildLiveEffectiveCapabilities({
-        standaloneSkills: await listCloudRuntimeSkills({
-          authHeader: `Bearer ${bearerToken}`,
-          projectId: hostedBody.projectId,
-        }),
-      });
-    } catch (error) {
+  const memberPool = async () => {
+    if (
+      !hostedBody.projectId ||
+      !shouldEnableCloudSkillTools({
+        isGuest: Boolean(c.get("guestId")),
+        harness: resolvedExecution.harness,
+        modelId: String(modelDefinition.id),
+        provider: modelDefinition.provider,
+        hosted: modelDefinition.hosted,
+        ...(routingSelection ? { selection: routingSelection } : {}),
+        hasProjectId: true,
+      })
+    ) {
+      return [];
+    }
+    return listCloudRuntimeSkills({
+      authHeader: `Bearer ${bearerToken}`,
+      projectId: hostedBody.projectId,
+    }).catch((error) => {
       projectSkillReadFailed = true;
       logger.warn(
         "[chat-v2] project skill catalog fetch failed; turn proceeds without them",
@@ -707,27 +671,47 @@ export async function resolveManagedTurnSetup(args: {
           error: error instanceof Error ? error.message : String(error),
         },
       );
-    }
-  }
-  // This machine's skills are an interactive extra, like
-  // `includeProjectSkills` above: a recorded scenario turn never takes them.
-  if (
-    localIngress &&
-    turnMode === "interactive" &&
-    !resolvedExecution.harness &&
-    (usesLiveSkills || includeProjectSkills)
-  ) {
-    const localSkills = await listLocalRuntimeSkills().catch((error) => {
-      logger.warn("[chat-v2] local skill scan failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
       return [];
     });
-    const localCapabilities = buildLiveEffectiveCapabilities({ localSkills });
-    liveProjectCapabilities = liveProjectCapabilities
-      ? withLiveProjectSkills(liveProjectCapabilities, localCapabilities)
-      : localCapabilities;
-  }
+  };
+  const environment = environmentSpec ?? scenarioEnvironment;
+  const turnSkills = environment
+    ? environmentTurnSkills({
+        spec: environment,
+        attribution,
+        pluginDisabled,
+        ...(clientTurn
+          ? {
+              liveExtras: {
+                localSkills:
+                  localIngress && !resolvedExecution.harness
+                    ? await listLocalRuntimeSkills().catch((error) => {
+                        logger.warn("[chat-v2] local skill scan failed", {
+                          error:
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                        });
+                        return [];
+                      })
+                    : [],
+              },
+            }
+          : {}),
+        runtime,
+        modelContextTokens: modelDefinition.contextLength,
+      })
+    : {
+        skills: resolveTurnSkills({
+          source: {
+            kind: "live",
+            projectSkills: turnMode === "recorded" ? await memberPool() : [],
+          },
+          runtime,
+          modelContextTokens: modelDefinition.contextLength,
+        }),
+        live: true,
+      };
   return {
     value: {
       authorizedOrganizationId: authorized?.organizationId,
@@ -764,11 +748,11 @@ export async function resolveManagedTurnSetup(args: {
       environmentServers,
       effectiveServerIds,
       effectiveServerNames,
-      environmentSkills,
       xaaPolicy,
       effectiveInitializePins,
       resolvedExecution,
-      turnProvenance,
+      turnSkills,
+      clientTurn,
       builtInToolPolicy,
       turnBuiltInToolIds,
       localBrowserSettingsUnavailable,
@@ -789,8 +773,6 @@ export async function resolveManagedTurnSetup(args: {
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      includeProjectSkills,
-      liveProjectCapabilities,
       projectSkillReadFailed,
     },
   };
