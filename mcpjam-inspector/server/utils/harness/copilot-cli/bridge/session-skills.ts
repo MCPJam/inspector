@@ -24,22 +24,27 @@ export const COPILOT_BUILTIN_SKILLS = [
 ] as const;
 
 /**
- * The session's tools and skills. Its tools are the host's custom tools plus
- * the built-in `skill` tool, which loads a skill's SKILL.md. `availableTools`
- * is an allow list and an `excludedTools` pattern always wins over it, so
- * `builtin:skill` can't sit behind a `builtin:*` exclusion: the allow list is
- * what keeps every other built-in tool off.
+ * The session's tools and skills. Its tools are the host's custom tools, the
+ * built-in `skill` tool, which loads a skill's SKILL.md, and the forwarded
+ * servers' tools when the turn forwards any (`mcpToolPatterns`, from
+ * `nativeMcpSessionConfig`). `availableTools` is an allow list and an
+ * `excludedTools` pattern always wins over it, so `builtin:skill` can't sit
+ * behind a `builtin:*` exclusion: the allow list is what keeps every other
+ * built-in tool off. For the same reason, MCP tools are excluded only when no
+ * server is forwarded.
  */
 export function sessionSkillsAndTools(
   home: string,
   customToolNames: readonly string[],
+  mcpToolPatterns: readonly string[],
 ) {
   return {
     availableTools: [
       ...customToolNames.map((name) => `custom:${name}`),
       "builtin:skill",
+      ...mcpToolPatterns,
     ],
-    excludedTools: ["mcp:*"],
+    excludedTools: mcpToolPatterns.length > 0 ? [] : ["mcp:*"],
     enableConfigDiscovery: false,
     enableSkills: true,
     skillDirectories: [join(home, COPILOT_SKILLS_FOLDER)],

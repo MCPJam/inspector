@@ -8,14 +8,16 @@ import {
   PLUGIN_INSTANCE_CONTEXT_BYTES,
   PLUGIN_INSTANCE_CONTROL_BYTES,
   PLUGIN_INSTANCE_CONTROL_PATH,
+  PLUGIN_SETTINGS_CONTROL_BYTES,
 } from "../../../shared/plugin-invocation-receipts.js";
 
 /**
  * Single-user local installs (not hosted, no INSPECTOR_SERVICE_TOKEN) keep App
  * instance controls in this process instead of the backend service, with the
  * same request contract and rules (expiry, ownership, activation anchors and
- * renewal, context versions, close tombstones). Invocation receipts stay in
- * the live invoker, as before. Nothing survives a restart: Apps reopen.
+ * renewal, context versions, settings documents and Settings App children,
+ * close tombstones). Invocation receipts stay in the live invoker, as before.
+ * Nothing survives a restart: Apps reopen.
  */
 export function pluginLocalStoresEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -32,6 +34,23 @@ const hash = (value: unknown) => {
     fail("INVALID_INSTANCE_CONTROL");
 };
 const bytes = (value: string) => Buffer.byteLength(value);
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+/** As the backend: only an interactive activation opened for Settings keeps a
+ * settings document on its row. */
+const isSettingsActivation = (snapshotJson: string | undefined) => {
+  try {
+    const snapshot = JSON.parse(snapshotJson ?? "null");
+    return (
+      !!snapshot &&
+      typeof snapshot === "object" &&
+      snapshot.kind === undefined &&
+      snapshot.instance?.activation?.selector?.kind === "settings"
+    );
+  } catch {
+    // A snapshot that is not JSON is no Settings App.
+    return false;
+  }
+};
 
 type ControlRow = {
   controlHash: string;
@@ -48,6 +67,15 @@ type ControlRow = {
   contextToken?: string;
   contextVersion?: number;
   contextJson?: string;
+  settingsVersion?: number;
+  settingsJson?: string;
+  childToken?: string;
+  childAnchorHash?: string;
+  childParentOwnerHash?: string;
+  childParentScopeHash?: string;
+  childSourceHash?: string;
+  childBindingHash?: string;
+  childSettingsAction?: { name: string; revision: string };
 };
 export class LocalPluginControlStore {
   private readonly controls = new Map<string, ControlRow>();
@@ -78,7 +106,156 @@ export class LocalPluginControlStore {
       expiresAt: row.expiresAt,
       ...(row.contextToken ? { contextVersion: row.contextVersion ?? 0 } : {}),
       ...(row.contextJson && !omit ? { contextJson: row.contextJson } : {}),
+      ...(row.settingsVersion !== undefined
+        ? { settingsVersion: row.settingsVersion }
+        : {}),
+      ...(row.settingsJson ? { settingsJson: row.settingsJson } : {}),
     };
+  }
+
+  /** As the backend: a Settings App child lives only while its live Settings
+   * App's stored document lists the App action it was opened for. */
+  private assertSettingsParent(row: ControlRow) {
+    if (!row.childParentOwnerHash) return;
+    const parent = [...this.controls.values()].find(
+      (other) => other.ownerHash === row.childParentOwnerHash,
+    );
+    if (
+      !parent ||
+      parent.closed ||
+      parent.childParentOwnerHash ||
+      parent.identityHash !== row.identityHash ||
+      parent.expiresAt <= this.now() ||
+      row.expiresAt > parent.expiresAt ||
+      parent.settingsVersion === undefined ||
+      !isSettingsActivation(parent.snapshotJson)
+    )
+      fail("INSTANCE_PRIVATE_PARENT_UNAVAILABLE");
+    let state: {
+      schemaChanged?: unknown;
+      actions?: { kind?: unknown; name?: unknown; revision?: unknown }[];
+    } | null;
+    try {
+      state = parent!.settingsJson ? JSON.parse(parent!.settingsJson) : null;
+    } catch {
+      // The parent's document is the only thing that can admit a child.
+      state = null;
+    }
+    if (
+      !state ||
+      state.schemaChanged ||
+      !Array.isArray(state.actions) ||
+      !state.actions.some(
+        (action) =>
+          action?.kind === "app" &&
+          action.name === row.childSettingsAction?.name &&
+          action.revision === row.childSettingsAction?.revision,
+      )
+    )
+      fail("INSTANCE_PRIVATE_PARENT_UNAVAILABLE");
+  }
+
+  private liveFor(identityHash: string, now: number) {
+    return [...this.controls.values()].filter(
+      (other) =>
+        other.identityHash === identityHash &&
+        !other.closed &&
+        other.expiresAt > now,
+    ).length;
+  }
+
+  /** A Settings App child: anchored, so a retry gets the original handle.
+   * This process keeps no receipts, so an operation's children are not
+   * accepted here. */
+  private issueChild(c: Record<string, any>, row: ControlRow | undefined, now: number) {
+    for (const value of [
+      c.ownerHash,
+      c.childAnchorHash,
+      c.childParentOwnerHash,
+      c.childParentScopeHash,
+      c.childSourceHash,
+      c.childBindingHash,
+    ])
+      hash(value);
+    const action = c.childSettingsAction as
+      | { name?: unknown; revision?: unknown }
+      | undefined;
+    let snapshot: { kind?: unknown } | null = null;
+    try {
+      snapshot = JSON.parse(String(c.snapshotJson));
+    } catch {
+      fail("INVALID_INSTANCE_CONTROL");
+    }
+    if (
+      typeof c.childToken !== "string" ||
+      !TOKEN.test(c.childToken) ||
+      !Number.isSafeInteger(c.expiresAt) ||
+      c.expiresAt <= now ||
+      c.expiresAt > now + INVOCATION_RECEIPT_TTL_MS ||
+      typeof c.snapshotJson !== "string" ||
+      bytes(c.snapshotJson) > PLUGIN_INSTANCE_CONTROL_BYTES ||
+      typeof action?.name !== "string" ||
+      !action.name ||
+      action.name.length > 4096 ||
+      typeof action.revision !== "string" ||
+      !action.revision ||
+      action.revision.length > 4096 ||
+      snapshot?.kind !== "settings-child"
+    )
+      fail("INVALID_INSTANCE_CONTROL");
+    const candidate: ControlRow = {
+      controlHash: c.controlHash,
+      identityHash: c.identityHash,
+      ownerHash: c.ownerHash,
+      snapshotJson: c.snapshotJson,
+      expiresAt: c.expiresAt,
+      pruneAt: now + INVOCATION_RECEIPT_RETENTION_MS,
+      closed: false,
+      childToken: c.childToken,
+      childAnchorHash: c.childAnchorHash,
+      childParentOwnerHash: c.childParentOwnerHash,
+      childParentScopeHash: c.childParentScopeHash,
+      childSourceHash: c.childSourceHash,
+      childBindingHash: c.childBindingHash,
+      childSettingsAction: {
+        name: action!.name as string,
+        revision: action!.revision as string,
+      },
+    };
+    this.assertSettingsParent(candidate);
+    const original = [...this.controls.values()].find(
+      (other) => other.childAnchorHash === c.childAnchorHash,
+    );
+    if (original) {
+      if (
+        original.closed ||
+        original.expiresAt <= now ||
+        original.identityHash !== c.identityHash ||
+        original.childParentOwnerHash !== c.childParentOwnerHash ||
+        original.childParentScopeHash !== c.childParentScopeHash ||
+        original.childSourceHash !== c.childSourceHash ||
+        original.childBindingHash !== c.childBindingHash ||
+        JSON.stringify(original.childSettingsAction) !==
+          JSON.stringify(candidate.childSettingsAction) ||
+        original.expiresAt !== c.expiresAt
+      )
+        fail("INSTANCE_CONTROL_CHANGED");
+      return { token: original.childToken!, control: this.view(original) };
+    }
+    if (row) fail("INSTANCE_CONTROL_CHANGED");
+    if (
+      [...this.controls.values()].some(
+        (other) => other.ownerHash === c.ownerHash,
+      )
+    )
+      fail("INSTANCE_CONTROL_CHANGED");
+    const siblings = [...this.controls.values()].filter(
+      (other) => other.childSourceHash === c.childSourceHash,
+    ).length;
+    if (siblings >= 64 || this.liveFor(c.identityHash, now) >= 512)
+      fail("INSTANCE_LIMIT");
+    this.controls.set(c.controlHash, candidate);
+    return { token: candidate.childToken!, control: this.view(candidate) };
   }
 
   private live(row: ControlRow | undefined, identityHash: string) {
@@ -130,6 +307,7 @@ export class LocalPluginControlStore {
     if (c.action === "read") {
       if (!row) return { control: null };
       this.live(row, c.identityHash);
+      this.assertSettingsParent(row);
       return { control: this.view(row, known) };
     }
     if (c.action === "close") {
@@ -141,6 +319,9 @@ export class LocalPluginControlStore {
           contextToken: undefined,
           contextJson: undefined,
           contextVersion: undefined,
+          settingsVersion: undefined,
+          settingsJson: undefined,
+          childToken: undefined,
         });
         if (row.activationAnchorHash)
           this.anchors.delete(row.activationAnchorHash);
@@ -175,6 +356,37 @@ export class LocalPluginControlStore {
       row!.contextJson = c.contextJson;
       return { control: this.view(row!, known) };
     }
+    if (c.action === "settings") {
+      if (
+        !row ||
+        row.closed ||
+        row.expiresAt <= now ||
+        row.settingsVersion === undefined
+      )
+        fail("INSTANCE_UNAVAILABLE");
+      if (
+        !Number.isSafeInteger(c.expectedVersion) ||
+        c.expectedVersion < 0 ||
+        typeof c.settingsJson !== "string" ||
+        bytes(c.settingsJson) > PLUGIN_SETTINGS_CONTROL_BYTES
+      )
+        fail("INVALID_SETTINGS_CONTROL");
+      try {
+        JSON.parse(c.settingsJson);
+      } catch {
+        fail("INVALID_SETTINGS_CONTROL");
+      }
+      const version = row!.settingsVersion!;
+      // An identical committed write can be retried after a lost reply.
+      if (version === c.expectedVersion + 1 && row!.settingsJson === c.settingsJson)
+        return { control: this.view(row!) };
+      if (version !== c.expectedVersion) fail("SETTINGS_CONTROL_CONFLICT");
+      if (version >= 4096) fail("SETTINGS_CONTROL_LIMIT");
+      row!.settingsVersion = version + 1;
+      row!.settingsJson = c.settingsJson;
+      return { control: this.view(row!) };
+    }
+    if (c.action === "issue-child") return this.issueChild(c, row, now);
     if (c.action === "renew") {
       if (
         !row ||
@@ -228,6 +440,11 @@ export class LocalPluginControlStore {
     const activation = c.activation as
       | { token: string; anchorHash: string; bindingHash: string; renewable: boolean }
       | undefined;
+    if (
+      c.settings &&
+      (!activation || !isSettingsActivation(c.snapshotJson) || c.contextToken)
+    )
+      fail("INVALID_SETTINGS_CONTROL");
     if (activation) {
       hash(activation.anchorHash);
       hash(activation.bindingHash);
@@ -248,6 +465,15 @@ export class LocalPluginControlStore {
             original.activationRenewable !== activation.renewable
           )
             fail("ACTIVATION_BINDING_CHANGED");
+          // A Settings App opened before its row kept settings gains the
+          // slot, when a fresh settings issue would accept its row.
+          if (
+            c.settings &&
+            original.settingsVersion === undefined &&
+            original.contextToken === undefined &&
+            isSettingsActivation(original.snapshotJson)
+          )
+            original.settingsVersion = 0;
           return {
             token: original.activationToken!,
             control: this.view(original),
@@ -264,7 +490,8 @@ export class LocalPluginControlStore {
       if (
         row.ownerHash !== c.ownerHash ||
         row.snapshotJson !== c.snapshotJson ||
-        row.expiresAt !== c.expiresAt
+        row.expiresAt !== c.expiresAt ||
+        (row.settingsVersion !== undefined) !== !!c.settings
       )
         fail("INSTANCE_CONTROL_CHANGED");
     } else {
@@ -272,15 +499,7 @@ export class LocalPluginControlStore {
         [...this.controls.values()].some((other) => other.ownerHash === c.ownerHash)
       )
         fail("INSTANCE_CONTROL_CHANGED");
-      if (
-        [...this.controls.values()].filter(
-          (other) =>
-            other.identityHash === c.identityHash &&
-            !other.closed &&
-            other.expiresAt > now,
-        ).length >= 512
-      )
-        fail("INSTANCE_LIMIT");
+      if (this.liveFor(c.identityHash, now) >= 512) fail("INSTANCE_LIMIT");
       const inserted: ControlRow = {
         controlHash: c.controlHash,
         identityHash: c.identityHash,
@@ -300,6 +519,7 @@ export class LocalPluginControlStore {
         ...(c.contextToken
           ? { contextToken: c.contextToken, contextVersion: 0 }
           : {}),
+        ...(c.settings ? { settingsVersion: 0 } : {}),
       };
       this.controls.set(c.controlHash, inserted);
       if (activation) this.anchors.set(activation.anchorHash, c.controlHash);

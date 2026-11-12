@@ -155,12 +155,19 @@
       "approvalPermissionMode": "allow-reads",
       "defaultPermissionMode": "allow-all",
       "displayName": "GitHub Copilot CLI",
+      "forwardingRuntime": {
+        "configurationVersion": "copilot-native-mcp-v1",
+        "correlationKey": "mcpjam/toolCallId",
+        "passThroughOnly": true,
+        "runtimeVersion": "1.0.92"
+      },
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.0.92",
       "promptImageInput": false,
+      "requiredForwarding": "pass-through",
       "requiresComputer": true,
       "skills": {
         "frontmatter": {
@@ -177,7 +184,7 @@
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
-      "supportsMcpToolApproval": false,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
       "supportsSkills": true

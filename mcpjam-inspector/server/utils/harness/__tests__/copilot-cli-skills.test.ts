@@ -9,6 +9,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
+import {
+  nativeMcpSessionConfig,
+  parseNativeMcpServers,
+} from "../copilot-cli/bridge/native-mcp";
 import { sessionSkillsAndTools } from "../copilot-cli/bridge/session-skills";
 import { createCopilotCli } from "../copilot-cli/index";
 import type { RuntimeSkill } from "../runtime-skills";
@@ -27,7 +31,7 @@ const skill = (name: string): RuntimeSkill => ({
 
 describe("Copilot CLI skills", () => {
   it("loads the box writer's folder and no other skills", () => {
-    const settings = sessionSkillsAndTools(BOX_HOME, ["search"]);
+    const settings = sessionSkillsAndTools(BOX_HOME, ["search"], []);
 
     expect(settings.enableSkills).toBe(true);
     expect(settings.skillDirectories).toEqual([
@@ -44,7 +48,7 @@ describe("Copilot CLI skills", () => {
   });
 
   it("exposes the host's tools and the skill tool, and no other built-in", () => {
-    const settings = sessionSkillsAndTools(BOX_HOME, ["search", "fetch"]);
+    const settings = sessionSkillsAndTools(BOX_HOME, ["search", "fetch"], []);
 
     // An allow list: a tool it doesn't name is off.
     expect(settings.availableTools).toEqual([
@@ -54,6 +58,28 @@ describe("Copilot CLI skills", () => {
     ]);
     // An exclusion wins over the allow list, so none may match the skill tool.
     expect(settings.excludedTools).toEqual(["mcp:*"]);
+  });
+
+  it("keeps the skill tool beside a forwarded server's tools", () => {
+    const { mcpToolPatterns } = nativeMcpSessionConfig(
+      parseNativeMcpServers({
+        weather: { type: "http", url: "https://forwarder.example/mcp" },
+      }),
+    );
+    const settings = sessionSkillsAndTools(
+      BOX_HOME,
+      ["search"],
+      mcpToolPatterns,
+    );
+
+    expect(settings.availableTools).toEqual([
+      "custom:search",
+      "builtin:skill",
+      "mcp:*",
+    ]);
+    // An `mcp:*` exclusion would win over the allow list and hide them.
+    expect(settings.excludedTools).toEqual([]);
+    expect(settings.enableSkills).toBe(true);
   });
 
   it("installs a bridge that opens every session with these settings", async () => {
@@ -66,7 +92,9 @@ describe("Copilot CLI skills", () => {
     )!.content;
 
     // The bundle as esbuild writes it, which may suffix a renamed binding.
-    expect(bridge).toMatch(/\.\.\.sessionSkillsAndTools\d*\(\s*homedir\d*\(\)/);
+    expect(bridge).toMatch(
+      /\.\.\.sessionSkillsAndTools\d*\(\s*homedir\d*\(\),[^;]*?,\s*mcpToolPatterns\d*\s*\)/,
+    );
     expect(bridge).toContain("enableSkills: true");
     expect(bridge).toContain('".copilot/skills"');
     expect(bridge).toContain('"builtin:skill"');
