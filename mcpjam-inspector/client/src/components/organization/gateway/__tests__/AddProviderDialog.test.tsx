@@ -140,6 +140,56 @@ describe("AddProviderDialog", () => {
     expect(screen.getByText("The provider needs a valid API key. Update the key and test again.")).toBeInTheDocument();
     await waitFor(() => expect(document.activeElement).toBe(field("gateway-secret")));
     expect(addButton()).toBeDisabled();
+    expect(screen.queryByRole("textbox", { name: "Add a model" })).not.toBeInTheDocument();
+  });
+
+  it("adds a provider that answers without a model list once the admin names a model", async () => {
+    const message = "The provider has nothing at https://chat-only.acme.example/v1/models. Check the base URL and the APIs this connection serves.";
+    testConnection.mockResolvedValue({
+      reachable: true,
+      origin: "backend",
+      status: 404,
+      message,
+      apis: { chatCompletions: { result: "ok", status: 200 } },
+      models: [],
+    });
+    renderDialog();
+    type("gateway-base-url", "https://chat-only.acme.example/v1");
+    submitTest();
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Chat Completions/ })).toBeChecked();
+    expect(addButton()).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "house-model" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(addButton()).toBeEnabled();
+    fireEvent.click(addButton());
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerKey: "custom:chat-only",
+        apis: ["chatCompletions"],
+        models: [{ nativeModelId: "house-model" }],
+      }),
+    );
+  });
+
+  it("asks for the APIs when models are listed but no API answered", async () => {
+    testConnection.mockResolvedValue({
+      ...PASSED,
+      apis: {
+        chatCompletions: { result: "failed", status: 500, message: "The provider returned an error." },
+        responses: { result: "failed", status: 404, message: "Nothing at /responses." },
+      },
+    });
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    const chat = await screen.findByRole("checkbox", { name: /Chat Completions/ });
+    expect(chat).not.toBeChecked();
+    expect(screen.queryByRole("textbox", { name: "Add a model" })).not.toBeInTheDocument();
+    expect(addButton()).toBeDisabled();
+    fireEvent.click(chat);
+    expect(addButton()).toBeEnabled();
   });
 
   it("shows the guard's reason and re-tests from the Inspector when MCPJam's servers refuse a private address", async () => {
