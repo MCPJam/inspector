@@ -60,5 +60,7 @@ export function useInsightsEnvelope(
 ): InsightsEnvelope | null | undefined {
   const { name, args } = queryFor(surface);
   return useQuery(name as never, args as never) as
-    InsightsEnvelope | null | undefined;
+    | InsightsEnvelope
+    | null
+    | undefined;
 }
