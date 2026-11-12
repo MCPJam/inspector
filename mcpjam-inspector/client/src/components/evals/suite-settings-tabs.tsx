@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { buttonVariants } from "@mcpjam/design-system/button";
 import { Settings2 } from "lucide-react";
+import { PAGE_HEADER_TAB_CLASSNAME } from "@/components/shared/landing-page-header";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import type { SamePageNavigation } from "@/hooks/use-unsaved-changes-guard";
 import type { EvalRoute, SuiteSettingsTab } from "@/lib/eval-route-types";
@@ -185,8 +186,8 @@ export function useSuiteSettingsTabs({
 
 export function SuiteSettingsEyebrow() {
   return (
-    <p className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-      <Settings2 className="size-3.5" aria-hidden="true" />
+    <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+      <Settings2 className="size-3" aria-hidden="true" />
       Suite settings
     </p>
   );
@@ -209,7 +210,7 @@ export function SuiteSettingsTabStrip({
 }) {
   return (
     <ViewModeSelector<SuiteSettingsTab>
-      className="mt-4 justify-start md:w-full"
+      className={PAGE_HEADER_TAB_CLASSNAME}
       ariaLabel="Suite settings sections"
       indicatorId="suite-settings-tabs"
       value={tab}

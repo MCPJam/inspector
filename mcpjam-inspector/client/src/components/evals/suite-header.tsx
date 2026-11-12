@@ -331,7 +331,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     };
 
     return (
-      <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
+      <div
+        className={
+          // Tabbed: left-aligned with the breadcrumb, tabs on a full-width divider.
+          settingsTabStrip
+            ? "w-full min-w-0 pt-6"
+            : "mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0"
+        }
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0" data-setting-key="name">
             {settingsTabStrip ? <SuiteSettingsEyebrow /> : null}
@@ -379,7 +386,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           </div>
           {settingsActions}
         </div>
-        {settingsTabStrip}
+        {settingsTabStrip ? (
+          <div className="mt-4 border-b border-border/60">{settingsTabStrip}</div>
+        ) : null}
       </div>
     );
   }
