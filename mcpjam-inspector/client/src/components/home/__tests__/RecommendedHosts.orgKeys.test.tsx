@@ -56,8 +56,8 @@ vi.mock("@/lib/toast", () => ({
 }));
 
 const ORG_LUNA = {
-  id: "gpt-5.6-luna",
-  name: "GPT-5.6 Luna",
+  id: "gpt-6-luna",
+  name: "GPT-6 Luna",
   provider: "openai",
   hosted: false,
   orgProvider: { providerKey: "openai", id: "orgprov_openai" },
@@ -96,7 +96,7 @@ describe("Home → ChatGPT → Create (QA-25)", () => {
     await createChatgpt();
     await waitFor(() => expect(createHost).toHaveBeenCalledTimes(1));
     const { input } = createHost.mock.calls[0][0];
-    expect(input.modelId).toBe("openai/gpt-5.6-luna");
+    expect(input.modelId).toBe("openai/gpt-6-luna");
     expect(input.modelSelection).toBeUndefined();
     expect(toastSuccess).toHaveBeenCalledWith("Created ChatGPT client.");
   });
@@ -110,7 +110,7 @@ describe("Home → ChatGPT → Create (QA-25)", () => {
     await createChatgpt();
     await waitFor(() => expect(createHost).toHaveBeenCalledTimes(1));
     const { input } = createHost.mock.calls[0][0];
-    expect(input.modelId).toBe("openai/gpt-5.6-luna");
+    expect(input.modelId).toBe("openai/gpt-6-luna");
     expect(input.modelSelection).toMatchObject({
       source: "org",
       connectionRef: { kind: "orgProvider", id: "orgprov_openai" },
@@ -127,7 +127,7 @@ describe("Home → ChatGPT → Create (QA-25)", () => {
     await createChatgpt();
     await waitFor(() => expect(createHost).toHaveBeenCalledTimes(1));
     expect(createHost.mock.calls[0][0].input.modelId).toBe(
-      "openai/gpt-5.6-luna",
+      "openai/gpt-6-luna",
     );
     expect(toastSuccess).toHaveBeenCalledWith(
       "Created ChatGPT client. Choose an organization model in the client's Agent tab before running it.",

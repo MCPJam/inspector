@@ -179,7 +179,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/playground/HarnessBuiltinToolsSection.tsx", 2],
   ["components/playground/panes/EnvironmentToolsPane.tsx", 2],
   ["components/playground/panes/MultiServerToolsPane.tsx", 2],
-  ["components/playground/PlaygroundEnvironmentSection.tsx", 1],
   ["components/playground/PlaygroundPluginSelector.tsx", 1],
   ["components/plugins/plugin-presentation.ts", 1],
   ["components/plugins/PluginImportPreviewContent.tsx", 3],

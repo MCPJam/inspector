@@ -51,6 +51,13 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_server_revisions: { command: "cloud projects servers revisions" },
   get_server_revision: { command: "cloud projects servers revision" },
   diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  // `default` runs the same operation as `rename`, with `isDefault` in place
+  // of a name.
+  list_server_accounts: { command: "cloud server-accounts list" },
+  get_server_account: { command: "cloud server-accounts show" },
+  upload_server_account_tokens: { command: "cloud server-accounts set" },
+  update_server_account: { command: "cloud server-accounts rename" },
+  delete_server_account: { command: "cloud server-accounts delete" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
   show_servers: { command: "cloud projects status" },

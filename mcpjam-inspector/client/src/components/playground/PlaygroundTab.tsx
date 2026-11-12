@@ -98,6 +98,7 @@ interface PlaygroundTabProps {
   ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean },
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -245,6 +246,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across
     // all of them and execution routes to the right server per tool.
+    onSelectMultipleServers:
+      props.playgroundServerSelectorProps?.onSelectMultipleServers,
     selectedServerNames:
       props.playgroundServerSelectorProps?.selectedMultipleServers,
   });
