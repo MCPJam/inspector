@@ -676,6 +676,40 @@ describe("a runtime this API does not run", () => {
     refusedBeforeAnyWork();
   });
 
+  it.each([
+    ["a host", { hostId: HOST }],
+    ["an environment", { environmentId: ENVIRONMENT }],
+  ])("refuses a client running a vendor's agent loop on %s target", async (_target, pointer) => {
+    // Such a host names no `harness`; reading only that field ran it emulated.
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: MODEL,
+      provider: "anthropic",
+    });
+    const vsCode = { agentLoop: "copilot-cli", modelId: MODEL };
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...vsCode, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(vsCode));
+
+    const response = await turn(firstTurn(pointer));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      message:
+        "The API can't run this client's GitHub Copilot CLI agent yet. " +
+        "Use the client in the Playground, or choose a different client.",
+      details: {
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "copilot-cli",
+        kind: "surface-agent-loop",
+      },
+    });
+    refusedBeforeAnyWork();
+  });
+
   it("refuses the dedicated GitHub Copilot CLI client with servers", async () => {
     // An API turn never forwards, and this client reaches servers no other way.
     resolveHostModelDefinitionMock.mockResolvedValue({
