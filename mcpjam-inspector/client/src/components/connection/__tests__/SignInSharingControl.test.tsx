@@ -87,6 +87,10 @@ describe("SignInSharingControl", () => {
       const dialog = await flip(user);
       expect(dialog).toHaveTextContent(title);
       expect(dialog).toHaveTextContent(deletion);
+      // The count shown can be short if another admin just connected one.
+      expect(dialog).toHaveTextContent(
+        "If another admin connected a project account since this list loaded, MCPJam deletes it too.",
+      );
       expect(dialog).toHaveTextContent("This cannot be undone.");
       await user.click(
         screen.getByRole("button", { name: "Delete and stop sharing" }),
