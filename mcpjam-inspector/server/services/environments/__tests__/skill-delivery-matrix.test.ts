@@ -16,6 +16,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
+import { replayRunSkills } from "../../evals/replay-suite-run";
+import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
 import {
   resolveTurnSkills,
   type ServerSkillsVia,
@@ -26,11 +28,14 @@ import {
 import {
   agentReceives,
   boxReceives,
+  EVAL_PLUGIN_VERSIONS,
   evalEnvironment,
+  evalRunPins,
   liveTurnSource,
   personalRuntimeSkill,
   personalSkill,
   preparedRunSkills,
+  preparedTargetSkills,
 } from "../../../test/support/skill-delivery";
 
 const ENGINES = [
@@ -76,6 +81,44 @@ const noSkillsOn = (refs: string[]): Expected => ({
   recorded: [],
 });
 
+/**
+ * What each engine receives of the fixture's three skills wherever they were
+ * pinned: an eval run, its replay and a swarm target all deliver the same.
+ */
+const PINNED: Record<Engine, Expected> = {
+  "mcpjam-agent": {
+    delivered: ["release-notes", "acme/summarize", "docs/search"],
+    excluded: [],
+    serverSkillsVia: "agent-tools",
+    recorded: RUN_SKILLS,
+  },
+  // Until server skills reach a harness as tools, a pinned run copies a
+  // captured server skill to the box as a plain skill folder.
+  "claude-code": {
+    delivered: RUN_SKILLS,
+    excluded: [],
+    serverSkillsVia: "box-files",
+    recorded: RUN_SKILLS,
+  },
+  codex: {
+    delivered: RUN_SKILLS,
+    excluded: [],
+    serverSkillsVia: "box-files",
+    recorded: RUN_SKILLS,
+  },
+  cursor: {
+    delivered: RUN_SKILLS,
+    excluded: [],
+    serverSkillsVia: "box-files",
+    recorded: RUN_SKILLS,
+  },
+  opencode: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
+  "copilot-cli": noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
+};
+
+const runOn = (engine: Engine) =>
+  engine === "mcpjam-agent" ? {} : { harness: engine };
+
 const runtimeOf = (engine: Engine): TurnRuntime =>
   engine === "mcpjam-agent"
     ? { kind: "agent" }
@@ -102,7 +145,7 @@ const EVAL: Surface = {
     const run = await preparedRunSkills();
     const { skills, skillsAtTurn } = iterationTurnSkills({
       pinnedSkillSource: run.pinnedSkillSource,
-      execution: engine === "mcpjam-agent" ? {} : { harness: engine },
+      execution: runOn(engine),
     });
     return {
       skills,
@@ -112,39 +155,69 @@ const EVAL: Surface = {
       }),
     };
   },
+  expected: PINNED,
+};
+
+/** A replay's iteration: the backend copies the eval run's pins onto the
+ *  replay run, which reads them back as its own. */
+const REPLAY: Surface = {
+  name: "replay",
+  async plan(engine) {
+    const run = await replayRunSkills({
+      convexClient: { query: async () => ({ pinnedSkills: evalRunPins() }) },
+      runId: "replay-run",
+      pluginVersions: EVAL_PLUGIN_VERSIONS,
+      serverIds: ["srv_docs"],
+    });
+    const { skills, skillsAtTurn } = iterationTurnSkills({
+      pinnedSkillSource: run.pinnedSkillSource,
+      execution: runOn(engine),
+    });
+    return {
+      skills,
+      ...(skillsAtTurn ? { skillsAtTurn } : {}),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
+    };
+  },
+  expected: PINNED,
+};
+
+/** A swarm session's turn, from its target's frozen skills. */
+const swarm =
+  (requireToolApproval: boolean): Surface["plan"] =>
+  async (engine) => {
+    const target = await preparedTargetSkills();
+    const { skills, skillsAtTurn } = sessionTurnSkills({
+      pinnedSkillSource: target,
+      ...runOn(engine),
+      requireToolApproval,
+    });
+    return {
+      skills,
+      ...(skillsAtTurn ? { skillsAtTurn } : {}),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: [...target.harnessSkills],
+      }),
+    };
+  };
+
+const SWARM: Surface = { name: "swarm", plan: swarm(false), expected: PINNED };
+
+/** With approval on, MCPJam's agent gets none of the target's skills, since a
+ *  headless visitor can't approve; a harness's box still gets them. */
+const SWARM_APPROVAL: Surface = {
+  name: "swarm with approval on",
+  plan: swarm(true),
   expected: {
+    ...PINNED,
     "mcpjam-agent": {
-      delivered: ["release-notes", "acme/summarize", "docs/search"],
+      delivered: [],
       excluded: [],
-      serverSkillsVia: "agent-tools",
-      recorded: RUN_SKILLS,
+      serverSkillsVia: "none",
+      recorded: [],
     },
-    // Until server skills reach a harness as tools, a pinned run copies a
-    // captured server skill to the box as a plain skill folder.
-    "claude-code": {
-      delivered: RUN_SKILLS,
-      excluded: [],
-      serverSkillsVia: "box-files",
-      recorded: RUN_SKILLS,
-    },
-    codex: {
-      delivered: RUN_SKILLS,
-      excluded: [],
-      serverSkillsVia: "box-files",
-      recorded: RUN_SKILLS,
-    },
-    cursor: {
-      delivered: RUN_SKILLS,
-      excluded: [],
-      serverSkillsVia: "box-files",
-      recorded: RUN_SKILLS,
-    },
-    opencode: noSkillsOn(["release-notes", "acme/summarize", "docs/search"]),
-    "copilot-cli": noSkillsOn([
-      "release-notes",
-      "acme/summarize",
-      "docs/search",
-    ]),
   },
 };
 
@@ -242,6 +315,9 @@ const COMPARE_CLIENT_PREVIEW: Surface = {
 /** Each surface joins as one entry here, with its own plan and rows. */
 const SURFACES: Surface[] = [
   EVAL,
+  REPLAY,
+  SWARM,
+  SWARM_APPROVAL,
   EVALUATE_PREVIEW,
   COMPARE_ENVIRONMENT_PREVIEW,
   COMPARE_CLIENT_PREVIEW,
@@ -273,7 +349,10 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
       expect([...received.listed].sort()).toEqual(
         [...expected.delivered].sort(),
       );
-      expect(received.tools).toContain("loadSkill");
+      // Skill tools come with skills to load, and never without.
+      expect(received.tools.includes("loadSkill")).toBe(
+        expected.delivered.length > 0,
+      );
     } else {
       // Every folder the runtime reads holds exactly these, whatever earlier
       // turns of other runtimes left on the box.

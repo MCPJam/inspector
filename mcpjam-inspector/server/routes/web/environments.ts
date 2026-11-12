@@ -85,7 +85,10 @@ environments.post("/skills-preview/suite", async (c) =>
       await readJsonBody(c),
     );
     const bearer = await getConvexBearerForRequest(c);
-    return previewSuiteSkills(createConvexClient(bearer), input);
+    return previewSuiteSkills(
+      createConvexClient(bearer, c.req.raw.signal),
+      input,
+    );
   }),
 );
 

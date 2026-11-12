@@ -2392,6 +2392,16 @@ describe("operation catalog consistency", () => {
     list_server_revisions: { server: "s" },
     get_server_revision: { server: "s", revisionNumber: 2 },
     diff_server_revisions: { server: "s", revisionNumber: 2 },
+    list_server_accounts: { server: "s" },
+    get_server_account: { server: "s", account: "test-automation-1" },
+    upload_server_account_tokens: {
+      server: "s",
+      account: "test-automation-1",
+      tokens: { access_token: "at_example" },
+      clientInformation: { clientId: "client_example" },
+    },
+    update_server_account: { server: "s", account: "a", isDefault: true },
+    delete_server_account: { server: "s", account: "test-automation-1" },
     list_server_tools: { server: "s" },
     list_server_prompts: { server: "s" },
     list_server_resources: { server: "s" },
@@ -2834,6 +2844,12 @@ describe("operation catalog consistency", () => {
       "create_secret",
       "update_secret",
       "delete_secret",
+      // Server account writes. The upload carries a token in its INPUT and the
+      // update moves the default runs act as (both risk: exposure); the delete
+      // removes an account and asks its issuer to revoke the token.
+      "upload_server_account_tokens",
+      "update_server_account",
+      "delete_server_account",
       // Trace-destination writes. `create` and `update` carry vendor
       // credentials in their INPUT and decide whether customer content leaves
       // the platform (risk: exposure); `resume` is exposure too, because it

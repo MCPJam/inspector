@@ -27,6 +27,7 @@ import {
   evalRunPins,
   namePin,
   preparedRunSkills,
+  preparedTargetSkills,
   writeTurnToBox,
 } from "../../../test/support/skill-delivery";
 
@@ -318,6 +319,17 @@ describe("an eval run stopped before its first model call", () => {
     expect(sent()).toEqual([
       { ...NONE, surface: "eval", outcome: "failed", failed_count: 2 },
     ]);
+  });
+
+  it("sends nothing for a swarm target, whose turns report no event yet", async () => {
+    // A captured server skill without its version stops the target's build.
+    const pins = evalRunPins().map(
+      ({ serverSkillVersionId: _version, ...pin }) => pin,
+    );
+    await expect(preparedTargetSkills(pins)).rejects.toBeInstanceOf(
+      RunPluginSnapshotError,
+    );
+    expect(sent()).toEqual([]);
   });
 });
 
