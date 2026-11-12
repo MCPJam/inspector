@@ -267,6 +267,21 @@ describe("runHarnessTurn hosted resume", () => {
       );
     });
 
+    it("starts fresh with the replaced notice when the restored session cannot start", async () => {
+      harnessState.claimedState = replaced;
+      snapshotRestore.available = true;
+      harnessState.createSession.mockRejectedValueOnce(
+        new Error("snapshot names a file outside the session folder"),
+      );
+
+      const result = await runHarnessTurn(options() as any, "ui");
+      const stream = await result.response!.text();
+
+      expect(harnessState.createSession).toHaveBeenLastCalledWith();
+      expect(stream).toContain('"reason":"sandbox-replaced"');
+      expect(stream).not.toContain('"reason":"resume-failed"');
+    });
+
     it("starts a fresh session with the existing notice when nothing was saved", async () => {
       harnessState.claimedState = replaced;
 

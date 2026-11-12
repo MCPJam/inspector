@@ -38,21 +38,18 @@ function snapshotBytes(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function mockBackend(snapshot: Uint8Array | null) {
+function mockBackend(snapshot: Uint8Array<ArrayBuffer> | null) {
   const urls: string[] = [];
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
-    if (url.endsWith("/snapshot/read")) {
-      return Response.json({
-        ok: true,
-        snapshot: snapshot
-          ? { url: "https://storage.example.com/s", bytes: snapshot.byteLength }
-          : null,
+    if (url.endsWith("/snapshot/read") && snapshot) {
+      return new Response(snapshot, {
+        headers: { "content-type": "application/gzip" },
       });
     }
-    if (url === "https://storage.example.com/s" && snapshot) {
-      return new Response(new Uint8Array(snapshot));
+    if (url.endsWith("/snapshot/read")) {
+      return new Response(null, { status: 204 });
     }
     return new Response("not found", { status: 404 });
   }) as typeof fetch;
@@ -100,7 +97,7 @@ afterEach(() => {
 
 describe("startSessionSnapshotRestore", () => {
   it("downloads the saved session for a replaced box and writes it before the CLI starts", async () => {
-    mockBackend(snapshotBytes());
+    mockBackend(await snapshotBytes());
     const restore = start();
     expect(await restore!.ready()).toBe(true);
     const box = newBox();
@@ -111,7 +108,7 @@ describe("startSessionSnapshotRestore", () => {
   });
 
   it("writes only once, even if the session is created again after a failure", async () => {
-    mockBackend(snapshotBytes());
+    mockBackend(await snapshotBytes());
     const restore = start();
     await restore!.ready();
     const box = newBox();
@@ -120,16 +117,16 @@ describe("startSessionSnapshotRestore", () => {
     expect(box.writes).toHaveLength(1);
   });
 
-  it("asks for nothing when the box survived", () => {
-    const urls = mockBackend(snapshotBytes());
+  it("asks for nothing when the box survived", async () => {
+    const urls = mockBackend(await snapshotBytes());
     expect(
       start({ computerId: "row-old", sandboxId: "sbx-old" }),
     ).toBeUndefined();
     expect(urls).toEqual([]);
   });
 
-  it("asks for nothing on local turns, guest lanes, other runtimes or paused approvals", () => {
-    mockBackend(snapshotBytes());
+  it("asks for nothing on local turns, guest lanes, other runtimes or paused approvals", async () => {
+    mockBackend(await snapshotBytes());
     expect(start({ hosted: false })).toBeUndefined();
     expect(
       start({
@@ -143,6 +140,23 @@ describe("startSessionSnapshotRestore", () => {
     expect(start({ state: null })).toBeUndefined();
   });
 
+  it("stops waiting as soon as the turn is cancelled", async () => {
+    globalThis.fetch = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          if (init?.signal?.aborted) reject(init.signal.reason);
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal!.reason),
+          );
+        }),
+    ) as typeof fetch;
+    const cancel = new AbortController();
+    const restore = start({ abortSignal: cancel.signal });
+    const ready = restore!.ready();
+    cancel.abort(new Error("stopped"));
+    expect(await ready).toBe(false);
+  });
+
   it("reports nothing to restore when the backend has no matching snapshot", async () => {
     mockBackend(null);
     expect(await start()!.ready()).toBe(false);
@@ -150,7 +164,7 @@ describe("startSessionSnapshotRestore", () => {
 
   it("refuses a snapshot saved under another working folder", async () => {
     mockBackend(
-      snapshotBytes({ workDir: "/home/user/elsewhere/claude-code-hs-1" }),
+      await snapshotBytes({ workDir: "/home/user/elsewhere/claude-code-hs-1" }),
     );
     const restore = start();
     await restore!.ready();

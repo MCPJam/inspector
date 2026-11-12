@@ -8,11 +8,14 @@
  * pays anyway. The files are written from `onSandboxSession`, which runs before
  * the CLI does. Any failure leaves the turn exactly where it was without this:
  * a fresh session and the existing reset notice.
+ *
+ * The backend serves a copy once, so a CLI that cannot resume from it costs
+ * one turn, not every turn after it.
  */
 import { logger } from "../../logger.js";
 import {
+  getConvexHttpUrl,
   getHarnessResumeEligibility,
-  postSessionState,
   type HarnessOwnerRef,
   type HarnessResumePayload,
 } from "../harness-session-state.js";
@@ -27,6 +30,7 @@ import { sessionFileSpec } from "./session-files.js";
 /** The backend's own ceiling on a stored snapshot, plus room for headers. */
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024 + 64 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+/** Runtimes whose files this knows how to place; the backend decides which it serves. */
 const RESTORABLE = new Set(["claude-code", "codex"]);
 
 /** What the model is told on the first prompt of a restored session. */
@@ -45,27 +49,38 @@ export type SessionSnapshotRestore = {
   apply(session: SnapshotFileSession, workDir: string): Promise<void>;
 };
 
+/** The snapshot's bytes, or null when the backend has none to serve. */
 async function download(args: {
   owner: HarnessOwnerRef;
   state: HarnessResumePayload;
   stateVersion: number;
   bearer: string;
+  signal: AbortSignal;
 }): Promise<Uint8Array | null> {
-  const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
-  const read = await postSessionState(
-    "snapshot/read",
-    args.bearer,
+  const res = await fetch(
+    new URL("/web/harness/session-state/snapshot/read", getConvexHttpUrl()),
     {
-      ...args.owner,
-      harnessSessionId: args.state.harnessSessionId,
-      stateVersion: args.stateVersion,
+      method: "POST",
+      headers: {
+        authorization: args.bearer.startsWith("Bearer ")
+          ? args.bearer
+          : `Bearer ${args.bearer}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        ...args.owner,
+        harnessSessionId: args.state.harnessSessionId,
+        stateVersion: args.stateVersion,
+      }),
+      signal: args.signal,
     },
-    signal,
   );
-  const url = read.ok ? read.payload?.snapshot?.url : undefined;
-  if (typeof url !== "string") return null;
-  const res = await fetch(url, { signal });
-  if (!res.ok) return null;
+  if (
+    res.status !== 200 ||
+    res.headers.get("content-type") !== "application/gzip"
+  ) {
+    return null;
+  }
   const bytes = new Uint8Array(await res.arrayBuffer());
   return bytes.byteLength <= MAX_DOWNLOAD_BYTES ? bytes : null;
 }
@@ -83,6 +98,8 @@ export function startSessionSnapshotRestore(args: {
   computerId: string;
   sandboxId: string | null;
   getBearer: () => Promise<string>;
+  /** The turn's own signal: a cancelled turn stops waiting at once. */
+  abortSignal?: AbortSignal;
 }): SessionSnapshotRestore | undefined {
   const { owner, state, stateVersion, sandboxId } = args;
   if (
@@ -103,9 +120,15 @@ export function startSessionSnapshotRestore(args: {
     return undefined;
   }
   const startedAt = Date.now();
+  const signal = args.abortSignal
+    ? AbortSignal.any([
+        args.abortSignal,
+        AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      ])
+    : AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   const fetched = args
     .getBearer()
-    .then((bearer) => download({ owner, state, stateVersion, bearer }))
+    .then((bearer) => download({ owner, state, stateVersion, bearer, signal }))
     .catch((error: unknown) => {
       logger.warn("[harness][snapshot] restore download failed", {
         harnessId: owner.harnessId,
@@ -116,7 +139,12 @@ export function startSessionSnapshotRestore(args: {
   let armed: Uint8Array | null = null;
   return {
     async ready() {
-      armed = await fetched;
+      const stopped = new Promise<null>((resolve) => {
+        if (signal.aborted) resolve(null);
+        else
+          signal.addEventListener("abort", () => resolve(null), { once: true });
+      });
+      armed = await Promise.race([fetched, stopped]);
       logger.info(
         `[harness][snapshot] restore ${armed ? "available" : "missing"} after ${Date.now() - startedAt}ms`,
         { harnessId: owner.harnessId },
@@ -135,7 +163,7 @@ export function startSessionSnapshotRestore(args: {
         home,
       });
       if (!spec) throw new Error("This session cannot be restored here.");
-      const bundle = decodeSnapshot(bytes, {
+      const bundle = await decodeSnapshot(bytes, {
         spec,
         home,
         harnessSessionId: state.harnessSessionId,

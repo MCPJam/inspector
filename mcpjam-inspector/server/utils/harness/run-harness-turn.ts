@@ -2504,6 +2504,7 @@ export async function runHarnessTurn(
         computerId,
         sandboxId,
         getBearer: currentAuthorization,
+        ...(abortSignal ? { abortSignal } : {}),
       });
 
       // Brokered turns acquire their exclusive box lease before any sandbox
@@ -3260,7 +3261,8 @@ export async function runHarnessTurn(
           });
           // Reattach threw — fall back fresh, but make it VISIBLE (the adapter
           // swallows its own reattach failures; this catch is our last signal).
-          resetReason = "resume-failed";
+          // A refused restore is still a replaced computer to the user.
+          resetReason = restoring ? "sandbox-replaced" : "resume-failed";
           session = await agent.createSession();
         }
       } else {
