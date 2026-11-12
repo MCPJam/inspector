@@ -46,7 +46,6 @@ const {
   getToolsMock,
   acquirePlaygroundHarnessBoxMock,
   releaseBoxMock,
-  playgroundCredentialRefusalMock,
   backend,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
@@ -62,21 +61,17 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
-  playgroundCredentialRefusalMock: vi.fn(),
   backend: { chatEnvironments: true },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
-// it and never resolves a persistent computer. Only the acquisition, and the
-// org key check a Cursor turn makes before it, are faked.
+// it and never resolves a persistent computer. Only the acquisition is faked.
 vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   acquirePlaygroundHarnessBox: (...args: unknown[]) =>
     acquirePlaygroundHarnessBoxMock(...args),
-  playgroundCredentialRefusal: (...args: unknown[]) =>
-    playgroundCredentialRefusalMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -157,6 +152,9 @@ vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},
 }));
 
+import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { harnessSurfaceRefusal } from "@/shared/harness-descriptors";
+import { harnessUsesExternalAccount } from "../../../utils/harness/registry.js";
 import chatSessions from "../chat-sessions.js";
 import type { TurnSkills } from "../../../services/environments/turn-skills.js";
 import { v1OnError } from "../envelope.js";
@@ -309,7 +307,6 @@ beforeEach(() => {
       release: releaseBoxMock,
     },
   });
-  playgroundCredentialRefusalMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -420,6 +417,18 @@ describe("host targeting dispatches the real harness", () => {
       }),
     );
     expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
+    backend.chatEnvironments = supported;
+    resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true, config: { hostId: HOST, harness: "claude-code", modelId: MODEL, selectedServerIds: ["srv_1"] },
+    });
+    const response = await turn(firstTurn({ hostId: HOST }));
+    expect(response.status).toBe(200);
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
+    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId).toBeUndefined();
   });
 
   it("refuses the turn, before any model call, when no box can be had", async () => {
@@ -619,28 +628,19 @@ describe("a refused box provision", () => {
   });
 });
 
-describe("a harness on the organization's vendor key", () => {
-  // Cursor's key reaches only a box the project provisioned, so the turn's own
-  // org key check runs BEFORE one is booted: a refused turn pays for no box
-  // and never reaches the model call that would hold the lease to its TTL.
-  // `resolveTurnRuntime` (faked here) refuses Cursor on this API for now; this
-  // branch is what admits it once the API may run it.
-  // Cursor picks its own model on the customer's account, so the engine gate
-  // holds the turn's model to the runtime's sentinel. No request body can send
-  // it (the route refuses `cursor/auto` before the lease), so the resolver
-  // hands it back here: the box pre-check must not lean on that gate.
+describe("a runtime this API does not run", () => {
+  // The declaration refuses it before any box, runtime or model call, with
+  // the reason the caller reads, and the lease is released for a retry.
   const CURSOR_MODEL = "cursor/auto";
-  const cursorHost = {
-    ok: true,
-    config: {
-      hostId: HOST,
-      harness: "cursor",
-      modelId: CURSOR_MODEL,
-      selectedServerIds: ["srv_1"],
-    },
+  const refusedBeforeAnyWork = () => {
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatSessions:releaseTurnLease",
+      expect.objectContaining({ turnId: "turn_1" }),
+    );
   };
-  const NO_KEY =
-    "Ask an org admin to add a Cursor key in Organization → AI providers.";
 
   beforeEach(() => {
     resolveHostModelDefinitionMock.mockResolvedValue({
@@ -649,90 +649,73 @@ describe("a harness on the organization's vendor key", () => {
     });
   });
 
-  it("refuses a host-only turn when the org has no key, before any box", async () => {
-    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
-    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
+  it.each([
+    ["a host", { hostId: HOST }],
+    ["an environment", { environmentId: ENVIRONMENT }],
+  ])("refuses Cursor CLI on %s target", async (_target, pointer) => {
+    const cursor = { harness: "cursor", modelId: CURSOR_MODEL };
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...cursor, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(cursor));
 
-    const response = await turn(firstTurn({ hostId: HOST }));
+    const response = await turn(firstTurn(pointer));
     const body = await response.json();
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(422);
     expect(body).toMatchObject({
-      code: "CONFLICT",
-      message: NO_KEY,
-      details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+      code: "FEATURE_NOT_SUPPORTED",
+      message: harnessSurfaceRefusal("cursor", "api"),
+      details: {
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "cursor",
+        kind: "surface-unsupported",
+      },
     });
-    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
-    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
-    // Refused before the model call, so the caller's retry may run.
-    expect(mutationMock).toHaveBeenCalledWith(
-      "chatSessions:releaseTurnLease",
-      expect.objectContaining({ turnId: "turn_1" }),
-    );
+    refusedBeforeAnyWork();
   });
 
-  it("refuses a turn on a pinned environment the same way", async () => {
-    resolveEnvironmentForRuntimeMock.mockResolvedValue(
-      environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
-    );
-    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
-
-    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
-    const body = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(body.code).toBe("CONFLICT");
-    expect(body.details.reason).toBe("EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE");
-    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
-    );
-    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
-    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
-  });
-
-  it("boots a host-only box that carries no environment for the key", async () => {
-    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
-
-    const response = await turn(firstTurn({ hostId: HOST }));
-
-    expect(response.status).toBe(200);
-    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
-    );
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
-    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0]).toMatchObject({
-      harness: "cursor",
-    });
-    expect(
-      acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId,
-    ).toBeUndefined();
-  });
-
-  it("a harness on MCPJam's own key makes no credential read", async () => {
+  it("refuses the dedicated GitHub Copilot CLI client with servers", async () => {
+    // An API turn never forwards, and this client reaches servers no other way.
     resolveHostModelDefinitionMock.mockResolvedValue({
       id: MODEL,
       provider: "anthropic",
     });
-    resolveEnvironmentForRuntimeMock.mockResolvedValue(
-      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "copilot-cli",
+        modelId: MODEL,
+        selectedServerIds: ["srv_1"],
+      },
+    });
+
+    const response = await turn(firstTurn({ hostId: HOST }));
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.message).toBe(
+      "GitHub Copilot CLI calls MCP servers only through its own client, and " +
+        "this turn cannot forward them. Open this client in the signed-in hosted Playground.",
     );
-
-    await turn(firstTurn({ environmentId: ENVIRONMENT }));
-
-    expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
+    expect(body.details).toMatchObject({
+      harness: "copilot-cli",
+      kind: "surface-unsupported",
+    });
+    refusedBeforeAnyWork();
   });
 
-  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
-    backend.chatEnvironments = supported;
-    resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
-    fetchHostRuntimeConfigMock.mockResolvedValue({
-      ok: true, config: { hostId: HOST, harness: "claude-code", modelId: MODEL, selectedServerIds: ["srv_1"] },
-    });
-    const response = await turn(firstTurn({ hostId: HOST }));
-    expect(response.status).toBe(200);
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
-    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId).toBeUndefined();
+  it("runs no runtime that signs in with the customer's own account", () => {
+    // This route checks no account key before it boots a box, so a runtime
+    // admitted here on the customer's account would pay for a box its turn
+    // then refuses.
+    const ownAccount = HARNESS_IDS.filter(harnessUsesExternalAccount);
+    expect(ownAccount.length).toBeGreaterThan(0);
+    for (const id of ownAccount) {
+      expect(harnessSurfaceRefusal(id, "api")).toBeDefined();
+    }
   });
 });
 
