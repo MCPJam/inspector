@@ -726,12 +726,19 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
   };
 }
 
+/**
+ * Headers for a call from this server to the backend. In hosted mode they
+ * also carry the service token that marks a credential request as managed
+ * delivery (see {@link hostedCredentialDeliveryHeaders}). No caller passes
+ * the backend's tokens on to its own client, so every call carries it.
+ */
 export function buildConvexAuthHeaders(
   caller: ManagerCallerContext,
   originalBearer: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
   };
   if (isOrgBoundCredential(caller.authMethod)) {
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);
@@ -884,11 +891,7 @@ export async function authorizeBatch(
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
-      headers: {
-        ...buildConvexAuthHeaders(caller, bearerToken),
-        // The tokens this answers with stay in this process.
-        ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
-      },
+      headers: buildConvexAuthHeaders(caller, bearerToken),
       body: JSON.stringify({
         projectId,
         ...(options?.connectionId

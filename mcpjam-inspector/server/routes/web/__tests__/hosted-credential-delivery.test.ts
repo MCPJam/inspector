@@ -19,9 +19,15 @@ vi.mock("../../../config.js", async (importOriginal) => ({
   HOSTED_MODE: true,
 }));
 
-import { authorizeBatch } from "../auth.js";
+import type { Context } from "hono";
+import {
+  authorizeBatch,
+  authorizeServer,
+  buildConvexAuthHeaders,
+} from "../auth.js";
 import { forceRefreshHostedOAuthAccessToken } from "../../../utils/hosted-oauth-refresh.js";
 import { hostedCredentialDeliveryHeaders } from "../../../services/service-credential.js";
+import { fetchReplayConfig } from "../../../services/evals/route-helpers.js";
 
 const SERVICE_TOKEN = "svc-token-for-tests-0123456789";
 
@@ -77,6 +83,66 @@ describe("hosted credential requests identify the hosted Inspector", () => {
     });
   });
 
+  it("single authorize sends it too", async () => {
+    // A refusal still shows what was sent, without a full config to answer.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ code: "FORBIDDEN", message: "Refused" }),
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const c = { get: () => undefined, var: {} } as unknown as Context;
+
+    await expect(
+      authorizeServer(c, "user-jwt", "project-1", "server-1"),
+    ).rejects.toThrow("Refused");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://convex.test/web/authorize",
+    );
+    expect(sentHeaders(fetchMock)).toMatchObject({
+      Authorization: "Bearer user-jwt",
+      "x-inspector-service-token": SERVICE_TOKEN,
+    });
+  });
+
+  it("an API key caller's calls send it beside the acting-as headers", () => {
+    expect(
+      buildConvexAuthHeaders(
+        {
+          authMethod: "workos_api_key",
+          workosUserId: "user_01",
+          mcpjamOrganizationId: "org-1",
+        },
+        "sk_live_caller",
+      ),
+    ).toMatchObject({
+      Authorization: `Bearer ${SERVICE_TOKEN}`,
+      "x-mcpjam-acting-as": "user_01",
+      "x-mcpjam-acting-in-org": "org-1",
+      "x-inspector-service-token": SERVICE_TOKEN,
+    });
+  });
+
+  it("the replay config read sends it, so a hosted replay keeps its servers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, replayConfig: { servers: [] } }),
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchReplayConfig("run-1", "user-jwt");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://convex.test/v1/evals/runs/replay-config",
+    );
+    expect(sentHeaders(fetchMock)).toMatchObject({
+      Authorization: "Bearer user-jwt",
+      "x-inspector-service-token": SERVICE_TOKEN,
+    });
+  });
+
   it("the hosted force-refresh sends it too", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -97,6 +163,29 @@ describe("hosted credential requests identify the hosted Inspector", () => {
     expect(sentHeaders(fetchMock)).toMatchObject({
       Authorization: "Bearer user-jwt",
       "x-inspector-service-token": SERVICE_TOKEN,
+    });
+  });
+});
+
+describe("a local Inspector's calls never claim managed delivery", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.doUnmock("../../../config.js");
+    vi.resetModules();
+  });
+
+  it("sends no service token even when one is set", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", SERVICE_TOKEN);
+    vi.resetModules();
+    vi.doMock("../../../config.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../../config.js")>()),
+      HOSTED_MODE: false,
+    }));
+    const local = await import("../auth.js");
+
+    expect(local.buildConvexAuthHeaders({}, "user-jwt")).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer user-jwt",
     });
   });
 });
