@@ -39,7 +39,7 @@ test.describe("NUX first-run redirect", () => {
 
     await page.waitForURL("**/home", { timeout: 15_000 });
     await expect(
-      page.getByRole("heading", { name: "Welcome to MCPJam" }),
+      page.getByRole("heading", { name: "Connect an MCP server" }),
     ).toBeVisible();
   });
 
@@ -85,7 +85,7 @@ test.describe("NUX first-run redirect", () => {
     ).toBe("completed");
 
     await expect(
-      page.getByRole("heading", { name: "Welcome to MCPJam" }),
+      page.getByRole("heading", { name: "Connect an MCP server" }),
     ).toHaveCount(0);
     // Guest projects use canonical URLs; the local fallback stays unscoped.
     await expect(page).toHaveURL(

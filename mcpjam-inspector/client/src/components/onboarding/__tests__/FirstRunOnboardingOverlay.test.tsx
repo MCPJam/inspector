@@ -348,7 +348,7 @@ describe("FirstRunOnboardingOverlay", () => {
       screen.getByRole("heading", { name: "Couldn't connect to Example" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Connection error",
+      "Details from the failed connection",
     );
     // The raw error is visible without a disclosure.
     expect(screen.getByText("Connection refused")).toBeVisible();

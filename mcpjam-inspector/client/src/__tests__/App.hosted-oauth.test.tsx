@@ -4368,7 +4368,7 @@ describe("App hosted OAuth callback handling", () => {
         screen.getByRole("heading", { name: SERVER_DETAILS_HEADING }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Connection error",
+        "Details from the failed connection",
       );
     });
     expect(mockTrack).toHaveBeenCalledWith(

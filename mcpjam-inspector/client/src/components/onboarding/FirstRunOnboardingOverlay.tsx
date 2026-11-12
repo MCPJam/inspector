@@ -637,7 +637,7 @@ export function FirstRunOnboardingOverlay({
         />
         {connectionState.status === "failed" ? (
           <ConnectionFailureNotice
-            title="Connection error"
+            title="Details from the failed connection"
             error={connectionState.error}
           />
         ) : null}
