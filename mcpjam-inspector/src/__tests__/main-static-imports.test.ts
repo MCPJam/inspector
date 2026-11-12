@@ -9,7 +9,7 @@ it("main.ts does not statically import server/config.ts", async () => {
   // default port, so on a fallback port the server refuses its own window.
   // The lifecycle test mocks too many server modules to see every such path.
   const { metafile } = await build({
-    absWorkingDir: resolve(__dirname, ".."),
+    absWorkingDir: resolve(__dirname, "../.."),
     entryPoints: ["src/main.ts"],
     bundle: true,
     write: false,
