@@ -115,6 +115,11 @@ import {
   listConformanceRunsOperation,
   startConformanceRunOperation,
 } from "./conformance-operations.js";
+import {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+} from "./server-revision-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2371,6 +2376,23 @@ export type {
   StartConformanceRunResult,
 } from "./conformance-operations.js";
 export type { ResolvedServerInfo, ServerScopedInput };
+
+// ── Server revision operations ───────────────────────────────────────
+// Defined in `server-revision-operations.ts`; re-exported like the above.
+
+export {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+};
+export type {
+  DiffServerRevisionsInput,
+  DiffServerRevisionsResult,
+  GetServerRevisionInput,
+  GetServerRevisionResult,
+  ListServerRevisionsInput,
+  ListServerRevisionsResult,
+} from "./server-revision-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19230,6 +19252,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
   listServerToolsOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,

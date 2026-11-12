@@ -125,7 +125,8 @@ export interface UsePlaygroundStateOptions {
     hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
+    options?: { allowInteractiveOAuthFlow?: boolean }
   ) => Promise<EnsureServersReadyResult>;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
@@ -137,6 +138,7 @@ export interface UsePlaygroundStateOptions {
    * Empty / undefined falls back to single-server mode driven by `serverName`.
    */
   selectedServerNames?: string[];
+  onSelectMultipleServers?: (names: string[]) => void;
 }
 
 /**
@@ -1183,6 +1185,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     activeServerNames,
 
     // misc
+    selectedServerNames,
+    onSelectMultipleServers: options.onSelectMultipleServers,
+    servers,
+    activeProjectId: options.activeProjectId,
+    areServersHydrated,
+    ensureServersReady: options.ensureServersReady,
     // Surfaces that connect a server in place (the Tools rail's empty state)
     // need the handler, not just the connection status.
     onConnect,

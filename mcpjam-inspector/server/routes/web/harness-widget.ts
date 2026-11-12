@@ -1,3 +1,4 @@
+import { SAVED_ACCOUNT_UNAVAILABLE } from "../../utils/oauth-account-sets.js";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import { retainedResourceProofSchema, readRetainedResourceSource } from "@/shared/retained-app-resources";
 import { retainedProfileFingerprint, retainedResourceLegGate, readRetainedResourceScope } from "../../utils/harness/forwarding/retained-resources";
@@ -132,7 +133,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
           organizationId: scope.organizationId,
         }),
         ...(owner.connectionId
-          ? { connectionIds: { [owner.serverId]: owner.connectionId }, onlySelectedConnections: true }
+          ? { connectionIdSets: { [owner.serverId]: [owner.connectionId] }, accountSetRefusal: SAVED_ACCOUNT_UNAVAILABLE }
           : {}),
       },
     );

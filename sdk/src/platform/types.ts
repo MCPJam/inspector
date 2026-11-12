@@ -14,6 +14,13 @@ export type {
   PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
 } from "./conformance-types.js";
+export type {
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSource,
+  PlatformServerRevisionSummary,
+  PlatformServerRevisionTool,
+} from "./server-revision-types.js";
 import type {
   SwarmJourneyFinding,
   SwarmJourneyFindings,

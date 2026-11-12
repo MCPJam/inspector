@@ -12,6 +12,7 @@ import { resolveEnvironmentPaneColumn } from "@/lib/compare-environment-columns"
 import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-panes";
 import type { ComparePaneTargetOption } from "../compare-pane-target-select";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 import {
   useComparePaneControls,
   type ComparePaneSections,
@@ -80,6 +81,7 @@ const resolutions = [codex, cursor].map((host) =>
 const serverIdByName = new Map([
   ["GitHub", "srv-github"],
   ["Docs", "srv-docs"],
+  ["Linear", "srv-linear"],
 ]);
 
 const clientTargets = [codex, cursor].map((host) => ({
@@ -97,6 +99,7 @@ function Harness({
   lineupResolutions = resolutions,
   environments = [],
   paneEnvironments = new Map(),
+  connectedServers,
 }: {
   paneId: string;
   lane?: ComparePaneLane;
@@ -112,12 +115,14 @@ function Harness({
   lineupResolutions?: PlaygroundClientResolution[];
   environments?: ComparePaneTargetOption[];
   paneEnvironments?: ReadonlyMap<string, ComparePaneEnvironment>;
+  connectedServers?: string[];
 }) {
   const controls = useComparePaneControls({
     active: true,
     panes: lineup.map((pane) => ({ ...pane, ...overrides[pane.paneId] })),
     resolutions: lineupResolutions,
     sharedServers: ["GitHub", "Docs"],
+    connectedServers,
     serverIdByName,
     orgConfig: undefined,
     sections,
@@ -160,6 +165,79 @@ function spies() {
 describe("Compare pane settings", () => {
   beforeEach(() => {
     useComparePaneStore.setState({ panes: [], selectedPaneId: null });
+  });
+
+  it("adds a saved server to a narrowed pane without changing other panes", () => {
+    const calls = spies();
+    render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{
+          [panes[0].paneId]: { serverIds: [] },
+        }}
+      />,
+    );
+    const pane = useComparePaneStore.getState().panes[0];
+    act(() => pane.onServerChosen?.("Docs"));
+    expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
+      panes[0].paneId,
+      {
+        serverIds: [serverIdByName.get("Docs")],
+      },
+    );
+  });
+
+  it("undoes a failed pick against the pane's current servers", () => {
+    const calls = spies();
+    const docs = serverIdByName.get("Docs")!;
+    const github = serverIdByName.get("GitHub")!;
+    const { rerender } = render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{ [panes[0].paneId]: { serverIds: [] } }}
+      />,
+    );
+    const undo = useComparePaneStore.getState().panes[0].onServerChosen?.("Docs");
+    rerender(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{ [panes[0].paneId]: { serverIds: [docs, github] } }}
+      />,
+    );
+    calls.setPaneOverrides.mockClear();
+    act(() => undo?.());
+    expect(calls.setPaneOverrides).toHaveBeenCalledExactlyOnceWith(
+      panes[0].paneId,
+      { serverIds: [github] },
+    );
+  });
+
+  it("leaves a server the pane already had alone", () => {
+    const calls = spies();
+    render(
+      <Harness
+        paneId={panes[0].paneId}
+        spies={calls}
+        overrides={{
+          [panes[0].paneId]: { serverIds: [serverIdByName.get("Docs")!] },
+        }}
+      />,
+    );
+    const undo = useComparePaneStore.getState().panes[0].onServerChosen?.("Docs");
+    expect(undo).toBeUndefined();
+    expect(calls.setPaneOverrides).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pane following the shared selection when a server connects", () => {
+    const calls = spies();
+    render(<Harness paneId={panes[0].paneId} spies={calls} />);
+    act(() =>
+      useComparePaneStore.getState().panes[0].onServerChosen?.("Docs"),
+    );
+    expect(calls.setPaneOverrides).not.toHaveBeenCalled();
   });
 
   it.each([false, undefined])("offers only clients for a hidden saved pane (%s)", async (visible) => {
@@ -214,6 +292,59 @@ describe("Compare pane settings", () => {
     await user.click(screen.getByRole("switch", { name: "Use Docs in codex" }));
     expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("codex", {
       serverIds: null,
+    });
+  });
+
+  it("sets Device and Theme for one pane only", async () => {
+    useComparePaneDisplayStore.setState({ byPane: {} });
+    const user = userEvent.setup();
+    render(<Harness paneId="codex" spies={spies()} />);
+    expect(screen.getByTestId("compare-pane-summary")).not.toHaveTextContent(
+      "Phone",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Pane settings for codex" }),
+    );
+    expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Fill");
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    expect(useComparePaneDisplayStore.getState().byPane).toEqual({
+      codex: { theme: "dark" },
+    });
+    act(() =>
+      useComparePaneDisplayStore
+        .getState()
+        .setPaneDisplay("codex", { deviceType: "mobile" }),
+    );
+    expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Phone");
+    expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
+      "Phone",
+    );
+    expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    useComparePaneDisplayStore.setState({ byPane: {} });
+  });
+
+  it("keeps a turned-off pane-only server in settings while it is connected", async () => {
+    const user = userEvent.setup();
+    const calls = spies();
+    render(
+      <Harness
+        paneId="codex"
+        overrides={{ codex: { serverIds: ["srv-github"] } }}
+        connectedServers={["GitHub", "Linear"]}
+        spies={calls}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Pane settings for codex" }),
+    );
+    const linear = screen.getByRole("switch", { name: "Use Linear in codex" });
+    expect(linear).not.toBeChecked();
+    await user.click(linear);
+    expect(calls.setPaneOverrides).toHaveBeenLastCalledWith("codex", {
+      serverIds: ["srv-github", "srv-linear"],
     });
   });
 

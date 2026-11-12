@@ -56,6 +56,7 @@ import {
   closeWorkspaceSurface,
 } from "@mcpjam/widget-react";
 import type { WidgetHost, MCPAppsRendererProps } from "@mcpjam/widget-react";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import { useWidgetHost } from "@/components/chat-v2/thread/mcp-apps/use-widget-host";
 import {
   createThreadAppApi,
@@ -224,6 +225,8 @@ export interface ThreadAppWorkspaceOptions {
    */
   currentThreadId?: () => string;
   capabilities?: ExtensionCapabilities;
+  /** How Apps choose a display mode; undefined while Display modes is off. */
+  displayBehavior?: DisplayBehavior;
   /** Settings discovery is owned once per scope; chat owners skip it. */
   settings?: boolean;
   /** Called when an App is launched or reselected, for presentation. */
@@ -1149,6 +1152,7 @@ export function useThreadAppWorkspace(
           sendMessage: capabilities.messages ? options.sendMessage : undefined,
           currentThreadId: options.currentThreadId,
           capabilities,
+          displayBehavior: options.displayBehavior,
           navigate: options.routeNavigate ?? navigateDeepLink,
           openFile: (server, entry) => options.routeLaunch?.(server, entry, true) ?? launch(server, entry, undefined, true),
           chooseViewer,
@@ -1283,6 +1287,7 @@ export interface RetainedAppPorts {
   sendMessage?: AppMessageSender;
   currentThreadId?: () => string;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   navigate: (server: WorkspaceServer, url: string) => Promise<void>;
   openFile: (
     server: WorkspaceServer,
@@ -1312,6 +1317,7 @@ export function AppRegistration({
   openFile,
   currentThreadId,
   capabilities = ALL_EXTENSION_CAPABILITIES,
+  displayBehavior,
   chooseViewer,
   containerDimensions,
   renderOutcome,
@@ -1333,6 +1339,7 @@ export function AppRegistration({
   /** Read per request; defaults to the owner's own chat. */
   currentThreadId?: () => string;
   capabilities?: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   row: AppRow;
   navigate: (server: WorkspaceServer, url: string) => Promise<void>;
   host: WidgetHost;
@@ -1353,6 +1360,7 @@ export function AppRegistration({
   // switched later is refused per request, here and on the server; it never
   // rebuilds the bridge under the running guest.
   const [negotiatedCapabilities] = useState(capabilities);
+  const [negotiatedDisplayBehavior] = useState(displayBehavior);
   const capabilitiesRef = useRef(capabilities);
   capabilitiesRef.current = capabilities;
   // Turning model context off removes the App's chips, tells the App its
@@ -1454,11 +1462,11 @@ export function AppRegistration({
       presentationCallbacks.current.onDisplayModeChange(mode),
     [],
   );
-  const openAIDisplayModes = negotiatedCapabilities.displayModes;
+  const openAIRules = negotiatedDisplayBehavior?.start === "hint-first";
   const setSupportedModes = useCallback(
     (modes: ("inline" | "fullscreen" | "pip")[] | undefined) => {
       // Entrypoints open fullscreen; an App that declares it can't is refused.
-      if (openAIDisplayModes && modes && !modes.includes("fullscreen"))
+      if (openAIRules && modes && !modes.includes("fullscreen"))
         logExtensionEvent({
           serverId: row.server.serverId,
           serverName: row.server.name,
@@ -1472,7 +1480,7 @@ export function AppRegistration({
         });
       presentationCallbacks.current.onAppSupportedDisplayModesChange(modes);
     },
-    [openAIDisplayModes, row.server, row.declaration],
+    [openAIRules, row.server, row.declaration],
   );
   const params = useMemo<MCPAppsRendererProps>(
     () => ({
@@ -1549,7 +1557,10 @@ export function AppRegistration({
           handle,
           row.server.serverId,
           row.declaration.kind === "global" ? "global" : "thread",
-          { openAIDisplayModes, projectId: scope.projectId },
+          {
+            displayBehavior: negotiatedDisplayBehavior,
+            projectId: scope.projectId,
+          },
         ),
         host,
         handle,
@@ -1611,6 +1622,7 @@ export function AppRegistration({
     scope.threadId,
     messagesAllowed,
     negotiatedCapabilities,
+    negotiatedDisplayBehavior,
     refuse,
   ]);
   // What the bridge is built from is negotiated with the first composition
@@ -1744,6 +1756,7 @@ function RetainedAppsBody({
           sendMessage={ports.sendMessage}
           currentThreadId={ports.currentThreadId}
           capabilities={ports.capabilities}
+          displayBehavior={ports.displayBehavior}
           chooseViewer={ports.chooseViewer}
           renderOutcome={ports.renderOutcome}
           revalidate={ports.revalidate}

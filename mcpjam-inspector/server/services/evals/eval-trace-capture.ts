@@ -307,6 +307,12 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         } finally {
           const toolFinishedAt = Date.now();
           ctx.openTools.delete(toolCallId);
+          // The account this call ran on, as the backend-tools wrapper records it.
+          const connectionId = toolConnectionAttribution(
+            raw,
+            input,
+            toolCallId,
+          )?.connectionId;
           if (!policyBlocked) {
             const toolSpan: EvalTraceSpan = {
               id: `tool-${toolCallId}`,
@@ -319,6 +325,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId,
               toolOrigin: origin,
+              ...(connectionId ? { connectionId } : {}),
               status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -349,6 +356,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolCallId,
                 toolName: name,
                 serverId,
+                ...(connectionId ? { connectionId } : {}),
                 status: "error",
                 ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
                 ...createOffsetInterval(

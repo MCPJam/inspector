@@ -37,6 +37,7 @@ import {
   type PluginIconDirectory,
 } from "./plugin-icon-directory";
 import type { PluginIcons } from "@/lib/plugins/plugin-api-types";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   ALL_EXTENSION_CAPABILITIES,
   GLOBAL_OWNER_THREAD_ID,
@@ -62,6 +63,8 @@ export interface ExtensionRegistration {
   /** Exact plugin contribution already resolved for this chat. Display only. */
   includedPluginTools?: { environmentId: string; serverIds: string[]; includeAppOnly?: boolean };
   capabilities?: ExtensionCapabilities;
+  /** How Apps choose a display mode; undefined while Display modes is off. */
+  displayBehavior?: DisplayBehavior;
   /** Which client profile App launches are counted under (H9). */
   profile?: "chatgpt" | "codex";
   /**
@@ -179,6 +182,7 @@ function registrationKey(registration: ExtensionRegistration): string {
       server.connection ?? null,
     ]),
     capabilitiesKey(registration.capabilities ?? ALL_EXTENSION_CAPABILITIES),
+    registration.displayBehavior ?? null,
     registration.profile ?? "chatgpt",
     registration.hostRevision ?? null,
     registration.includedPluginTools ?? null,
@@ -297,6 +301,7 @@ export function ExtensionWorkspaceProvider({
   );
   const chatId = identity ? (registration?.chatId ?? null) : null;
   const profile = registration?.profile ?? "chatgpt";
+  const displayBehavior = identity ? registration?.displayBehavior : undefined;
   const hostRevision = identity ? registration?.hostRevision : undefined;
 
   // Retained chats for the current identity, most recent last.
@@ -391,6 +396,7 @@ export function ExtensionWorkspaceProvider({
             servers={servers}
             discovery={discovery}
             capabilities={capabilities}
+            displayBehavior={displayBehavior}
             profile={profile}
             hostRevision={hostRevision}
             currentThreadId={currentThreadId}
@@ -408,6 +414,7 @@ export function ExtensionWorkspaceProvider({
                 servers={servers}
                 discovery={discovery}
                 capabilities={capabilities}
+                displayBehavior={displayBehavior}
                 profile={profile}
                 hostRevision={hostRevision}
                 sendMessage={sendMessage}
@@ -506,6 +513,7 @@ const GlobalOwner = memo(function GlobalOwner({
   servers,
   discovery,
   capabilities,
+  displayBehavior,
   profile,
   hostRevision,
   currentThreadId,
@@ -517,6 +525,7 @@ const GlobalOwner = memo(function GlobalOwner({
   servers: WorkspaceServer[];
   discovery: ExtensionDiscovery;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   profile: "chatgpt" | "codex";
   hostRevision?: string;
   currentThreadId: () => string;
@@ -528,6 +537,7 @@ const GlobalOwner = memo(function GlobalOwner({
   const workspace = useThreadAppWorkspace(scope, servers, {
     discovery,
     capabilities,
+    displayBehavior,
     launchProfile: profile,
     hostRevision,
     currentThreadId,
@@ -591,6 +601,7 @@ const ChatOwner = memo(function ChatOwner({
   servers,
   discovery,
   capabilities,
+  displayBehavior,
   profile,
   hostRevision,
   sendMessage,
@@ -601,6 +612,7 @@ const ChatOwner = memo(function ChatOwner({
   servers: WorkspaceServer[];
   discovery: ExtensionDiscovery;
   capabilities: ExtensionCapabilities;
+  displayBehavior?: DisplayBehavior;
   profile: "chatgpt" | "codex";
   hostRevision?: string;
   sendMessage: AppMessageSender;
@@ -613,6 +625,7 @@ const ChatOwner = memo(function ChatOwner({
   const workspace = useThreadAppWorkspace(scope, servers, {
     discovery,
     capabilities,
+    displayBehavior,
     launchProfile: profile,
     hostRevision,
     sendMessage,

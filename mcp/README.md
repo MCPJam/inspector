@@ -44,6 +44,9 @@ beta; they are listed [after the table](#held-tools).
 | `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
+| `list_server_revisions` | List a saved MCP server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change. | — |
+| `get_server_revision` | Read one stored revision of a saved MCP server: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent. | — |
+| `diff_server_revisions` | Compare two stored revisions of a saved MCP server: tools added, removed and changed with old and new definitions, and server info changes with values. A field in `droppedFields` was not stored on that side, so a change to it is unknown. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
 | `render_server_widget` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. Executes the tool. | — |
 | `list_server_prompts` | List the prompts a saved MCP server exposes: names, descriptions, and arguments. | — |

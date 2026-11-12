@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.20.0",
+  "version": "3.21.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -54,7 +54,7 @@
     "dev:worktree": "node scripts/dev-worktree.mjs",
     "dev:setup-guest-auth": "node scripts/dev-setup-guest-auth.mjs",
     "worktree": "node scripts/worktree.mjs",
-    "dev:hosted": "cross-env VITE_MCPJAM_HOSTED_MODE=true WEB_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 npm run dev",
+    "dev:hosted": "cross-env VITE_MCPJAM_HOSTED_MODE=true node scripts/dev-worktree.mjs",
     "sdk:build": "npm --prefix ../sdk run build",
     "telemetry:catalogs": "node ../scripts/generate-telemetry-catalogs.mjs",
     "telemetry:watch": "node ../scripts/generate-telemetry-catalogs.mjs --watch",
@@ -175,7 +175,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@lezer/highlight": "^1.2.5",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^10.4.0",
+    "@mcpjam/sdk": "^10.5.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -205,6 +205,7 @@
     "cross-env": "^10.1.0",
     "date-fns": "^4.4.0",
     "denque": "^2.1.0",
+    "diff": "^9.0.0",
     "dotenv": "^18.0.5",
     "e2b": "^2.62.2",
     "electron-log": "^5.4.4",

@@ -21,6 +21,7 @@ import {
   canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
+  uiDisplayHintFields,
 } from "../../../utils/ui-resource-meta";
 import { viewOriginLabelForConfig } from "../../../utils/view-origin-label";
 
@@ -262,6 +263,7 @@ apps.post("/widget-content", async (c) => {
       domain: declaredDomain,
       metadataSources,
       metadataSource,
+      ...uiDisplayHints
     } = resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
@@ -350,6 +352,7 @@ apps.post("/widget-content", async (c) => {
       cspMode: effectiveCspMode,
       prefersBorder,
       resourceDisplayHints: readResourceDisplayHints(resourceMeta, listingMeta),
+      ...uiDisplayHintFields(uiDisplayHints),
       declaredDomain,
       // The subdomain this server's views get once per-app origins are on.
       // Optional-called: the route tests stand up managers that expose no

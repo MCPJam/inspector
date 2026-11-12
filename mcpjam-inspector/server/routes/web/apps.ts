@@ -12,6 +12,7 @@ import {
   canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
+  uiDisplayHintFields,
 } from "../../utils/ui-resource-meta.js";
 import { viewOriginLabelForConfig } from "../../utils/view-origin-label.js";
 import {
@@ -163,6 +164,7 @@ export async function buildMcpAppsWidgetContent(manager: MCPClientManager, body:
         domain: declaredDomain,
         metadataSource,
         metadataSources,
+        ...uiDisplayHints
       } = resolveUiResourceMeta({
         contentMeta: resourceMeta,
         listingMeta,
@@ -206,6 +208,7 @@ export async function buildMcpAppsWidgetContent(manager: MCPClientManager, body:
           resourceMeta,
           listingMeta,
         ),
+        ...uiDisplayHintFields(uiDisplayHints),
         declaredDomain,
         viewOriginLabel: viewOriginLabelForConfig(
           manager.getServerConfig?.(body.serverId),

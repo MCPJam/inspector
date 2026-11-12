@@ -296,7 +296,8 @@ cases:
           type: onlyToolsCalled
           toolNames: [
             search_mcp_tools, load_mcp_tools, check_host_compatibility,
-            compare_eval_run, diagnose_server, export_server, get_capabilities,
+            compare_eval_run, diagnose_server, diff_server_revisions,
+            export_server, get_capabilities,
             get_chat_session, get_chat_session_trace, get_client,
             get_conformance_check, get_conformance_report,
             get_conformance_run, get_eval_case,
@@ -311,7 +312,8 @@ cases:
             get_project_server, get_project_server_connection_status,
             get_project_skill, get_readiness_report, get_readiness_run,
             get_registry_directory_server, get_sandbox_image, get_scenario,
-            get_secret, get_server_prompt, get_server_skill,
+            get_secret, get_server_prompt, get_server_revision,
+            get_server_skill,
             get_share_settings, get_study, get_study_insights,
             get_study_metrics, get_study_session, get_study_signals,
             get_study_usage, get_swarm, get_swarm_run_insights,
@@ -333,6 +335,7 @@ cases:
             list_registry_directory_sources, list_registry_servers,
             list_sandbox_image_builds, list_sandbox_images, list_scenarios,
             list_secrets, list_server_prompts, list_server_resources,
+            list_server_revisions,
             list_server_skills, list_server_tools, list_studies,
             list_study_findings, list_study_sessions, list_swarm_findings,
             list_swarms, list_trace_destination_backfills,

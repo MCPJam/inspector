@@ -1238,6 +1238,38 @@ export {
 } from "./provider-tool-names.js";
 export type { ToolNameAliases } from "./provider-tool-names.js";
 
+// Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
+// meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
+// gating. `HostRunner` and the Inspector's hosted turns run the same code.
+export {
+  DEFAULT_TOOL_DISCOVERY_POLICY,
+  META_TOOL_LOAD,
+  META_TOOL_NAMES,
+  META_TOOL_SEARCH,
+  buildToolCatalog,
+  commitNewlyLoaded,
+  createDiscoveryState,
+  decideProgressivePlan,
+  gateToolsToActiveSubset,
+  hydrateDiscoveryStateFromHistory,
+  lookupToolIdByModelName,
+  parseProgressiveToolsEnv,
+  resolveActiveToolNames,
+  shouldForceInitialToolSearch,
+} from "./progressive-discovery/discovery.js";
+export type {
+  ProgressiveDiscoveryOptions,
+  ProgressiveToolPlan,
+  ToolCatalogEntry,
+  ToolDiscoveryState,
+} from "./progressive-discovery/discovery.js";
+export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
+export type {
+  LoadMcpToolsResult,
+  ProgressiveMetaToolsConfig,
+  SearchMcpToolsResult,
+} from "./progressive-discovery/meta-tools.js";
+
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
   serializeForInlineScript,

@@ -7,11 +7,14 @@ const mocks = vi.hoisted(() => ({
   user: { id: "account-1" } as { id: string } | null,
   signIn: vi.fn(),
   redeem: vi.fn(),
+  override: null as unknown,
   context: {
     status: "ready",
     accountExternalId: "account-1",
     credits: 1000,
     label: "AGNTCon",
+    mode: "single_use" as "single_use" | "shared",
+    collectLead: true as boolean | undefined,
     cutoff: 2000000000000,
     account: { userId: "user-1", name: "Alex", email: "alex@example.test" },
     organizations: [{ organizationId: "org-1", name: "My organization" }],
@@ -21,7 +24,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: mocks.user, signIn: mocks.signIn }),
 }));
 vi.mock("convex/react", () => ({
-  useQuery: () => mocks.context,
+  useQuery: () => mocks.override ?? mocks.context,
   useMutation: () => mocks.redeem,
 }));
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -34,6 +37,10 @@ beforeEach(() => {
     { organizationId: "org-1", name: "My organization" },
   ];
   mocks.context.accountExternalId = "account-1";
+  mocks.context.mode = "single_use";
+  mocks.context.collectLead = true;
+  mocks.override = null;
+  window.history.replaceState(null, "", "/redeem");
   savePromoIntent("SYNTH-ETIC1");
 });
 
@@ -165,4 +172,108 @@ it("lets an attendee correct a scanned code before submitting", async () => {
       expect.objectContaining({ code: "OTHER-CODE1" }),
     ),
   );
+});
+
+it("asks for name and company when an older backend omits collectLead", async () => {
+  mocks.context.collectLead = undefined;
+  mocks.redeem.mockResolvedValue({ status: "refused", code: "rate_limited" });
+  render(<PromoRedemptionPage />);
+  expect(screen.getAllByRole("textbox")).toHaveLength(2);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Claim for My organization" }),
+  );
+  await waitFor(() =>
+    expect(mocks.redeem).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Alex", company: "My organization" }),
+    ),
+  );
+});
+
+describe("shared campaigns", () => {
+  beforeEach(() => {
+    clearPromoIntent();
+    window.history.replaceState(
+      null,
+      "",
+      "/redeem?campaign=maven-evals-0a1b2c3d4e",
+    );
+    mocks.context.mode = "shared";
+  });
+
+  it("asks only for the destination when the campaign collects no leads", async () => {
+    mocks.context.collectLead = false;
+    mocks.redeem.mockResolvedValue({
+      status: "refused",
+      code: "campaign_closed",
+    });
+    render(<PromoRedemptionPage />);
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    expect(screen.queryByLabelText("Code printed below the QR")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Claim for My organization" }),
+    );
+    await waitFor(() =>
+      expect(mocks.redeem).toHaveBeenCalledExactlyOnceWith({
+        campaignId: "maven-evals-0a1b2c3d4e",
+        name: "",
+        company: "",
+        organizationId: "org-1",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This offer has ended.",
+    );
+  });
+
+  it("keeps the lead fields but drops the code when the campaign collects leads", async () => {
+    mocks.redeem.mockResolvedValue({ status: "refused", code: "rate_limited" });
+    render(<PromoRedemptionPage />);
+    expect(screen.getAllByRole("textbox")).toHaveLength(2);
+    expect(screen.queryByLabelText("Code printed below the QR")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Claim for My organization" }),
+    );
+    await waitFor(() =>
+      expect(mocks.redeem).toHaveBeenCalledExactlyOnceWith({
+        campaignId: "maven-evals-0a1b2c3d4e",
+        name: "Alex",
+        company: "My organization",
+        organizationId: "org-1",
+      }),
+    );
+  });
+
+  it("names the campaign on an existing receipt", () => {
+    mocks.override = {
+      status: "already_redeemed",
+      accountExternalId: "account-1",
+      receipt: {
+        canOpenOrganization: true,
+        userId: "user-1",
+        grantId: "grant-1",
+        organizationId: "org-1",
+        organizationName: "My organization",
+        campaignLabel: "Maven MCP Evals",
+        credits: 1000,
+        redeemedAt: 1_700_000_000_000,
+      },
+    };
+    render(<PromoRedemptionPage />);
+    expect(
+      screen.getByText("You've already redeemed your Maven MCP Evals credits."),
+    ).toBeVisible();
+  });
+
+  it("carries the campaign through sign-in", async () => {
+    mocks.user = null;
+    render(<PromoRedemptionPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to claim" }));
+    await waitFor(() =>
+      expect(mocks.signIn).toHaveBeenCalledWith({
+        state: expect.objectContaining({
+          promoCampaign: "maven-evals-0a1b2c3d4e",
+        }),
+      }),
+    );
+  });
 });

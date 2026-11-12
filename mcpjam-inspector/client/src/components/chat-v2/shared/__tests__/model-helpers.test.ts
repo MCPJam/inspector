@@ -209,7 +209,7 @@ describe("org model helpers", () => {
     });
     const byId = new Map(models.map((m) => [String(m.id), m]));
 
-    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna"]) {
       const row = byId.get(id);
       expect(row, `${id} missing from the BYOK list`).toBeDefined();
       expect(row!.contextLength).toBe(1_050_000);

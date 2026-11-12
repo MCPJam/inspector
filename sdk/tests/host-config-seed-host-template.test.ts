@@ -190,7 +190,7 @@ describe("seedHostTemplate", () => {
   it("matches the documented model + style for the claude template", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     expect(config.hostStyle).toBe("claude");
-    expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
+    expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
   });
 
   it("keeps Claude protocol and app capabilities faithful to the probe", () => {

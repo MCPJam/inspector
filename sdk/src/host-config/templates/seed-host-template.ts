@@ -546,7 +546,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // SUPPORTED_MODELS entry → silently fell back to default.
         // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
         // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -794,7 +794,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // SUPPORTED_MODELS entry → silently fell back to default.
         // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
         // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -1149,7 +1149,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // entry → silently fell back. Luna is the current default ChatGPT
         // model and is hosted (every hosted model is guest-allowed), so
         // guests still get it without an OpenAI key.
-        modelId: "openai/gpt-5.6-luna",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1412,7 +1412,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
         // Default the Mistral host to Mistral Large 3 2512 (MCPJam-hosted).
-        modelId: "mistralai/mistral-large-2512",
+        modelId: "mistralai/mistral-small-2603",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1554,7 +1554,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Goose Desktop is model-provider agnostic. Use MCPJam's smallest
         // hosted model so the simulated chat runs before a user wires their
         // own Goose-like model stack.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1678,7 +1678,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Slackbot's MCP host is model-provider agnostic toward the server.
         // Use MCPJam's smallest hosted model so simulated chats run before a
         // user wires their own Slackbot-shaped model stack.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1848,7 +1848,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // MCPJAM_GUEST_ALLOWED_MODEL_IDS (4.6 is gated); guests get it
         // without an Anthropic key. Anthropic-flavored default matches
         // Cursor's typical chat config — users can swap any model after.
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
         // Real Cursor (3.4.20 probe) doesn't yet implement SEP-1865
@@ -2303,7 +2303,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "copilot",
         // Match the backend's supported default for Copilot so offline
         // template creation uses the same model as the live catalog.
-        modelId: "openai/gpt-5.6-luna",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2465,13 +2465,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "vscode",
-        // Tool search defaults on for the seeded Claude Sonnet 4.5 model.
+        // Tool search defaults on for supported Claude models.
         progressiveToolDiscovery: true,
         // VS Code Copilot Chat offers both OpenAI and Anthropic models;
         // default to the same guest-allowed Anthropic model as Cursor
         // (Sonnet 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App
         // Builder works without a BYOK key. Users can swap any model after.
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
         // The 1.130 probe did not exercise SEP-1865 visibility filtering, so
@@ -2657,7 +2657,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // need AWS creds), so default to the guest-allowed hosted Claude
         // analog — Haiku 4.5 — so the App Builder works without AWS
         // credentials. Users can swap to a real Bedrock model id after.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2715,7 +2715,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "n8n",
         // n8n's MCP Client Tool is model-provider agnostic; this hosted
         // default only keeps MCPJam's simulated chat runnable out-of-the-box.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2747,7 +2747,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "gemini",
-        modelId: "google/gemini-3-pro",
+        modelId: "google/gemini-3.8-flash",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2856,7 +2856,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "perplexity",
         // The probe only identifies Perplexity's MCP client, not a reusable
         // model id; keep MCPJam's simulated chat runnable with a hosted model.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2885,7 +2885,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "cline",
         // The probe only identifies Cline's MCP client, not a reusable model
         // id; keep MCPJam's simulated chat runnable with a hosted model.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -2916,7 +2916,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "notion",
         // Notion AI is model-provider agnostic toward MCP servers; this hosted
         // default only keeps MCPJam's simulated chat runnable out-of-the-box.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });

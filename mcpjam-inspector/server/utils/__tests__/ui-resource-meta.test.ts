@@ -13,7 +13,9 @@ import { describe, it, expect } from "vitest";
 import {
   canSkipListingLookup,
   resolveUiResourceMeta,
+  uiDisplayHintFields,
 } from "../ui-resource-meta.js";
+import { widgetResourceContent } from "../widget-resource-content.js";
 
 const CSP_A = { connectDomains: ["https://a.example"] };
 const CSP_B = { connectDomains: ["https://b.example"] };
@@ -131,6 +133,94 @@ describe("resolveUiResourceMeta — domain", () => {
     });
     expect(resolved.domain).toBeUndefined();
     expect(resolved.metadataSources.domain).toBe("none");
+  });
+});
+
+describe("resolveUiResourceMeta — preferredDisplayMode", () => {
+  const resolve = (content?: unknown, listing?: unknown) =>
+    resolveUiResourceMeta({
+      contentMeta:
+        content === undefined
+          ? undefined
+          : uiMeta({ preferredDisplayMode: content }),
+      listingMeta:
+        listing === undefined
+          ? undefined
+          : uiMeta({ preferredDisplayMode: listing }),
+    });
+
+  it.each(["inline", "fullscreen"] as const)("passes %s through", (mode) => {
+    const resolved = resolve(mode);
+    expect(resolved.preferredDisplayMode).toBe(mode);
+    expect(resolved.ignoredPreferredDisplayMode).toBeUndefined();
+    expect(uiDisplayHintFields(resolved)).toEqual({
+      uiDisplayHints: { preferredDisplayMode: mode },
+    });
+  });
+
+  it("lets the content item win and falls back to the listing", () => {
+    expect(resolve("inline", "fullscreen").preferredDisplayMode).toBe("inline");
+    expect(resolve(undefined, "fullscreen").preferredDisplayMode).toBe(
+      "fullscreen",
+    );
+    expect(resolve().preferredDisplayMode).toBeUndefined();
+    expect(uiDisplayHintFields(resolve())).toEqual({});
+  });
+
+  it.each([
+    ["sidebar", '"sidebar"'],
+    ["pip", '"pip"'],
+    ["Fullscreen", '"Fullscreen"'],
+    [null, "null"],
+    [1, "1"],
+    [["fullscreen"], '["fullscreen"]'],
+    [{ mode: "fullscreen" }, '{"mode":"fullscreen"}'],
+  ])("ignores %j and reports it", (value, reported) => {
+    const resolved = resolve(value);
+    expect(resolved.preferredDisplayMode).toBeUndefined();
+    expect(resolved.ignoredPreferredDisplayMode).toBe(reported);
+    expect(uiDisplayHintFields(resolved)).toEqual({
+      ignoredPreferredDisplayMode: reported,
+    });
+  });
+
+  it("reports a malformed content value and still reads the listing", () => {
+    const resolved = resolve("side-panel", "fullscreen");
+    expect(resolved.preferredDisplayMode).toBe("fullscreen");
+    expect(resolved.ignoredPreferredDisplayMode).toBe('"side-panel"');
+  });
+
+  it("reports a malformed listing value only when the content declares none", () => {
+    expect(resolve("inline", "bogus").ignoredPreferredDisplayMode).toBe(
+      undefined,
+    );
+    expect(resolve(undefined, "bogus").ignoredPreferredDisplayMode).toBe(
+      '"bogus"',
+    );
+  });
+
+  it("shortens a long declaration", () => {
+    const reported = resolve("x".repeat(200)).ignoredPreferredDisplayMode;
+    expect(reported).toHaveLength(80);
+    expect(reported?.endsWith("...")).toBe(true);
+  });
+
+  it("leaves the openai/ui hints and the metadata sources as they were", () => {
+    const content = widgetResourceContent({
+      mimeType: "text/html;profile=mcp-app",
+      text: "<p>app</p>",
+      _meta: {
+        ui: { preferredDisplayMode: "fullscreen" },
+        "openai/ui": { preferredDisplayMode: "inline" },
+      },
+    });
+    expect(content.uiDisplayHints).toEqual({
+      preferredDisplayMode: "fullscreen",
+    });
+    expect(content.resourceDisplayHints).toEqual({
+      preferredDisplayMode: "inline",
+    });
+    expect(content.metadataSource).toBe("none");
   });
 });
 

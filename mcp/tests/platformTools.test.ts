@@ -147,6 +147,9 @@ const PLAIN_TOOLS = [
   "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
+  "list_server_revisions",
+  "get_server_revision",
+  "diff_server_revisions",
   "call_server_tool",
   // The render verdict is structured evidence (tree, console errors, blocked
   // requests). A widget PANEL here would be a second, drifting copy of the
@@ -449,6 +452,9 @@ describe("platform tool registration", () => {
       "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
+      "list_server_revisions",
+      "get_server_revision",
+      "diff_server_revisions",
       "call_server_tool",
       "render_server_widget",
       "list_server_prompts",

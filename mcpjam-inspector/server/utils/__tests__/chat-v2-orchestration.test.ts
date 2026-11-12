@@ -38,7 +38,7 @@ import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
   resolveActiveToolNames,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 
 function mockManager(tools: Record<string, unknown>) {
   return {
