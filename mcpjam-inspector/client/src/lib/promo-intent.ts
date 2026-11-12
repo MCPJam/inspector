@@ -1,7 +1,25 @@
 const KEY = "mcpjam_promo_intent";
 const TTL = 30 * 60 * 1000;
-type Intent = { code: string; storedAt: number };
+// A code belongs to the campaign whose link carried it, so opening another
+// campaign in the same tab never offers the previous campaign's code.
+type Intent = { code: string; storedAt: number; campaign: string };
 let memory: Intent | null | undefined;
+
+const CAMPAIGN_KEY = /^[a-z0-9-]{1,80}$/;
+/** Printed AGNTCon cards link to `/redeem` with no campaign. */
+export const DEFAULT_PROMO_CAMPAIGN = "agntcon-2026";
+
+function campaignOrNull(value: unknown) {
+  return typeof value === "string" && CAMPAIGN_KEY.test(value) ? value : null;
+}
+
+/** The campaign key is printed in a shared QR, so it may live in the URL. */
+export function readPromoCampaign(search = window.location.search) {
+  return (
+    campaignOrNull(new URLSearchParams(search).get("campaign")) ??
+    DEFAULT_PROMO_CAMPAIGN
+  );
+}
 
 export function clearPromoIntent() {
   memory = null;
@@ -15,8 +33,12 @@ export function clearPromoIntent() {
   }
 }
 
-export function savePromoIntent(code: string, now = Date.now()) {
-  memory = { code, storedAt: now };
+export function savePromoIntent(
+  code: string,
+  now = Date.now(),
+  campaign = readPromoCampaign(),
+) {
+  memory = { code, storedAt: now, campaign };
   try {
     sessionStorage.setItem(KEY, JSON.stringify(memory));
     return true;
@@ -27,7 +49,10 @@ export function savePromoIntent(code: string, now = Date.now()) {
   }
 }
 
-export function readPromoIntent(now = Date.now()): string {
+export function readPromoIntent(
+  now = Date.now(),
+  campaign = readPromoCampaign(),
+): string {
   try {
     if (memory === undefined) {
       const raw: unknown = JSON.parse(sessionStorage.getItem(KEY) ?? "null");
@@ -40,7 +65,13 @@ export function readPromoIntent(now = Date.now()): string {
         raw.code.length <= 64 &&
         typeof raw.storedAt === "number"
       ) {
-        memory = { code: raw.code, storedAt: raw.storedAt };
+        memory = {
+          code: raw.code,
+          storedAt: raw.storedAt,
+          campaign:
+            ("campaign" in raw && campaignOrNull(raw.campaign)) ||
+            DEFAULT_PROMO_CAMPAIGN,
+        };
       }
     }
   } catch {
@@ -51,12 +82,24 @@ export function readPromoIntent(now = Date.now()): string {
     clearPromoIntent();
     return "";
   }
-  return memory.code;
+  return memory.campaign === campaign ? memory.code : "";
 }
 
-/** Only a non-secret recovery flag crosses the authentication redirect. */
-export function promoSignInState() {
-  const code = readPromoIntent();
+export function redeemPath(campaign: string | null, manual = false) {
+  const params = new URLSearchParams();
+  if (manual) params.set("manual", "1");
+  if (campaign && campaign !== DEFAULT_PROMO_CAMPAIGN)
+    params.set("campaign", campaign);
+  const query = params.toString();
+  return query ? `/redeem?${query}` : "/redeem";
+}
+
+/**
+ * Only non-secret values cross the authentication redirect: the recovery flag
+ * and the public campaign key, so a lost intent still lands on its campaign.
+ */
+export function promoSignInState(campaign: string) {
+  const code = readPromoIntent(Date.now(), campaign);
   let stored = false;
   try {
     stored = sessionStorage.getItem(KEY) === JSON.stringify(memory);
@@ -64,21 +107,33 @@ export function promoSignInState() {
     // Authentication can continue with manual entry when storage is blocked.
     console.debug("Promo intent storage unavailable");
   }
-  return { promoReturn: true, promoManualEntry: !code || !stored };
+  return {
+    promoReturn: true,
+    promoManualEntry: !code || !stored,
+    promoCampaign: campaign,
+  };
 }
 
 export function promoSignInReturn(state: Record<string, unknown> | null) {
   if (state?.promoReturn !== true) return null;
-  return state.promoManualEntry === true ? "/redeem?manual=1" : "/redeem";
+  return redeemPath(
+    campaignOrNull(state.promoCampaign),
+    state.promoManualEntry === true,
+  );
 }
 
 /** Capture before app-bootstrap initializes telemetry or sign-in return state. */
 export function capturePromoIntent() {
   if (window.location.pathname.replace(/\/+$/, "") !== "/redeem") return;
   const url = new URL(window.location.href);
+  const campaign = campaignOrNull(url.searchParams.get("campaign"));
   if (url.searchParams.get("manual") === "1") {
     if (clearPromoIntent()) {
-      window.history.replaceState(window.history.state, "", "/redeem");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        redeemPath(campaign),
+      );
     }
     return;
   }
@@ -86,9 +141,10 @@ export function capturePromoIntent() {
     url.searchParams.get("code") ??
     new URLSearchParams(url.hash.slice(1)).get("code");
   if (code !== null) {
-    if (code.length <= 64) savePromoIntent(code);
+    if (code.length <= 64)
+      savePromoIntent(code, Date.now(), campaign ?? DEFAULT_PROMO_CAMPAIGN);
     else clearPromoIntent();
-    window.history.replaceState(window.history.state, "", "/redeem");
+    window.history.replaceState(window.history.state, "", redeemPath(campaign));
   }
 }
 

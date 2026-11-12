@@ -209,14 +209,12 @@ function isModelVisibleImageOutput(value: unknown): boolean {
 /**
  * One decision per tool call, for the life of a turn.
  *
- * Keyed by `toolCallId` rather than by tool name because the SEP-2640
- * declaration is a FUNCTION WITH SIDE EFFECTS: it resolves the skill's
- * manifest and records the digest set the user is about to be asked about,
- * which `execute` then re-checks. This engine asks the same question about the
- * same call more than once — at the emit gate, then again on the unresolved
- * and auto-deny re-scans, which re-walk the whole history — and a second
- * evaluation would re-fetch the manifest and could overwrite the binding it
- * exists to check. The AI SDK evaluates once per call; so does this.
+ * Keyed by `toolCallId` rather than by tool name because a FUNCTION-form
+ * declaration answers per call, from that call's input and messages. This
+ * engine asks the same question about the same call more than once — at the
+ * emit gate, then again on the unresolved and auto-deny re-scans, which
+ * re-walk the whole history — and every one of those must get the answer the
+ * first ask got. The AI SDK evaluates once per call; so does this.
  *
  * Promises, not booleans, so two concurrent askers share one evaluation rather
  * than racing into two.
@@ -1068,8 +1066,8 @@ export interface MCPJamHandlerOptions {
    * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
    * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
    * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skillsSource` instead (which THROWS on
-   * harness+pinned — the two paths are deliberately disjoint).
+   * pinned skills via prepareChatV2's `skills` plan instead (which it refuses
+   * on a harness turn — the two paths are deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**

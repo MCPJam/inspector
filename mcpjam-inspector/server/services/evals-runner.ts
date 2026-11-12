@@ -195,7 +195,7 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
-import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
+import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -240,6 +240,8 @@ import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
 import { failCommittedQuickRun } from "./evals/quick-run-environment.js";
 import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
+import { iterationTurnSkills } from "./evals/pinned-skill-source.js";
+import type { PinnedSkillSource } from "./environments/turn-skills.js";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -501,37 +503,11 @@ export type EvalTestCase = {
 };
 
 /**
- * How a run delivers its PINNED skills to the model (INS-5).
- *
- * Both variants are frozen snapshot content and both bypass approval — an eval
- * run is auto-deny, and these are pure reads of content that cannot change
- * mid-run. They differ only in the tool SURFACE, and which one a run needs is a
- * property of what it pinned:
- *
- *  - `pinned` — bare-name tools over SKILL.md bodies. Every eval run that
- *    predates plugins, unchanged: same tool names, same prompt stanza, and no
- *    supporting-file tools advertised for files that cannot exist.
- *  - `pinned-effective` — INS-3's ref-addressed surface, for a run whose pins
- *    carry a plugin `modelRef` (two plugins may declare the same skill name, so
- *    a bare name cannot identify one) or supporting FILES (the bare-name
- *    surface has no tool to read them with).
- *
- * Decided ONCE, at the boundary that read the run's pins, so no iteration can
- * disagree with another about the surface the suite was measured on.
- */
-export type EvalPinnedSkillSource =
-  | { kind: "pinned"; skills: PinnableSkill[] }
-  | {
-      kind: "pinned-effective";
-      capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
-    };
-
-/**
  * How a run's FROZEN skills reach one case — both channels, together.
  *
  * There are two, and they are not interchangeable:
- *   - `pinnedSkillSource` feeds the EMULATED path, where skills become
- *     in-memory tool definitions.
+ *   - `pinnedSkillSource` is what each iteration plans its skills from
+ *     (`iterationTurnSkills`): MCPJam's agent's tools, and what a turn records.
  *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
  *     as SKILL.md files on the box.
  *
@@ -547,10 +523,10 @@ export type EvalPinnedSkillSource =
  * the "this run delivers no skills" answer and must survive.
  */
 export function runFrozenSkillOptions(run: {
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 }): {
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
   // Presence selects the pinned source at every hop below, so a non-array that
@@ -580,34 +556,6 @@ export function runFrozenSkillOptions(run: {
       ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
       : {}),
   };
-}
-
-/**
- * Which skills source an ITERATION hands `prepareChatV2` — the second half of
- * the two-channel decision `runFrozenSkillOptions` bundles.
- *
- * Eval runs never use local-FS skills (decision 10), so the answer is always
- * explicit. The part that is not obvious: a HARNESS iteration takes
- * `{ kind: "none" }` EVEN WHEN THE RUN HAS PINS. Its pins are already travelling
- * on the other channel (`pinnedHarnessSkills` → SKILL.md on the box), and
- * `prepareChatV2` THROWS on harness+pinned because delivering both would hand
- * the model the same skill twice by two mechanisms — an in-memory `loadSkill`
- * tool AND an on-box copy.
- *
- * This is a seam guard, in the same spirit as `runFrozenSkillOptions` and for a
- * bug of the same family. #4146 wired a run's pins into `pinnedSkillSource`
- * without teaching the two iteration paths that a harness must not receive
- * them, so every harness run whose environment carried a skill died at
- * `prepareChatV2` with `tokensUsed: 0` — while runs with no skills stayed green,
- * which is why it shipped. Both call sites now ask this one function, so the
- * two paths cannot drift apart again.
- */
-export function resolveIterationSkillsSource(args: {
-  harness?: string | undefined;
-  pinnedSkillSource?: EvalPinnedSkillSource;
-}): EvalPinnedSkillSource | { kind: "none" } {
-  if (args.harness) return { kind: "none" };
-  return args.pinnedSkillSource ?? { kind: "none" };
 }
 
 /**
@@ -756,17 +704,13 @@ export type RunEvalSuiteOptions = {
   suiteHostConfig?: Record<string, unknown> | null;
   harnessRuntimeVenue?: "local" | "hosted";
   /**
-   * The skill delivery this run's PINS resolved to, decided once at the
-   * boundary (`prepareEvalRun`) and forwarded verbatim by every iteration
-   * runner. Absent ⇒ the runners pass `skillsSource: none` (eval runs never use
-   * local-FS skills — decision 10); quick-run stays absent (no run row = no
-   * pinning carrier).
-   *
-   * A SOURCE rather than a skill list because INS-5 gave the pin store two
-   * possible shapes, and which one a run needs is a property of what it pinned,
-   * not a per-iteration choice — see {@link EvalPinnedSkillSource}.
+   * The run's frozen skills, prepared once at the boundary (`prepareEvalRun`)
+   * and forwarded verbatim; every iteration plans its turn's skills from them
+   * (`iterationTurnSkills`). Absent ⇒ no skills (eval runs never use local-FS
+   * skills — decision 10); a quick run without an environment stays absent
+   * (no run row = no pinning carrier).
    */
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   /**
    * The run's frozen skills in HARNESS shape, materialized ON BOX.
    *
@@ -2488,11 +2432,10 @@ type RunIterationBaseParams = {
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
   /**
-   * The skill delivery this run's PINS resolved to (see
-   * {@link RunEvalSuiteOptions.pinnedSkillSource}). Eval runs NEVER use local-FS
-   * skills (decision 10) — the runner passes this or `skillsSource: none`.
+   * The run's frozen skills (see {@link RunEvalSuiteOptions.pinnedSkillSource}).
+   * Eval runs NEVER use local-FS skills (decision 10): absent means none.
    */
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   /** The run's frozen skills in harness shape (see
    *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
@@ -3297,8 +3240,8 @@ const executeTestCase = async (params: {
   projectEnvironmentId?: string;
   /** See {@link RunEvalSuiteOptions.projectEnvironmentUnresolvedReason}. */
   projectEnvironmentUnresolvedReason?: string;
-  /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills (see RunEvalSuiteOptions.pinnedSkillSource). */
+  pinnedSkillSource?: PinnedSkillSource;
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
@@ -5085,9 +5028,10 @@ const runLocalIteration = async ({
     precedence: "override-wins",
   });
   assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
-  const skillsSource = resolveIterationSkillsSource({
-    harness: resolvedExecution.harness,
+  const turnSkills = iterationTurnSkills({
     pinnedSkillSource,
+    execution: resolvedExecution,
+    modelContextTokens: modelDefinition.contextLength,
   });
   const system = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
@@ -5222,6 +5166,8 @@ const runLocalIteration = async ({
   // `runIterationWithAiSdk`. Empty when `prepareChatV2` throws before
   // returning.
   let streamEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // The turns' `skillsAtTurn` rows, set once `prepareChatV2` has prepared the turn.
+  let skillsAtTurnForPersist: Array<Record<string, unknown>> | undefined;
   // PR 4d review fix (Cursor Low "Stream snapshots drop system prompt"):
   // PR 4d dropped the `conversationMessages.push({role:"system"})` in
   // this runner, but `buildTraceSnapshotEvent` reads from those arrays
@@ -5327,7 +5273,7 @@ const runLocalIteration = async ({
               ),
             }
           : {}),
-        skillsSource,
+        skills: turnSkills.skills,
         // Host progressive-discovery toggle, same conversion as the chat-v2
         // routes and the session-sim runner. Only an explicit host value is
         // forwarded — absent stays undefined so prepareChatV2 keeps its
@@ -5353,6 +5299,7 @@ const runLocalIteration = async ({
       // system-free, and persistence prepends the resolved value at write
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+      skillsAtTurnForPersist = turnSkills.skillsAtTurn;
       if (toolDescriptionOverride) {
         stampDescriptionExperiment(
           iterationMetadataBase,
@@ -5941,6 +5888,9 @@ const runLocalIteration = async ({
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
+      ...(skillsAtTurnForPersist
+        ? { skillsAtTurn: skillsAtTurnForPersist }
+        : {}),
       spans: acc.capturedSpans,
       requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
@@ -6245,6 +6195,9 @@ const runLocalIteration = async ({
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
+      ...(skillsAtTurnForPersist
+        ? { skillsAtTurn: skillsAtTurnForPersist }
+        : {}),
       spans: acc.capturedSpans,
       requestPayloads: acc.requestPayloads,
       prompts: promptTraceSummaries,
@@ -6509,9 +6462,10 @@ const runHostedIterationWithBrowser = async (
     precedence: "override-wins",
   });
   assertNativeDiscovery({ required: resolvedExecution.requireNativeToolDiscovery });
-  const skillsSource = resolveIterationSkillsSource({
-    harness: resolvedExecution.harness,
+  const turnSkills = iterationTurnSkills({
     pinnedSkillSource,
+    execution: resolvedExecution,
+    modelContextTokens: modelDefinition.contextLength,
   });
   const systemPrompt = withHostContextSystemPrompt(
     resolvedExecution.systemPrompt,
@@ -6609,6 +6563,8 @@ const runHostedIterationWithBrowser = async (
   // throws — the setup-failure persistence path doesn't need a system
   // prefix.
   let backendEnhancedSystemPromptForPersist: string | undefined = undefined;
+  // The turns' `skillsAtTurn` rows, set once `prepareChatV2` has prepared the turn.
+  let skillsAtTurnForPersist: Array<Record<string, unknown>> | undefined;
   // PR 5a folds in the deferred 4d Cursor-Low fix: mid-run SSE
   // snapshot events (`buildTraceSnapshotEvent`) in this streaming
   // backend variant read from `messageHistory` directly. PR 4d
@@ -7065,13 +7021,14 @@ const runHostedIterationWithBrowser = async (
       ...(backendCustomProviders?.length
         ? { customProviders: backendCustomProviders }
         : {}),
-      skillsSource,
+      skills: turnSkills.skills,
       priorMessages: [],
       ...(builtInTools ? { builtInTools } : {}),
     });
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+    skillsAtTurnForPersist = turnSkills.skillsAtTurn;
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
         iterationMetadataBase,
@@ -7734,6 +7691,7 @@ const runHostedIterationWithBrowser = async (
     ...(backendEnhancedSystemPromptForPersist
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),
+    ...(skillsAtTurnForPersist ? { skillsAtTurn: skillsAtTurnForPersist } : {}),
     spans: capturedSpans,
     requestPayloads,
     harnessMcpByPromptIndex,

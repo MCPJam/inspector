@@ -136,6 +136,7 @@ import {
   buildLiveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
+import { turnSkillsFromLegacySource } from "../../services/environments/turn-skills.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
@@ -667,7 +668,7 @@ function narrowTarget(
  * that matters (a server must never get to choose the namespace its own skills
  * are addressed under, so `serverInfo.name` is never a candidate) — it just
  * reads as `p176vpy…/run-evals` instead of `mcpjam-staging-skills/run-evals`
- * in the `listSkills` catalog and in the origin banner on loaded skill content,
+ * in the prompt's skill list and in the origin banner on loaded skill content,
  * both of which the model and the user see.
  *
  * Returns `undefined` when nothing is labelled, so the call site can keep to
@@ -1492,12 +1493,12 @@ async function handleTurn(c: Context): Promise<Response> {
         timeoutMs: CONNECT_TIMEOUT_MS,
         tolerateServerRefusals: true,
         // This surface emulates no host persona — it is MCPJam's own agent —
-        // and it ships the fulfiller, since `prepareChatV2` merges
-        // `withServerSkills`, which loads only through the verified read path
-        // in `server-skills.ts`. Without the declaration the extension can
-        // never be active: the model is handed no `listSkills` / `loadSkill`
-        // at all, so a server that serves skills is indistinguishable from one
-        // that does not.
+        // and it ships the fulfiller, since `prepareChatV2` adds the
+        // servers' skills to the turn's set, whose tools load only through the
+        // verified read path in `server-skills.ts`. Without the declaration
+        // the extension can never be active: the model is handed none of a
+        // server's skills, so a server that serves skills is
+        // indistinguishable from one that does not.
         advertiseSkillsExtension: true,
       },
     );
@@ -1592,29 +1593,29 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
-      ...(turnCapabilities
-        ? {
-            skillsSource: {
-              kind: "resolved" as const,
+      // Without a set the turn is still live: it gets the connected servers'
+      // skills.
+      skills: turnSkillsFromLegacySource(
+        turnCapabilities
+          ? {
+              kind: "resolved",
               capabilities: turnCapabilities,
               // Only a LIVE set composes live server skills, and that is the
               // same rule `web-chat-turn` follows. An environment's server
               // skills were CAPTURED; fetching more from the connection would
               // falsify the claim that the set describes the turn — which is
-              // exactly what this flag exists to prevent. On the live arm it
-              // keeps #4419's server skills composed alongside the project's.
-              ...(capabilitiesAreLive
-                ? { composeLiveServerSkills: true as const }
-                : {}),
-              // The turn's own controller, so a lazy body or file read stops
-              // with the turn instead of running to its own fetch timeout.
-              abortSignal: abortController.signal,
-            },
-          }
-        : {}),
+              // exactly what this flag exists to prevent.
+              ...(capabilitiesAreLive ? { composeLiveServerSkills: true } : {}),
+            }
+          : undefined,
+        modelDefinition.contextLength,
+      ),
+      // The turn's own controller, so a lazy body or file read stops with the
+      // turn instead of running to its own fetch timeout.
+      abortSignal: abortController.signal,
       // Without this every server-skill ref is namespaced by the raw server
-      // id, in the `listSkills` catalog the model reads AND in the origin
-      // banner prepended to loaded skill content.
+      // id, in the skill list the model reads AND in the origin banner
+      // prepended to loaded skill content.
       ...(serverLabels ? { serverLabels } : {}),
       modelDefinition,
       ...(pins.systemPrompt ? { systemPrompt: pins.systemPrompt } : {}),
@@ -1642,9 +1643,9 @@ async function handleTurn(c: Context): Promise<Response> {
     //
     // The ZERO case clears the FINAL set rather than trusting the name
     // exclusion above. `prepareChatV2` applies `excludeMcpToolNames` and THEN
-    // merges skill/meta tools (`withServerSkills`), so a server advertising
-    // the skills extension would still hand the model executable `listSkills`
-    // / `loadSkill` entries on a turn that asked for no tools at all. Excluding
+    // merges skill/meta tools, so a server advertising the skills extension
+    // would still hand the model an executable `loadSkill` and its file
+    // tools on a turn that asked for no tools at all. Excluding
     // names bounds what is LOADED; clearing the set is what makes "zero" true.
     const tools = noTools
       ? ({} as ToolSet)
@@ -1874,7 +1875,7 @@ async function handleTurn(c: Context): Promise<Response> {
       // into its sandbox. Without this `selectHarnessSkillSource` falls to its
       // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
       // environment's decision honoured by the emulated engine (through
-      // `skillsSource` above) and silently discarded by the harness, which is
+      // `skills` above) and silently discarded by the harness, which is
       // the same class of mismatch as running the wrong engine.
       //
       // Harness-only and presence-semantic. The emulated arm ignores this

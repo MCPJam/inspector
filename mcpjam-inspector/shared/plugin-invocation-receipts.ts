@@ -40,6 +40,10 @@ export interface DurableInvocationReceipt {
 export const PLUGIN_INSTANCE_CONTROL_PATH =
   "/internal/v1/plugin-instance-controls";
 export const PLUGIN_INSTANCE_CONTROL_BYTES = 128 * 1024;
+/** The Settings App's stored document: a plugin's settings read result (up to
+ * 512 KiB) with the action list a Settings App child is checked against. The
+ * backend's ceiling is the same number. */
+export const PLUGIN_SETTINGS_CONTROL_BYTES = 576 * 1024;
 /** The stored context envelope (`export()`): the largest update a policy may
  * admit, with its `_meta`, cursor and removal receipts. The backend keeps it
  * in chunk rows and refuses one byte more. */

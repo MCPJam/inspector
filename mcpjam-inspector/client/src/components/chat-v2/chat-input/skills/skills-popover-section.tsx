@@ -63,7 +63,7 @@ interface SkillsPopoverSectionProps {
 /** One server skill in the picker, plus the provider it came from. */
 interface ServerSkillPickerItem extends ServerSkillSummary {
   serverLabel: string;
-  /** `<serverSlug>/<name>` — the same address the chat wrapper uses. */
+  /** `<serverSlug>/<name>` — the same address `loadSkill` resolves. */
   ref: string;
 }
 
@@ -239,10 +239,10 @@ export function SkillsPopoverSection({
     }
     (async () => {
       // Slugs come from the SHARED assigner, over the FULL server list rather
-      // than the connected subset — the chat wrapper assigns over its full
-      // candidate list too, and both must describe the same namespace or the
-      // ref shown here is not the ref `loadSkill` resolves. Only the connected
-      // ones are then listed.
+      // than the connected subset — a live turn's listing assigns over its
+      // full candidate list too, and both must describe the same namespace or
+      // the ref shown here is not the ref `loadSkill` resolves. Only the
+      // connected ones are then listed.
       const assigned = assignServerSlugs(
         (mcpServers ?? []).map((server) => ({
           serverId: server.serverId,

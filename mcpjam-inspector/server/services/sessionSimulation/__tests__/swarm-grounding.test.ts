@@ -391,10 +391,13 @@ describe("setup turn integration", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(prepareChatV2).toHaveBeenCalledWith(
       expect.objectContaining({
-        skillsSource: { kind: "none" },
         progressiveToolDiscovery: { enabled: false },
         requireToolApproval: false,
       }),
+    );
+    // No skills: a setup turn gets none, not even its servers' own.
+    expect(vi.mocked(prepareChatV2).mock.calls[0]![0]).not.toHaveProperty(
+      "skills",
     );
   });
   it("keeps the record-limit reason when setup throws after overflowing it", async () => {
