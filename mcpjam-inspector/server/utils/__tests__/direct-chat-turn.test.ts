@@ -512,6 +512,12 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         pendingApprovalToolIds: new Set<string>(),
       };
       const showSquad = vi.fn(async () => "squad");
+      const policy = {
+        thresholdPct: 0.03,
+        maxToolTokens: 10_000,
+        maxToolCount: 30,
+        searchLimit: 8,
+      };
       streamTextMock.mockImplementationOnce((options: any) =>
         ai.streamText({ ...options, stopWhen: ai.stepCountIs(4) }),
       );
@@ -525,6 +531,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
           ...createProgressiveMetaTools({
             getCatalog: () => catalog as any,
             state: discoveryState as any,
+            policy,
           } as any),
           show_squad: ai.tool({
             inputSchema: ai.jsonSchema(squadSchema as any),
@@ -534,12 +541,7 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
         progressivePlan: {
           enabled: true,
           reasons: [],
-          policy: {
-            thresholdPct: 0.03,
-            maxToolTokens: 10_000,
-            maxToolCount: 30,
-            searchLimit: 8,
-          },
+          policy,
           catalog,
           totalTokenEstimate: 100,
         } as any,
@@ -554,6 +556,12 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
       const toolResults = (result.messages as any[])
         .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
         .filter((part) => part.type === "tool-result");
+      // The search and the load ran cleanly, as in a real turn.
+      for (const id of ["search-1", "load-1"]) {
+        expect(
+          toolResults.find((part) => part.toolCallId === id)?.output?.type,
+        ).toBe("json");
+      }
       expect(
         toolResults.find((part) => part.toolCallId === "call-1")?.output,
       ).toMatchObject({ type: "text", value: "squad" });
