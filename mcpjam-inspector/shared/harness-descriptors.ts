@@ -138,9 +138,7 @@ export const HARNESS_DESCRIPTORS = {
     displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
-    unavailableOn: {
-      local: "GitHub Copilot CLI can't run on your computer yet. Run it in the cloud instead.",
-    },
+    unavailableOn: {},
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {

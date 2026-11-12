@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
-import { parseRuntimeCompat } from "../../../../../scripts/local-harness-pack-tables.mjs";
+import { parseRuntimeCompat, readAdvertisedTargets } from "../../../../../scripts/local-harness-pack-tables.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script
 import { planConformance } from "../../../../../scripts/plan-local-harness-conformance.mjs";
 import { inspectorLayerDigest } from "../inspector-layer.js";
@@ -120,6 +120,40 @@ describe("which conformance legs run", () => {
 
   it("refuses a version that is not a pack semver", () => {
     expect(() => planConformance({ event: "workflow_call", codexVersion: "1.0.0; rm -rf", record })).toThrow(/not a pack version/);
+  });
+
+  describe("every other local runtime", () => {
+    const legs = (plan: { runtime_matrix: string }) =>
+      (JSON.parse(plan.runtime_matrix) as Array<{ harness: string; platform_key: string; pack_version: string }>)
+        .filter((leg) => leg.harness === "copilot-cli");
+
+    it("runs the gateway turn on each target its definition advertises, from source on a main push", () => {
+      const plan = legs(planConformance({ event: "push", record }));
+      expect(plan.map((leg) => leg.platform_key).sort()).toEqual([...readAdvertisedTargets("copilot-cli")].sort());
+      expect(plan.every((leg) => leg.pack_version === "")).toBe(true);
+    });
+
+    it("runs a pull request on Linux x64, against its pinned pack or one built from source", () => {
+      const pinned = Object.values(record.harnesses["copilot-cli"]?.targets ?? {})[0]?.desired.packVersion ?? "";
+      expect(legs(planConformance({ event: "pull_request", record }))).toMatchObject([
+        { platform_key: "linux-x64", pack_version: pinned },
+      ]);
+    });
+
+    it("runs a call only against the pack it names", () => {
+      expect(legs(planConformance({ event: "workflow_call", record }))).toEqual([]);
+      const named = legs(planConformance({ event: "workflow_call", harnesses: "copilot-cli", runtimeVersions: "copilot-cli=1.2.3", record }));
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.every((leg) => leg.pack_version === "1.2.3")).toBe(true);
+      expect(legs(planConformance({ event: "workflow_call", harnesses: "codex", runtimeVersions: "copilot-cli=1.2.3", record }))).toEqual([]);
+    });
+
+    it.each([["codex=1.0.0"], ["copilot-cli=1.0"], ["copilot-cli=1.0.0=2"], ["copilot-cli"]])(
+      "refuses %s as another runtime's pack",
+      (runtimeVersions) => {
+        expect(() => planConformance({ event: "workflow_call", runtimeVersions, record })).toThrow(/not a/);
+      },
+    );
   });
 });
 

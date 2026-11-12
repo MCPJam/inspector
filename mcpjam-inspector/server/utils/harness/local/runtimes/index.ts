@@ -8,12 +8,18 @@
  * one that still declares the exception cannot. Making a runtime local is:
  *
  *  1. Remove its `local` exception in `shared/harness-descriptors.ts` and in
- *     the backend's copy (`convex/lib/harnessDescriptors.ts`).
+ *     the backend's copy (`convex/lib/harnessDescriptors.ts`). The compiler
+ *     then names what is missing: a definition here, and the client's copy
+ *     (`local-runtime-copy.ts`) and rollout flag (`useLocalHarnessRollouts`).
  *  2. Add `runtimes/<harnessId>.ts`, a `LocalRuntime` (`types.ts`), and list
  *     it below. The compiler names every fact it has to declare.
  *  3. Add its pack recipe, `scripts/local-harness-pack-recipes/<harnessId>.mjs`,
- *     and its Inspector layer bridge in `scripts/bundle-local-harness-layer.mjs`.
- *  4. Release it: the pack pipeline publishes its pack and records its
+ *     its Inspector layer bridge in `scripts/bundle-local-harness-layer.mjs`,
+ *     and an empty entry in `runtime-compat.generated.json`.
+ *  4. Run `conformance/run-gateway-turn.ts <harnessId>` against a pack built
+ *     from that recipe. CI runs it on every target the definition advertises
+ *     (`scripts/plan-local-harness-conformance.mjs`).
+ *  5. Release it: the pack pipeline publishes its pack and records its
  *     conformance. Until then the release gate keeps it dark, so setup is not
  *     offered and evals never choose the local venue for it.
  *
@@ -23,6 +29,7 @@
 import type { SupportedLocalHarnessId } from "../targets.js";
 import { claudeCodeLocalRuntime } from "./claude-code.js";
 import { codexLocalRuntime } from "./codex.js";
+import { copilotCliLocalRuntime } from "./copilot-cli.js";
 import type { LocalRuntime } from "./types.js";
 
 export type { LocalRuntime } from "./types.js";
@@ -33,6 +40,7 @@ export const LOCAL_RUNTIMES: {
 } = {
   "claude-code": claudeCodeLocalRuntime,
   codex: codexLocalRuntime,
+  "copilot-cli": copilotCliLocalRuntime,
 };
 
 /** The definition of a runtime the caller already knows is local. */

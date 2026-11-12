@@ -107,6 +107,7 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
         "'<bridgeStateDir>' --session-data-dir '<sessionDataDir>' --bootstrap-dir " +
         "'<bootstrapDir>'",
     ],
+    install: "pnpm install --frozen-lockfile --store-dir .pnpm-store",
     versionProbe: "node node_modules/@openai/codex/bin/codex.js --version",
     bridgeFlags: [
       "--workdir",
@@ -138,6 +139,7 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
     version: { from: "package-json", path: ["node_modules", "@openai", "codex", "package.json"] },
   }),
   reservedSecretEnv: /^(CODEX_|OPENAI_|AI_GATEWAY_|BRIDGE_)/i,
+  bridgeEnv: ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"],
   // `OPENAI_BASE_URL` is the gateway's BARE origin, no `/v1`: Codex appends
   // `/responses`, and the gateway forwards exactly `POST /responses` under the
   // broker's own OpenAI base path.

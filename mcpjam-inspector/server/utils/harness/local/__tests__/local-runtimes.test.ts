@@ -78,9 +78,8 @@ describe("the generic local runner", () => {
    * else a runtime needs belongs in its definition.
    */
   const ALLOWED: Readonly<Record<string, readonly string[]>> = {
-    // Stored records that Inspectors already shipped also read and validate.
-    "authorization.ts": ["claude-code", "codex"],
-    "grants.ts": ["claude-code", "codex"],
+    // The runtimes whose records Inspectors already shipped read and validate.
+    "cross-version-store.ts": ["claude-code", "codex"],
     // Claude Code's release names and install root predate per-runtime names.
     "pack-naming.ts": ["claude-code"],
     "runtime-lifecycle.ts": ["claude-code"],
@@ -94,6 +93,7 @@ describe("the generic local runner", () => {
         .filter((name) => name.endsWith(".ts") && !name.includes(".generated."))
         .map((name) => join(localDir, name)),
       join(serverDir, "routes/mcp/local-harness.ts"),
+      join(serverDir, "routes/web/flags.ts"),
       join(serverDir, "harness-install-cli.ts"),
     ];
     const found: string[] = [];

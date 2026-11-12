@@ -19,8 +19,12 @@ if (!Number.isFinite(latencyMs) || latencyMs < 0) {
     `MOCK_LATENCY_MS must be a finite, non-negative number of milliseconds; got ${JSON.stringify(process.env.MOCK_LATENCY_MS)}`,
   );
 }
-/** The relay's MCP server name (`RELAY_MCP_SERVER_NAME`) as Codex namespaces it. */
-const RELAY_NAMESPACE = "mcp__mcpjam";
+/**
+ * The relay's MCP server name (`RELAY_MCP_SERVER_NAME`) as Codex namespaces it.
+ * A runtime that receives MCPJam's host tools as plain functions sets
+ * `MOCK_PROBE_NAMESPACE` to an empty string.
+ */
+const RELAY_NAMESPACE = process.env.MOCK_PROBE_NAMESPACE ?? "mcp__mcpjam";
 /** The probe host tool `mcp__probe__echo`, as the relay aliases it. */
 const PROBE_TOOL = "probe__echo";
 const seenNonces = new Set();
@@ -128,7 +132,7 @@ function userText(item) {
     .join("\n");
 }
 
-const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT)\b\s*(.*)$/s;
+const SCENARIO = /^(SHELL|MCPPROBE|HOSTWRITE|COUNT|HELLO)\b\s*(.*)$/s;
 
 const server = http.createServer((req, res) => {
   requestCount += 1;
@@ -183,7 +187,7 @@ const server = http.createServer((req, res) => {
     if (m) {
       const [, kind, arg] = m;
       if (kind === "SHELL") return reply({ calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
-      if (kind === "MCPPROBE") return reply({ calls: [{ namespace: RELAY_NAMESPACE, name: PROBE_TOOL, arguments: { message: "conformance" } }] });
+      if (kind === "MCPPROBE") return reply({ calls: [{ ...(RELAY_NAMESPACE ? { namespace: RELAY_NAMESPACE } : {}), name: PROBE_TOOL, arguments: { message: "conformance" } }] });
       if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
       if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns}` });
     }

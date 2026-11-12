@@ -73,6 +73,8 @@ export interface LocalRuntime<
   commands: {
     /** Every shape, as reviewed. Documentation and the translator's tests. */
     shapes: readonly string[];
+    /** The adapter's vendor install, a no-op locally: the pack is the graph. */
+    install: string;
     /** The adapter's vendor version check, answered from the verified pack. */
     versionProbe: string;
     /** The bridge launch's exact flag vector, in order. */
@@ -89,6 +91,10 @@ export interface LocalRuntime<
   /** Project secrets may not use these names: they are where this runtime
    *  reads its model endpoint and credential. */
   reservedSecretEnv: RegExp;
+  /** The vendor variables this runtime's adapter may hand its bridge on a
+   *  spawn, besides the bridge's own channel. Anything else it offers is
+   *  dropped, so an adapter change cannot quietly add one. */
+  bridgeEnv: readonly string[];
   /** The child's model credential: the gateway, named the way the CLI reads
    *  it. The lease itself never reaches the child. */
   childAuth(gateway: LocalModelGatewayEndpoint): HarnessAuth;

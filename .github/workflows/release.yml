@@ -99,6 +99,8 @@ jobs:
       codex_desired_pack: ${{ steps.local_harness_packs.outputs.codex_desired }}
       claude_permitted_pack: ${{ steps.local_harness_packs.outputs.claude_permitted }}
       codex_permitted_pack: ${{ steps.local_harness_packs.outputs.codex_permitted }}
+      runtime_desired_packs: ${{ steps.local_harness_packs.outputs.runtime_desired }}
+      runtime_permitted_packs: ${{ steps.local_harness_packs.outputs.runtime_permitted }}
       permitted_harnesses: ${{ steps.local_harness_packs.outputs.permitted_harnesses }}
     steps:
       - name: Enforce main branch
@@ -307,13 +309,19 @@ jobs:
             if (versions.size > 1) throw new Error(`${harnessId} ${role} packs differ across targets: ${[...versions]}`);
             return [...versions][0] ?? "";
           };
+          // Every other runtime's packs as `<harnessId>=<version>` pairs.
+          const runtimes = Object.keys(record.harnesses).filter((id) => id !== "claude-code" && id !== "codex");
+          const pairs = (role) => runtimes.filter((id) => one(id, role)).map((id) => `${id}=${one(id, role)}`);
           const out = {
             claude_desired: one("claude-code", "desired"),
             codex_desired: one("codex", "desired"),
             claude_permitted: one("claude-code", "permitted"),
             codex_permitted: one("codex", "permitted"),
+            runtime_desired: pairs("desired").join(","),
+            runtime_permitted: pairs("permitted").join(","),
           };
-          out.permitted_harnesses = [out.claude_permitted && "claude-code", out.codex_permitted && "codex"].filter(Boolean).join(",");
+          out.permitted_harnesses = [out.claude_permitted && "claude-code", out.codex_permitted && "codex",
+            ...pairs("permitted").map((pair) => pair.split("=")[0])].filter(Boolean).join(",");
           for (const [key, value] of Object.entries(out)) console.log(`${key}=${value}`);
           JS
 
@@ -328,6 +336,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_desired_packs }}
 
   local-harness-evidence-permitted:
     needs: preflight
@@ -336,6 +345,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_permitted_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_permitted_packs }}
       harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
 
   local-harness-contract:
