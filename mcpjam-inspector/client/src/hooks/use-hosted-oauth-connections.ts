@@ -30,17 +30,19 @@ export function useHostedOAuthConnections(
           if (!cancelled) setList({ key: `${projectId}/${serverId}`, ...rows });
         })
         .catch((e) => {
-          if (!cancelled)
-            setError(
-              e instanceof Error ? e.message : "Could not load accounts",
-            );
+          if (cancelled) return;
+          // The rows may be gone (sharing stopped, an account deleted), so
+          // nothing should keep acting on them.
+          setList(undefined);
+          setError(e instanceof Error ? e.message : "Could not load accounts");
         });
     return () => {
       cancelled = true;
     };
   }, [projectId, serverId, enabled, revision]);
   // A refetch keeps the current rows on screen until the new ones land, so
-  // nothing that depends on them blinks; another server's rows never show.
+  // nothing that depends on them blinks; a failed one clears them, and
+  // another server's rows never show.
   const current =
     enabled && list?.key === `${projectId}/${serverId}` ? list : undefined;
   return {
