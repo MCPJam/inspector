@@ -83,10 +83,6 @@ import {
   type SkillsFetchFailure,
 } from "../../utils/computers/cloud-skill-tools.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
-import {
-  buildLiveEffectiveCapabilities,
-  type EffectiveCapabilitySet,
-} from "../../services/environments/effective-capabilities.js";
 import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { sessionTurnSkills } from "./session-skills.js";
 import {
@@ -994,8 +990,8 @@ export async function runSyntheticHostSession(
     // the live cloud-skill tools. MCPJam's agent gets them as tools; a
     // HARNESS turn gets no tools, and the copies ride `pinnedHarnessSkills`
     // on the drain instead.
-    // The live arm, for a run with no pins: the project pool as a capability
-    // set, plus the connected servers' own skills.
+    // The live arm, for a run with no pins: the project pool, plus the
+    // connected servers' own skills.
     //
     // A catalog failure degrades to a live set with no PROJECT skills — never
     // to no skills at all. A live set also composes the connected servers'
@@ -1005,7 +1001,7 @@ export async function runSyntheticHostSession(
     // here rather than read back off `prepared`, because the fetch happens on
     // this side of `prepareChatV2` and the orchestrator cannot know how it
     // went.
-    let liveCapabilities: EffectiveCapabilitySet | undefined;
+    let liveSkills: RuntimeStandaloneSkill[] | undefined;
     let skillsFetchFailed: SkillsFetchFailure | undefined;
     // `!harness` explicitly, not just via `cloudSkillsEnabled`: that gate only
     // suppresses a harness on a hosted-catalog model, so a harness on a BYOK
@@ -1021,14 +1017,14 @@ export async function runSyntheticHostSession(
       } catch (error) {
         skillsFetchFailed = skillsFailureFrom(error, Date.now() - startedAt);
       }
-      liveCapabilities = buildLiveEffectiveCapabilities({ standaloneSkills });
+      liveSkills = standaloneSkills;
     }
 
     // One plan serves every turn of the session, and each turn's trace records
     // what it hands the engine.
     const sessionSkills = sessionTurnSkills({
       pinnedSkillSource,
-      liveSkills: liveCapabilities,
+      liveSkills,
       harness,
       requireToolApproval,
       modelContextTokens: modelDefinition.contextLength,

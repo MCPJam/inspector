@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ConvexError } from "convex/values";
 import {
   resolveEnvironmentForRuntime,
@@ -295,9 +295,7 @@ describe("runtime projections", () => {
 });
 
 describe("toEnvironmentPreview", () => {
-  const preview = toEnvironmentPreview(SPEC, {
-    harnessSupportsSkills: () => true,
-  });
+  const preview = toEnvironmentPreview(SPEC, { skillDelivery: "harness" });
 
   it("STRIPS skill content and every supporting-file reference", () => {
     const serialized = JSON.stringify(preview);
@@ -343,7 +341,7 @@ describe("toEnvironmentPreview", () => {
           } as never,
         ],
       },
-      { harnessSupportsSkills: () => true }
+      { skillDelivery: "harness" },
     );
     const serialized = JSON.stringify(leaky);
     expect(serialized).not.toContain("sk_live_do_not_ship");
@@ -384,17 +382,10 @@ describe("toEnvironmentPreview", () => {
     });
   });
 
-  it("reports `unsupported` skill delivery for a skills-incapable harness", () => {
-    // Codex delivers no skills today. Saying "harness" here would claim a
-    // delivery that never happens.
-    const codex = toEnvironmentPreview(SPEC, {
-      harnessSupportsSkills: () => false,
-    });
-    expect(codex.capabilities.skillDelivery).toBe("unsupported");
-  });
-
-  it("reports `emulated` when the environment's host runs no harness", () => {
-    const emulated = toEnvironmentPreview(
+  it("carries the skill delivery its caller read off the turn's engine", () => {
+    // Which engine runs and whether it takes skills are the plan's to decide;
+    // the preview only carries the answer to the browser.
+    const bare = toEnvironmentPreview(
       {
         ...SPEC,
         host: {
@@ -402,28 +393,12 @@ describe("toEnvironmentPreview", () => {
           runtimeConfig: { modelId: "openai/gpt-5-mini" },
         },
       },
-      { harnessSupportsSkills: vi.fn(() => true) }
+      { skillDelivery: "emulated" },
     );
-    expect(emulated.capabilities.skillDelivery).toBe("emulated");
-    expect(emulated.capabilities.hasComputer).toBe(false);
-  });
-  it("reads the agent loop, as the turn does, when deciding skill delivery", () => {
-    // A ChatGPT client on the Codex loop sets `agentLoop`, not `harness`. The
-    // turn runs Codex (`resolveAgentLoop`), so the preview must not say
-    // "emulated" for it.
-    const supports = vi.fn((id: string) => id === "codex");
-    const agentLoop = toEnvironmentPreview(
-      {
-        ...SPEC,
-        host: {
-          ...SPEC.host,
-          runtimeConfig: { modelId: "openai/gpt-5.5", agentLoop: "codex" },
-        },
-      },
-      { harnessSupportsSkills: supports }
-    );
-    expect(agentLoop.capabilities.skillDelivery).toBe("harness");
-    expect(supports).toHaveBeenCalledWith("codex");
+    expect(bare.capabilities).toMatchObject({
+      skillDelivery: "emulated",
+      hasComputer: false,
+    });
   });
 });
 
