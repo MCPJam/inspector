@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   flag: vi.fn(),
   sharing: vi.fn(),
   setSharing: vi.fn(),
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
 }));
@@ -391,5 +393,47 @@ describe("ConnectionAccountsSection", () => {
       expect(mocks.setSharing).toHaveBeenCalledWith("shared");
       expect(onSwitch).toHaveBeenCalledOnce();
     });
+
+    it("reports a failed reconnect on its own, not as a failed sharing change", async () => {
+      const user = userEvent.setup();
+      const onSwitch = vi.fn().mockRejectedValue(new Error("connect failed"));
+      mocks.setSharing.mockResolvedValue(undefined);
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount({ onSwitch });
+      await user.click(
+        screen.getByRole("switch", { name: "Share sign-in with the project" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Share sign-in" }),
+      );
+      expect(mocks.toast.error).toHaveBeenCalledWith(
+        "Sharing changed, but the server could not reconnect. Reconnect it to use the new accounts.",
+      );
+      expect(mocks.toast.success).toHaveBeenCalledWith(
+        "Sign-in shared with the project.",
+      );
+    });
+  });
+
+  it("offers to load the accounts again after they failed to load", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    mocks.hook.mockReturnValue({
+      connections: [],
+      shared: false,
+      loaded: false,
+      error: "Could not load accounts",
+      refetch,
+    });
+    mount();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load accounts",
+    );
+    await user.click(screen.getByRole("button", { name: "Reload accounts" }));
+    expect(refetch).toHaveBeenCalledOnce();
   });
 });

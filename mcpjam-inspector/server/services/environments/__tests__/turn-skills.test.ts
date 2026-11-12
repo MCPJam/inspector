@@ -213,7 +213,7 @@ describe("resolveTurnSkills", () => {
 
   it("serves a live set to MCPJam's agent, with the connected servers' skills", () => {
     const skills = resolveTurnSkills({
-      source: { kind: "live", liveExtras: { projectSkills: [DEPLOY] } },
+      source: { kind: "live", projectSkills: [DEPLOY] },
       runtime: AGENT,
     });
     expect(skills.agent).toEqual({ kind: "live" });

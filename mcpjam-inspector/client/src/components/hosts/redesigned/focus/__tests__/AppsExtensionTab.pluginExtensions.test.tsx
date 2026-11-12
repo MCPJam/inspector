@@ -147,14 +147,14 @@ describe("AppsExtensionTab — OpenAI plugin extensions", () => {
     });
   });
 
-  it("starts a Claude client with only Display modes on", async () => {
+  it("starts a Claude client with only Sidebar Apps and Display modes on", async () => {
     const user = userEvent.setup();
     const { draftRef } = renderTab({ hostStyle: "claude" });
     const master = within(card()).getByRole("switch", {
       name: "OpenAI plugin extensions",
     });
     expect(master).toBeChecked();
-    expect(within(card()).getByText(/1 of 13 on/)).toBeInTheDocument();
+    expect(within(card()).getByText(/2 of 13 on/)).toBeInTheDocument();
     await user.click(
       within(card()).getByRole("button", { name: /Extensions/ }),
     );
@@ -163,6 +163,6 @@ describe("AppsExtensionTab — OpenAI plugin extensions", () => {
       enabled: true,
       capabilities: { forms: true },
     });
-    expect(within(card()).getByText(/2 of 13 on/)).toBeInTheDocument();
+    expect(within(card()).getByText(/3 of 13 on/)).toBeInTheDocument();
   });
 });

@@ -1082,15 +1082,6 @@ export interface MCPJamHandlerOptions {
    */
   runtimeSkillsOverride?: RuntimeSkill[];
   /**
-   * The Playground's HIDDEN environment, harness side: deliver the project's
-   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
-   * Selects the `live_plus` skill source explicitly — a turn that merely
-   * carries an environment's override and capability set never gets it. Only
-   * the web chat route sets it, and only for an environment target that asked
-   * for the project's skills.
-   */
-  includeProjectSkills?: boolean;
-  /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
    * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
@@ -1103,6 +1094,12 @@ export interface MCPJamHandlerOptions {
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * `runtimeSkillsOverride` is a client's live turn: its servers are connected
+   * now, so their own MCP-server skills may be offered too. Unset for a named
+   * environment, whose server skills were captured with it.
+   */
+  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.

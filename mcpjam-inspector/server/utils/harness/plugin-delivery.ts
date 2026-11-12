@@ -96,23 +96,6 @@ export function pluginVersionsFingerprint(
   return (h >>> 0).toString(16);
 }
 
-/**
- * The skills fingerprint with the plugin dimension folded in.
- *
- * For a turn whose skill set mixes the project's pool with plugin skills (the
- * Playground's hidden environment): a change in which plugin versions ran —
- * even one whose skills read identically — must change the hash that decides
- * whether the box's skills are re-written. Empty versions leave the hash
- * byte-identical, so a turn with no plugins keeps resuming exactly as before.
- */
-export function skillsHashWithPlugins(
-  skillsHash: string,
-  versions: RuntimePluginVersion[]
-): string {
-  const plugins = pluginVersionsFingerprint(versions);
-  return plugins ? `${skillsHash}+plugins:${plugins}` : skillsHash;
-}
-
 /** Refused servers are omitted; an unexplained missing plugin config still fails. */
 export function selectDeliverableServerIds(args: {
   selectedServerIds: string[];
