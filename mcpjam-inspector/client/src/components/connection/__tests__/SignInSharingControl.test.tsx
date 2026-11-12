@@ -100,12 +100,16 @@ describe("SignInSharingControl", () => {
     },
   );
 
-  it("stops sharing a server with no project accounts without a deletion warning", async () => {
+  it("stops sharing a server with no project accounts listed, warning about one connected since", async () => {
     const user = userEvent.setup();
     const onChange = mount(true, 0);
     const dialog = await flip(user);
     expect(dialog).toHaveTextContent("Stop sharing this server's sign-in?");
-    expect(dialog).not.toHaveTextContent("delete");
+    // Another admin may have connected one after this list loaded, and the
+    // stop deletes whatever the server holds when it commits.
+    expect(dialog).toHaveTextContent(
+      "If another admin connected a project account since this list loaded, MCPJam deletes it.",
+    );
     await user.click(screen.getByRole("button", { name: "Stop sharing" }));
     expect(onChange).toHaveBeenCalledWith("personal");
   });

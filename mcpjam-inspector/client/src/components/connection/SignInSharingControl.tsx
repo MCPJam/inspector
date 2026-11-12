@@ -19,9 +19,12 @@ import type { OAuthSharing } from "@/hooks/use-sign-in-sharing";
 function stopSharingCopy(accounts: number) {
   const runs = "Members' runs will use their own accounts again.";
   if (accounts === 0) {
+    // Turning sharing off deletes every project account the server holds
+    // when it commits, including one another admin connected since this
+    // list loaded.
     return {
       title: "Stop sharing this server's sign-in?",
-      body: runs,
+      body: `${runs} If another admin connected a project account since this list loaded, MCPJam deletes it.`,
       action: "Stop sharing",
     };
   }
