@@ -1,142 +1,64 @@
 /**
- * Public v1 OAuth surface.
+ * Public v1 OAuth surface: the deprecated token import.
  *
- * When a v1 operation hits an OAuth-protected server without a stored grant,
- * the caller gets `OAUTH_REQUIRED` with `{ serverId, serverUrl }` details.
- * This route closes the loop: an agent completes the OAuth flow itself
- * (e.g. SDK `runOAuthLogin` — interactive loopback, headless, or
- * client-credentials) and imports the resulting tokens here. The backend
- * stores them scoped to (user, project, server); every subsequent v1 connect
- * injects the stored access token automatically and 401s trigger a
- * server-side refresh — no further caller involvement.
+ * `POST .../oauth/import-tokens` is an alias for "upload to my default
+ * account" until its sunset. It takes its old body and answers its old
+ * response, and in between it is the accounts API's upload: the same token
+ * checks and the same backend call, with `account: { default: true }`. An
+ * account it creates is hosted-only; an existing default it writes into keeps
+ * whatever rule it had, so a caller who also uses that account locally is not
+ * cut off by the alias.
  *
- * Unlike the hosted `/api/web/oauth/*` proxies (which forward the raw
- * Authorization header), this route builds delegation-aware Convex headers so
- * WorkOS API-key callers work.
+ * `serverUrl` still travels so the backend can refuse one that is not the
+ * server's saved URL. `authorizationServerUrl`, `oauthResourceUrl` and
+ * `tokens.id_token` are dropped without an error, because existing callers
+ * send them and the API takes neither a caller's URLs nor ID tokens.
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import {
-  assertBearerToken,
-  parseWithSchema,
-  ErrorCode,
-  WebRouteError,
-} from "../web/errors.js";
-import { buildConvexAuthHeaders } from "../web/auth.js";
-import { synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody } from "./adapter.js";
+import { markDeprecated } from "./deprecation.js";
 import { v1Resource } from "./envelope.js";
+import {
+  clientFields,
+  parseUpload,
+  tokenFields,
+  uploadAccountTokens,
+} from "./server-accounts.js";
 
 const oauth = new Hono();
 
-const IMPORT_TIMEOUT_MS = 15_000;
+// Set at release to the day the accounts API ships. The alias is removed 90
+// days later, and its Sunset header says when.
+const ACCOUNTS_API_RELEASED_AT = Date.UTC(2026, 10, 11);
+const IMPORT_TOKENS_SUNSET = new Date(
+  ACCOUNTS_API_RELEASED_AT + 90 * 24 * 60 * 60 * 1000,
+).toUTCString();
 
+// Lenient, unlike `PUT .../accounts/:account`: unknown keys are stripped,
+// which is how the old body's extra fields drop out.
 const importTokensSchema = z.object({
-  projectId: z.string().min(1),
-  serverId: z.string().min(1),
   serverUrl: z.string().min(1),
-  oauthResourceUrl: z.string().optional(),
-  // AS URL discovered by the caller; refresh fallback for servers the hosted
-  // backend can't reach (e.g. localhost). Forwarded to Convex import-tokens.
-  authorizationServerUrl: z.string().optional(),
-  clientInformation: z
-    .object({
-      clientId: z.string().min(1),
-      clientSecret: z.string().optional(),
-    })
-    .optional(),
-  tokens: z.object({
-    access_token: z.string().min(1),
-    refresh_token: z.string().optional(),
-    expires_in: z.number().optional(),
-    token_type: z.string().optional(),
-    scope: z.string().optional(),
-    id_token: z.string().optional(),
-  }),
+  clientInformation: z.object(clientFields),
+  tokens: z.object(tokenFields),
 });
 
-// POST /v1/projects/:projectId/servers/:serverId/oauth/import-tokens
-// Store externally-obtained OAuth tokens for this server. Returns
-// { imported: true, expiresAt } on success.
 oauth.post(
   "/projects/:projectId/servers/:serverId/oauth/import-tokens",
   async (c) => {
-    const rawBody = await synthesizeServerBody(c);
-    const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(importTokensSchema, rawBody);
-
-    const convexUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexUrl) {
-      throw new WebRouteError(
-        500,
-        ErrorCode.INTERNAL_ERROR,
-        "Server missing CONVEX_HTTP_URL configuration"
-      );
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), IMPORT_TIMEOUT_MS);
-    let response: Response;
-    try {
-      response = await fetch(`${convexUrl}/web/oauth/import-tokens`, {
-        method: "POST",
-        headers: buildConvexAuthHeaders(c, bearerToken),
-        // `kind: "generic"` — the registry OAuth-proxy variant is a hosted
-        // client concern, not part of the public surface.
-        body: JSON.stringify({ ...body, kind: "generic" }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      const isAbort =
-        error instanceof Error &&
-        (error.name === "AbortError" ||
-          (error as { code?: string }).code === "ABORT_ERR");
-      throw new WebRouteError(
-        isAbort ? 504 : 502,
-        isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
-        isAbort
-          ? `Token import timed out after ${IMPORT_TIMEOUT_MS}ms`
-          : "Failed to reach the token import service"
-      );
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    type ImportTokensPayload = {
-      expiresAt?: number | null;
-      code?: string;
-      message?: string;
-    };
-    let payload: ImportTokensPayload | null = null;
-    try {
-      payload = (await response.json()) as ImportTokensPayload;
-    } catch {
-      // handled below
-    }
-
-    if (!response.ok) {
-      const status = response.status;
-      const code =
-        status === 401
-          ? ErrorCode.UNAUTHORIZED
-          : status === 403
-            ? ErrorCode.FORBIDDEN
-            : status === 404
-              ? ErrorCode.NOT_FOUND
-              : status === 400
-                ? ErrorCode.VALIDATION_ERROR
-                : ErrorCode.INTERNAL_ERROR;
-      throw new WebRouteError(
-        status >= 400 && status < 500 ? status : 502,
-        code,
-        payload?.message ?? `Token import failed (${status})`
-      );
-    }
-
-    return v1Resource(c, {
-      imported: true,
-      expiresAt: payload?.expiresAt ?? null,
+    markDeprecated(
+      c,
+      "/api/v1/projects/{projectId}/servers/{serverId}/accounts",
+    );
+    c.header("Sunset", IMPORT_TOKENS_SUNSET);
+    const body = parseUpload(importTokensSchema, await readJsonObjectBody(c));
+    const { expiresAt } = await uploadAccountTokens(c, {
+      ...body,
+      account: { default: true },
+      hostedOnly: "whenCreated",
     });
-  }
+    return v1Resource(c, { imported: true, expiresAt });
+  },
 );
 
 export default oauth;
