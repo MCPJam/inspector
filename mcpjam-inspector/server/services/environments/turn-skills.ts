@@ -9,8 +9,8 @@
  *
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
- * budget, and on a harness the adapter's `prepareSkills` over the copies the
- * harness turn writes to its box.
+ * budget, and on a harness the box writer's plan (`planBoxSkills`) over the
+ * copies the harness turn writes to its box.
  *
  * A delivery that fails while the turn runs is not part of the plan. It belongs
  * on the turn's result ({@link TurnSkillsResult}), so a preview of the plan
@@ -20,11 +20,14 @@ import type { PaneSkillReason } from "../../../shared/pane-skills-preview.js";
 import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { skillCatalogOmissions } from "../../utils/computers/effective-skill-tools.js";
-import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/pinned-harness-skills.js";
 import {
-  getHarnessAdapter,
-  harnessSupportsSkills,
-} from "../../utils/harness/registry.js";
+  boxVerdicts,
+  pinnedBox,
+  sourcePlan,
+  type BoxInput,
+  type EnvironmentSkillSource,
+  type LiveSkillSource,
+} from "./turn-skill-sources.js";
 import {
   pinnedSkillId,
   pinnedSkillMeta,
@@ -37,10 +40,11 @@ import {
 } from "./effective-capabilities.js";
 
 /**
- * Why an engine is not handed a skill: the Compare preview's reasons, plus
- * `over-cap` (a stated cap on a turn's skills left it out; none applies today).
+ * Why an engine is not handed a skill, which the previews show as is.
+ * `over-cap`: the backend left it out of the environment because a skill scope
+ * covered more skills than its cap.
  */
-export type SkillExclusionReason = PaneSkillReason | "over-cap";
+export type SkillExclusionReason = PaneSkillReason;
 
 /** The engine that runs a turn. */
 export type TurnRuntime =
@@ -141,23 +145,18 @@ export interface PinnedSkillSource {
   harnessSkills: readonly PinnedSkillArtifact[];
 }
 
-/**
- * The skills a surface reads at turn time rather than from pins: an older
- * swarm target's project skills, which it pinned none of.
- */
-export interface LiveSkillSource {
-  kind: "live";
-  set: EffectiveCapabilitySet;
-}
-
 export interface TurnSkillsInput {
   /**
    * `none`: the turn gets no skills from MCPJam. A harness turn handed no
    * frozen skills still fetches the project's own (`selectHarnessSkillSource`),
-   * which a plan made here cannot see; that is also why a harness is handed
-   * nothing from a `live` source.
+   * which a plan made here cannot see. The live sources, a resolved
+   * environment and a client's own skills, are in `turn-skill-sources.ts`.
    */
-  source: PinnedSkillSource | LiveSkillSource | { kind: "none" };
+  source:
+    | PinnedSkillSource
+    | EnvironmentSkillSource
+    | LiveSkillSource
+    | { kind: "none" };
   runtime: TurnRuntime;
   /** The model's context window in tokens, which sizes the skill list MCPJam's
    *  agent puts in its prompt. */
@@ -179,15 +178,10 @@ export function resolveTurnSkills({
   runtime,
   modelContextTokens,
 }: TurnSkillsInput): TurnSkills {
-  if (source.kind === "live" && runtime.kind === "agent") {
-    return planAgentSet(
-      source.set,
-      setRefs(source.set),
-      { kind: "live" },
-      modelContextTokens,
-    );
+  if (source.kind === "environment" || source.kind === "live") {
+    return planSource(source, runtime, modelContextTokens);
   }
-  if (source.kind !== "pins" || source.pins.length === 0) {
+  if (source.kind === "none" || source.pins.length === 0) {
     return {
       runtime,
       set:
@@ -211,8 +205,26 @@ export function resolveTurnSkills({
       ...(provenance ? { provenance } : {}),
     };
   });
-  if (runtime.kind === "harness") return planBox(runtime, source, refs);
+  if (runtime.kind === "harness") {
+    return planBox(runtime, source.set, refs, pinnedBox(source.harnessSkills));
+  }
   return planAgentSet(source.set, refs, { kind: "frozen" }, modelContextTokens);
+}
+
+/** A resolved environment or a client's own skills, planned for the engine
+ *  that runs the turn. A skill the turn switched off, or the backend left out
+ *  of the environment, stays out on both. */
+function planSource(
+  source: EnvironmentSkillSource | LiveSkillSource,
+  runtime: TurnRuntime,
+  modelContextTokens: number | undefined,
+): TurnSkills {
+  const { set, refs, agentOnly, agent, box, excluded } = sourcePlan(source);
+  const plan =
+    runtime.kind === "harness"
+      ? planBox(runtime, set, refs, box)
+      : planAgentSet(set, [...refs, ...agentOnly], agent, modelContextTokens);
+  return { ...plan, excluded: [...excluded, ...plan.excluded] };
 }
 
 /**
@@ -294,36 +306,20 @@ function planAgentSet(
   };
 }
 
-/**
- * A harness writes the run's copies to its box: the ones its adapter's
- * `prepareSkills` keeps, from the list the harness turn builds in its pinned
- * mode. A captured server skill among them lands as a plain skill folder.
- */
+/** A harness gets its skills on its box (`boxVerdicts`), never as tools. */
 function planBox(
   runtime: { kind: "harness"; harnessId: string },
-  source: PinnedSkillSource,
+  set: EffectiveCapabilitySet,
   refs: SkillRef[],
+  box: BoxInput,
 ): TurnSkills {
-  const plan = { runtime, set: source.set, agent: null };
-  if (!harnessSupportsSkills(runtime.harnessId)) {
-    return {
-      ...plan,
-      ...partition(refs, () => "unsupported-harness"),
-      serverSkillsVia: "none",
-    };
-  }
-  const copies = pinnedArtifactsToRuntimeSkills([...source.harnessSkills]);
-  const prepared = getHarnessAdapter(runtime.harnessId).prepareSkills(copies);
-  const kept = new Set(prepared.delivered);
-  const skipped = new Set(prepared.skipped.map((skill) => skill.name));
+  const { reasonFor, serverSkillsVia } = boxVerdicts(runtime.harnessId, box);
   return {
-    ...plan,
-    ...partition(refs, (ref, index) => {
-      const copy = copies[index];
-      if (copy && kept.has(copy)) return null;
-      return skipped.has(ref.name) ? "invalid-skill-name" : "name-collision";
-    }),
-    serverSkillsVia: "box-files",
+    runtime,
+    set,
+    agent: null,
+    ...partition(refs, reasonFor),
+    serverSkillsVia,
   };
 }
 

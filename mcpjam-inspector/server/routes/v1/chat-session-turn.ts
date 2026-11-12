@@ -131,12 +131,12 @@ import {
 import { logger } from "../../utils/logger.js";
 import { markRuntimeSecretsDelivered } from "../../utils/harness/runtime-secrets.js";
 import { resolveBrowserSecrets } from "../../utils/secrets/browser-secrets.js";
-import { listCloudRuntimeSkills } from "../../utils/computers/cloud-skill-tools.js";
+import { environmentTurnSkills } from "../../services/environments/live-turn-skills.js";
+import type { BoxSkillsResult } from "../../utils/harness/box-skills-writer.js";
 import {
-  buildLiveEffectiveCapabilities,
-  type EffectiveCapabilitySet,
-} from "../../services/environments/effective-capabilities.js";
-import { turnSkillsFromLegacySource } from "../../services/environments/turn-skills.js";
+  reportBoxSkillsDelivered,
+  reportSkillsDelivered,
+} from "../../services/environments/skills-delivered-event.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
 import {
@@ -1539,53 +1539,21 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
 
-    // The project's own skills, which this surface has never had. #4419 gave it
-    // a connected server's skills by advertising the extension above; the
-    // project pool was still invisible, so an agent driving MCPJam could read
-    // somebody else's skills but not its own.
-    //
-    // TWO shapes, because a turn that named an environment is not a live turn.
-    // An environment IS a decision about what runs, so its own resolved set is
-    // the answer — pinned skill selection, attached plugin skills, captured
-    // server skills and all. Only a turn pinning bare `serverIds` has no such
-    // decision behind it, and only that turn builds a live set from the
-    // project pool.
-    //
-    // The live shape stays lazy, like every other live surface: the catalog is
-    // one query and a body is fetched only for the skill the model loads. A
-    // catalog failure degrades to no skills rather than failing the turn.
-    let turnCapabilities: EffectiveCapabilitySet | undefined;
-    let capabilitiesAreLive = false;
-    // The project pool is a MEMBER resource: `listCloudRuntimeSkills` resolves
-    // `projectSkills:listSkills`, which is signed-in-only, and
-    // `getConvexBearerForRequest` forwards a guest bearer verbatim. The v1 mount
-    // already 401s guests on this path (`/chat-sessions/messages` is absent from
-    // `guest-allowed-paths.ts`), so this term is unreachable today — it is here
-    // because that allowlist is edited independently of this file, and the
-    // reachable twin of this exact gate on the local route is what produced
-    // CONVEX-19R.
-    const callerIsGuest = Boolean(c.get("guestId"));
-    if (target.environmentCapabilities) {
-      turnCapabilities = target.environmentCapabilities;
-    } else if (projectId && !callerIsGuest) {
-      try {
-        turnCapabilities = buildLiveEffectiveCapabilities({
-          standaloneSkills: await listCloudRuntimeSkills({
-            authHeader,
-            projectId,
-          }),
-        });
-        capabilitiesAreLive = true;
-      } catch (error) {
-        logger.warn(
-          "[v1/chat-session-turn] project skill catalog unavailable",
-          {
-            projectId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
+    // One skill plan for this turn's engine, from the environment the turn
+    // resolved. A client's turn (a host or a bare server list) carries its
+    // client's selection, all visible by default, and its connected servers'
+    // own skills join when the prompt is built. A named environment's turn
+    // has exactly its own.
+    const turnSkills = environmentTurnSkills({
+      spec: target.resolvedEnvironment,
+      attribution: target.attribution,
+      ...(target.clientTurn ? { liveExtras: {} } : {}),
+      runtime:
+        engine.kind === "harness"
+          ? { kind: "harness", harnessId: engine.harness }
+          : { kind: "agent" },
+      modelContextTokens: modelDefinition.contextLength,
+    });
 
     const activeServerIds = selectedServerIds.filter((id) => !Object.hasOwn(unavailable, id));
     const prepared = await prepareChatV2({
@@ -1593,23 +1561,9 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(builtInTools ? { builtInTools } : {}),
       selectedServers: activeServerIds,
       isolatedServers: activeServerIds,
-      // Without a set the turn is still live: it gets the connected servers'
-      // skills.
-      skills: turnSkillsFromLegacySource(
-        turnCapabilities
-          ? {
-              kind: "resolved",
-              capabilities: turnCapabilities,
-              // Only a LIVE set composes live server skills, and that is the
-              // same rule `web-chat-turn` follows. An environment's server
-              // skills were CAPTURED; fetching more from the connection would
-              // falsify the claim that the set describes the turn — which is
-              // exactly what this flag exists to prevent.
-              ...(capabilitiesAreLive ? { composeLiveServerSkills: true } : {}),
-            }
-          : undefined,
-        modelDefinition.contextLength,
-      ),
+      // MCPJam's agent gets its skill tools from the plan. A harness gets its
+      // skills on its box, so its prompt must not describe tools it lacks.
+      ...(engine.kind === "harness" ? {} : { skills: turnSkills.skills }),
       // The turn's own controller, so a lazy body or file read stops with the
       // turn instead of running to its own fetch timeout.
       abortSignal: abortController.signal,
@@ -1631,6 +1585,11 @@ async function handleTurn(c: Context): Promise<Response> {
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
+    // MCPJam's agent holds its skill tools now; a harness turn reports from
+    // its box writer (`onBoxSkillsWritten` below).
+    if (engine.kind !== "harness") {
+      reportSkillsDelivered("api", turnSkills.skills);
+    }
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
     // than folded into the step budget. One step can emit several parallel
@@ -1698,7 +1657,7 @@ async function handleTurn(c: Context): Promise<Response> {
 
     const setupAtTurn = await buildSetupManifest({
       environment: target.resolvedEnvironment,
-      capabilities: turnCapabilities,
+      capabilities: turnSkills.skills.set,
       model: {
         id: String(modelDefinition.id),
         provider: modelDefinition.provider,
@@ -1871,25 +1830,25 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
-      // The ENVIRONMENT's resolved skills, for the harness that will write them
-      // into its sandbox. Without this `selectHarnessSkillSource` falls to its
-      // `live` arm and the turn runs the whole PROJECT-WIDE catalog — the
-      // environment's decision honoured by the emulated engine (through
-      // `skills` above) and silently discarded by the harness, which is
-      // the same class of mismatch as running the wrong engine.
-      //
-      // Harness-only and presence-semantic. The emulated arm ignores this
-      // field, so gating on the engine keeps every emulated turn byte-identical
-      // rather than relying on a downstream reader to stay uninterested.
+      // The same plan's skills, for the harness that writes them into its
+      // sandbox. Harness-only and presence-semantic: the emulated arm ignores
+      // this field, so gating on the engine keeps every emulated turn
+      // byte-identical rather than relying on a downstream reader to stay
+      // uninterested.
       //
       // What still does NOT cross: per-skill SUPPORTING FILES and pinned plugin
       // versions, which travel as `effectiveCapabilities` — an option
       // `runAssistantTurn` does not expose (the browser route reaches it
       // through `web-chat-turn`). So a harness turn here delivers the
-      // environment's skill BODIES, not its attachments. Narrower than the
-      // Playground, and no longer a different set.
-      ...(engine.kind === "harness" && target.environmentSkills !== undefined
-        ? { runtimeSkillsOverride: target.environmentSkills }
+      // environment's skill BODIES, and their files only through the
+      // project-wide file query.
+      ...(engine.kind === "harness" && turnSkills.box
+        ? {
+            runtimeSkillsOverride: turnSkills.box.skills,
+            ...(turnSkills.live ? { liveTurn: true } : {}),
+            onBoxSkillsWritten: (written: BoxSkillsResult) =>
+              reportBoxSkillsDelivered("api", turnSkills.skills, written),
+          }
         : {}),
       abortSignal: abortController.signal,
       ...(prepared.progressivePlan
@@ -1909,8 +1868,14 @@ async function handleTurn(c: Context): Promise<Response> {
     unsettledHarnessCommit = result.harnessSessionCommit;
 
     await runtime.finalizeUsage(result);
+    // The record of what the turn ran with is written from its plan, so it
+    // names exactly the skills the engine was handed.
     if (result.turnTrace)
-      result.turnTrace = { ...result.turnTrace, setupAtTurn };
+      result.turnTrace = {
+        ...result.turnTrace,
+        ...(turnSkills.turnProvenance ?? {}),
+        setupAtTurn,
+      };
 
     // The wall clock fired, and the turn still DELIVERED: a Claude Code turn
     // waiting on background agents ends that wait at the deadline and keeps

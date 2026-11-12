@@ -6,7 +6,11 @@ import {
   turnSkillsFromLegacySource,
   type TurnSkills,
 } from "../turn-skills";
-import { buildLiveEffectiveCapabilities } from "../effective-capabilities";
+import {
+  buildLiveEffectiveCapabilities,
+  type RuntimeStandaloneSkill,
+} from "../effective-capabilities";
+import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
 import {
   agentLoads,
   agentReceives,
@@ -24,20 +28,18 @@ const refs = (skills: TurnSkills) => skills.delivered.map((ref) => ref.ref);
 const reasons = (skills: TurnSkills) =>
   skills.excluded.map(({ ref, reason }) => [ref.ref, reason]);
 
-const LIVE_SET = buildLiveEffectiveCapabilities({
-  standaloneSkills: [
-    {
-      skillId: "sk_deploy",
-      ref: "deploy",
-      name: "deploy",
-      description: "Deploy.",
-      content: "# Deploy",
-      aggregateHash: "h",
-      files: [],
-      channels: [],
-    },
-  ],
-});
+const DEPLOY: RuntimeStandaloneSkill = {
+  skillId: "sk_deploy",
+  ref: "deploy",
+  name: "deploy",
+  description: "Deploy.",
+  content: "# Deploy",
+  aggregateHash: "h",
+  files: [],
+  channels: [],
+};
+
+const LIVE_SET = buildLiveEffectiveCapabilities({ standaloneSkills: [DEPLOY] });
 
 describe("resolveTurnSkills", () => {
   it("plans no skills for a turn without a source, on either engine", () => {
@@ -211,18 +213,23 @@ describe("resolveTurnSkills", () => {
 
   it("serves a live set to MCPJam's agent, with the connected servers' skills", () => {
     const skills = resolveTurnSkills({
-      source: { kind: "live", set: LIVE_SET },
+      source: { kind: "live", projectSkills: [DEPLOY] },
       runtime: AGENT,
     });
     expect(skills.agent).toEqual({ kind: "live" });
-    expect(skills.set).toBe(LIVE_SET);
+    expect(skills.set.standaloneSkills.map((skill) => skill.ref)).toEqual([
+      "deploy",
+    ]);
     expect(refs(skills)).toEqual(["deploy"]);
   });
 
-  it("hands a harness nothing from a live set, which its box fetches itself", () => {
-    const skills = resolveTurnSkills({
-      source: { kind: "live", set: LIVE_SET },
-      runtime: harness("claude-code"),
+  it("hands a swarm session's harness nothing from a live set, which its box fetches itself", () => {
+    // An older target's live skills are for MCPJam's agent alone. A preview's
+    // live pool does reach a harness box (`turn-skill-sources.test.ts`).
+    const { skills, skillsAtTurn } = sessionTurnSkills({
+      liveSkills: [DEPLOY],
+      harness: "claude-code",
+      requireToolApproval: false,
     });
     expect(skills).toMatchObject({
       agent: null,
@@ -230,6 +237,7 @@ describe("resolveTurnSkills", () => {
       excluded: [],
       serverSkillsVia: "none",
     });
+    expect(skillsAtTurn).toBeUndefined();
   });
 
   it("reports every skill on a harness that takes none", async () => {

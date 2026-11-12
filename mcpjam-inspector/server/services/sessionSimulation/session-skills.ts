@@ -9,7 +9,8 @@
  * banner. An older target pinned nothing and reads the project's skills live.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
-import type { EffectiveCapabilitySet } from "../environments/effective-capabilities.js";
+import type { RuntimeStandaloneSkill } from "../environments/effective-capabilities.js";
+import type { LiveSkillSource } from "../environments/turn-skill-sources.js";
 import {
   resolveTurnSkills,
   toSkillsAtTurn,
@@ -53,6 +54,7 @@ export async function buildTargetSkillSource(args: {
     // re-gated when the session connects them.
     pluginServers: [],
     effectiveServerIds: args.serverIds,
+    reportsFailure: false,
   });
   return built.pinnedSkillSource;
 }
@@ -65,7 +67,7 @@ export function sessionTurnSkills(args: {
   /** The target's frozen skills; absent for an older target, which pinned none. */
   pinnedSkillSource?: PinnedSkillSource;
   /** The project's skills now, for an older target; absent when it gets none. */
-  liveSkills?: EffectiveCapabilitySet;
+  liveSkills?: readonly RuntimeStandaloneSkill[];
   /** The harness the session runs on; absent for MCPJam's agent. */
   harness?: string;
   requireToolApproval: boolean;
@@ -76,13 +78,16 @@ export function sessionTurnSkills(args: {
   // headless visitor can't approve, and the local-runtime path refuses any
   // tool at all while approval is on. A harness's box is not gated by it.
   const withheld = args.requireToolApproval && runtime.kind === "agent";
+  // An older target's live skills are for MCPJam's agent alone: a harness's
+  // box fetches the project's skills itself, which this plan does not see.
+  const live: LiveSkillSource | undefined =
+    args.liveSkills && runtime.kind === "agent"
+      ? { kind: "live", projectSkills: args.liveSkills }
+      : undefined;
   const skills = resolveTurnSkills({
     source: withheld
       ? { kind: "none" }
-      : (args.pinnedSkillSource ??
-        (args.liveSkills
-          ? { kind: "live", set: args.liveSkills }
-          : { kind: "none" })),
+      : (args.pinnedSkillSource ?? live ?? { kind: "none" }),
     runtime,
     ...(args.modelContextTokens !== undefined
       ? { modelContextTokens: args.modelContextTokens }
