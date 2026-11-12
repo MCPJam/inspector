@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       deploy_webapp:
-        description: "Deploy the webapp to production after publish"
+        description: "Deploy the webapp to production once the backend and the npm build are done, without waiting for publish"
         required: false
         default: false
         type: boolean

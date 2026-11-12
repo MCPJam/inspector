@@ -158,7 +158,11 @@ const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 
 /** `sha256:…` over every conformance input at `rev`. */
 export function computeConformanceInputsDigest({ cwd = REPO_ROOT, rev = "HEAD" } = {}) {
-  const git = (...args) => execFileSync("git", args, { cwd, maxBuffer: 256 * 1024 * 1024 });
+  // The checkout can belong to another user: test.yml runs in a container, and
+  // git refuses to read a repository it does not own unless told it is safe.
+  // These calls only read objects from this one checkout.
+  const git = (...args) =>
+    execFileSync("git", ["-c", `safe.directory=${cwd}`, ...args], { cwd, maxBuffer: 256 * 1024 * 1024 });
   const entries = git("ls-tree", "-r", "-z", "--full-tree", rev)
     .toString("utf8")
     .split("\0")

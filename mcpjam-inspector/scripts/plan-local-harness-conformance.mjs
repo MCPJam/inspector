@@ -78,14 +78,15 @@ export function planConformance(input) {
       .filter((leg) => !input.certifiedOnly || leg.certified)
       .filter((leg) => !pullRequest || leg.platform_key === "linux-x64");
   };
-  const claudeWindows = advertisedTargetsOf(facts["claude-code"]).includes("win32-x64");
   const proven = input.event === "push" && input.inputsUnchanged === true;
   return {
     claude_pack_version: version("claude-code", input.claudeVersion),
     codex_pack_version: version("codex", input.codexVersion),
     run_claude: String(selected.has("claude-code") && !proven),
     run_codex: String(selected.has("codex") && !proven),
-    run_windows: String(selected.has("claude-code") && !pullRequest && !proven && (claudeWindows || !input.certifiedOnly)),
+    // `summarize` stamps Claude Code's version only once Windows passed, so
+    // `certifiedOnly` never skips this leg.
+    run_windows: String(selected.has("claude-code") && !pullRequest && !proven),
     posix_matrix: JSON.stringify(legsFor("claude-code", POSIX_LEGS)),
     codex_matrix: JSON.stringify(legsFor("codex", CODEX_LEGS)),
   };

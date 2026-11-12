@@ -54,8 +54,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # The same plan release.yml's preflight makes: conformance gates only a
-      # release that builds the Inspector's npm package or desktop apps.
+      # The question release.yml's preflight answers, minus its refusal of an
+      # empty release: conformance gates only a release that builds the
+      # Inspector's npm package or desktop apps, and most pushes ship nothing.
       - name: Would a release from this commit ship the Inspector?
         id: plan
         env:
@@ -63,7 +64,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           node .github/scripts/unpublished-versions.mjs > "$RUNNER_TEMP/unpublished.json"
-          node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json"
+          node .github/scripts/release-plan.mjs "$RUNNER_TEMP/unpublished.json" --needs-inspector-artifacts
 
       - name: Packs a release from this commit selects
         id: packs
