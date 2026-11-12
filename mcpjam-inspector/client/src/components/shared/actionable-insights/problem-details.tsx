@@ -53,16 +53,37 @@ const OUTCOME_LINE: Record<
   not_reached: "Analysis ran but did not reach this problem.",
 };
 
+/** Reasons a cause was confirmed but left out of this problem's results. */
+const CONFIRMED_OMISSIONS = new Set([
+  "rank_cap",
+  "verification_cap",
+  "publication_cap",
+  "subsumed",
+  "review_explained_other_observations",
+]);
+
+function outcomeLine(
+  outcome: NonNullable<FindingProblem["outcome"]>,
+): string | undefined {
+  if (outcome.state === "explained" || outcome.state === "addressed")
+    return undefined;
+  if (
+    outcome.state === "withheld" &&
+    outcome.reason &&
+    CONFIRMED_OMISSIONS.has(outcome.reason)
+  )
+    return "Analysis confirmed a cause but did not show it for this problem.";
+  return OUTCOME_LINE[outcome.state];
+}
+
 /** What the analysis established about this problem's iterations. */
 export function coverageLine(problem: FindingProblem): string {
   const { observed, explained, unresolved } = problem.coverage;
-  const state = problem.outcome?.state;
   const parts = [
     explained > 0
       ? `Evidence reviewed for ${explained} of ${plural(observed, "iteration")}.`
-      : ((state && state !== "explained" && state !== "addressed"
-          ? OUTCOME_LINE[state]
-          : undefined) ?? "Cause not established."),
+      : ((problem.outcome && outcomeLine(problem.outcome)) ??
+        "Cause not established."),
   ];
   if (unresolved > 0 && unresolved < observed)
     parts.push(
@@ -80,7 +101,9 @@ export function CopyOptionPrompt({
   option: FindingOption;
   context?: FindingPromptContext;
 }) {
-  const [status, setStatus] = useState<"idle" | "copied" | "unavailable">("idle");
+  const [status, setStatus] = useState<"idle" | "copied" | "unavailable">(
+    "idle",
+  );
   const prompt = buildOptionPrompt(problem, option, context);
   return (
     <div className="min-w-0 space-y-3">
@@ -181,10 +204,7 @@ export function ProblemDetailsContent({
               >
                 Options ({problem.options.length})
               </label>
-              <Select
-                value={option.id}
-                onValueChange={setChosen}
-              >
+              <Select value={option.id} onValueChange={setChosen}>
                 <SelectTrigger
                   className="w-full min-w-0 [&>span]:block [&>span]:truncate"
                   id={`problem-option-${problem.id}`}
