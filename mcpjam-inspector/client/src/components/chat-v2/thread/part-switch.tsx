@@ -730,7 +730,9 @@ function LivePartSwitch({
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
             recordedWidgetDiagnostics={
-              isFrozenWidget
+              // A live App from an eval run still shows the errors the run
+              // recorded, not only those from this replay.
+              isFrozenWidget || renderOverride?.recordedWidgetErrors
                 ? {
                     resourceUri:
                       renderOverride?.resourceUri ??

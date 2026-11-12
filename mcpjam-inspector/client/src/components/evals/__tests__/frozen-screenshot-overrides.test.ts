@@ -238,7 +238,10 @@ describe("buildFrozenScreenshotOverrides", () => {
     it("only switches the clicked tool call to a picture", () => {
       const base: Record<string, ToolRenderOverride> = {
         ...savedCopy(),
-        tc2: { cachedWidgetHtmlUrl: "https://s/other.html" },
+        tc2: {
+          cachedWidgetHtmlUrl: "https://s/other.html",
+          toolMetadata: { ui: { resourceUri: "ui://squad/other.html" } },
+        },
       };
       const out = buildFrozenScreenshotOverrides(
         base,
@@ -250,6 +253,33 @@ describe("buildFrozenScreenshotOverrides", () => {
       );
       expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/one.png");
       expect(out.tc2?.frozenScreenshotUrl).toBeUndefined();
+    });
+
+    it("keeps the run's recorded errors on the live App", () => {
+      const out = buildFrozenScreenshotOverrides(savedCopy(), [
+        obs({
+          toolCallId: "tc1",
+          screenshotUrl: "https://s/page.png",
+          consoleErrors: ["TypeError: broken"],
+          blockedRequests: ["https://blocked.example.com"],
+        }),
+      ]);
+      expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+      expect(out.tc1).toMatchObject({
+        cachedWidgetHtmlUrl: "https://s/app.html",
+        recordedWidgetErrors: {
+          consoleErrors: ["TypeError: broken"],
+          blockedRequests: ["https://blocked.example.com"],
+        },
+      });
+    });
+
+    it("keeps the picture when the saved copy has no UI metadata to mount it", () => {
+      const out = buildFrozenScreenshotOverrides(
+        { tc1: { cachedWidgetHtmlUrl: "https://s/app.html", toolMetadata: {} } },
+        [obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" })],
+      );
+      expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/page.png");
     });
 
     it("falls back to the picture when there is no saved App copy", () => {

@@ -4,6 +4,7 @@ import type {
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 /**
  * Actions that can move the App away from its opening state. `screenshot`
@@ -30,6 +31,16 @@ function changedAppState(step: EvalTraceBrowserInteractionStepView): boolean {
   );
 }
 
+/** The saved copy can mount as a live App: it has HTML and UI tool metadata.
+ *  PartSwitch reads its UI type from that metadata, so without it the tool
+ *  call would show as a bare tool card. */
+function canMountSavedApp(override: ToolRenderOverride | undefined): boolean {
+  return (
+    !!override?.cachedWidgetHtmlUrl &&
+    detectUIType(override.toolMetadata, undefined) !== null
+  );
+}
+
 /**
  * Build `frozenScreenshotUrl` tool-render overrides from a run's recorded
  * captures. See [[project_eval_chat_frozen_replay]].
@@ -38,9 +49,13 @@ function changedAppState(step: EvalTraceBrowserInteractionStepView): boolean {
  * (`cachedWidgetHtmlUrl` on the snapshot-derived `base` override). The recorded
  * picture is a screenshot of the whole headless test page, not the App, so it
  * is used only when:
- * - the run clicked inside that App (it has interaction steps), because the
- *   saved copy would re-open at its default state, not where the run left it; or
- * - there is no saved copy to load, as a backup.
+ * - the run acted on that App (a step that passes `changedAppState`, such as a
+ *   click or typing), because the saved copy would re-open at its default
+ *   state, not where the run left it; or
+ * - there is no saved copy that can mount as an App, as a backup.
+ *
+ * The run's recorded console errors and blocked requests stay on the override
+ * either way, so the Chat tab can still show them next to the live App.
  *
  * Merged onto `base` keyed by `toolCallId` — the SAME id the transcript tool
  * part carries (`adaptTraceToUiMessages` re-keys the message id but leaves the
@@ -102,31 +117,43 @@ export function buildFrozenScreenshotOverrides(
     if (changedAppState(step)) clickedToolCallIds.add(step.toolCallId);
     consider(step.toolCallId, step.screenshotUrl, step.ts);
   }
-  // Keep the live App (saved copy) unless the run clicked in it.
+  // Keep the live App (saved copy) unless the run acted on it.
   for (const toolCallId of [...latestByTool.keys()]) {
     if (
       !clickedToolCallIds.has(toolCallId) &&
-      base[toolCallId]?.cachedWidgetHtmlUrl
+      canMountSavedApp(base[toolCallId])
     ) {
       latestByTool.delete(toolCallId);
     }
   }
-  if (latestByTool.size === 0) return base;
-  const merged = { ...base };
-  for (const [toolCallId, { url, resourceUri }] of latestByTool) {
+  const recordedErrorsFor = (toolCallId: string) => {
     const errors = errorsByTool.get(toolCallId);
     const consoleErrors = [...(errors?.consoleErrors ?? [])];
     const blockedRequests = [...(errors?.blockedRequests ?? [])];
-    merged[toolCallId] = {
-      ...merged[toolCallId],
+    return consoleErrors.length || blockedRequests.length
+      ? { recordedWidgetErrors: { consoleErrors, blockedRequests } }
+      : {};
+  };
+  let merged: Record<string, ToolRenderOverride> | undefined;
+  const set = (toolCallId: string, override: ToolRenderOverride) => {
+    merged ??= { ...base };
+    merged[toolCallId] = override;
+  };
+  for (const [toolCallId, { url, resourceUri }] of latestByTool) {
+    set(toolCallId, {
+      ...base[toolCallId],
       frozenScreenshotUrl: url,
-      ...(merged[toolCallId]?.resourceUri || !resourceUri
-        ? {}
-        : { resourceUri }),
-      ...(consoleErrors.length || blockedRequests.length
-        ? { recordedWidgetErrors: { consoleErrors, blockedRequests } }
-        : {}),
-    };
+      ...(base[toolCallId]?.resourceUri || !resourceUri ? {} : { resourceUri }),
+      ...recordedErrorsFor(toolCallId),
+    });
   }
-  return merged;
+  // A live App keeps the errors the run recorded for it.
+  for (const toolCallId of errorsByTool.keys()) {
+    if (latestByTool.has(toolCallId) || !base[toolCallId]) continue;
+    const errors = recordedErrorsFor(toolCallId);
+    if (errors.recordedWidgetErrors) {
+      set(toolCallId, { ...base[toolCallId], ...errors });
+    }
+  }
+  return merged ?? base;
 }
