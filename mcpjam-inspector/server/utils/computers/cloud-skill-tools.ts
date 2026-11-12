@@ -1,27 +1,17 @@
 /**
- * Cloud skill tools for the AI SDK — hosted/`/web` chat. Reads the project's
- * durable skills from Convex (`cloud-skills.ts`), NOT the Computer filesystem,
- * so listing/loading never wakes a sandbox.
+ * The project's Convex skills for hosted/`/web` chat. Reads them from Convex
+ * (`cloud-skills.ts`), NOT the Computer filesystem, so listing/loading never
+ * wakes a sandbox.
  *
- * Catalog in the prompt, load on demand: names + one-line descriptions are
- * inlined at prompt-build time (sorted + budgeted); `loadSkill` delivers the
- * full body. This matches the local-FS path and real Claude Code. Zero skills
- * → no tools, no stanza. `listSkills` is not advertised here or anywhere
- * else.
- *
- * Emulated `loadSkill` is an approximation: real Claude Code/Codex read an
- * installed SKILL.md from the filesystem with no model-callable load tool
- * (the harness adapters already mirror that). When the tools are wired is
- * decided by `shouldEnableCloudSkillTools` (see `web/chat-v2.ts`).
+ * `listCloudRuntimeSkills` returns them as standalone skills for a turn's
+ * `EffectiveCapabilitySet`; its tools (`effective-skill-tools.ts`) list the
+ * catalog in the prompt and fetch a body or file only when the model asks.
+ * `shouldEnableCloudSkillTools` decides which turns get them.
  */
-import { skillTool as tool } from "../skill-tool.js";
-import { z } from "zod";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { runsHarness } from "../harness/harness-availability.js";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
-import type { PinnableSkill } from "../../../shared/skill-types.js";
 import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
-import { logger } from "../logger.js";
 import {
   CloudSkillsError,
   getCloudSkillByName,
@@ -30,13 +20,6 @@ import {
   readCloudSkillFile,
   type CloudSkillsContext,
 } from "./cloud-skills.js";
-import {
-  formatSkillCatalogBody,
-  renderBudgetedSkillCatalog,
-  skillMetadataBudgetChars,
-} from "./skill-metadata-budget.js";
-
-const NAME_RE = /^[a-z0-9-]+$/;
 
 /**
  * ConvexHttpClient.query takes no AbortSignal, so the prompt-build fetch
@@ -110,48 +93,6 @@ export function shouldEnableCloudSkillTools(args: {
 function errMessage(err: unknown): string {
   if (err instanceof CloudSkillsError) return err.message;
   return err instanceof Error ? err.message : "Unknown error";
-}
-
-function sortByName<T extends { name: string }>(items: T[]): T[] {
-  return [...items].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function budgetedCatalogBody(
-  entries: Array<{ name: string; description: string }>,
-  modelContextTokens?: number
-): { body: string; omittedRefs: string[] } {
-  const budgetChars = skillMetadataBudgetChars(modelContextTokens);
-  const { lines, omittedRefs } = renderBudgetedSkillCatalog(
-    sortByName(entries).map((entry) => ({
-      ref: entry.name,
-      description: entry.description,
-    })),
-    budgetChars
-  );
-  return { body: formatSkillCatalogBody(lines, omittedRefs), omittedRefs };
-}
-
-/** The names the bare-name skill list leaves out to stay within this model's
- *  budget, as `getPinnedSkillToolsAndPrompt` builds the list. */
-export function pinnedCatalogOmissions(
-  skills: PinnableSkill[],
-  modelContextTokens?: number
-): string[] {
-  return budgetedCatalogBody(skills, modelContextTokens).omittedRefs;
-}
-
-/**
- * Strengthened trigger: when the user names a skill or a task clearly
- * matches one's purpose, load it before acting.
- */
-const SKILLS_TRIGGER =
-  `You have access to the following skills. When the user names a skill ` +
-  `or a task clearly matches one's purpose, load it with \`loadSkill\` ` +
-  `before acting.`;
-
-function buildSkillsPromptSection(args: { catalogBody: string }): string {
-  const parts = ["## Skills", "", SKILLS_TRIGGER, "", args.catalogBody];
-  return `\n\n${parts.join("\n")}`;
 }
 
 class CloudSkillsFetchTimeoutError extends CloudSkillsError {
@@ -258,87 +199,3 @@ export async function listCloudRuntimeSkills(
     },
   }));
 }
-
-/**
- * PINNED skill tools for eval runs — an in-memory closure over frozen skill
- * content (from `configSnapshot.pinnedSkills`). The tool is named `loadSkill`
- * so the matcher's skill exemption still applies — but `execute()`
- * does ZERO network I/O (a mid-run skill edit can't change behavior between
- * iterations, which is the whole point of pinning). The discovery catalog is
- * inlined in the prompt (sorted + budgeted), not a `listSkills` tool. The
- * supporting-file tools (`listSkillFiles`/`readSkillFile`) are intentionally
- * OMITTED: pinned eval skills reaching THIS surface are file-free (decision
- * 8c), and the pinned prompt omits the file-tools guidance to match. A run
- * whose pins carry supporting files or a plugin ref is routed to the
- * ref-addressed surface in `./effective-skill-tools.ts` instead (INS-5),
- * which can serve both. Never `needsApproval` — pure reads of frozen content
- * under an auto-deny eval run.
- *
- * Emulated `loadSkill` is an approximation of real Claude Code/Codex, which
- * read an installed SKILL.md with no model-callable load tool.
- */
-export function createPinnedSkillTools(skills: PinnableSkill[]) {
-  const byName = new Map(skills.map((s) => [s.name, s]));
-  return {
-    loadSkill: tool({
-      description:
-        "Load a skill's full instructions by name. Use when a task matches a skill's purpose.",
-      inputSchema: z.object({
-        name: z
-          .string()
-          .describe("The skill name to load (e.g., 'pdf-processing')."),
-      }),
-      execute: async ({ name }) => {
-        if (!NAME_RE.test(name)) {
-          return `Error: Invalid skill name format "${name}". Skill names contain only lowercase letters, numbers, and hyphens.`;
-        }
-        const skill = byName.get(name);
-        if (!skill) return `Error: Skill "${name}" not found.`;
-        return `# Skill: ${skill.name}\n\n${skill.content}`;
-      },
-    }),
-  };
-}
-
-export type PinnedSkillTools = ReturnType<typeof createPinnedSkillTools>;
-export type PinnedSkillToolSet = Partial<PinnedSkillTools>;
-
-/**
- * The pinned tools plus a prompt stanza that inlines the frozen
- * names+descriptions (sorted + budgeted). Empty list → empty tools + empty
- * stanza (defensive — the runner already maps empty pins to `kind:"none"`).
- * Omits file-tools guidance (decision 8c pins are file-free).
- */
-export function getPinnedSkillToolsAndPrompt(
-  skills: PinnableSkill[],
-  options?: { modelContextTokens?: number }
-): {
-  tools: PinnedSkillToolSet;
-  systemPromptSection: string;
-} {
-  if (skills.length === 0) {
-    return { tools: {}, systemPromptSection: "" };
-  }
-  const { body, omittedRefs } = budgetedCatalogBody(
-    skills,
-    options?.modelContextTokens
-  );
-  if (omittedRefs.length > 0) {
-    logger.warn(
-      "[pinned-skills] skill metadata budget exceeded; skills omitted from prompt catalog",
-      { omitted: omittedRefs, total: skills.length }
-    );
-  }
-  return {
-    tools: createPinnedSkillTools(skills),
-    systemPromptSection: buildSkillsPromptSection({
-      catalogBody: body,
-    }),
-  };
-}
-
-// The Project-Environment turn used to reuse the pinned tools verbatim
-// (`getResolvedSkillToolsAndPrompt`). INS-3 replaced that with
-// `./effective-skill-tools.ts`, which addresses skills by REF rather than bare
-// name so two plugins may declare the same skill name, and which exposes the
-// supporting-file tools an environment turn genuinely can serve.

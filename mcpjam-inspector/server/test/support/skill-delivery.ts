@@ -1,7 +1,7 @@
 /**
  * Fixtures and engine probes for the skill-delivery matrix
- * (`services/environments/__tests__/skill-delivery-matrix.test.ts`) and the
- * turn-skills tests.
+ * (`services/environments/__tests__/skill-delivery-matrix.test.ts`), the
+ * turn-skills tests and the swarm session tests.
  *
  * The fixtures go through the real preparation code; the probes read what an
  * engine is handed through the code each engine runs, never through
@@ -14,6 +14,10 @@ import type {
   RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
 import type { TurnSkills } from "../../services/environments/turn-skills.js";
+import {
+  buildTargetSkillSource,
+  type FetchedTargetSkill,
+} from "../../services/sessionSimulation/session-skills.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { selectHarnessSkillSource } from "../../utils/harness/skill-delivery.js";
@@ -132,6 +136,36 @@ export function preparedRunSkills(pins: RunPinnedSkill[] = evalRunPins()) {
     pluginServers: [],
     effectiveServerIds: ["srv_docs"],
     serverNames: ["Docs"],
+  });
+}
+
+/**
+ * A swarm target's pins of the same skills: each row as the swarm's snapshot
+ * holds it, and the body the swarm runner fetches for it, which carries no
+ * files (the fetch serves them as links neither engine reads).
+ */
+export function swarmTargetSkills(
+  pins: RunPinnedSkill[] = evalRunPins(),
+): FetchedTargetSkill[] {
+  return pins.map(
+    ({ content, files: _files, extraFrontmatter: _extra, ...row }) => ({
+      row,
+      copy: {
+        name: row.name,
+        description: row.description,
+        content,
+        contentHash: row.contentHash,
+      },
+    }),
+  );
+}
+
+/** A swarm target's frozen skills, prepared by the code a swarm target uses. */
+export function preparedTargetSkills(pins?: RunPinnedSkill[]) {
+  return buildTargetSkillSource({
+    skills: swarmTargetSkills(pins),
+    pluginVersions: EVAL_PLUGIN_VERSIONS,
+    serverIds: ["srv_docs"],
   });
 }
 

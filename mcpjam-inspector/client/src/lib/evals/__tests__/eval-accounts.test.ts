@@ -32,7 +32,11 @@ function asana(overrides: Partial<SuiteAccountsServer> = {}): SuiteAccountsServe
 }
 
 const names = (serverId: string) =>
-  ({ "srv-asana": "Asana", "srv-linear": "Linear" })[serverId] ?? serverId;
+  ({
+    "srv-asana": "Asana",
+    "srv-linear": "Linear",
+    "srv-tracker": "Task tracker",
+  })[serverId] ?? serverId;
 
 describe("checkedAccountIds", () => {
   it("preselects the default account when nothing is saved", () => {
@@ -82,6 +86,31 @@ describe("chosenAccountProblems", () => {
     ]);
   });
 
+  it("names a chosen project account that needs reconnecting", () => {
+    const view: SuiteAccountsView = {
+      servers: [
+        {
+          serverId: "srv-tracker",
+          mode: "shared",
+          accounts: [
+            { ...dummy, name: "test-automation-2", needsReauth: true },
+          ],
+          chosen: ["conn-dummy"],
+        },
+      ],
+      scheduleOwners: [],
+    };
+    expect(chosenAccountProblems(view, names)).toEqual([
+      {
+        kind: "needs_reconnect",
+        serverId: "srv-tracker",
+        serverName: "Task tracker",
+        connectionId: "conn-dummy",
+        accountName: "test-automation-2",
+      },
+    ]);
+  });
+
   it("leaves a suite nobody chose accounts for alone, even when the default needs reconnecting", () => {
     const view: SuiteAccountsView = {
       servers: [asana({ accounts: [{ ...live, needsReauth: true }, dummy] })],
@@ -92,7 +121,7 @@ describe("chosenAccountProblems", () => {
 });
 
 describe("runsAsEntries", () => {
-  it("lists each of the person's servers with the accounts it runs with", () => {
+  it("lists each server the person chooses for with the accounts it runs with", () => {
     const view: SuiteAccountsView = {
       servers: [
         asana({ chosen: ["conn-dummy"] }),
@@ -105,6 +134,25 @@ describe("runsAsEntries", () => {
           chosen: null,
         },
         { serverId: "srv-shared", mode: "shared", accounts: [], chosen: null },
+        {
+          serverId: "srv-tracker",
+          mode: "shared",
+          accounts: [
+            {
+              connectionId: "p1",
+              name: "test-automation-1",
+              isDefault: true,
+              needsReauth: false,
+            },
+            {
+              connectionId: "p2",
+              name: "test-automation-2",
+              isDefault: false,
+              needsReauth: false,
+            },
+          ],
+          chosen: ["p2"],
+        },
       ],
       scheduleOwners: [],
     };
@@ -118,6 +166,12 @@ describe("runsAsEntries", () => {
         serverId: "srv-linear",
         serverName: "Linear",
         accounts: [{ name: "Work", needsReauth: false }],
+      },
+      // A shared server's chosen project account; one with none has no line.
+      {
+        serverId: "srv-tracker",
+        serverName: "Task tracker",
+        accounts: [{ name: "test-automation-2", needsReauth: false }],
       },
     ]);
   });

@@ -1,7 +1,8 @@
 /**
  * Turn a run's COMMITTED skill pins into the two frozen-skill channels the
- * runner consumes. Shared by suite runs (pins frozen on the run snapshot) and
- * environment quick runs (pins frozen on each committed iteration), so the two
+ * runner consumes. Shared by suite runs and their replays (pins frozen on the
+ * run snapshot), environment quick runs (pins frozen on each committed
+ * iteration) and swarm targets (pins frozen on the swarm's snapshot), so the
  * surfaces cannot drift in how a pin becomes a skill.
  *
  * Strict throughout — every failure throws before any model call:
@@ -42,6 +43,13 @@ export async function buildPinnedSkillSource(args: {
   /** The committed pins, content joined. `[]` means "delivers no skills". */
   pins: readonly RunPinnedSkill[];
   /**
+   * The copies a harness writes to its box, one per pin in pin order, when the
+   * caller fetched them itself: a swarm target's, which the swarm runner
+   * fetches and caches by content. Absent: built from the pins here, with
+   * every supporting file downloaded.
+   */
+  harnessSkills?: readonly PinnedSkillArtifact[];
+  /**
    * The plugin versions the commit recorded — the snapshot's own record, never
    * re-resolved to a plugin's active version.
    */
@@ -54,9 +62,9 @@ export async function buildPinnedSkillSource(args: {
   serverNames?: readonly string[];
 }): Promise<BuiltPinnedSkillSource> {
   assertPinnedSkillFilesReachable(args.pins);
-  const pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
-    args.pins,
-  );
+  const pinnedHarnessSkills = args.harnessSkills
+    ? [...args.harnessSkills]
+    : await runPinnedSkillsToHarnessArtifacts(args.pins);
   return {
     pinnedHarnessSkills,
     pinnedSkillSource: {
