@@ -59,10 +59,14 @@ export function ProjectRouteInaccessible() {
     >
       <AlertTriangle className="h-6 w-6 text-muted-foreground" />
       <div className="space-y-1">
-        <p className="text-sm font-medium">This project isn&apos;t available</p>
+        <p className="text-sm font-medium">You can&apos;t open this project</p>
+        {/* Most people land here from a link a colleague shared, so the next
+          step is asking them for an invite. Switching organization cannot
+          help: a project you can see in any of your organizations would
+          already have opened. */}
         <p className="max-w-md text-sm text-muted-foreground">
-          It may have been deleted, or you may not have access to it. Pick a
-          project from the switcher to keep working.
+          It was deleted, or you don&apos;t have access yet. If someone shared
+          this link with you, ask them to invite you to the project.
         </p>
       </div>
       <Button

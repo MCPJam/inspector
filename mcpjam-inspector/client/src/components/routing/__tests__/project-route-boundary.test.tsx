@@ -77,6 +77,20 @@ describe("ProjectRouteBoundary", () => {
     expect(screen.queryByTestId("project-screen")).toBeNull();
   });
 
+  it("tells someone opening a shared link to ask for an invite", () => {
+    // Pointing at the switcher was a dead end: a project visible in any of
+    // the viewer's organizations already opens on its own.
+    renderBoundary({
+      status: "inaccessible",
+      requestedProjectId: A,
+      reason: "not-a-member",
+    });
+    expect(
+      screen.getByText(/ask them to invite you to the project/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/switcher/i)).toBeNull();
+  });
+
   it("keeps the requested URL instead of redirecting to another project", () => {
     // Silently bouncing to a default project is how a user ends up acting on
     // data they never asked for — and it breaks "reload after being granted
