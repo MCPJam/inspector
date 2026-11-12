@@ -33,12 +33,15 @@ import { sessionFileSpec } from "./session-files.js";
 /** Long enough for a slow box and a large upload; short enough to never pile up. */
 const SAVE_TIMEOUT_MS = 60_000;
 /**
- * Saves one server runs at once. Each holds a session's text in memory and
- * compresses it; past this a save is skipped, and the next turn's save
- * catches up (a restore only uses a copy of the latest turn).
+ * Saves one server runs at once: each holds a session's text in memory and
+ * compresses it. Past this a save waits its turn. A waiting save is replaced
+ * by a newer one for the same chat, since only the latest turn's copy can
+ * ever be restored, and the oldest waiting save is dropped past the cap.
  */
 const MAX_CONCURRENT_SAVES = 2;
+const MAX_WAITING_SAVES = 50;
 let runningSaves = 0;
+const waitingSaves = new Map<string, SaveSessionSnapshotArgs>();
 
 export type SnapshotSaveOutcome =
   | "saved"
@@ -120,13 +123,19 @@ export async function saveSessionSnapshot(
   // text), so no copy is kept at all rather than one that cannot resume.
   if (collected.scrubbed) return "has-secret";
   if (collected.files.length === 0) return "empty";
-  const bytes = await encodeSnapshot({
-    version: 1,
-    harnessId: spec.harnessId,
-    harnessSessionId: args.harnessSessionId,
-    ...(args.workDir ? { workDir: args.workDir } : {}),
-    files: collected.files,
-  });
+  let bytes;
+  try {
+    bytes = await encodeSnapshot({
+      version: 1,
+      harnessId: spec.harnessId,
+      harnessSessionId: args.harnessSessionId,
+      ...(args.workDir ? { workDir: args.workDir } : {}),
+      files: collected.files,
+    });
+  } catch (error) {
+    if (error instanceof SnapshotTooLargeError) return "too-large";
+    throw error;
+  }
   if (bytes.byteLength > reserved.maxBytes) return "too-large";
 
   const authorization = args.bearer.startsWith("Bearer ")
@@ -205,12 +214,21 @@ function logOutcome(
 
 /** Start a save without waiting for it; the outcome is only logged. */
 export function startSessionSnapshotSave(args: SaveSessionSnapshotArgs): void {
-  const startedAt = Date.now();
   if (runningSaves >= MAX_CONCURRENT_SAVES) {
-    logOutcome(args.owner.harnessId, "busy", 0);
+    const lane = laneKey(args.owner);
+    waitingSaves.delete(lane);
+    waitingSaves.set(lane, args);
+    if (waitingSaves.size > MAX_WAITING_SAVES) {
+      const [oldest] = waitingSaves;
+      if (oldest) {
+        waitingSaves.delete(oldest[0]);
+        logOutcome(oldest[1].owner.harnessId, "busy", 0);
+      }
+    }
     return;
   }
   runningSaves += 1;
+  const startedAt = Date.now();
   void saveSessionSnapshot(args)
     .then(
       (outcome) =>
@@ -219,5 +237,20 @@ export function startSessionSnapshotSave(args: SaveSessionSnapshotArgs): void {
     )
     .finally(() => {
       runningSaves -= 1;
+      const [next] = waitingSaves;
+      if (next) {
+        waitingSaves.delete(next[0]);
+        startSessionSnapshotSave(next[1]);
+      }
     });
+}
+
+function laneKey(owner: HarnessOwnerRef): string {
+  return [
+    owner.projectId,
+    owner.harnessId,
+    owner.ownerType,
+    owner.scenarioId ?? "",
+    owner.chatSessionId ?? "",
+  ].join("\u0000");
 }
