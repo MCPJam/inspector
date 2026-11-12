@@ -1119,6 +1119,26 @@ describe("PartSwitch", () => {
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
       });
 
+      it("shows no backup picture for a dismissed eval App", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            tornDownWidgetIds={new Set(["call-1"])}
+            toolRenderOverrides={{
+              "call-1": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.queryByTestId("frozen-widget-replay")).not.toBeInTheDocument();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      });
+
       it("still renders WidgetReplay when the dismissed set does not match", () => {
         mockDetectUIType.mockReturnValue("mcp-apps");
         render(

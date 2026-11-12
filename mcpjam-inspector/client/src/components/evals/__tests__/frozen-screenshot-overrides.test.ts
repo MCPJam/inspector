@@ -318,6 +318,29 @@ describe("buildFrozenScreenshotOverrides", () => {
       expect(out.tc1?.fallbackScreenshotUrl).toBe("https://s/step.png");
     });
 
+    it.each([
+      ["called a tool", { widgetToolCalls: [{ name: "load_squad", ok: true }] }],
+      ["sent a message", { followUps: ["Show me more"] }],
+    ])(
+      "shows the picture when the App %s during a wait step",
+      (_label, extra) => {
+        const out = buildFrozenScreenshotOverrides(
+          savedCopy(),
+          [obs({ toolCallId: "tc1", ts: 1, screenshotUrl: "https://s/page.png" })],
+          [
+            interaction({
+              toolCallId: "tc1",
+              ts: 50,
+              action: "wait",
+              screenshotUrl: "https://s/loaded.png",
+              ...(extra as Partial<EvalTraceBrowserInteractionStepView>),
+            }),
+          ],
+        );
+        expect(out.tc1?.frozenScreenshotUrl).toBe("https://s/loaded.png");
+      },
+    );
+
     it("keeps the live App when the run clicked but recorded no picture", () => {
       const base = savedCopy();
       const out = buildFrozenScreenshotOverrides(

@@ -677,10 +677,13 @@ function LivePartSwitch({
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
     // An eval replay that prefers the live App keeps its picture as a backup
-    // for when the App can't render under the host being viewed.
+    // for when the App can't render under the host being viewed. A closed or
+    // torn-down App shows the plain tool card instead.
     const frozenScreenshotUrl =
       renderOverride?.frozenScreenshotUrl ||
-      (!shouldRenderWidget ? renderOverride?.fallbackScreenshotUrl : null) ||
+      (!shouldRenderWidget && !isWidgetTornDown
+        ? renderOverride?.fallbackScreenshotUrl
+        : null) ||
       undefined;
     if (widgetSlotShouldRender(shouldRenderWidget, { frozenScreenshotUrl })) {
       const isFrozenWidget = !!frozenScreenshotUrl;

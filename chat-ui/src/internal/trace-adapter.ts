@@ -338,18 +338,21 @@ function resolveTraceMessages(
     if ("widgetSnapshots" in trace && Array.isArray(trace.widgetSnapshots)) {
       // Eval trace envelopes carry `protocol` + `resourceUri` but no
       // `toolMetadata`; rebuild it the same way snapshotsToTraceWidgetSnapshots
-      // does so the saved App is recognised as a widget.
+      // does so the saved App is recognised as a widget. When nothing can be
+      // rebuilt, leave it unset so readers still fall back to the tool's live
+      // or streamed metadata.
       widgetSnapshots = (trace.widgetSnapshots as TraceWidgetSnapshot[]).map(
-        (snapshot) =>
-          isRecord(snapshot) && !isRecord(snapshot.toolMetadata)
-            ? {
-                ...snapshot,
-                toolMetadata: snapshotToolMetadata(
-                  snapshot.protocol,
-                  snapshot.resourceUri,
-                ),
-              }
-            : snapshot,
+        (snapshot) => {
+          if (!isRecord(snapshot) || isRecord(snapshot.toolMetadata))
+            return snapshot;
+          const toolMetadata = snapshotToolMetadata(
+            snapshot.protocol,
+            snapshot.resourceUri,
+          );
+          return Object.keys(toolMetadata).length > 0
+            ? { ...snapshot, toolMetadata }
+            : snapshot;
+        },
       );
     }
   } else if (isRecord(trace) && typeof trace.role === "string") {

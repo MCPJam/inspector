@@ -24,6 +24,9 @@ const APP_STATE_CHANGING_ACTIONS: ReadonlySet<EvalTraceBrowserAction> =
 /** A step that actually acted on the App: a state-changing action that did
  *  not fail and was not skipped (a `note` marks a step that never ran). */
 function changedAppState(step: EvalTraceBrowserInteractionStepView): boolean {
+  // Any step during which the App called a tool or sent a message counts too,
+  // even a wait or a screenshot: the App's state moved on from its saved copy.
+  if (step.widgetToolCalls?.length || step.followUps?.length) return true;
   return (
     APP_STATE_CHANGING_ACTIONS.has(step.action) &&
     step.ok !== false &&
