@@ -11,6 +11,7 @@
  *     file");
  *   - the harness shape downloads those same files, here in preparation rather
  *     than per iteration.
+ * An eval run stopped here reports its skills-delivered event as `failed`.
  *
  * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
  * `[]` (the harness selects its pinned source by presence, and `undefined`
@@ -26,6 +27,10 @@ import {
   type PinnedSkillSource,
   type TurnSkills,
 } from "../environments/turn-skills.js";
+import {
+  reportSkillsDelivered,
+  reportSkillsUndelivered,
+} from "../environments/skills-delivered-event.js";
 import { runPinnedSkillsToHarnessArtifacts } from "./run-pinned-harness-skills.js";
 import {
   assertPinnedSkillFilesReachable,
@@ -60,29 +65,41 @@ export async function buildPinnedSkillSource(args: {
   effectiveServerIds: readonly string[];
   /** Display names index-aligned with `effectiveServerIds`; may be empty. */
   serverNames?: readonly string[];
+  /**
+   * False for a swarm target: a failure here reports an eval run's
+   * skills-delivered event, and swarm turns report none yet.
+   */
+  reportsFailure?: boolean;
 }): Promise<BuiltPinnedSkillSource> {
-  assertPinnedSkillFilesReachable(args.pins);
-  const pinnedHarnessSkills = args.harnessSkills
-    ? [...args.harnessSkills]
-    : await runPinnedSkillsToHarnessArtifacts(args.pins);
-  return {
-    pinnedHarnessSkills,
-    pinnedSkillSource: {
-      kind: "pins",
-      pins: args.pins,
-      set: buildRunCapabilitySet({
+  try {
+    assertPinnedSkillFilesReachable(args.pins);
+    const pinnedHarnessSkills = args.harnessSkills
+      ? [...args.harnessSkills]
+      : await runPinnedSkillsToHarnessArtifacts(args.pins);
+    return {
+      pinnedHarnessSkills,
+      pinnedSkillSource: {
+        kind: "pins",
         pins: args.pins,
-        // Pinned files are read from the bytes downloaded above, not from the
-        // prepared links, which a long run can outlast.
-        downloadedPins: pinnedHarnessSkills,
-        pluginVersions: args.pluginVersions,
-        pluginServers: args.pluginServers,
-        effectiveServerIds: args.effectiveServerIds,
-        ...(args.serverNames ? { serverNames: args.serverNames } : {}),
-      }),
-      harnessSkills: pinnedHarnessSkills,
-    },
-  };
+        set: buildRunCapabilitySet({
+          pins: args.pins,
+          // Pinned files are read from the bytes downloaded above, not from the
+          // prepared links, which a long run can outlast.
+          downloadedPins: pinnedHarnessSkills,
+          pluginVersions: args.pluginVersions,
+          pluginServers: args.pluginServers,
+          effectiveServerIds: args.effectiveServerIds,
+          ...(args.serverNames ? { serverNames: args.serverNames } : {}),
+        }),
+        harnessSkills: pinnedHarnessSkills,
+      },
+    };
+  } catch (error) {
+    if (args.reportsFailure !== false) {
+      reportSkillsUndelivered("eval", args.pins.length);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -96,6 +113,9 @@ export async function buildPinnedSkillSource(args: {
  * run): those turns did run with none. An iteration with no frozen set to go
  * by (a quick run without an environment) records nothing, since `[]` would
  * claim it ran with none.
+ *
+ * The plan is also the iteration's skills-delivered event. Until the box
+ * writer reports what it wrote, a harness iteration reports its plan.
  */
 export function iterationTurnSkills(args: {
   pinnedSkillSource?: PinnedSkillSource;
@@ -110,6 +130,7 @@ export function iterationTurnSkills(args: {
       ? { modelContextTokens: args.modelContextTokens }
       : {}),
   });
+  reportSkillsDelivered("eval", skills);
   return args.pinnedSkillSource
     ? { skills, skillsAtTurn: toSkillsAtTurn(skills) }
     : { skills };

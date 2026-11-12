@@ -8,15 +8,17 @@ import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api"],
+  surface: ["api", "eval"],
   outcome: [
     "ok",
+    "partial",
     "failed",
     "rate_limited",
     "timeout",
     "completed",
     "cancelled",
   ],
+  runtime: ["agent", "harness"],
   readiness_kind: ["claude", "chatgpt"],
   submission_mode: ["submit", "prepare", "existing"],
   overall_status: ["ready", "not-ready", "needs-attention", "pass", "fail"],
@@ -56,6 +58,20 @@ const numbers = new Set([
   "environment_base_server_count",
   "environment_effective_server_count",
   "environment_skill_count",
+  // skills_delivered: one turn's skills by family, off the prompt's list, by
+  // exclusion reason, and failed
+  "delivered_library_count",
+  "delivered_plugin_count",
+  "delivered_mcp_server_count",
+  "delivered_local_count",
+  "omitted_from_catalog_count",
+  "excluded_unsupported_harness_count",
+  "excluded_server_skill_unsupported_count",
+  "excluded_plugin_disabled_count",
+  "excluded_name_collision_count",
+  "excluded_invalid_skill_name_count",
+  "excluded_over_cap_count",
+  "failed_count",
 ]);
 const booleans = new Set([
   "include_llm_observations",

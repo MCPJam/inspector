@@ -54,6 +54,7 @@ export async function buildTargetSkillSource(args: {
     // re-gated when the session connects them.
     pluginServers: [],
     effectiveServerIds: args.serverIds,
+    reportsFailure: false,
   });
   return built.pinnedSkillSource;
 }
