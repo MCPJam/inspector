@@ -204,46 +204,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "csp": {
             "cspDirectives": {
-              "connect-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "font-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
               "frame-src": [
                 "'self'",
                 "data:",
                 "blob:",
-              ],
-              "img-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "media-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "script-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "style-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
               ],
             },
             "mode": "declared",
           },
           "permissions": {
             "allow": {
+              "clipboardWrite": true,
               "microphone": true,
             },
             "mode": "custom",
@@ -411,46 +382,17 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
           "csp": {
             "cspDirectives": {
-              "connect-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "font-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
               "frame-src": [
                 "'self'",
                 "data:",
                 "blob:",
-              ],
-              "img-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "media-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "script-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "style-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
               ],
             },
             "mode": "declared",
           },
           "permissions": {
             "allow": {
+              "clipboardWrite": true,
               "microphone": true,
             },
             "mode": "custom",
@@ -529,7 +471,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.310",
+          "version": "2.1.312",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -588,7 +530,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.310",
+          "version": "2.1.312",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -670,10 +612,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "desktop",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
@@ -817,7 +759,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "dark",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/5.1231.2 Chrome/156.0.8078.75 Electron/45.2.1 Safari/537.36",
     },
     "hostStyle": "claude-desktop",
     "mcpProfile": {
@@ -854,7 +796,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
-          "toolInfo": false,
+          "toolInfo": true,
           "toolResult": {
             "content": {
               "audio": true,
@@ -1022,10 +964,10 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "locale": "en-US",
       "platform": "desktop",
       "safeAreaInsets": {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 12,
       },
       "styles": {
         "css": {
@@ -1169,7 +1111,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "light",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/5.1231.2 Chrome/156.0.8078.75 Electron/45.2.1 Safari/537.36",
     },
     "hostStyle": "claude-desktop",
     "mcpProfile": {
@@ -1206,7 +1148,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
-          "toolInfo": false,
+          "toolInfo": true,
           "toolResult": {
             "content": {
               "audio": true,
@@ -1521,7 +1463,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "dark",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
     },
     "hostStyle": "claude",
     "mcpProfile": {
@@ -1874,7 +1816,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "theme": "light",
       "timeZone": "America/Los_Angeles",
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
     },
     "hostStyle": "claude",
     "mcpProfile": {
@@ -2159,8 +2101,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "getFileDownloadUrl": false,
             "notifyIntrinsicHeight": false,
             "requestCheckout": false,
-            "requestClose": false,
-            "requestModal": false,
             "selectFiles": false,
             "setOpenInAppUrl": false,
             "uploadFile": false,
@@ -2227,46 +2167,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "base-uri": [
                 "'none'",
               ],
-              "connect-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "font-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
               "frame-src": [
                 "'self'",
                 "data:",
                 "blob:",
               ],
-              "img-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "media-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "script-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "style-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
             },
             "mode": "declared",
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
@@ -2274,7 +2186,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "chatgpt",
-            "version": "26.1021.31345",
+            "version": "26.1103.60933",
           },
         },
       },
@@ -2368,8 +2280,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "getFileDownloadUrl": false,
             "notifyIntrinsicHeight": false,
             "requestCheckout": false,
-            "requestClose": false,
-            "requestModal": false,
             "selectFiles": false,
             "setOpenInAppUrl": false,
             "uploadFile": false,
@@ -2436,46 +2346,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
               "base-uri": [
                 "'none'",
               ],
-              "connect-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "font-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
               "frame-src": [
                 "'self'",
                 "data:",
                 "blob:",
               ],
-              "img-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "media-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "script-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
-              "style-src": [
-                "https://cdn.jsdelivr.net",
-                "https://unpkg.com",
-                "https://esm.sh",
-              ],
             },
             "mode": "declared",
           },
           "permissions": {
-            "allow": {},
+            "allow": {
+              "clipboardWrite": true,
+            },
             "mode": "custom",
           },
           "sameOriginAppIframe": true,
@@ -2483,7 +2365,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "chatgpt",
-            "version": "26.1021.31345",
+            "version": "26.1103.60933",
           },
         },
       },
@@ -2735,7 +2617,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
         },
         "uiInitialize": {
           "hostInfo": {
@@ -2864,7 +2746,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
-          "sameOriginAppIframe": false,
+          "sameOriginAppIframe": true,
         },
         "uiInitialize": {
           "hostInfo": {
@@ -3056,11 +2938,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
         },
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.27.14",
+            "version": "3.29.9",
           },
         },
       },
@@ -3186,11 +3069,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             },
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
         },
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.27.14",
+            "version": "3.29.9",
           },
         },
       },
@@ -3324,7 +3208,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "initialize": {
         "clientInfo": {
           "name": "google-adk",
-          "version": "2.12.0",
+          "version": "2.14.0",
         },
         "supportedProtocolVersions": [
           "2025-11-25",
@@ -3444,7 +3328,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "initialize": {
         "clientInfo": {
           "name": "google-adk",
-          "version": "2.12.0",
+          "version": "2.14.0",
         },
         "supportedProtocolVersions": [
           "2025-11-25",
@@ -5118,6 +5002,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow": {},
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],
@@ -5353,6 +5238,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "allow": {},
             "mode": "custom",
           },
+          "sameOriginAppIframe": true,
           "sandboxAttrs": [
             "allow-forms",
           ],

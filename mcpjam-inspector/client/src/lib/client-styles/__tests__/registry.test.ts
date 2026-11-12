@@ -148,9 +148,9 @@ describe("host-styles registry", () => {
       message: { text: {} },
       downloadFile: {},
     });
-    // ChatGPT keeps serverResources / logging, but the probe reports no
-    // downloadFile support. Model context and messages advertise every
-    // content type in OpenAI's Supported Content table, not just text.
+    // ChatGPT keeps serverResources / logging, and since the 2026-11-11 probe
+    // it advertises downloadFile too. Model context and messages advertise
+    // every content type in OpenAI's Supported Content table, not just text.
     expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
       openLinks: {},
       serverTools: {},
@@ -164,6 +164,7 @@ describe("host-styles registry", () => {
         structuredContent: {},
       },
       message: { text: {}, image: {}, resourceLink: {}, resource: {} },
+      downloadFile: {},
     });
   });
 

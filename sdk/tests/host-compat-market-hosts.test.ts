@@ -74,7 +74,8 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      downloadFile: false,
+      // Advertised in `hostCapabilities` since the 2026-11-11 probe.
+      downloadFile: true,
     });
   });
 

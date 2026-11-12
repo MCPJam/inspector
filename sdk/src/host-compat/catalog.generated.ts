@@ -428,7 +428,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1791676800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -492,7 +492,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
         platform: "web",
         deviceCapabilities: {
           touch: false,
@@ -580,8 +580,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "light-dark(rgba(67, 116, 38, 0.5), rgba(89, 145, 48, 0.5))",
             "--color-ring-warning":
               "light-dark(rgba(128, 92, 31, 0.5), rgba(168, 120, 41, 0.5))",
-            "--font-sans": '"anthropic-sans", sans-serif',
-            "--font-mono": "ui-monospace, monospace",
+            "--font-sans":
+              '"anthropic-sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+            "--font-mono":
+              '"anthropic-mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace',
             "--font-weight-normal": "400",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
@@ -625,7 +627,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           css: {
             fonts:
-              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n}\n',
+              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}',
           },
         },
       },
@@ -743,7 +745,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -807,17 +809,17 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/5.1231.2 Chrome/156.0.8078.75 Electron/45.2.1 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: {
           touch: false,
           hover: true,
         },
         safeAreaInsets: {
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
+          top: 12,
+          right: 12,
+          bottom: 12,
+          left: 12,
         },
         styles: {
           variables: {
@@ -895,8 +897,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "light-dark(rgba(67, 116, 38, 0.5), rgba(89, 145, 48, 0.5))",
             "--color-ring-warning":
               "light-dark(rgba(128, 92, 31, 0.5), rgba(168, 120, 41, 0.5))",
-            "--font-sans": '"anthropic-sans", sans-serif',
-            "--font-mono": "ui-monospace, monospace",
+            "--font-sans":
+              'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+            "--font-mono":
+              '"anthropic-mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace',
             "--font-weight-normal": "400",
             "--font-weight-medium": "500",
             "--font-weight-semibold": "600",
@@ -940,7 +944,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           css: {
             fonts:
-              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n}\n',
+              '\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Regular-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-RegularItalic-Static.otf") format("opentype");\n  font-weight: 400;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Medium-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-MediumItalic-Static.otf") format("opentype");\n  font-weight: 500;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Semibold-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-SemiboldItalic-Static.otf") format("opentype");\n  font-weight: 600;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cb48c413e-yAna2Le1.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0, "ss01" 1, "ss02" 1;\n  unicode-range: U+0-5B, U+5D-A0, U+A2-A3, U+A5-316, U+318-3C8, U+3CA-DFFF, U+E140-10FFFF;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/claude-ai/v2/assets/v1/cc27851ad-DDVos-BJ.woff2") format("woff2"), url("https://assets.claude.ai/Fonts/AnthropicSans-Text-Bold-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: normal;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n  unicode-range: U+5C, U+A1, U+A4, U+E000-E13F;\n}\n@font-face {\n  font-family: "anthropic-sans";\n  src: url("https://assets.claude.ai/Fonts/AnthropicSans-Text-BoldItalic-Static.otf") format("opentype");\n  font-weight: 700;\n  font-style: italic;\n  font-display: swap;\n  font-feature-settings: "dlig" 0;\n}',
           },
         },
       },
@@ -1006,7 +1010,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
-            toolInfo: false,
+            toolInfo: true,
             openLinks: true,
             serverTools: true,
             serverResources: true,
@@ -1057,7 +1061,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -1134,7 +1138,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.310",
+            version: "2.1.312",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1257,39 +1261,40 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "--color-background-inverse": "rgb(237, 237, 237)",
           "--color-background-ghost": "transparent",
           "--color-background-info": "rgb(19, 52, 99)",
-          "--color-background-danger": "rgb(40, 11, 10)",
+          "--color-background-danger":
+            "color(srgb 0.980392 0.258824 0.243137 / 0.16)",
           "--color-background-success":
             "color-mix(in srgb, rgb(64, 201, 119) 12%, rgb(33, 33, 33))",
           "--color-background-warning":
-            "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(33, 33, 33))",
+            "color-mix(in srgb, rgb(226, 85, 7) 12%, rgb(33, 33, 33))",
           "--color-background-disabled": "rgb(48, 48, 48)",
           "--color-text-primary": "rgb(237, 237, 237)",
-          "--color-text-secondary": "rgb(175, 175, 175)",
+          "--color-text-secondary": "rgb(205, 205, 205)",
           "--color-text-tertiary": "rgb(175, 175, 175)",
           "--color-text-inverse": "rgb(13, 13, 13)",
           "--color-text-ghost": "rgb(175, 175, 175)",
-          "--color-text-info": "rgb(44, 103, 197)",
+          "--color-text-info": "rgb(51, 156, 255)",
           "--color-text-danger": "rgb(255, 103, 100)",
           "--color-text-success": "rgb(64, 201, 119)",
-          "--color-text-warning": "rgb(255, 133, 73)",
+          "--color-text-warning": "rgb(226, 85, 7)",
           "--color-text-disabled": "rgb(175, 175, 175)",
           "--color-border-primary": "rgba(255, 255, 255, 0.2)",
           "--color-border-secondary": "rgba(255, 255, 255, 0.15)",
           "--color-border-tertiary": "rgba(255, 255, 255, 0.15)",
           "--color-border-inverse": "rgb(237, 237, 237)",
           "--color-border-ghost": "transparent",
-          "--color-border-info": "rgb(58, 131, 247)",
+          "--color-border-info": "rgb(255, 255, 255)",
           "--color-border-danger": "rgb(255, 103, 100)",
           "--color-border-success": "rgb(64, 201, 119)",
-          "--color-border-warning": "rgb(255, 133, 73)",
+          "--color-border-warning": "rgb(226, 85, 7)",
           "--color-border-disabled": "rgba(255, 255, 255, 0.2)",
-          "--color-ring-primary": "rgb(58, 131, 247)",
-          "--color-ring-secondary": "rgb(58, 131, 247)",
-          "--color-ring-inverse": "rgb(58, 131, 247)",
-          "--color-ring-info": "rgb(58, 131, 247)",
+          "--color-ring-primary": "rgb(255, 255, 255)",
+          "--color-ring-secondary": "rgb(255, 255, 255)",
+          "--color-ring-inverse": "rgb(255, 255, 255)",
+          "--color-ring-info": "rgb(255, 255, 255)",
           "--color-ring-danger": "rgb(255, 103, 100)",
           "--color-ring-success": "rgb(64, 201, 119)",
-          "--color-ring-warning": "rgb(255, 133, 73)",
+          "--color-ring-warning": "rgb(226, 85, 7)",
           "--font-sans":
             '-apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol"',
           "--font-mono":
@@ -1339,7 +1344,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1413,39 +1418,40 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "--color-background-inverse": "rgb(237, 237, 237)",
             "--color-background-ghost": "transparent",
             "--color-background-info": "rgb(19, 52, 99)",
-            "--color-background-danger": "rgb(40, 11, 10)",
+            "--color-background-danger":
+              "color(srgb 0.980392 0.258824 0.243137 / 0.16)",
             "--color-background-success":
               "color-mix(in srgb, rgb(64, 201, 119) 12%, rgb(33, 33, 33))",
             "--color-background-warning":
-              "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(33, 33, 33))",
+              "color-mix(in srgb, rgb(226, 85, 7) 12%, rgb(33, 33, 33))",
             "--color-background-disabled": "rgb(48, 48, 48)",
             "--color-text-primary": "rgb(237, 237, 237)",
-            "--color-text-secondary": "rgb(175, 175, 175)",
+            "--color-text-secondary": "rgb(205, 205, 205)",
             "--color-text-tertiary": "rgb(175, 175, 175)",
             "--color-text-inverse": "rgb(13, 13, 13)",
             "--color-text-ghost": "rgb(175, 175, 175)",
-            "--color-text-info": "rgb(44, 103, 197)",
+            "--color-text-info": "rgb(51, 156, 255)",
             "--color-text-danger": "rgb(255, 103, 100)",
             "--color-text-success": "rgb(64, 201, 119)",
-            "--color-text-warning": "rgb(255, 133, 73)",
+            "--color-text-warning": "rgb(226, 85, 7)",
             "--color-text-disabled": "rgb(175, 175, 175)",
             "--color-border-primary": "rgba(255, 255, 255, 0.2)",
             "--color-border-secondary": "rgba(255, 255, 255, 0.15)",
             "--color-border-tertiary": "rgba(255, 255, 255, 0.15)",
             "--color-border-inverse": "rgb(237, 237, 237)",
             "--color-border-ghost": "transparent",
-            "--color-border-info": "rgb(58, 131, 247)",
+            "--color-border-info": "rgb(255, 255, 255)",
             "--color-border-danger": "rgb(255, 103, 100)",
             "--color-border-success": "rgb(64, 201, 119)",
-            "--color-border-warning": "rgb(255, 133, 73)",
+            "--color-border-warning": "rgb(226, 85, 7)",
             "--color-border-disabled": "rgba(255, 255, 255, 0.2)",
-            "--color-ring-primary": "rgb(58, 131, 247)",
-            "--color-ring-secondary": "rgb(58, 131, 247)",
-            "--color-ring-inverse": "rgb(58, 131, 247)",
-            "--color-ring-info": "rgb(58, 131, 247)",
+            "--color-ring-primary": "rgb(255, 255, 255)",
+            "--color-ring-secondary": "rgb(255, 255, 255)",
+            "--color-ring-inverse": "rgb(255, 255, 255)",
+            "--color-ring-info": "rgb(255, 255, 255)",
             "--color-ring-danger": "rgb(255, 103, 100)",
             "--color-ring-success": "rgb(64, 201, 119)",
-            "--color-ring-warning": "rgb(255, 133, 73)",
+            "--color-ring-warning": "rgb(226, 85, 7)",
             "--font-sans":
               '-apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol"',
             "--font-mono":
@@ -1555,36 +1561,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             csp: {
               mode: "declared",
               cspDirectives: {
-                "connect-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "script-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "style-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "img-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "font-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "media-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
@@ -1592,6 +1568,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               mode: "custom",
               allow: {
                 microphone: true,
+                clipboardWrite: true,
               },
             },
             browserStorage: {
@@ -1646,7 +1623,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               },
             },
             resourcePrefersBorder: true,
-            downloadFile: false,
+            downloadFile: true,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
@@ -2280,7 +2257,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
       },
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -2516,6 +2493,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sessionStorage: true,
               indexedDB: true,
             },
+            sameOriginAppIframe: true,
           },
         },
       },
@@ -2526,7 +2504,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -2616,7 +2594,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "Cursor",
-              version: "3.27.14",
+              version: "3.29.9",
             },
           },
           sandbox: {
@@ -2634,6 +2612,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sessionStorage: true,
               indexedDB: true,
             },
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: false,
@@ -2874,7 +2853,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       styleVariablesByTheme: {
         light: {
           "--color-background-primary": "rgb(255, 255, 255)",
@@ -2972,7 +2951,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(40, 40, 40))",
           "--color-background-disabled": "rgba(255, 255, 255, 0.05)",
           "--color-text-primary": "rgb(255, 255, 255)",
-          "--color-text-secondary": "rgba(255, 255, 255, 0.498)",
+          "--color-text-secondary": "color(srgb 1 1 1 / 0.65)",
           "--color-text-tertiary": "rgba(255, 255, 255, 0.498)",
           "--color-text-inverse": "rgb(13, 13, 13)",
           "--color-text-ghost": "rgba(255, 255, 255, 0.498)",
@@ -3136,7 +3115,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               "color-mix(in srgb, rgb(255, 133, 73) 12%, rgb(40, 40, 40))",
             "--color-background-disabled": "rgba(255, 255, 255, 0.05)",
             "--color-text-primary": "rgb(255, 255, 255)",
-            "--color-text-secondary": "rgba(255, 255, 255, 0.498)",
+            "--color-text-secondary": "color(srgb 1 1 1 / 0.65)",
             "--color-text-tertiary": "rgba(255, 255, 255, 0.498)",
             "--color-text-inverse": "rgb(13, 13, 13)",
             "--color-text-ghost": "rgba(255, 255, 255, 0.498)",
@@ -3224,7 +3203,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "chatgpt",
-              version: "26.1021.31345",
+              version: "26.1103.60933",
             },
           },
           pluginExtensions: {
@@ -3234,43 +3213,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             csp: {
               mode: "declared",
               cspDirectives: {
-                "connect-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "script-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "style-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "img-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "font-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "media-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
             },
             permissions: {
               mode: "custom",
-              allow: {},
+              allow: {
+                clipboardWrite: true,
+              },
             },
             browserStorage: {
               localStorage: true,
@@ -3326,8 +3277,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           compatRuntime: {
             openaiApps: true,
             openaiAppsOverrides: {
-              requestClose: false,
-              requestModal: false,
               uploadFile: false,
               selectFiles: false,
               getFileDownloadUrl: false,
@@ -3351,7 +3300,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1791763200000,
+      verifiedAt: 1794355200000,
       compatibilityEvidence: {
         profileLabel: "Copilot",
         sourceUrl:
@@ -3747,7 +3696,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
-            sameOriginAppIframe: false,
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
@@ -3765,6 +3714,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
             resourcePrefersBorder: false,
             downloadFile: true,
             requestTeardown: false,
@@ -4391,7 +4345,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794355200000,
       modelVisibleMcpToolResults: {},
       mcpToolResultImageRendering: {},
       hostStyle: "gemini",
@@ -4429,7 +4383,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "google-adk",
-            version: "2.12.0",
+            version: "2.14.0",
           },
         },
         apps: {

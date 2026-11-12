@@ -590,7 +590,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
         platform: "web",
         deviceCapabilities: { touch: false, hover: true },
         // The 2026-09-02 capture reports a uniform 12px inset on every edge;
@@ -838,13 +838,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.9939.2 Chrome/152.0.7977.130 Electron/44.4.3 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/5.1231.2 Chrome/156.0.8078.75 Electron/45.2.1 Safari/537.36",
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
-        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
-        // the widget iframe is inset from its card rather than flush to it.
-        // Zero on every edge, unlike the web app's uniform 12px.
-        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // Correction from the latest sweep: a uniform 12px inset on every
+        // edge, same as the web app. The zeros came from the September runs.
+        safeAreaInsets: { top: 12, right: 12, bottom: 12, left: 12 },
         // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
         // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
         // (set below). Variables use CSS `light-dark()` so they pick the
@@ -971,7 +970,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
-            // Both Desktop captures send `hostContext.safeAreaInsets`, all 0.
+            // Every Desktop capture sends `hostContext.safeAreaInsets`.
             safeAreaInsets: true,
             // Correction from the latest sweep: fullscreen is advertised too.
             availableDisplayModes: ["inline", "fullscreen"],
@@ -980,9 +979,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // only fires while arguments stream and the probe tool takes none.
             hostContextChanged: true,
             resourceTeardown: true,
-            // Absent from `hostContext` in a payload received whole, so the
-            // absence is a real observation. The web row carries it.
-            toolInfo: false,
+            // Correction from the latest sweep: `hostContext.toolInfo` is
+            // present, as on the web app. Only the first Desktop capture
+            // lacked it.
+            toolInfo: true,
             openLinks: true,
             serverTools: true,
             serverResources: true,
@@ -1056,7 +1056,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         computer: { kind: "personal" },
       });
       // From a live `start-host-probe` against Claude Code CLI v2.1.310
-      // in the latest sweep: elicitation declaring the `form` and `url` modes, and
+      // in the October sweep (re-probed on 2.1.312 since, unchanged): elicitation declaring the `form` and `url` modes, and
       // `extensions["io.modelcontextprotocol/tasks"]`. That capture also
       // reported `roots.listChanged`, but `roots` is deliberately held at
       // the older bare `{}` reading pending a cleaner capture. Still NO
@@ -1125,7 +1125,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.310",
+            version: "2.1.312",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1309,52 +1309,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             csp: {
               mode: "declared",
               // ChatGPT's own baseline allowlist, merged with the widget's
-              // declared domains. The prober loaded each of these origins
-              // undeclared for fetch, xhr, script, style, image, font and
-              // media, while undeclared frame origins were blocked. Keep this
-              // limited to origins the prober has checked.
+              // declared domains. Correction from the latest sweep: there is
+              // no connect or resource baseline any more. `cdn.jsdelivr.net`,
+              // `unpkg.com` and `esm.sh` used to load undeclared and now hit
+              // a real CSP violation on every connect and resource load.
+              // Undeclared frame origins are still blocked.
               cspDirectives: {
-                "connect-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "script-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "style-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "img-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "font-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "media-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
                 "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {
               mode: "custom",
-              // 2026-09-29: ChatGPT's OUTER frame may still carry
-              // `clipboard-write` (captured 2026-05-18), but the widget's own
-              // frame is `allow="fullscreen *; microphone *"` and its
-              // Permissions Policy blocks clipboard-write, so a widget cannot
-              // write. Microphone is delegated and reads `granted`.
-              allow: { microphone: true },
+              // Correction from the latest sweep: the widget's frame now
+              // delegates clipboard-write as well as microphone, ChatGPT
+              // advertises both, and both read `granted` only when declared.
+              allow: { microphone: true, clipboardWrite: true },
             },
             // The 2026-08-24 capture read and wrote all three browser
             // storage APIs from inside the widget sandbox — every one
@@ -1824,6 +1793,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // The App has a real origin of its own (`app-….slack-mcps.com`).
+            sameOriginAppIframe: true,
           },
         },
       };
@@ -1914,7 +1885,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // need this to take that path. The version is identity metadata
             // only; bumped with the latest re-probe (was 3.21.16), which
             // re-confirmed every capability note above.
-            hostInfo: { name: "Cursor", version: "3.27.14" },
+            hostInfo: { name: "Cursor", version: "3.29.9" },
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
@@ -1967,6 +1938,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // The App has a real origin of its own (`vscode-webview://…`).
+            sameOriginAppIframe: true,
           },
         },
       };
@@ -2044,14 +2017,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         },
         apps: {
           // Both name and version are now probed: the latest capture
-          // reported `chatgpt` 26.1021.31345 (the backend catalog's `codex`
+          // reported `chatgpt` 26.1103.60933 (the backend catalog's `codex`
           // row). That replaces the ASSUMED 26.928.20710, a deliberate bump
           // past the then-latest capture to OpenAI's documented minimum
           // desktop build for the DevDay 2026 extensions (mcp-extensions
           // patterns.md), which Apps such as Bits & Bolts check before
           // enabling themselves. The probed build is past that minimum.
           uiInitialize: {
-            hostInfo: { name: "chatgpt", version: "26.1021.31345" },
+            hostInfo: { name: "chatgpt", version: "26.1103.60933" },
           },
           // OpenAI plugin extensions are on by default for Codex; each one
           // can be switched off in the client's Apps tab.
@@ -2061,51 +2034,19 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // below are its own baseline, merged on top of that declaration.
             csp: {
               mode: "declared",
-              // Same baseline as ChatGPT: the prober loaded each of these
-              // origins undeclared for fetch, xhr, script, style, image, font
-              // and media.
+              // Same as ChatGPT: the connect and resource baseline is gone in
+              // the latest sweep, so only the frame and base-uri entries stay.
               cspDirectives: {
-                "connect-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "script-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "style-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "img-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "font-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
-                "media-src": [
-                  "https://cdn.jsdelivr.net",
-                  "https://unpkg.com",
-                  "https://esm.sh",
-                ],
                 "frame-src": ["'self'", "data:", "blob:"],
                 "base-uri": ["'none'"],
               },
             },
-            // Correction from the latest sweep: clipboard write is refused again
-            // (`declared-denied`), and that capture's `hostCapabilities`
-            // carries no `sandbox.permissions` block at all. It had briefly
-            // worked in only one earlier run, between two that refused it.
-            // Microphone is `declared-denied` too; camera and geolocation
-            // were only undeclared canaries. Nothing is granted.
-            permissions: { mode: "custom", allow: {} },
+            // Correction from the latest sweep: clipboard write works again
+            // (`paired-transition`). It has flipped across runs (refused,
+            // worked, refused, worked), so read it as unstable. Microphone is
+            // still `declared-denied`, and `hostCapabilities` still carries
+            // no `sandbox.permissions` block.
+            permissions: { mode: "custom", allow: { clipboardWrite: true } },
             // All three browser storage APIs were readable and writable from
             // inside the widget sandbox. Not an MCP concept — the MCP Apps
             // spec says nothing about storage.
@@ -2171,9 +2112,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           compatRuntime: {
             openaiApps: true,
+            // `requestClose` and `requestModal` are functions as of the
+            // latest sweep, so neither is turned off.
             openaiAppsOverrides: {
-              requestClose: false,
-              requestModal: false,
               uploadFile: false,
               selectFiles: false,
               getFileDownloadUrl: false,
@@ -2441,10 +2382,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // refused even though Copilot advertises it.
               allow: { clipboardWrite: true },
             },
-            // The App iframe carries `allow-same-origin`, but the prober
-            // saw its origin as `"null"` (an opaque `about:srcdoc` frame),
-            // so the App gets no real origin of its own.
-            sameOriginAppIframe: false,
+            // Correction from the latest sweep: the App is an `about:srcdoc`
+            // frame, so `location.origin` reads `"null"`, but under
+            // `allow-same-origin` it inherits a real origin (`self.origin`
+            // is `….widget-renderer.usercontent.microsoft`) and storage works.
+            sameOriginAppIframe: true,
           },
         },
       };
@@ -2775,7 +2717,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           // ONE observed negotiation, not a ladder probe.
           supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: { name: "google-adk", version: "2.12.0" },
+          clientInfo: { name: "google-adk", version: "2.14.0" },
         },
         apps: {
           // `ui/initialize` answers the widget runtime name; the product name
