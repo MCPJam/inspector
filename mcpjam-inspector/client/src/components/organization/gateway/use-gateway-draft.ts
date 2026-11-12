@@ -67,11 +67,11 @@ export function useGatewayDraft({
   const focusRequest = useRef<GatewayField | null>(null);
   // The latest Test run; a reset or a newer run makes an earlier answer stale.
   const testRun = useRef(0);
-  // The runtime, URL and key the latest Test ran with. A new provider's APIs
-  // and models come from its Test, so they start over only when the Test runs
-  // against something else; testing the same provider again keeps the
-  // admin's mappings and the models they added by hand.
-  const testedInputs = useRef<string | null>(null);
+  // The base URL the latest Test ran against. A new provider's APIs and
+  // models come from its Test, so they start over only when a Test runs
+  // against another address; testing the same address again, from either
+  // side or with another key, keeps the admin's mappings and hand-added models.
+  const testedBaseUrl = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -91,7 +91,7 @@ export function useGatewayDraft({
     setOutcome(null);
     setKeyRequested(false);
     setDirty(false);
-    testedInputs.current = null;
+    testedBaseUrl.current = null;
   }, [open, editProvider]);
 
   useEffect(() => {
@@ -110,15 +110,18 @@ export function useGatewayDraft({
       setDirty(true);
     };
 
-  // A Test answers for the URL and key it ran with. Editing either makes a
-  // pending answer stale, drops a finished one, and a new Test can start.
-  const editProbe = (set: (value: string) => void) => (value: string) => {
-    testRun.current += 1;
-    setTesting(false);
-    setTested(null);
-    setOutcome(null);
-    edit(set)(value);
-  };
+  // A Test answers for the URL, key and runtime it ran with. Editing any of
+  // them makes a pending answer stale, drops a finished one, and a new Test
+  // can start.
+  const editProbe =
+    <T>(set: (value: T) => void) =>
+    (value: T) => {
+      testRun.current += 1;
+      setTesting(false);
+      setTested(null);
+      setOutcome(null);
+      edit(set)(value);
+    };
 
   const showOutcome = (next: GatewayTestOutcome) => {
     if (next.focus) onFieldProblem?.(next.focus);
@@ -142,16 +145,11 @@ export function useGatewayDraft({
     setTesting(true);
     setOutcome(null);
     setTested(null);
-    const inputs = JSON.stringify([
-      runtimeLocation,
-      baseUrl.trim(),
-      secret.trim(),
-    ]);
-    if (!editProvider && inputs !== testedInputs.current) {
+    if (!editProvider && baseUrl.trim() !== testedBaseUrl.current) {
       setApis([]);
       setModels([]);
     }
-    testedInputs.current = inputs;
+    testedBaseUrl.current = baseUrl.trim();
     let response: Awaited<ReturnType<typeof testConnection>>;
     try {
       response = await testConnection({
@@ -178,6 +176,13 @@ export function useGatewayDraft({
     showOutcome(next);
   };
 
+  // The saved provider's last Test speaks only for its saved URL, key and
+  // runtime; once any of them is edited it says nothing about the draft.
+  const asSaved =
+    !!editProvider &&
+    baseUrl.trim() === (editProvider.baseUrl ?? "") &&
+    !secret.trim() &&
+    runtime === (editProvider.runtimeLocation ?? "cloud");
   // What the latest Test said of each API, else the saved provider's last Test.
   const results: Partial<Record<GatewayApi, GatewayApiTestResult>> = tested
     ? Object.fromEntries(
@@ -186,7 +191,11 @@ export function useGatewayDraft({
           return result ? [[api, result]] : [];
         }),
       )
-    : (editProvider?.lastTest?.apis ?? {});
+    : asSaved
+      ? (editProvider?.lastTest?.apis ?? {})
+      : {};
+  /** The latest Test reached the provider and wasn't refused. */
+  const answered = !!tested && tested.reachable && !tested.refusal;
 
   return {
     baseUrl,
@@ -199,23 +208,23 @@ export function useGatewayDraft({
     outcome,
     testing,
     keyRequested,
-    /** The latest Test reached the provider and found something to save. */
-    passed:
-      !!tested &&
-      tested.reachable &&
-      !tested.refusal &&
-      outcome?.tone !== "destructive",
+    answered,
+    /**
+     * The latest Test answered cleanly. An answer with a failure (a 404 on
+     * the model list, no API answering) still lets the admin fill in by hand.
+     */
+    passed: answered && outcome?.tone !== "destructive",
     dirty,
     keyProblem: baseUrlKeyProblem(editProvider, baseUrl, secret),
     setBaseUrl: editProbe(setBaseUrl),
     setSecret: editProbe(setSecret),
-    setRuntime: edit(setRuntime),
+    setRuntime: editProbe(setRuntime),
     setApis: edit(setApis),
     setModels: edit(setModels),
     runTest,
     /** The fix for a private address MCPJam's servers refuse. */
     testFromInspector: () => {
-      edit(setRuntime)("local");
+      editProbe(setRuntime)("local");
       void runTest("local");
     },
     /** The save's connection fields; the caller adds the key and name. */
