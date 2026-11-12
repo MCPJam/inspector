@@ -177,12 +177,16 @@ describe("swarm single-host runner — attempt ordering", () => {
 
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // ChatGPT's preset plus the override, not only the override's own keys.
+    // Messages carrying every OpenAI content type (not just text) is
+    // ChatGPT-specific, and `downloadFile` has been in its preset since the
+    // 2026-11-11 probe.
     expect(adapter.runtime.hostCapabilities).toMatchObject({
       openLinks: {},
       serverTools: {},
       serverResources: {},
+      downloadFile: {},
+      message: { text: {}, image: {}, resourceLink: {}, resource: {} },
     });
-    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
   });
 
   it("advertises only the override's own keys while the snapshot has no host style", async () => {
