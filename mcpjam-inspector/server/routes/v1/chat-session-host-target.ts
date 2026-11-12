@@ -310,7 +310,6 @@ export function resolveChatSessionEngine(args: {
     harnessId: harness,
     // Its turn runs the Playground's box path; runtime resolution checks `api`.
     surface: "playground",
-    agentLoop: hostConfig.agentLoop !== undefined,
     requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     model: args.model,
