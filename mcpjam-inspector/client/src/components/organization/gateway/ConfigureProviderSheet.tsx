@@ -349,6 +349,15 @@ function TestStatus({
       />
     );
   }
+  // The saved Test says nothing once the URL, key or runtime is edited.
+  if (!draft.asSaved) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <CircleDashed aria-hidden="true" className="size-4" />
+        The connection changed since the last test. Test again to check it.
+      </p>
+    );
+  }
   const last = provider.lastTest;
   if (!last) {
     return (

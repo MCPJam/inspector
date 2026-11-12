@@ -209,6 +209,8 @@ export function useGatewayDraft({
     testing,
     keyRequested,
     answered,
+    /** The URL, key and runtime are still the saved provider's. */
+    asSaved,
     /**
      * The latest Test answered cleanly. An answer with a failure (a 404 on
      * the model list, no API answering) still lets the admin fill in by hand.

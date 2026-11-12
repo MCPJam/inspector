@@ -183,6 +183,14 @@ describe("ConfigureProviderSheet", () => {
     expect(screen.getByText("house-model")).toBeInTheDocument();
   });
 
+  it("stops showing the saved Test once the URL changes", () => {
+    render(sheet({ ...SAVED, lastTest: { at: 1, origin: "backend", ok: true, apis: { chatCompletions: "ok" } } }, { initialSection: "connection" }));
+    expect(screen.getByText("Last test passed.")).toBeInTheDocument();
+    type("gateway-base-url", "https://gw.other.example/v1");
+    expect(screen.queryByText("Last test passed.")).not.toBeInTheDocument();
+    expect(screen.getByText("The connection changed since the last test. Test again to check it.")).toBeInTheDocument();
+  });
+
   it("requires the key again before saving a keyed provider with a new base URL", () => {
     render(sheet(SAVED, { initialSection: "connection" }));
     type("gateway-base-url", "https://gw.other.example/v1");
