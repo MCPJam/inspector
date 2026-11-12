@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
-import { useCurrentLocationState } from "@/lib/app-navigation";
+import { navigateApp, useCurrentLocationState } from "@/lib/app-navigation";
 import type { RunResultPageRoute } from "@/lib/eval-route-types";
 import { evalRunDecisionRevision } from "@/lib/evals/eval-decision-summary-store";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
@@ -15,17 +15,20 @@ import { buildRunResultsMatrix } from "../run-results-matrix-model";
 import { IterationResultsPage } from "./iteration-results-page";
 import { ResultNotFound, ResultPageSkeleton } from "./result-page-parts";
 import {
-  FROM_GRID_STATE,
   findTarget,
   openResult,
   targetParam,
+  viaFromState,
   type MatrixTarget,
 } from "./result-page-links";
+import { IterationPager } from "./iteration-pager";
+import { pagerPosition } from "./iteration-pager-model";
+import { resultLinkRewrite } from "./result-link-rewrite";
+import { readRunView } from "./run-view-memory";
 import {
   trackCaseResultViewed,
   trackIterationViewed,
   trackRunViewed,
-  type IterationVia,
 } from "./run-view-events";
 import { TestCaseResultsPage } from "./test-case-results-page";
 
@@ -39,6 +42,7 @@ export function RunResultPage({
   suiteId,
   runId,
   resultPage,
+  fromOldLink = false,
   run,
   runs,
   allIterations,
@@ -52,6 +56,8 @@ export function RunResultPage({
   suiteId: string;
   runId: string;
   resultPage: RunResultPageRoute;
+  /** A legacy `?case=&iteration=` link, replaced with its page. */
+  fromOldLink?: boolean;
   run: EvalSuiteRun | null;
   runs: readonly EvalSuiteRunListItem[];
   allIterations: readonly EvalIteration[];
@@ -66,6 +72,18 @@ export function RunResultPage({
   const { caseKey, iterationId } = resultPage;
   const runRef = useMemo(() => ({ suiteId, runId }), [suiteId, runId]);
   const surface = iterationId ? "iteration_page" : "case_page";
+
+  const rewrite = resultLinkRewrite({
+    enabled,
+    run: runRef,
+    resultPage,
+    fromOldLink,
+    loading,
+    iterations: allIterations,
+  });
+  useEffect(() => {
+    if (rewrite) navigateApp(rewrite, { replace: true });
+  }, [rewrite]);
 
   const matrix = useMemo(
     () =>
@@ -102,15 +120,8 @@ export function RunResultPage({
   });
 
   const locationState = useCurrentLocationState();
-  // A history entry keeps its state, so `via` is fixed for the whole view.
-  const via: IterationVia =
-    typeof locationState === "object" &&
-    locationState !== null &&
-    "runResultVia" in locationState &&
-    locationState.runResultVia === FROM_GRID_STATE.runResultVia
-      ? "grid"
-      : "link";
-  const shown = enabled === true;
+  const via = viaFromState(locationState);
+  const shown = enabled === true && !rewrite && !(fromOldLink && loading);
   useEffect(() => {
     if (shown) trackRunViewed(runRef, surface);
   }, [shown, runRef, surface]);
@@ -168,6 +179,10 @@ export function RunResultPage({
   const testCaseId = row?.testCaseId;
   const editCase =
     onEditCase && testCaseId ? () => onEditCase(testCaseId) : undefined;
+  const pager =
+    matrix && target && iteration
+      ? pagerPosition(matrix, target.key, iteration._id, readRunView(runId))
+      : null;
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
@@ -189,6 +204,27 @@ export function RunResultPage({
           )}
           chain={chains.chains.get(iteration._id)}
           onEditCase={editCase}
+          pager={
+            pager && (
+              <IterationPager
+                run={runRef}
+                position={pager}
+                tab={resultPage.tab}
+              />
+            )
+          }
+          tab={resultPage.tab}
+          onTabChange={(tab) =>
+            // Keeps the history state, so the view is not counted again.
+            openResult(
+              runRef,
+              { ...resultPage, tab },
+              {
+                replace: true,
+                state: locationState,
+              },
+            )
+          }
         />
       ) : (
         <TestCaseResultsPage

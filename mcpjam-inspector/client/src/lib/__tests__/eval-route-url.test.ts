@@ -446,7 +446,7 @@ describe("eval-route-url", () => {
       expect(parsed).toEqual(route);
     });
 
-    it("round-trips an iteration page with a title case key", () => {
+    it("round-trips an iteration page with its tab and a title case key", () => {
       const route = {
         type: "run-detail" as const,
         suiteId: "s1",
@@ -454,16 +454,29 @@ describe("eval-route-url", () => {
         resultPage: {
           caseKey: "title:Refund / partial?",
           iterationId: "i1",
+          tab: "trace" as const,
         },
       };
       const { url, parsed } = roundTrip(route);
       expect(url).toBe(
-        "/evaluate/suite/s1/runs/r1/cases/title%3ARefund%20%2F%20partial%3F/iterations/i1",
+        "/evaluate/suite/s1/runs/r1/cases/title%3ARefund%20%2F%20partial%3F/iterations/i1?tab=trace",
       );
       expect(parsed).toEqual(route);
     });
 
-    it("keeps the pages off other prefixes", () => {
+    it("drops an unknown tab and keeps the pages off other prefixes", () => {
+      expect(
+        parseEvalRouteFromUrl(
+          "/evaluate",
+          "/evaluate/suite/s1/runs/r1/cases/c1/iterations/i1",
+          "?tab=bogus",
+        ),
+      ).toEqual({
+        type: "run-detail",
+        suiteId: "s1",
+        runId: "r1",
+        resultPage: { caseKey: "c1", iterationId: "i1" },
+      });
       expect(
         parseEvalRouteFromUrl("/evals", "/evals/suite/s1/runs/r1/cases/c1"),
       ).toEqual({ type: "list" });

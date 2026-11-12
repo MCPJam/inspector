@@ -248,6 +248,12 @@ export type ScorecardTabContext = {
   scoresSection: ReactNode | null;
 };
 
+export type IterationReportMode =
+  | TraceViewMode
+  | "browser"
+  | "steps"
+  | "scorecard";
+
 export function IterationDetails({
   hostSnapshot,
   iteration,
@@ -263,6 +269,8 @@ export function IterationDetails({
   syncedStepId,
   onSyncStep,
   traceDetailPlacement,
+  activeTab,
+  onTabChange,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -322,6 +330,9 @@ export function IterationDetails({
   onSyncStep?: (stepId: string | null) => void;
   /** Forwarded to the trace timeline; the iteration page passes "auto". */
   traceDetailPlacement?: TraceDetailPlacement;
+  /** Controls the tab; the reset on iteration change then stays off. */
+  activeTab?: IterationReportMode;
+  onTabChange?: (mode: IterationReportMode) => void;
 }) {
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
@@ -394,10 +405,14 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
-  type PreviewTraceMode = TraceViewMode | "browser" | "steps" | "scorecard";
-  const [previewTraceMode, setPreviewTraceMode] = useState<PreviewTraceMode>(
+  const [ownTraceMode, setOwnTraceMode] = useState<IterationReportMode>(
     scorecard ? "scorecard" : "chat",
   );
+  const previewTraceMode = activeTab ?? ownTraceMode;
+  const setPreviewTraceMode = (mode: IterationReportMode) => {
+    setOwnTraceMode(mode);
+    onTabChange?.(mode);
+  };
 
   // The authored steps this run executed (from its snapshot), so the replay can
   // offer the same step-aligned "Steps" tab the live preview does. Falls back to
@@ -495,10 +510,11 @@ export function IterationDetails({
   useEffect(() => {
     if (layoutMode !== "full") return;
     setToolCallsSectionOpen(iteration.result !== "passed");
+    if (activeTab) return;
     // Step-aligned cases (any interact/assert step) open on the Steps replay —
     // the 1:1 mirror of the authored steps — matching the live preview default;
     // pure prompt+grade cases keep Chat.
-    setPreviewTraceMode(
+    setOwnTraceMode(
       scorecard
         ? "scorecard"
         : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")

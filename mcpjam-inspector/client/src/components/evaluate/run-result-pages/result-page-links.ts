@@ -7,11 +7,22 @@ import {
 import type { RunResultPageRoute } from "@/lib/eval-route-types";
 import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
+import type { IterationVia } from "./run-view-events";
 
 export type MatrixTarget = RunResultsMatrixData["targets"][number];
 export type RunRef = { suiteId: string; runId: string };
 
 export const FROM_GRID_STATE = { runResultVia: "grid" } as const;
+export const FROM_PAGER_STATE = { runResultVia: "pager" } as const;
+
+/** A history entry keeps its state, so `via` is fixed for the whole view. */
+export function viaFromState(state: unknown): IterationVia {
+  const via =
+    typeof state === "object" && state !== null && "runResultVia" in state
+      ? state.runResultVia
+      : undefined;
+  return via === "grid" || via === "pager" ? via : "link";
+}
 
 /** Sibling runs can share a target key, so the run id names the column too. */
 export function targetParam(target: MatrixTarget): string {
@@ -76,5 +87,7 @@ export function useCaseResultLinks(run: { suiteId: string; _id: string }) {
       resultHref(ref, page(caseKey, target)),
     onOpenCaseResult: (caseKey: string, target: MatrixTarget | null) =>
       openResult(ref, page(caseKey, target), { state: FROM_GRID_STATE }),
+    // The pages read back what the grid showed, so only they keep it.
+    viewMemoryRunId: run._id,
   };
 }

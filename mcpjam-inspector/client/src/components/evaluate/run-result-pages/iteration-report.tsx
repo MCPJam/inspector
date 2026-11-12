@@ -4,6 +4,7 @@ import type {
 } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
+import type { IterationTab } from "@/lib/eval-route-types";
 import { runClientIdentity } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
@@ -15,6 +16,7 @@ import { IterationReportScorecard } from "../case-scorecard/iteration-report-sub
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
 import { outcomeLabel } from "./outcome";
+import { modeForTab, tabForMode } from "./iteration-tab";
 
 /**
  * One iteration's full report: tabs, scorecard and trace. The caller gives it
@@ -27,6 +29,8 @@ export function IterationReport({
   chain,
   onEditEvaluator,
   traceDetailPlacement,
+  tab,
+  onTabChange,
 }: {
   iteration: EvalIteration;
   target: RunResultsMatrixData["targets"][number];
@@ -34,6 +38,8 @@ export function IterationReport({
   chain?: EvalRunDecisionChain;
   onEditEvaluator?: () => void;
   traceDetailPlacement?: TraceDetailPlacement;
+  tab?: IterationTab;
+  onTabChange?: (tab: IterationTab) => void;
 }) {
   const result = computeIterationResult(iteration);
   const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
@@ -62,6 +68,8 @@ export function IterationReport({
           testCase={null}
           layoutMode="full"
           traceDetailPlacement={traceDetailPlacement}
+          activeTab={modeForTab(tab)}
+          onTabChange={onTabChange && ((mode) => onTabChange(tabForMode(mode)))}
           trialVerdictWord={outcomeLabel(result)}
           scorecard={{
             render: (context) => (

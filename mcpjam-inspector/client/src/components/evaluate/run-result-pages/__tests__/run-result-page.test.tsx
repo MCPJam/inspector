@@ -10,6 +10,7 @@ import type { RunResultPageRoute } from "@/lib/eval-route-types";
 import { RunResultsMatrix } from "../../run-results-matrix";
 import { RunResultPage } from "../run-result-page";
 import { useCaseResultLinks } from "../result-page-links";
+import { rememberRunView } from "../run-view-memory";
 
 const mocks = vi.hoisted(() => ({
   flag: { value: undefined as boolean | undefined },
@@ -45,10 +46,14 @@ vi.mock("../iteration-report", () => ({
     iteration: { _id: string };
     chain?: unknown;
     traceDetailPlacement?: string;
+    onTabChange?: (tab: "raw") => void;
   }) => (
     <div data-testid="iteration-report">
       {props.iteration._id} chain:{props.chain ? "yes" : "no"} trace:
       {props.traceDetailPlacement}
+      <button type="button" onClick={() => props.onTabChange?.("raw")}>
+        Raw tab
+      </button>
     </div>
   ),
 }));
@@ -179,6 +184,70 @@ describe("RunResultPage", () => {
     expect(screen.getByTestId("run-result-page-skeleton")).toBeVisible();
     expect(mocks.navigateApp).not.toHaveBeenCalled();
     expect(mocks.track).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy run link when the flag is off", () => {
+    mocks.flag.value = false;
+    renderPage({ caseKey: "refund", iterationId: "it1" });
+    expect(mocks.navigateApp).toHaveBeenCalledWith(
+      "/evaluate/suite/suite/runs/one?iteration=it1&case=refund",
+      { replace: true },
+    );
+  });
+
+  it("moves an old `?iteration=` link to its page without counting a view", () => {
+    renderPage({ caseKey: "", iterationId: "it2" }, { fromOldLink: true });
+    expect(mocks.navigateApp).toHaveBeenCalledWith(
+      "/evaluate/suite/suite/runs/one/cases/refund/iterations/it2",
+      { replace: true },
+    );
+    expect(screen.getByTestId("run-result-page-skeleton")).toBeVisible();
+    expect(mocks.track).not.toHaveBeenCalled();
+  });
+
+  it("pages through the column, keeping the tab", async () => {
+    renderPage({ caseKey: "refund", iterationId: "it1", tab: "trace" });
+    expect(screen.getByText("1 of 2")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Previous iteration" }),
+    ).toBeDisabled();
+    const next = screen.getByRole("link", { name: "Next iteration" });
+    expect(next).toHaveAttribute(
+      "href",
+      "/evaluate/suite/suite/runs/one/cases/title%3AShip%20label/iterations/it3?tab=trace",
+    );
+    await userEvent.click(next);
+    expect(mocks.navigateApp).toHaveBeenCalledWith(
+      "/evaluate/suite/suite/runs/one/cases/title%3AShip%20label/iterations/it3?tab=trace",
+      { state: { runResultVia: "pager" } },
+    );
+  });
+
+  it("follows the grid's remembered filters", () => {
+    rememberRunView("one", { search: "refund" });
+    renderPage({ caseKey: "refund", iterationId: "it1" });
+    expect(screen.getByText("1 of 1")).toBeVisible();
+    rememberRunView("one", { search: "" });
+  });
+
+  it("counts a view reached from the pager as such", () => {
+    window.history.replaceState({ runResultVia: "pager" }, "");
+    renderPage({ caseKey: "title:Ship label", iterationId: "it3" });
+    expect(mocks.track).toHaveBeenCalledWith(
+      "eval_iteration_viewed",
+      expect.objectContaining({ run_id: "one", via: "pager" }),
+    );
+    window.history.replaceState(null, "");
+  });
+
+  it("writes the open tab into the link in place", async () => {
+    renderPage({ caseKey: "refund", iterationId: "it1" });
+    await userEvent.click(screen.getByRole("button", { name: "Raw tab" }));
+    expect(mocks.navigateApp).toHaveBeenCalledWith(
+      "/evaluate/suite/suite/runs/one/cases/refund/iterations/it1?tab=raw",
+      expect.objectContaining({ replace: true }),
+    );
+    expect(mocks.track).toHaveBeenCalledTimes(2);
   });
 
   it("renders a test case page with column links and iteration links", async () => {
@@ -319,6 +388,22 @@ describe("run grid cells", () => {
       screen.getByRole("link", { name: "Open Refund order on Cursor · gpt" }),
     );
     expect(onOpenCaseResult.mock.lastCall?.[1]?.run._id).toBe("two");
+  });
+
+  it("restore the filters remembered for their run", () => {
+    rememberRunView("seeded", { search: "ship" });
+    render(
+      <RunResultsMatrix
+        run={routeRun}
+        iterations={iterations}
+        hostNamesById={names}
+        viewMemoryRunId="seeded"
+      />,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Find a test case" }),
+    ).toHaveValue("ship");
+    expect(screen.queryByText("Refund order")).toBeNull();
   });
 
   it("open the drawer without an href", async () => {

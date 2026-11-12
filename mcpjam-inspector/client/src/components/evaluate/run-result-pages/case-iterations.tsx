@@ -9,8 +9,8 @@ import {
 } from "../../evals/helpers";
 import { formatRunCaseLatencyMs } from "../../evals/run-case-groups";
 import { computeIterationResult } from "../../evals/pass-criteria";
-import type { EvalIteration } from "../../evals/types";
 import {
+  cellIterationOrder,
   resultCounts,
   type RunResultsMatrixData,
 } from "../run-results-matrix-model";
@@ -48,17 +48,7 @@ export function CaseIterations({
       item.actualToolCalls ? [item.actualToolCalls.length] : [],
     ),
   );
-  const sorted = items
-    .map((item, index) => ({ item, index }))
-    .sort((a, b) => {
-      const rank = (item: EvalIteration) =>
-        ["failed", "timed_out"].includes(computeIterationResult(item))
-          ? 0
-          : computeIterationResult(item) === "pending"
-            ? 1
-            : 2;
-      return rank(a.item) - rank(b.item) || a.index - b.index;
-    });
+  const sorted = cellIterationOrder(items);
   const passTone = counts.pending
     ? "text-pending"
     : counts.passed === items.length

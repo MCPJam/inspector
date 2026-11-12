@@ -1,8 +1,20 @@
+export const ITERATION_TABS = [
+  "scorecard",
+  "steps",
+  "chat",
+  "tools",
+  "trace",
+  "replay",
+  "raw",
+] as const;
+export type IterationTab = (typeof ITERATION_TABS)[number];
+
 /** A result page under a run: `caseKey` is the grid row key (`matrixCaseKey`). */
 export type RunResultPageRoute = {
   caseKey: string;
   target?: string;
   iterationId?: string;
+  tab?: IterationTab;
 };
 
 export type SuiteOverviewView =
