@@ -387,7 +387,7 @@ This is not `UNAUTHORIZED`. `UNAUTHORIZED` means your MCPJam API key is missing 
 
 **Next steps**
 - Sign in with `mcpjam oauth login --url <server-url> --credentials-out <file>`, then retry with `--credentials-file <file>`. Add `--scopes` with the scope the challenge names, if any.
-- Through the public API, store the tokens with `POST .../oauth/import-tokens`, then call again. See [Public API](/reference/public-api#errors).
+- Through the public API, upload the token to one of the server's accounts with `PUT .../accounts/{account}`, then call again. See [Server accounts](/reference/public-api#server-accounts).
 - In the inspector, if the server asked when connecting, use **Reconnect** on its card in the **Servers** tab to run the OAuth flow. See [Connecting servers](/inspector/connecting-servers).
 - If it asked on one call, run that call from the **Tools** tab and use the **Connect** card. See [Mid-session sign-in](/inspector/lazy-authentication).
 
@@ -1096,6 +1096,121 @@ This environment's server group is gone.
 
 **Next steps**
 - Attach a different server group, or clear the attachment.
+
+---
+
+## Server account errors
+
+The [server accounts API](/reference/public-api#server-accounts) answers with the standard error envelope and puts one of these codes in `details.code`. The HTTP status and the top-level `code` follow the status in each heading.
+
+### Invalid account name
+
+`invalid_account_name` (400, `VALIDATION_ERROR`)
+
+The account name breaks the name rule. Names are refused, never cleaned up.
+
+**Next steps**
+- Use letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters.
+- Don't use a name that is also a well-formed account id.
+
+### Server URL mismatch
+
+`server_url_mismatch` (400, `VALIDATION_ERROR`)
+
+The deprecated `oauth/import-tokens` route was sent a `serverUrl` that is not the server URL saved in the project. Nothing was stored.
+
+**Next steps**
+- Send the saved URL, or move to `PUT .../accounts/{account}`, which takes no URL.
+
+### Token too large
+
+`token_too_large` (400, `VALIDATION_ERROR`)
+
+A token field is over 16 KB. Nothing was stored.
+
+**Next steps**
+- Upload the access token alone. If it is genuinely that large, check that the issuer is not packing extra data into it.
+
+### Field not accepted
+
+`field_not_accepted` (400, `VALIDATION_ERROR`)
+
+The upload carried a URL field (`serverUrl`, `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token`. Tokens are used with the server URL saved in the project, and ID tokens are not stored.
+
+**Next steps**
+- Send only `tokens` and `clientInformation`, without `id_token`.
+
+### Admin required
+
+`admin_required` (403, `FORBIDDEN`)
+
+A member who is not a project admin tried to change a project account, or to upload to a server shared with the project.
+
+**Next steps**
+- Ask a project admin, or use an API key created by one.
+
+### Account not found
+
+`account_not_found` (404, `NOT_FOUND`)
+
+No account matches the id or name for you on this server. Another member's personal account answers the same way.
+
+**Next steps**
+- List the server's accounts with `GET .../accounts` and use one of their ids or names.
+
+### Account name ambiguous
+
+`account_name_ambiguous` (409, `CONFLICT`)
+
+Two or more accounts share the name, so it can't pick one. `details.accountIds` lists them.
+
+**Next steps**
+- Address the account by its id, then rename one of them.
+
+### Account name taken
+
+`account_name_taken` (409, `CONFLICT`)
+
+Another account on this server already uses the name, ignoring case.
+
+**Next steps**
+- Pick a different name, or rename the other account first.
+
+### Account is default
+
+`account_is_default` (409, `CONFLICT`)
+
+The account is the default and other accounts exist, so deleting it would change which account runs act as.
+
+**Next steps**
+- Make another account the default with `PATCH .../accounts/{account}` and `{ "isDefault": true }`, then delete this one.
+
+### Account limit reached
+
+`account_limit_reached` (409, `CONFLICT`)
+
+The server already has 8 accounts, or 16 counting the ones that need reconnecting.
+
+**Next steps**
+- Delete an account you no longer use, or upload to an existing one by name.
+
+### Upload budget spent
+
+`rate_limited` (429, `RATE_LIMITED`)
+
+Uploads to this server are budgeted per person: 60, refilling at 120 an hour. Nothing was stored. `details.retryAfterMs` and the `Retry-After` header say how long to wait.
+
+**Next steps**
+- Wait for `Retry-After`, then upload again. Upload once per run, not on every retry.
+
+### Account for hosted runs only
+
+`policy: "hostedOnlyAccount"`
+
+The server signs in with an account that only MCPJam-hosted runs can use: one uploaded through the API, or a project account. Its token is never sent to a local app, a browser or a sandbox, and no organization setting changes that.
+
+**Next steps**
+- Run it as a hosted run, or connect a separate account for local use.
 
 ---
 

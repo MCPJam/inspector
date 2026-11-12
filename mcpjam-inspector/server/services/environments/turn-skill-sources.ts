@@ -29,7 +29,11 @@ import {
   type RuntimeStandaloneSkill,
 } from "./effective-capabilities.js";
 import type { PluginRuntimeAttribution } from "./plugin-attribution.js";
-import { runtimeSkills, type ResolvedEnvironmentSkill } from "./runtime.js";
+import {
+  runtimeSkills,
+  type ResolvedEnvironmentRuntime,
+  type ResolvedEnvironmentSkill,
+} from "./runtime.js";
 import type {
   AgentSkillTools,
   ServerSkillsVia,
@@ -51,7 +55,8 @@ export interface LiveSkillExtras {
 export interface EnvironmentSkillSource {
   kind: "environment";
   /** The environment after this turn's own plugin narrowing. */
-  spec: EffectiveCapabilityInput;
+  spec: EffectiveCapabilityInput &
+    Pick<ResolvedEnvironmentRuntime, "skillScopeExclusions">;
   /** Plugin origins for its skills (`fetchPluginRuntimeAttribution`). */
   attribution: PluginRuntimeAttribution | null;
   /** Skills this turn's plugin narrowing switched off. */
@@ -72,7 +77,8 @@ export interface EnvironmentSkillSource {
   liveExtras?: LiveSkillExtras;
 }
 
-/** A client turn with no environment behind it. */
+/** A turn with no environment behind it: a client's, or an older swarm
+ *  target's, which pinned none of its project's skills. */
 export interface LiveSkillSource {
   kind: "live";
   /** The project's skills as the caller sees them now, personal ones
@@ -100,8 +106,9 @@ export interface SourcePlan {
   /** How MCPJam's agent would serve the set. */
   agent: AgentSkillTools;
   box: BoxInput;
-  /** Left out whichever engine runs the turn. */
-  disabled: SkillExclusion[];
+  /** Left out whichever engine runs the turn: switched off by the turn's
+   *  plugin narrowing, or left out of the environment by the backend. */
+  excluded: SkillExclusion[];
 }
 
 export function sourcePlan(
@@ -200,6 +207,14 @@ export function sourcePlan(
     seen.add(skill.skillId);
     return [refOf(skill, skill.ref)];
   });
+  // Read after every source, so a skill the turn takes another way stays taken.
+  const excluded = [...disabled];
+  for (const skill of environment?.spec.skillScopeExclusions ?? []) {
+    const reason = scopeReason(skill.reason);
+    if (!reason || seen.has(skill.skillId)) continue;
+    seen.add(skill.skillId);
+    excluded.push({ ref: refOf(skill), reason });
+  }
 
   return {
     set,
@@ -219,8 +234,14 @@ export function sourcePlan(
       copyOf,
       serverSkillsVia: frozen ? "box-files" : "none",
     },
-    disabled,
+    excluded,
   };
+}
+
+/** The plan's reason for a skill a scope left out. Any other value, from a
+ *  newer backend, is skipped rather than shown as a reason it isn't. */
+function scopeReason(reason: string): SkillExclusionReason | null {
+  return reason === "over-cap" || reason === "name-collision" ? reason : null;
 }
 
 /**
