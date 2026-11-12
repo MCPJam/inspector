@@ -26,6 +26,29 @@ and install dependencies with `npm install --legacy-peer-deps`.
 - No new type escapes, suppressions, swallowed errors, or scratch files.
   Remove obsolete implementations and callers when replacing code.
 
+## Public docs (`docs/`)
+
+`docs/` is published at docs.mcpjam.com, and any change there needs an approval
+from `@MCPJam/docs-reviewers`. Docs are refreshed by hand, about weekly, not in
+feature PRs.
+
+- DO NOT edit `docs/` unless the engineer you work for has verified that the
+  change needs a docs update. Ask them; never infer it from the diff.
+- Even then, document it only if all of these hold:
+  - It is public and developer facing, not internal architecture, plans or
+    design notes.
+  - It is released to everyone the page would be for, not behind a feature
+    flag or an org-by-org rollout.
+  - It is worth a page or section: a new capability or a changed workflow a
+    developer would look up, not UI polish, renames or implementation detail.
+- If any check fails, leave `docs/` alone and note the possible doc impact in
+  the PR's Documentation section for the weekly refresh.
+- Tests require these in the same change, and they still need docs-reviewers
+  approval: `docs/reference/openapi.json` and
+  `docs/reference/published-api-pages.json` with an API route change (see
+  `docs/README.md`), and the `docs/style.css` token block that
+  `npm run design:sync` writes.
+
 ## Validation
 
 - For code changes, run `npm run slop:check`, the affected workspace's
