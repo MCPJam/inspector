@@ -23,7 +23,11 @@ import {
   type RuntimeStandaloneSkill,
 } from "./effective-capabilities.js";
 import type { PluginRuntimeAttribution } from "./plugin-attribution.js";
-import { runtimeSkills, type ResolvedEnvironmentSkill } from "./runtime.js";
+import {
+  runtimeSkills,
+  type ResolvedEnvironmentRuntime,
+  type ResolvedEnvironmentSkill,
+} from "./runtime.js";
 import type {
   AgentSkillTools,
   ServerSkillsVia,
@@ -46,7 +50,8 @@ export interface LiveSkillExtras {
 export interface EnvironmentSkillSource {
   kind: "environment";
   /** The environment after this turn's own plugin narrowing. */
-  spec: EffectiveCapabilityInput;
+  spec: EffectiveCapabilityInput &
+    Pick<ResolvedEnvironmentRuntime, "skillScopeExclusions">;
   /** Plugin origins for its skills (`fetchPluginRuntimeAttribution`). */
   attribution: PluginRuntimeAttribution | null;
   /** Skills this turn's plugin narrowing switched off. */
@@ -62,7 +67,8 @@ export interface EnvironmentSkillSource {
   liveExtras?: LiveSkillExtras;
 }
 
-/** A client turn with no environment behind it. */
+/** A turn with no environment behind it: a client's, or an older swarm
+ *  target's, which pinned none of its project's skills. */
 export interface LiveSkillSource {
   kind: "live";
   liveExtras: LiveSkillExtras;
@@ -85,8 +91,9 @@ export interface SourcePlan {
   /** How MCPJam's agent would serve the set. */
   agent: AgentSkillTools;
   box: BoxInput;
-  /** Left out whichever engine runs the turn. */
-  disabled: SkillExclusion[];
+  /** Left out whichever engine runs the turn: switched off by the turn's
+   *  plugin narrowing, or left out of the environment by the backend. */
+  excluded: SkillExclusion[];
 }
 
 export function sourcePlan(
@@ -178,6 +185,14 @@ export function sourcePlan(
     aggregateHash: skill.aggregateHash,
   }));
   (pool ?? []).forEach((skill, index) => add(refOf(skill), poolCopies[index]!));
+  // Read after every source, so a skill the turn takes another way stays taken.
+  const excluded = [...disabled];
+  for (const skill of environment?.spec.skillScopeExclusions ?? []) {
+    const reason = scopeReason(skill.reason);
+    if (!reason || seen.has(skill.skillId)) continue;
+    seen.add(skill.skillId);
+    excluded.push({ ref: refOf(skill), reason });
+  }
   // Only a client's turn merges its pool beside its environment by box
   // folder; with no environment, the adapter gets the pool as read.
   const copies = !environment
@@ -195,8 +210,14 @@ export function sourcePlan(
       kind: frozen ? "frozen" : environment && !pool ? "environment" : "live",
     },
     box: { copies, copyOf, serverSkillsVia: frozen ? "box-files" : "none" },
-    disabled,
+    excluded,
   };
+}
+
+/** The plan's reason for a skill a scope left out. Any other value, from a
+ *  newer backend, is skipped rather than shown as a reason it isn't. */
+function scopeReason(reason: string): SkillExclusionReason | null {
+  return reason === "over-cap" || reason === "name-collision" ? reason : null;
 }
 
 /**
@@ -226,7 +247,16 @@ export function boxVerdicts(
     return { reasonFor: () => "unsupported-harness", serverSkillsVia: "none" };
   }
   const prepared = getHarnessAdapter(harnessId).prepareSkills([...box.copies]);
-  const kept = new Set(prepared.delivered);
+  // A box has one folder per skill name, so only the first copy with a name
+  // gets one; a later copy with that name is a collision.
+  const names = new Set<string>();
+  const kept = new Set(
+    prepared.delivered.filter((copy) => {
+      if (names.has(copy.name)) return false;
+      names.add(copy.name);
+      return true;
+    }),
+  );
   const skipped = new Set(prepared.skipped.map((skill) => skill.name));
   return {
     reasonFor: (ref, index) => {

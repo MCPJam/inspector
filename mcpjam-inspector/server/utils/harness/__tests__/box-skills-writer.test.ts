@@ -168,6 +168,27 @@ describe("writeBoxSkills", () => {
     );
   });
 
+  it("puts only the delivered copy's files in the folder two copies want", async () => {
+    const box = fakeSkillBox();
+    await runTurn(
+      "codex",
+      box,
+      artifact("summarize", {
+        files: [{ path: "notes.md", content: "ours" }],
+      }),
+      artifact("summarize", {
+        skillId: "sk_acme_summarize",
+        content: "# acme",
+        files: [
+          { path: "notes.md", content: "acme's" },
+          { path: "acme.md", content: "acme only" },
+        ],
+      }),
+    );
+    expect(box.files.get(`${AGENTS}/summarize/notes.md`)).toBe("ours");
+    expect(box.files.has(`${AGENTS}/summarize/acme.md`)).toBe(false);
+  });
+
   it("takes out a grant a box written before the strip still holds", async () => {
     // The skill had `allowed-tools`, an earlier turn wrote it, and the extras
     // were removed since. The adapter's hash is unchanged, so only the

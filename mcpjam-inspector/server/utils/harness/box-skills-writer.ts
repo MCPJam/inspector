@@ -31,6 +31,7 @@ import {
   reconcileSkillDirs,
   type ReconcileSession,
 } from "./reconcile-skill-dirs.js";
+import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   skillsFingerprint,
   type HarnessSkillPayload,
@@ -93,6 +94,20 @@ export function planBoxSkills(
       content: skill.content,
     })),
   };
+}
+
+/**
+ * A run's frozen copies that the box took, in pin order, for the pinned file
+ * writer: a copy left off for a taken folder would write its files into it.
+ * `skills` are the copies as the turn read them, one per copy in pin order.
+ */
+export function deliveredPinnedCopies(
+  copies: readonly PinnedSkillArtifact[],
+  skills: readonly RuntimeSkill[],
+  plan: BoxSkillsPlan,
+): PinnedSkillArtifact[] {
+  const taken = new Set(plan.deliver);
+  return copies.filter((_, index) => taken.has(skills[index]!));
 }
 
 /** The folder a runtime's adapter writes skills to, on a box with this home. */

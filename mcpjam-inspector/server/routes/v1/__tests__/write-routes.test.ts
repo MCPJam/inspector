@@ -3,7 +3,8 @@ import { Hono } from "hono";
 
 // Covers the v1 WRITE surface: tools/call + prompts/get schema validation,
 // the async eval-run POST (mocked prepare/execute seam), the eval read
-// proxies (mocked ConvexHttpClient), and the OAuth import-tokens proxy.
+// proxies (mocked ConvexHttpClient). The deprecated OAuth import-tokens
+// alias is covered with the accounts API in server-accounts.test.ts.
 
 const {
   validateGuestTokenMock,
@@ -3397,55 +3398,6 @@ describe("v1 write routes", () => {
         code: "NOT_FOUND",
         details: { reason: "TRACE_NOT_AVAILABLE" },
       });
-    });
-  });
-
-  describe("POST oauth/import-tokens", () => {
-    it("forwards to Convex and returns { imported: true }", async () => {
-      global.fetch = vi.fn(async (input: any) => {
-        expect(String(input)).toBe(
-          "https://convex-http.example.com/web/oauth/import-tokens"
-        );
-        return new Response(JSON.stringify({ expiresAt: 123 }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }) as typeof fetch;
-
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        {
-          serverUrl: "https://server.example.com/mcp",
-          tokens: { access_token: "at", refresh_token: "rt" },
-        }
-      );
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ imported: true, expiresAt: 123 });
-      const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock
-        .calls[0] as [string, RequestInit];
-      const forwarded = JSON.parse(String(init.body));
-      // Path params win over the body; kind pinned to generic.
-      expect(forwarded).toMatchObject({
-        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        serverId: "s1",
-        kind: "generic",
-        tokens: { access_token: "at" },
-      });
-    });
-
-    it("rejects a body without tokens (400 VALIDATION_ERROR)", async () => {
-      const res = await request(
-        makeApp(),
-        "POST",
-        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/servers/s1/oauth/import-tokens",
-        { serverUrl: "https://server.example.com/mcp" }
-      );
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
-      );
     });
   });
 });

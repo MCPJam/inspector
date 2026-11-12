@@ -17,6 +17,7 @@ import {
   reserveLoopbackPort,
 } from "../bridge-endpoint.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
+import { availableListenerPort } from "../conformance/listener-port.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import {
   readProcessBirthIdentity,
@@ -93,6 +94,23 @@ const LAN_BRIDGE = [
   "server.listen(port, '0.0.0.0', function(){ console.log('up'); });",
   "setInterval(function(){}, 1000);",
 ].join("\n");
+
+/**
+ * A bridge spawn that failed only because another process took its port: the
+ * bridge's own bind hit EADDRINUSE, or the provider found the port already
+ * answering before the spawn. Reserving a port means binding it and letting
+ * go, so a busy runner can take it before the bridge binds; neither outcome is
+ * the binding the exposure probe judges.
+ */
+function lostBridgePort(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /EADDRINUSE|already accepting connections/.test(error.message)
+  );
+}
+
+/** Enough fresh ports that losing every one of them is not a plausible flake. */
+const LAN_BRIDGE_ATTEMPTS = 3;
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-provider-")));
@@ -202,10 +220,10 @@ async function buildSession(
     sessionId,
   );
   await mkdir(sessionStateDir, { recursive: true, mode: 0o700 });
-  // The OS picks the port. A fixed counter lands in the ephemeral range,
-  // where a stray socket on a CI runner takes the port first and the bridge
-  // fails to bind with EADDRINUSE.
-  const bridgePort = await reserveLoopbackPort();
+  // The OS picks a port that is free on every interface, not only loopback:
+  // LAN_BRIDGE binds 0.0.0.0, and a port held on any other local address
+  // refuses that bind with EADDRINUSE while 127.0.0.1 still looks free.
+  const bridgePort = await availableListenerPort("0.0.0.0");
 
   const provider = createSupervisedLocalHarnessProvider({
     harnessId: "claude-code",
@@ -754,24 +772,23 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
     // agent control channel to whatever network the machine is on, so the
     // session must stop rather than proceed — and the process must not be left
     // running behind the refusal.
-    const sup = supervisor();
-    const { session, workRoot, sessionStateDir, bridgePort } = await buildSession(
-      "lan-bridge",
-      sup,
-      undefined,
-      LAN_BRIDGE,
-      undefined,
-      // A pack whose loopback wrapper does nothing. The probe, not the
-      // launcher, is what makes the loopback guarantee enforceable.
-      'await import("./bridge.mjs");',
-    );
     const hasLan = nonLoopbackLocalAddresses().some((a) => !a.includes(":"));
-    if (!hasLan) {
-      await session.stop();
-      return; // nothing to be exposed to on this machine
-    }
-    await expect(
-      session.spawn({
+    if (!hasLan) return; // nothing to be exposed to on this machine
+    // A lost port costs the 10s readiness wait, hence the longer timeout.
+    for (let attempt = 1; ; attempt += 1) {
+      const sessionId = `lan-bridge-${attempt}`;
+      const sup = supervisor();
+      const { session, sessionStateDir, bridgePort } = await buildSession(
+        sessionId,
+        sup,
+        undefined,
+        LAN_BRIDGE,
+        undefined,
+        // A pack whose loopback wrapper does nothing. The probe, not the
+        // launcher, is what makes the loopback guarantee enforceable.
+        'await import("./bridge.mjs");',
+      );
+      const spawned = session.spawn({
         command:
           `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
           `--workdir '${workspace}' --bridge-state-dir '${join(
@@ -779,10 +796,18 @@ describe.skipIf(!canOwnProcesses)("the bridge launch", () => {
             "state",
           )}'`,
         env: { BRIDGE_WS_PORT: String(bridgePort) },
-      }),
-    ).rejects.toThrow(/reachable from the local network/);
-    expect(sup.liveProcessCount("lan-bridge")).toBe(0);
-  }, 30_000);
+      });
+      const failure = await spawned.then(() => undefined, (error: unknown) => error);
+      if (attempt < LAN_BRIDGE_ATTEMPTS && lostBridgePort(failure)) {
+        // Throws if the lost attempt left a process running.
+        await session.stop();
+        continue;
+      }
+      await expect(spawned).rejects.toThrow(/reachable from the local network/);
+      expect(sup.liveProcessCount(sessionId)).toBe(0);
+      return;
+    }
+  }, 60_000);
 
   it("destroy takes the tree down and removes the session state", async () => {
     const sup = supervisor();
