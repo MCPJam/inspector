@@ -263,6 +263,7 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
+import { sessionSnapshotSaver } from "./session-snapshot/save-session-snapshot.js";
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
@@ -1051,6 +1052,9 @@ export async function runHarnessTurn(
   // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
   // closure free the lane if the commit can't happen (detach/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
+  // Copies the CLI's session files off the box once the commit has landed.
+  let saveSnapshotAfterCommit: (() => void) | undefined;
+  let sandboxWorkDir: string | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
@@ -2985,6 +2989,7 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
+          sandboxWorkDir = sessionWorkDir;
           cleanupSandbox = session;
           const networkSession = session as Partial<HarnessV1NetworkSandboxSession>;
           if (typeof networkSession.getPortEndpoint === "function")
@@ -4591,6 +4596,17 @@ export async function runHarnessTurn(
               // Phase 3: the ingest commit re-resolves the guest's own lane.
               ...(executionScope ? { executionScope } : {}),
             };
+            saveSnapshotAfterCommit = sessionSnapshotSaver({
+              hosted: !localPrepared && !warmAgentPilot,
+              session: sandboxFileSession,
+              owner: continuity.owner,
+              harnessSessionId: session.sessionId,
+              stateVersion: continuity.stateVersion + 1,
+              resumeState,
+              workDir: sandboxWorkDir,
+              secrets: secretsUnavailable ? undefined : runtimeSecretsOverride,
+              getBearer: cleanupAuthorization,
+            });
           } else {
             if (localPrepared && retainLocalState) await session.stop();
             else await session.destroy();
@@ -4830,6 +4846,7 @@ export async function runHarnessTurn(
         if (capturedHarnessCommit && onConversationComplete && persistOk) {
           retainLocalState = true;
           localStateCommitted = true;
+          saveSnapshotAfterCommit?.();
         }
         if (persistOutcome && chatSessionId) {
           writePersistReceipt(receiptWriter, persistOutcome, {

@@ -27,6 +27,11 @@ const harnessState = vi.hoisted(() => ({
   })),
 }));
 
+const snapshotSave = vi.hoisted(() => ({ run: vi.fn(), saver: vi.fn() }));
+vi.mock("../session-snapshot/save-session-snapshot.js", () => ({
+  sessionSnapshotSaver: snapshotSave.saver,
+}));
+
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     createSession = harnessState.createSession;
@@ -170,6 +175,8 @@ describe("runHarnessTurn hosted resume", () => {
     ];
     harnessState.finalText = "Hi.";
     harnessState.createSession.mockClear();
+    snapshotSave.run.mockReset();
+    snapshotSave.saver.mockReset().mockImplementation(() => snapshotSave.run);
   });
 
   afterEach(() => {
@@ -202,6 +209,54 @@ describe("runHarnessTurn hosted resume", () => {
         data: { claudeSessionId: "claude-1" },
       },
     });
+  });
+
+  it("saves the CLI's session files once the turn's commit lands", async () => {
+    harnessState.claimedState = {
+      harnessSessionId: "harness-session-0",
+      computerId: "computer-1",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "claude-code",
+        data: { claudeSessionId: "claude-1", bridge: BRIDGE },
+      },
+    };
+    const persisted = { outcome: "saved" };
+    const result = await runHarnessTurn(
+      {
+        ...options(),
+        runtimeSecrets: [],
+        onConversationComplete: vi.fn(async () => persisted),
+      } as any,
+      "ui",
+    );
+    await result.response!.text();
+
+    expect(snapshotSave.saver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hosted: true,
+        harnessSessionId: "harness-session-0",
+        stateVersion: 2,
+        secrets: [],
+      }),
+    );
+    expect(snapshotSave.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves nothing when the transcript and resume state did not land", async () => {
+    const result = await runHarnessTurn(
+      {
+        ...options(),
+        runtimeSecrets: [],
+        onConversationComplete: vi.fn(async () => ({
+          outcome: "failed",
+          failureKind: "exception",
+        })),
+      } as any,
+      "ui",
+    );
+    await result.response!.text();
+    expect(snapshotSave.run).not.toHaveBeenCalled();
   });
 
   it("A pauses, B runs, A decides: the decision reattaches to A's bridge", async () => {

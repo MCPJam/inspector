@@ -156,7 +156,7 @@ function getConvexHttpUrl(): string {
   return convexHttpUrl;
 }
 
-async function postSessionState(
+export async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
