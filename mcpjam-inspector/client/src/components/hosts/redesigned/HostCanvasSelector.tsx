@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -90,6 +90,19 @@ export function HostCanvasSelector({
     [sortedHosts, activeHostId],
   );
   const active = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
+  const hasActive = active !== null;
+
+  // Entry step of the overlay → client_created funnel: once per mount, after
+  // the controls render, so a loading or empty selector is not an entrant.
+  const hasTrackedOpened = useRef(false);
+  useEffect(() => {
+    if (!hasActive || hasTrackedOpened.current) return;
+    hasTrackedOpened.current = true;
+    track("connect_host_overlay_opened", {
+      location: ANALYTICS_LOCATION,
+      host_count: hosts.length,
+    });
+  }, [hasActive, hosts.length]);
 
   const switchTo = (hostId: string) => {
     if (hostId === activeHostId) return;
