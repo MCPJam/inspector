@@ -1049,6 +1049,41 @@ describe("PartSwitch", () => {
       );
     });
 
+    it.each([
+      ["the live App can render", "mcp-apps", "widget-replay"],
+      ["the live App can't render here", null, "frozen-widget-replay"],
+    ])(
+      "uses an eval run's backup picture only when needed: %s",
+      (_label, uiType, shownTestId) => {
+        mockDetectUIType.mockReturnValue(uiType);
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={
+              {
+                type: "tool-invocation",
+                toolName: "create_view",
+                toolCallId: "call-backup",
+                state: "output-available",
+                input: {},
+                output: { content: "saved" },
+              } as any
+            }
+            toolRenderOverrides={{
+              "call-backup": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.getByTestId(shownTestId)).toBeInTheDocument();
+        const hiddenTestId =
+          shownTestId === "widget-replay" ? "frozen-widget-replay" : "widget-replay";
+        expect(screen.queryByTestId(hiddenTestId)).not.toBeInTheDocument();
+      },
+    );
+
     // SEP-1865 `ui/notifications/request-teardown`: once the host has
     // honored the widget's teardown request, its toolCallId lands in
     // `tornDownWidgetIds` on the Thread. PartSwitch must

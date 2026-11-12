@@ -17,6 +17,13 @@ export interface ToolRenderOverride {
    * record-armed surfaces leave it unset.
    */
   frozenScreenshotUrl?: string | null;
+  /**
+   * Recorded screenshot kept as a backup when the live App is preferred. The
+   * transcript shows it only when the live App can't render here (for example
+   * the viewed host doesn't support widgets), so the tool call never ends up
+   * with neither the App nor the picture.
+   */
+  fallbackScreenshotUrl?: string | null;
   /** Eval-only browser evidence captured with a frozen widget screenshot. */
   recordedWidgetErrors?: {
     consoleErrors: string[];

@@ -117,13 +117,17 @@ export function buildFrozenScreenshotOverrides(
     if (changedAppState(step)) clickedToolCallIds.add(step.toolCallId);
     consider(step.toolCallId, step.screenshotUrl, step.ts);
   }
-  // Keep the live App (saved copy) unless the run acted on it.
-  for (const toolCallId of [...latestByTool.keys()]) {
+  // Keep the live App (saved copy) unless the run acted on it. Its picture stays
+  // as a backup that PartSwitch shows only if the App can't render under the
+  // host being viewed.
+  const fallbackByTool = new Map<string, string>();
+  for (const [toolCallId, { url }] of [...latestByTool]) {
     if (
       !clickedToolCallIds.has(toolCallId) &&
       canMountSavedApp(base[toolCallId])
     ) {
       latestByTool.delete(toolCallId);
+      fallbackByTool.set(toolCallId, url);
     }
   }
   const recordedErrorsFor = (toolCallId: string) => {
@@ -147,9 +151,21 @@ export function buildFrozenScreenshotOverrides(
       ...recordedErrorsFor(toolCallId),
     });
   }
+  for (const [toolCallId, url] of fallbackByTool) {
+    set(toolCallId, {
+      ...base[toolCallId],
+      fallbackScreenshotUrl: url,
+      ...recordedErrorsFor(toolCallId),
+    });
+  }
   // A live App keeps the errors the run recorded for it.
   for (const toolCallId of errorsByTool.keys()) {
-    if (latestByTool.has(toolCallId) || !base[toolCallId]) continue;
+    if (
+      latestByTool.has(toolCallId) ||
+      fallbackByTool.has(toolCallId) ||
+      !base[toolCallId]
+    )
+      continue;
     const errors = recordedErrorsFor(toolCallId);
     if (errors.recordedWidgetErrors) {
       set(toolCallId, { ...base[toolCallId], ...errors });

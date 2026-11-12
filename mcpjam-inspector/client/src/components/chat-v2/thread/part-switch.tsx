@@ -676,8 +676,14 @@ function LivePartSwitch({
     // widget eligibility: a completed run's widget can fail host-caps / server /
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
-    if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
-      const isFrozenWidget = !!renderOverride?.frozenScreenshotUrl;
+    // An eval replay that prefers the live App keeps its picture as a backup
+    // for when the App can't render under the host being viewed.
+    const frozenScreenshotUrl =
+      renderOverride?.frozenScreenshotUrl ||
+      (!shouldRenderWidget ? renderOverride?.fallbackScreenshotUrl : null) ||
+      undefined;
+    if (widgetSlotShouldRender(shouldRenderWidget, { frozenScreenshotUrl })) {
+      const isFrozenWidget = !!frozenScreenshotUrl;
       const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
@@ -751,9 +757,9 @@ function LivePartSwitch({
             }
             {...approvalProps}
           />
-          {renderOverride?.frozenScreenshotUrl ? (
+          {frozenScreenshotUrl ? (
             <FrozenWidgetScreenshot
-              url={renderOverride.frozenScreenshotUrl}
+              url={frozenScreenshotUrl}
               toolName={toolInfo.toolName}
             />
           ) : (

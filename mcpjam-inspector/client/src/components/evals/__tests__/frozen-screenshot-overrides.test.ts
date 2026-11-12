@@ -215,9 +215,11 @@ describe("buildFrozenScreenshotOverrides", () => {
       const out = buildFrozenScreenshotOverrides(base, [
         obs({ toolCallId: "tc1", screenshotUrl: "https://s/page.png" }),
       ]);
-      expect(out).toBe(base);
       expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
       expect(out.tc1?.cachedWidgetHtmlUrl).toBe("https://s/app.html");
+      // Kept only as a backup for when the App can't render on the viewed host.
+      expect(out.tc1?.fallbackScreenshotUrl).toBe("https://s/page.png");
+      expect(base.tc1?.fallbackScreenshotUrl).toBeUndefined();
     });
 
     it("shows the recorded picture when the run clicked inside the App", () => {
@@ -312,8 +314,8 @@ describe("buildFrozenScreenshotOverrides", () => {
           }),
         ],
       );
-      expect(out).toBe(base);
       expect(out.tc1?.frozenScreenshotUrl).toBeUndefined();
+      expect(out.tc1?.fallbackScreenshotUrl).toBe("https://s/step.png");
     });
 
     it("keeps the live App when the run clicked but recorded no picture", () => {
