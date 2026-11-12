@@ -128,7 +128,7 @@ describe("whether the gate holds the turn", () => {
       }),
     });
     const turn = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: NO_SERVERS,
       serverIds: [],
@@ -140,7 +140,7 @@ describe("whether the gate holds the turn", () => {
 
   it("does not otherwise, and the runtime keeps its own mode", async () => {
     const turn = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: NO_SERVERS,
       serverIds: [],
@@ -170,7 +170,7 @@ describe("the turn's box report", () => {
 
   it("is the box writer's own when the tools served none", async () => {
     const turn = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: NO_SERVERS,
       serverIds: [],
@@ -319,7 +319,7 @@ describe("a live turn's connected servers' skills", () => {
   it("serves what the servers list, addressed by server id", async () => {
     const wire = await makeServerSkillWire();
     const turn = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: wire,
       serverIds: ["srv1"],
@@ -337,7 +337,7 @@ describe("a live turn's connected servers' skills", () => {
 
   it("serves nothing, and offers no tools, when no server serves skills", async () => {
     const turn = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: await makeServerSkillWire({ active: false }),
       serverIds: ["srv1"],
@@ -349,7 +349,7 @@ describe("a live turn's connected servers' skills", () => {
 
   it("refuses a file read on a later turn once the server changed the skill", async () => {
     const first = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: await makeServerSkillWire(),
       serverIds: ["srv1"],
@@ -379,7 +379,7 @@ describe("a live turn's connected servers' skills", () => {
       ],
     }));
     const next = await serve({
-      mode: "live",
+      mode: "none",
       live: true,
       manager: changed,
       serverIds: ["srv1"],

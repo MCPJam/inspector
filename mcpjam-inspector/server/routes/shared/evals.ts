@@ -3140,9 +3140,9 @@ export async function prepareEvalRun(
    *
    * Set for EVERY runId-bearing run, empty included. The harness selects its
    * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
-   * `undefined` falls through to a live project-wide fetch of whatever the
-   * project holds right now — which would unfreeze a frozen run, and would hand
-   * the `skillsOverride: "exclude"` arm every skill in the project.
+   * `undefined` leaves the box with whatever skills it already holds — which
+   * would unfreeze a frozen run, and would hand the `skillsOverride: "exclude"`
+   * arm an earlier turn's skills.
    */
   let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   /** The run's pinned plugin servers, re-gated just before execution. */

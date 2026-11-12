@@ -1065,7 +1065,7 @@ describe("an environment's skills reach the engine that runs", () => {
     aggregateHash: "hash_1",
   };
 
-  it("hands the HARNESS the environment's resolved set", async () => {
+  it("hands the HARNESS the environment's resolved set, with the set that carries its files", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({ harness: "claude-code" }),
       skills: [ENV_SKILL],
@@ -1075,9 +1075,14 @@ describe("an environment's skills reach the engine that runs", () => {
 
     expect(response.status).toBe(200);
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
-      Record<string, unknown>,
+      Record<string, unknown> & {
+        effectiveCapabilities?: { standaloneSkills: { skillId: string }[] };
+      },
     ];
     expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(
+      args.effectiveCapabilities?.standaloneSkills.map((s) => s.skillId),
+    ).toEqual(["sk_env"]);
     expect(args.onBoxSkillsWritten).toBeTypeOf("function");
     // The environment captured its server skills; the turn is not live.
     expect(args).not.toHaveProperty("liveTurn");

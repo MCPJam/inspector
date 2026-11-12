@@ -1831,20 +1831,17 @@ async function handleTurn(c: Context): Promise<Response> {
         ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
       // The same plan's skills, for the harness that writes them into its
-      // sandbox. Harness-only and presence-semantic: the emulated arm ignores
-      // this field, so gating on the engine keeps every emulated turn
-      // byte-identical rather than relying on a downstream reader to stay
-      // uninterested.
-      //
-      // What still does NOT cross: per-skill SUPPORTING FILES and pinned plugin
-      // versions, which travel as `effectiveCapabilities` — an option
-      // `runAssistantTurn` does not expose (the browser route reaches it
-      // through `web-chat-turn`). So a harness turn here delivers the
-      // environment's skill BODIES, and their files only through the
-      // project-wide file query.
+      // sandbox, with the set that carries their supporting files and pinned
+      // plugin versions. Harness-only and presence-semantic: the emulated arm
+      // ignores these fields, so gating on the engine keeps every emulated
+      // turn byte-identical rather than relying on a downstream reader to
+      // stay uninterested.
       ...(engine.kind === "harness" && turnSkills.box
         ? {
             runtimeSkillsOverride: turnSkills.box.skills,
+            ...(turnSkills.box.set
+              ? { effectiveCapabilities: turnSkills.box.set }
+              : {}),
             ...(turnSkills.live ? { liveTurn: true } : {}),
             onBoxSkillsWritten: (written: BoxSkillsResult) =>
               reportBoxSkillsDelivered("api", turnSkills.skills, written),

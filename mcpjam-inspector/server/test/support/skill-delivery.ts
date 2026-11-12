@@ -332,9 +332,7 @@ function turnServerSkills(
     localUnattended: false,
     mode: selected.mode,
     // `HarnessTurnSkills.live`: the project's pool, or a client's environment.
-    live:
-      selected.mode === "live" ||
-      (selected.mode === "environment" && source.liveTurn === true),
+    live: selected.mode !== "pinned" && source.liveTurn === true,
     ...(source.pinnedHarnessSkills
       ? { pinnedHarnessSkills: source.pinnedHarnessSkills }
       : {}),

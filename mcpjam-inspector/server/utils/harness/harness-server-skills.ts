@@ -114,9 +114,7 @@ export async function harnessServerSkills(
   const captured =
     args.mode === "pinned"
       ? (args.pinnedHarnessSkills ?? []).flatMap(capturedServerSkill)
-      : args.mode === "live"
-        ? []
-        : (args.effectiveCapabilities?.serverSkills ?? []);
+      : (args.effectiveCapabilities?.serverSkills ?? []);
   // Labelled by server id, as MCPJam's agent is when it has no labels: the id
   // is host-assigned, so a server can't choose the namespace its refs take.
   const live = args.live
