@@ -18,6 +18,7 @@ import { truncatedWire } from "./swarm-findings-wire-fixtures";
 describe("FindingsSummaryCard", () => {
   it("renders a rejected cause once when coverage and counts report it", () => {
     const wire = truncatedWire({
+      mechanismRows: false,
       verification: {
         proposed: 1,
         confirmed: 0,
@@ -37,7 +38,9 @@ describe("FindingsSummaryCard", () => {
     );
 
     expect(screen.getAllByText(/possible cause.*rejected/)).toHaveLength(1);
-    expect(screen.getByText("1 possible cause was rejected.")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 possible cause was rejected."),
+    ).toBeInTheDocument();
   });
 
   it("joins the sentences into a single paragraph element", () => {

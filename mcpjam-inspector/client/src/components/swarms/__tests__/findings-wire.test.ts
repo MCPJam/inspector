@@ -511,6 +511,7 @@ describe("the wire headline says what was established", () => {
     "shows only the counted note for %i rejected causes",
     (rejected) => {
       const wire = truncatedWire({
+        mechanismRows: false,
         verification: {
           proposed: rejected + 2,
           confirmed: 0,
@@ -532,8 +533,27 @@ describe("the wire headline says what was established", () => {
   );
 
   it("keeps the generic rejection note when verification counts are absent", () => {
-    const wire = truncatedWire();
+    const wire = truncatedWire({ mechanismRows: false });
     delete wire.verification;
+    wire.coverageNotes = ["mechanismsRejected", "partialRead"];
+
+    expect(wireFindingsFootnotes(wire)).toEqual([
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.mechanismsRejected,
+      SWARM_FINDING_COVERAGE_NOTE_LABELS.partialRead,
+    ]);
+  });
+
+  it("keeps the generic rejection note when the rejected count is zero", () => {
+    const wire = truncatedWire({
+      mechanismRows: false,
+      verification: {
+        proposed: 0,
+        confirmed: 0,
+        rejected: 0,
+        unverified: 0,
+        omitted: 0,
+      },
+    });
     wire.coverageNotes = ["mechanismsRejected", "partialRead"];
 
     expect(wireFindingsFootnotes(wire)).toEqual([
