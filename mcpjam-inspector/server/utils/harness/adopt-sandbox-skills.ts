@@ -33,7 +33,6 @@ import {
 } from "../computers/convex-skills-client.js";
 import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
 const MANIFEST_BASENAME = ".mcpjam-skills.json";
@@ -231,12 +230,11 @@ export async function adoptSandboxSkills(args: {
   authHeader: string;
   projectId: string;
   managedNames: Set<string>;
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
+  /** The runtime's skills folder, absolute. */
+  skillsBase: string;
   signal?: AbortSignal;
 }): Promise<{ adopted: AdoptedSkillEntry[] }> {
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { skillsBase } = args;
   try {
     if (args.signal?.aborted) return { adopted: [] };
     // List entries (small output — bounded dir). `-1` one per line; dotfiles

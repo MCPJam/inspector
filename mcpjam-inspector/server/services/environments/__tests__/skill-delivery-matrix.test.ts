@@ -7,26 +7,38 @@
  * hand-written answer: once for the surface's plan (`resolveTurnSkills`), and
  * once for what reaches the engine, read through the code the engine runs:
  * MCPJam's agent's prompt and tools from `prepareChatV2`, a harness's box from
- * its pinned skill path. Checking the plan against the engine alone would pass
- * if both were wrong the same way.
+ * the box writer, on a box earlier turns of other runtimes left skills on.
+ * Checking the plan against the engine alone would pass if both were wrong the
+ * same way.
+ *
+ * A preview plans a turn it does not run, so its engine check reads the turn
+ * it previews: the eval run for the Evaluate page, a live turn for Compare.
  */
 import { describe, expect, it } from "vitest";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
 import { replayRunSkills } from "../../evals/replay-suite-run";
 import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
-import type {
-  ServerSkillsVia,
-  SkillExclusionReason,
-  TurnSkills,
+import {
+  environmentTurnSkills,
+  type LiveTurnSkills,
+} from "../live-turn-skills";
+import {
+  resolveTurnSkills,
+  type ServerSkillsVia,
+  type SkillExclusionReason,
+  type TurnRuntime,
+  type TurnSkills,
 } from "../turn-skills";
 import {
   agentReceives,
   boxReceives,
   EVAL_PLUGIN_VERSIONS,
+  evalEnvironment,
   evalRunPins,
+  liveTurnSource,
   preparedRunSkills,
   preparedTargetSkills,
+  visibleScopeEnvironment,
 } from "../../../test/support/skill-delivery";
 
 const ENGINES = [
@@ -53,8 +65,8 @@ interface Expected {
 interface PlannedTurn {
   skills: TurnSkills;
   skillsAtTurn?: Array<Record<string, unknown>>;
-  /** The copies a harness turn on this surface writes to its box. */
-  box: PinnedSkillArtifact[];
+  /** A harness turn's box on this surface; MCPJam's agent has none. */
+  box: Awaited<ReturnType<typeof boxReceives>> | null;
 }
 
 interface Surface {
@@ -105,6 +117,25 @@ const PINNED: Record<Engine, Expected> = {
 const runOn = (engine: Engine) =>
   engine === "mcpjam-agent" ? {} : { harness: engine };
 
+const runtimeOf = (engine: Engine): TurnRuntime =>
+  engine === "mcpjam-agent"
+    ? { kind: "agent" }
+    : { kind: "harness", harnessId: engine };
+
+/** The box of a harness turn; MCPJam's agent has none. */
+const harnessBox = (
+  engine: Engine,
+  source: Parameters<typeof boxReceives>[1],
+) => (engine === "mcpjam-agent" ? null : boxReceives(engine, source));
+
+/** A preview records nothing: it plans a turn it does not run. */
+function previewing(rows: Record<Engine, Expected>): Record<Engine, Expected> {
+  const preview = { ...rows };
+  for (const engine of ENGINES)
+    preview[engine] = { ...rows[engine], recorded: [] };
+  return preview;
+}
+
 /** An eval run's iteration, from the run's frozen skills. */
 const EVAL: Surface = {
   name: "eval",
@@ -117,7 +148,9 @@ const EVAL: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: run.pinnedHarnessSkills,
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
     };
   },
   expected: PINNED,
@@ -141,7 +174,9 @@ const REPLAY: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: run.pinnedHarnessSkills,
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
     };
   },
   expected: PINNED,
@@ -160,7 +195,9 @@ const swarm =
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: [...target.harnessSkills],
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: [...target.harnessSkills],
+      }),
     };
   };
 
@@ -174,8 +211,166 @@ const SWARM_APPROVAL: Surface = {
   expected: PINNED,
 };
 
+/**
+ * The Evaluate page's preview of the eval fixture's environment, which an
+ * eval run freezes into the eval surface's pins: the same rows as that run.
+ */
+const EVALUATE_PREVIEW: Surface = {
+  name: "evaluate preview",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    const run = await preparedRunSkills();
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "environment", spec, attribution, frozen: true },
+        runtime: runtimeOf(engine),
+      }),
+      box: await harnessBox(engine, {
+        pinnedHarnessSkills: run.pinnedHarnessSkills,
+      }),
+    };
+  },
+  expected: previewing(EVAL.expected),
+};
+
+/**
+ * A live turn on the fixture environment, and the same with a client's own
+ * skill beside it, which the backend's visible scope adds to the client's
+ * hidden environment. `recorded` is false for a preview, which runs no turn.
+ */
+const liveRows = (
+  extra: string[],
+  recorded: boolean,
+): Record<Engine, Expected> => {
+  // The scope's skills are the environment's own, ahead of its captures.
+  const refs = ["release-notes", "acme/summarize", ...extra, "docs/search"];
+  // Until server skills reach a harness as tools, a live harness turn
+  // leaves a captured server skill off its box.
+  const boxed = ["release-notes", "summarize", ...extra];
+  const harness: Expected = {
+    delivered: boxed,
+    excluded: [["docs/search", "server-skill-unsupported"]],
+    serverSkillsVia: "none",
+    recorded: recorded ? boxed : [],
+  };
+  return {
+    "mcpjam-agent": {
+      delivered: refs,
+      excluded: [],
+      serverSkillsVia: "agent-tools",
+      recorded: recorded
+        ? ["release-notes", "summarize", ...extra, "search"]
+        : [],
+    },
+    "claude-code": harness,
+    codex: harness,
+    cursor: noSkillsOn(refs),
+    opencode: noSkillsOn(refs),
+    "copilot-cli": noSkillsOn(refs),
+  };
+};
+
+/** The Compare pane's preview of a named environment's next turn. */
+const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
+  name: "compare preview, named environment",
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "environment", spec, attribution },
+        runtime: runtimeOf(engine),
+      }),
+      box: await harnessBox(engine, liveTurnSource(spec)),
+    };
+  },
+  expected: liveRows([], false),
+};
+
+/** The Compare pane's preview of a client turn: its hidden environment,
+ *  resolved in the client's all-visible selection. */
+const COMPARE_CLIENT_PREVIEW: Surface = {
+  name: "compare preview, client with its own skills",
+  async plan(engine) {
+    const { spec, attribution } = visibleScopeEnvironment();
+    return {
+      skills: resolveTurnSkills({
+        source: { kind: "environment", spec, attribution, liveExtras: {} },
+        runtime: runtimeOf(engine),
+      }),
+      box: await harnessBox(engine, liveTurnSource(spec)),
+    };
+  },
+  expected: liveRows(["my-notes"], false),
+};
+
+/** A live surface's turn, planned by the module the surface calls, with the
+ *  box it hands the harness and the record it writes. */
+async function plannedLiveTurn(
+  engine: Engine,
+  turn: LiveTurnSkills,
+): Promise<PlannedTurn> {
+  return {
+    skills: turn.skills,
+    ...(turn.turnProvenance
+      ? { skillsAtTurn: turn.turnProvenance.skillsAtTurn }
+      : {}),
+    box: await harnessBox(engine, {
+      ...(turn.box
+        ? {
+            runtimeSkillsOverride: turn.box.skills,
+            effectiveCapabilities: turn.box.set,
+          }
+        : {}),
+    }),
+  };
+}
+
+/** A client's turn on the Playground or over the API: its hidden
+ *  environment, resolved in the client's all-visible selection. */
+const clientTurn = (name: string): Surface => ({
+  name,
+  async plan(engine) {
+    const { spec, attribution } = visibleScopeEnvironment();
+    return plannedLiveTurn(
+      engine,
+      environmentTurnSkills({
+        spec,
+        attribution,
+        liveExtras: {},
+        runtime: runtimeOf(engine),
+      }),
+    );
+  },
+  expected: liveRows(["my-notes"], true),
+});
+
+/** A turn on a named environment, on the Playground or over the API. */
+const namedEnvironmentTurn = (name: string): Surface => ({
+  name,
+  async plan(engine) {
+    const { spec, attribution } = evalEnvironment();
+    return plannedLiveTurn(
+      engine,
+      environmentTurnSkills({ spec, attribution, runtime: runtimeOf(engine) }),
+    );
+  },
+  expected: liveRows([], true),
+});
+
 /** Each surface joins as one entry here, with its own plan and rows. */
-const SURFACES: Surface[] = [EVAL, REPLAY, SWARM, SWARM_APPROVAL];
+const SURFACES: Surface[] = [
+  EVAL,
+  REPLAY,
+  SWARM,
+  SWARM_APPROVAL,
+  EVALUATE_PREVIEW,
+  COMPARE_ENVIRONMENT_PREVIEW,
+  COMPARE_CLIENT_PREVIEW,
+  clientTurn("playground, client turn"),
+  namedEnvironmentTurn("playground, named environment"),
+  clientTurn("chat over the API, client turn"),
+  namedEnvironmentTurn("chat over the API, named environment"),
+];
 
 const ROWS = SURFACES.flatMap((surface) =>
   ENGINES.map((engine) => ({ surface, engine })),
@@ -208,15 +403,27 @@ describe.each(ROWS)("$surface.name on $engine", ({ surface, engine }) => {
         expected.delivered.length > 0,
       );
     } else {
-      expect(boxReceives(engine, box).sort()).toEqual(
-        [...expected.delivered].sort(),
-      );
+      // Every folder the runtime reads holds exactly these, whatever earlier
+      // turns of other runtimes left on the box.
+      expect([...box!.folders].sort()).toEqual([...expected.delivered].sort());
       // A harness gets its skills on its box, never as agent tools too.
       expect((await agentReceives(skills, { harness: engine })).tools).toEqual(
         [],
       );
     }
   });
+
+  it.skipIf(isAgent)(
+    "the box writer reports the delivery it made",
+    async () => {
+      const { written } = (await surface.plan(engine)).box!;
+      expect(written.delivered.map((skill) => skill.name)).toEqual(
+        expected.delivered,
+      );
+      expect(written.notDelivered).toEqual([]);
+      expect(written.failed).toEqual([]);
+    },
+  );
 
   it("records the skills the engine was handed", async () => {
     const { skillsAtTurn } = await surface.plan(engine);

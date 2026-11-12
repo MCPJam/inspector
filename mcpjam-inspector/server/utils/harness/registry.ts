@@ -29,7 +29,11 @@ export {
   CURSOR_CLI_CHECKSUMS,
   CURSOR_CLI_VERSION,
 } from "./cursor-bootstrap.js";
-import { createCopilotCli } from "./copilot-cli/index.js";
+import {
+  createCopilotCli,
+  refuseForwardedContinuation,
+} from "./copilot-cli/index.js";
+import { COPILOT_CORRELATION_KEY } from "./copilot-cli/bridge/native-mcp.js";
 import { createCodexAppServer } from "./codex-appserver/index.js";
 import { createOpenCode } from "@ai-sdk/harness-opencode";
 import { createOpenCodeHarness } from "./opencode-adapter.js";
@@ -70,18 +74,9 @@ import {
   type HarnessMcpJson,
 } from "./mcp-config.js";
 import {
-  prepareClaudeCodeSkills,
-  prepareCodexSkills,
-  prepareNoSkills,
-  type PreparedHarnessSkills,
-  type RuntimeSkill,
-} from "./runtime-skills.js";
-import {
-  CLAUDE_CODE_SKILLS_BASE,
-  CODEX_SKILLS_BASE,
-  CURSOR_SKILLS_BASE,
-  OPENCODE_SKILLS_BASE,
-} from "./skill-roots.js";
+  HARNESS_SKILLS,
+  type HarnessSkillsDescriptor,
+} from "./skills-descriptor.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -398,29 +393,18 @@ type HarnessRuntimeAdapterBase = {
   /** The runtime refuses to resume when its MCP config changes, so each lane
    *  gets session handles in place of per-turn tokens. */
   sessionStableMcpConfig?: boolean;
+  /** A client that selects this runtime directly tests its own MCP client, so
+   *  a turn with servers it cannot pass through is refused. */
+  requiredForwarding?: "pass-through";
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
   supportsSkills: boolean;
-  /** Where THIS runtime keeps skills on the box. MCPJam's own passes (stale-dir
-   *  reconcile, supporting-file materialization, extra-frontmatter rewrite,
-   *  turn-end adoption) must address the dirs the ADAPTER wrote, so the root
-   *  travels with the adapter instead of being hardcoded per pass. */
-  skillsBaseDir: string;
-  /** The options THIS adapter's runtime passes to `writeSkills` for its
-   *  turn-time on-box write, mirrored exactly so the `onSandboxSession`
-   *  pre-seed (see `preseed-adapter-skills.ts`) produces the identical
-   *  projected content hash and the adapter's own write becomes a no-op.
-   *  Claude Code passes `trailingNewline: true`; Codex takes the default.
-   *  Verified against the installed packages' `writeClaudeCodeSkills` /
-   *  `writeCodexSkills` — re-verify on adapter bumps. */
-  skillsWriteOptions: { trailingNewline: boolean };
-  /** Shape the runtime skills into this adapter's `skills` param, and report
-   *  which skills that actually amounts to (a runtime may reject a name outright
-   *  — Codex throws mid-`doStart`, which would fail the whole turn). The caller
-   *  drives its own passes off `delivered`, so they never target a dir the
-   *  adapter will not create. */
-  prepareSkills(skills: RuntimeSkill[]): PreparedHarnessSkills;
+  /** What the runtime does with skills on its box: the folders it writes and
+   *  reads, the names it takes, its frontmatter rules. The box writer reads
+   *  this and nothing else about the runtime, `supportsSkills` off included:
+   *  a runtime that takes no skills still reads folders other runtimes write. */
+  skills: HarnessSkillsDescriptor;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
    *  the bundle's components into per-kind channels (skills, native MCP config)?
@@ -900,10 +884,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   },
   liveApprovalRuntime: true,
   supportsSkills: true,
-  skillsBaseDir: CLAUDE_CODE_SKILLS_BASE,
-  // Mirrors `writeClaudeCodeSkills` in `@ai-sdk/harness-claude-code`.
-  skillsWriteOptions: { trailingNewline: true },
-  prepareSkills: prepareClaudeCodeSkills,
+  skills: HARNESS_SKILLS["claude-code"],
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
   // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
@@ -1078,9 +1059,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
   // root the retired exec transport used.
   supportsSkills: true,
-  skillsBaseDir: CODEX_SKILLS_BASE,
-  skillsWriteOptions: { trailingNewline: false },
-  prepareSkills: prepareCodexSkills,
+  skills: HARNESS_SKILLS.codex,
   // Codex has no plugin-install interface — MCPJam still projects a plugin's
   // components (skills param, host-executed MCP tools), which is not the same
   // contract as a native bundle install.
@@ -1198,17 +1177,11 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     nativeVersionNegotiation: "legacy-first",
     refresh: (runtime) => runtime,
   },
-  // OFF for v1. ACP supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this
-  // is a scope decision rather than a capability wall: shipping skills means
-  // owning the same delivery/reconcile/adopt passes the other two adapters
-  // have, plus a parity test against the real adapter. Tracked as a follow-up.
+  // Off: no live turn has shown the headless CLI loading the folder. ACP
+  // supports skills (`DEFAULT_ACP_SKILLS_DIRECTORY`), so this is an unchecked
+  // path rather than a capability wall.
   supportsSkills: false,
-  // Dormant while the flag above is false; see CURSOR_SKILLS_BASE.
-  skillsBaseDir: CURSOR_SKILLS_BASE,
-  skillsWriteOptions: { trailingNewline: false },
-  // Never called (`runHarnessTurn` guards on supportsSkills), and honest if the
-  // guard ever moves: nothing delivered, every skill reported skipped.
-  prepareSkills: prepareNoSkills,
+  skills: HARNESS_SKILLS.cursor,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
   fileChangeToolName: undefined,
@@ -1277,15 +1250,27 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   defaultPermissionMode: "allow-all",
   approvalPermissionMode: "allow-reads",
   liveApprovalRuntime: true,
-  // Only registered host tools are exposed. The CLI denies any other request.
+  // Only registered host tools and forwarded servers are exposed. The CLI
+  // denies any other request.
   supportsNativeToolApproval: true,
   supportsHostExecutedToolApproval: true,
-  supportsMcpToolApproval: false,
+  // Its MCP calls reach a server only through MCPJam's forwarder, whose gate
+  // asks the user about each request.
+  supportsMcpToolApproval: true,
   mcpDelivery: HARNESS_MCP_DELIVERY["copilot-cli"],
+  // The dedicated client exists to exercise the CLI's own MCP client; the
+  // VS Code and Microsoft 365 Copilot profiles keep MCPJam's.
+  requiredForwarding: "pass-through",
+  forwardingRuntime: {
+    runtimeVersion: "1.0.92",
+    configurationVersion: "copilot-native-mcp-v1",
+    // Stamped by the bridge's pre-call hook with the stream's tool call id.
+    correlationKey: COPILOT_CORRELATION_KEY,
+    passThroughOnly: true,
+    refresh: (runtime) => refuseForwardedContinuation(runtime),
+  },
   supportsSkills: false,
-  skillsBaseDir: "",
-  skillsWriteOptions: { trailingNewline: false },
-  prepareSkills: prepareNoSkills,
+  skills: HARNESS_SKILLS["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],
   parseToolName: parseHarnessToolName,
@@ -1293,11 +1278,14 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   modelSupport: modelSupportFor("copilot-cli"),
   supportsModel: supportsModelFor("copilot-cli"),
   toNativeModel: (modelId, upstream) => upstream?.nativeModelId ?? modelId,
-  createHarness: ({ modelId, upstream, auth, startupTimeoutMs }) =>
+  createHarness: ({ modelId, upstream, auth, startupTimeoutMs, forwardingMcpJson }) =>
     createCopilotCli({
       model: upstream?.nativeModelId ?? modelId,
       auth,
       startupTimeoutMs,
+      ...(forwardingMcpJson
+        ? { nativeMcpServers: forwardingMcpJson.mcpServers }
+        : {}),
     }),
 };
 
@@ -1316,9 +1304,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   supportsHostExecutedToolApproval: true,
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
   supportsSkills: false,
-  skillsBaseDir: OPENCODE_SKILLS_BASE,
-  skillsWriteOptions: { trailingNewline: false },
-  prepareSkills: prepareNoSkills,
+  skills: HARNESS_SKILLS.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),

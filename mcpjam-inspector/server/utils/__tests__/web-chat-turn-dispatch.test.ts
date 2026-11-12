@@ -393,6 +393,18 @@ describe("streamWebChatTurn model dispatch", () => {
     expect(handlers.hostedOrg).not.toHaveBeenCalled();
   });
 
+  it("gives a turn with no skill plan a live one: its servers' own skills only", async () => {
+    // MCPJam's docs agent passes none; its docs servers' skills still reach it.
+    const orchestration = await import("../chat-v2-orchestration.js");
+    vi.mocked(orchestration.prepareChatV2).mockClear();
+    await streamWebChatTurn(
+      args({ id: "openai/gpt-5-nano", provider: "openai" }) as never,
+    );
+    const prepared = vi.mocked(orchestration.prepareChatV2).mock.calls[0]?.[0];
+    expect(prepared?.skills?.agent).toEqual({ kind: "live" });
+    expect(prepared?.skills?.delivered).toEqual([]);
+  });
+
   it("routes a non-MCPJam model to the org-BYOK path", async () => {
     await streamWebChatTurn(
       args({ id: "gpt-4.1-mini-custom", provider: "openai" }, null) as never,

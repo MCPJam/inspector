@@ -57,8 +57,7 @@ const onKeys = (input: PluginExtensionsHostInput | undefined) => {
 function previousResolution(input: PluginExtensionsHostInput) {
   const apps = (input.mcpProfile as { apps?: Record<string, unknown> })?.apps;
   const setting = apps?.pluginExtensions as
-    | { enabled?: unknown; capabilities?: Record<string, unknown> }
-    | undefined;
+    { enabled?: unknown; capabilities?: Record<string, unknown> } | undefined;
   const saved = typeof setting?.enabled === "boolean" ? setting : undefined;
   const enabled = saved
     ? saved.enabled === true
@@ -206,7 +205,7 @@ describe("style defaults", () => {
     ["mcpjam", "codex", true, 13, CHATGPT],
     // The Codex harness is Codex, whatever style it is drawn in.
     ["claude", "codex", true, 13, CHATGPT],
-    ["claude", undefined, true, 1, CLAUDE],
+    ["claude", undefined, true, 2, CLAUDE],
     ["claude-desktop", undefined, true, 1, CLAUDE],
     ["claude-code", "claude-code", false, 13, CHATGPT],
     ["cursor", undefined, false, 13, CHATGPT],
@@ -231,9 +230,12 @@ describe("style defaults", () => {
     }
   );
 
-  it("turns on only Display modes for a Claude client", () => {
-    for (const hostStyle of ["claude", "claude-desktop"])
-      expect(onKeys({ hostStyle })).toEqual(["displayModes"]);
+  it("turns on Display modes for Claude, and the sidebar on the web only", () => {
+    expect(onKeys({ hostStyle: "claude" })).toEqual([
+      "sidebarApps",
+      "displayModes",
+    ]);
+    expect(onKeys({ hostStyle: "claude-desktop" })).toEqual(["displayModes"]);
     expect(resolvePluginExtensionBehavior(undefined)).toEqual(CHATGPT);
   });
 });
@@ -296,9 +298,9 @@ describe("resolvePluginExtensions with the style table", () => {
           { hostStyle: "claude" }
         )
       )
-    ).toEqual(["displayModes"]);
+    ).toEqual(["sidebarApps", "displayModes"]);
     expect(
-      onKeys(withSetting({ enabled: true }, { hostStyle: "claude" }))
+      onKeys(withSetting({ enabled: true }, { hostStyle: "claude-desktop" }))
     ).toEqual(["displayModes"]);
     expect(
       onKeys(
