@@ -78,7 +78,7 @@ describe("buildMarketHostProfiles", () => {
     });
   });
 
-  it("keeps Claude app capabilities faithful to the raw probe", () => {
+  it("keeps Claude app capabilities faithful to the raw probe, with frameDomains from Claude's docs", () => {
     expect(profileFor("claude")?.capabilities).toMatchObject({
       availableDisplayModes: ["inline", "fullscreen"],
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
@@ -89,7 +89,7 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
+      cspFrameDomains: true,
       cspBaseUriDomains: false,
       requestTeardown: false,
       toolCancelled: true,
