@@ -55,7 +55,8 @@ import {
 /** Why the planner refuses a forward-only turn on each surface that never
  *  forwards; the Playground forwards. */
 const FORWARDING_CLOSED: Partial<Record<HarnessSurface, HarnessMcpPlanReason>> = {
-  api: "plane is not web-authorized",
+  // A v1 API turn runs on the web plane but hands the turn no host id.
+  api: "no host id",
   evals: "eval iteration",
   events: "eval iteration",
   swarms: "journey run",

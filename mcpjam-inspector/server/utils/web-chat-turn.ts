@@ -344,8 +344,7 @@ export interface WebChatTurnPersistContext {
   /**
    * This turn's skills, HARNESS side: what its box writer writes. Forwarded
    * verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`, where presence
-   * (even empty) is authoritative; absent, the harness reads the project's
-   * skills itself (`harness/skill-delivery.ts`).
+   * (even empty) is authoritative; absent, the box keeps the skills it has.
    *
    * It lives on the persist context rather than the prepare inputs because the
    * harness path is reached through the persist/stream half of this helper —
@@ -356,13 +355,13 @@ export interface WebChatTurnPersistContext {
    * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
    * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
    * this is what the Computer delivery path needs on top of it — the resolved
-   * per-skill supporting files (including plugin ones, which the project-wide
-   * file query cannot return) and the pinned plugin versions that make a
-   * resumed sandbox with stale plugin material ineligible.
+   * per-skill supporting files (including plugin ones) and the pinned plugin
+   * versions that make a resumed sandbox with stale plugin material
+   * ineligible.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /** Those skills are a client's live turn, whose connected servers may offer
-   *  their own (`MCPJamHandlerOptions.liveTurn`). */
+  /** A client's or a study's turn, whose connected servers may offer their
+   *  own skills (`MCPJamHandlerOptions.liveTurn`). */
   liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
@@ -2044,7 +2043,7 @@ export async function streamChatTurn(
       : {}),
     ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
     // Presence is semantic (even an empty array): it is the turn's whole set,
-    // and the harness then reads no project skills of its own.
+    // and absent leaves the box's skills as they are.
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
