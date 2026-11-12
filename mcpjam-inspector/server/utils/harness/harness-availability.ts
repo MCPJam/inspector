@@ -47,6 +47,20 @@ import {
   harnessSurfaceRefusal,
   type HarnessSurface,
 } from "@/shared/harness-descriptors";
+import {
+  requiredForwardingRefusal,
+  type HarnessMcpPlanReason,
+} from "./harness-mcp-plan.js";
+
+/** Why the planner refuses a forward-only turn on each surface that never
+ *  forwards; the Playground forwards. */
+const FORWARDING_CLOSED: Partial<Record<HarnessSurface, HarnessMcpPlanReason>> = {
+  api: "plane is not web-authorized",
+  evals: "eval iteration",
+  events: "eval iteration",
+  swarms: "journey run",
+  "user-testing": "scenario turn",
+};
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -515,6 +529,9 @@ export function checkHarnessRuntimeAvailable(args: {
   /** Where the turn runs. Guests are decided by the backend's capability map,
    *  and `local` comes from `localExecution`. */
   surface: Exclude<HarnessSurface, "guests" | "local">;
+  /** The host runs this runtime as another client's agent loop (VS Code or
+   *  Microsoft 365 Copilot on Copilot CLI), keeping MCPJam's MCP client. */
+  agentLoop?: boolean;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
@@ -631,6 +648,27 @@ export function checkHarnessRuntimeAvailable(args: {
       : undefined);
   if (surfaceRefusal) {
     return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
+  }
+  // A dedicated client reaches its servers only through the runtime's own MCP
+  // client, which only signed-in Playground chats forward. Refused here in the
+  // planner's words, so an eval or a study is not admitted only to fail every
+  // turn.
+  if (
+    adapter.requiredForwarding === "pass-through" &&
+    args.agentLoop !== true &&
+    args.hasSelectedMcpServers
+  ) {
+    const closed =
+      args.localExecution === true
+        ? "local execution target"
+        : FORWARDING_CLOSED[args.surface];
+    if (closed) {
+      return {
+        ok: false,
+        kind: "surface-unsupported",
+        reason: requiredForwardingRefusal({ reasons: [closed], gaps: [] }, name),
+      };
+    }
   }
 
   // Does MCPJam supply this runtime's model credential, or does the runtime

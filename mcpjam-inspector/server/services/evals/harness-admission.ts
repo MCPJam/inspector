@@ -315,7 +315,7 @@ export function checkEvalHarnessStaticAdmission(args: {
   const pinnedRow: { id: string; hosted?: boolean } = { id: hostModelId ?? "" };
   const pinnedModel = withSelectionRouting(pinnedRow, pinnedSelection);
   const availability = checkHarnessRuntimeAvailable({
-    harnessId: harness, surface: "evals",
+    harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
     requireToolApproval: hostConfig.requireToolApproval === true,
     hasSelectedMcpServers,
@@ -438,7 +438,7 @@ export function checkEvalHarnessAdmission(args: {
       };
       const routedCaseModel = withSelectionRouting(caseRow, selection);
       const availability = checkHarnessRuntimeAvailable({
-        harnessId: harness, surface: "evals",
+        harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,

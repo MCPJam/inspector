@@ -53,6 +53,9 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
     for (const [surface, reason] of Object.entries(descriptor.unavailableOn)) {
       expect(HARNESS_SURFACES).toContain(surface);
       expect(reason).toMatch(/^[A-Z].+\.$/);
+      // The backend's mirror pin captures surface/reason pairs, so each
+      // reason names its runtime.
+      expect(reason.startsWith(descriptor.displayName)).toBe(true);
     }
   });
 
