@@ -5,8 +5,11 @@
  * Runs after the turn's transcript and resume state are saved, and nothing
  * waits for it: the user's turn is already over. Every failure ends the save
  * and is logged; a missing snapshot only means the next replaced box starts
- * blank, as it did before. The backend decides whether snapshots are on
- * (`snapshot/upload-url` answers `enabled: false` otherwise).
+ * blank, as it did before.
+ *
+ * The backend decides whether snapshots are on: `snapshot/begin` answers
+ * before anything is read off the box, and reserves the key the bytes are then
+ * posted under (`snapshot/save`).
  */
 import { logger } from "../../logger.js";
 import {
@@ -14,6 +17,7 @@ import {
   type SecretRegistryEntry,
 } from "../../secrets/secret-scrubber.js";
 import {
+  getConvexHttpUrl,
   postSessionState,
   type HarnessOwnerRef,
 } from "../harness-session-state.js";
@@ -28,13 +32,22 @@ import { sessionFileSpec } from "./session-files.js";
 
 /** Long enough for a slow box and a large upload; short enough to never pile up. */
 const SAVE_TIMEOUT_MS = 60_000;
+/**
+ * Saves one server runs at once. Each holds a session's text in memory and
+ * compresses it; past this a save is skipped, and the next turn's save
+ * catches up (a restore only uses a copy of the latest turn).
+ */
+const MAX_CONCURRENT_SAVES = 2;
+let runningSaves = 0;
 
 export type SnapshotSaveOutcome =
   | "saved"
   | "unsupported"
   | "refused"
   | "empty"
+  | "has-secret"
   | "too-large"
+  | "busy"
   | "failed";
 
 export type SaveSessionSnapshotArgs = {
@@ -51,28 +64,16 @@ export type SaveSessionSnapshotArgs = {
   secrets: readonly SecretRegistryEntry[];
 };
 
-type UploadGrant = {
-  uploadUrl: string;
-  key: string;
-  contentType: string;
-  maxBytes: number;
-};
-
-function uploadGrant(payload: unknown): UploadGrant | undefined {
+function reservation(
+  payload: unknown,
+): { key: string; maxBytes: number } | undefined {
   if (!payload || typeof payload !== "object") return undefined;
-  const read = (name: string) => Reflect.get(payload, name);
-  const [uploadUrl, key, contentType, maxBytes] = [
-    "uploadUrl",
-    "key",
-    "contentType",
-    "maxBytes",
-  ].map(read);
-  return read("enabled") === true &&
-    typeof uploadUrl === "string" &&
+  const key: unknown = Reflect.get(payload, "key");
+  const maxBytes: unknown = Reflect.get(payload, "maxBytes");
+  return Reflect.get(payload, "enabled") === true &&
     typeof key === "string" &&
-    typeof contentType === "string" &&
     typeof maxBytes === "number"
-    ? { uploadUrl, key, contentType, maxBytes }
+    ? { key, maxBytes }
     : undefined;
 }
 
@@ -80,18 +81,18 @@ export async function saveSessionSnapshot(
   args: SaveSessionSnapshotArgs,
 ): Promise<SnapshotSaveOutcome> {
   const signal = AbortSignal.timeout(SAVE_TIMEOUT_MS);
-  const session = {
-    harnessSessionId: args.harnessSessionId,
-    stateVersion: args.stateVersion,
-  };
   const begun = await postSessionState(
-    "snapshot/upload-url",
+    "snapshot/begin",
     args.bearer,
-    { ...args.owner, ...session },
+    {
+      ...args.owner,
+      harnessSessionId: args.harnessSessionId,
+      stateVersion: args.stateVersion,
+    },
     signal,
   );
-  const grant = begun.ok ? uploadGrant(begun.payload) : undefined;
-  if (!grant) return "refused";
+  const reserved = begun.ok ? reservation(begun.payload) : undefined;
+  if (!reserved) return "refused";
 
   const home = await boxHome(args.session, signal);
   const spec = sessionFileSpec({
@@ -101,9 +102,9 @@ export async function saveSessionSnapshot(
     home,
   });
   if (!spec) return "unsupported";
-  let files;
+  let collected;
   try {
-    files = await collectSessionFiles({
+    collected = await collectSessionFiles({
       session: args.session,
       spec,
       home,
@@ -114,42 +115,45 @@ export async function saveSessionSnapshot(
     if (error instanceof SnapshotTooLargeError) return "too-large";
     throw error;
   }
-  if (files.length === 0) return "empty";
-  const bytes = encodeSnapshot({
+  // A delivered secret reached the session. Its scrubbed copy would not be
+  // the history the CLI signed (a thinking block's signature covers its
+  // text), so no copy is kept at all rather than one that cannot resume.
+  if (collected.scrubbed) return "has-secret";
+  if (collected.files.length === 0) return "empty";
+  const bytes = await encodeSnapshot({
     version: 1,
     harnessId: spec.harnessId,
     harnessSessionId: args.harnessSessionId,
     ...(args.workDir ? { workDir: args.workDir } : {}),
-    files,
+    files: collected.files,
   });
-  if (bytes.byteLength > grant.maxBytes) return "too-large";
+  if (bytes.byteLength > reserved.maxBytes) return "too-large";
 
-  const upload = await fetch(grant.uploadUrl, {
-    method: "POST",
-    headers: { "content-type": grant.contentType },
-    body: new Uint8Array(bytes),
-    signal,
-  });
-  const uploaded: unknown = upload.ok ? await upload.json() : undefined;
-  const storageId =
-    uploaded && typeof uploaded === "object"
-      ? Reflect.get(uploaded, "storageId")
-      : undefined;
-  if (typeof storageId !== "string") return "failed";
-
-  const committed = await postSessionState(
-    "snapshot/commit",
-    args.bearer,
+  const authorization = args.bearer.startsWith("Bearer ")
+    ? args.bearer
+    : `Bearer ${args.bearer}`;
+  const res = await fetch(
+    new URL("/web/harness/session-state/snapshot/save", getConvexHttpUrl()),
     {
-      ...args.owner,
-      key: grant.key,
-      storageId,
+      method: "POST",
+      headers: {
+        authorization,
+        "content-type": "application/gzip",
+        "x-mcpjam-snapshot": JSON.stringify({
+          ...args.owner,
+          key: reserved.key,
+        }),
+      },
+      body: bytes,
+      signal,
     },
-    signal,
   );
-  return committed.ok && committed.payload?.saved === true
+  const saved: unknown = res.ok ? await res.json() : undefined;
+  return saved &&
+    typeof saved === "object" &&
+    Reflect.get(saved, "saved") === true
     ? "saved"
-    : "refused";
+    : "failed";
 }
 
 /**
@@ -188,19 +192,32 @@ function logSaveFailure(harnessId: string, error: unknown): void {
   });
 }
 
+function logOutcome(
+  harnessId: string,
+  outcome: SnapshotSaveOutcome,
+  ms: number,
+): void {
+  logger.info(`[harness][snapshot] save ${outcome} in ${ms}ms`, {
+    harnessId,
+    outcome,
+  });
+}
+
 /** Start a save without waiting for it; the outcome is only logged. */
 export function startSessionSnapshotSave(args: SaveSessionSnapshotArgs): void {
   const startedAt = Date.now();
-  void saveSessionSnapshot(args).then(
-    (outcome) => {
-      logger.info(
-        `[harness][snapshot] save ${outcome} in ${Date.now() - startedAt}ms`,
-        {
-          harnessId: args.owner.harnessId,
-          outcome,
-        },
-      );
-    },
-    (error: unknown) => logSaveFailure(args.owner.harnessId, error),
-  );
+  if (runningSaves >= MAX_CONCURRENT_SAVES) {
+    logOutcome(args.owner.harnessId, "busy", 0);
+    return;
+  }
+  runningSaves += 1;
+  void saveSessionSnapshot(args)
+    .then(
+      (outcome) =>
+        logOutcome(args.owner.harnessId, outcome, Date.now() - startedAt),
+      (error: unknown) => logSaveFailure(args.owner.harnessId, error),
+    )
+    .finally(() => {
+      runningSaves -= 1;
+    });
 }

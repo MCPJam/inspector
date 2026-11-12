@@ -1,9 +1,10 @@
 /**
- * A harness session snapshot as bytes: the session files, each scrubbed of the
- * turn's materialized secrets, as gzipped JSON. Reading and writing the box
- * goes through the turn's own file-capable sandbox session.
+ * A harness session snapshot as bytes: the session files as gzipped JSON.
+ * Reading and writing the box goes through the turn's own file-capable sandbox
+ * session. Compression runs off the event loop: the server is shared.
  */
-import { gunzipSync, gzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { gunzip, gzip } from "node:zlib";
 import type { SecretScrubber } from "../../secrets/secret-scrubber.js";
 import {
   isPathUnderRoot,
@@ -13,7 +14,10 @@ import {
 
 /** The slice of the turn's sandbox session a snapshot needs. */
 export type SnapshotFileSession = {
-  readTextFile(args: { path: string }): PromiseLike<string | null>;
+  readTextFile(args: {
+    path: string;
+    abortSignal?: AbortSignal;
+  }): PromiseLike<string | null>;
   writeTextFile(args: { path: string; content: string }): PromiseLike<unknown>;
   run(args: {
     command: string;
@@ -32,8 +36,10 @@ export type SnapshotBundle = {
 
 /** More than any real session holds; a larger one is not saved. */
 export const MAX_SNAPSHOT_FILES = 500;
-export const MAX_SNAPSHOT_RAW_BYTES = 64 * 1024 * 1024;
+export const MAX_SNAPSHOT_RAW_BYTES = 32 * 1024 * 1024;
 const READ_CONCURRENCY = 8;
+const gzipAsync = promisify(gzip);
+const gunzipAsync = promisify(gunzip);
 
 export class SnapshotTooLargeError extends Error {}
 
@@ -49,14 +55,17 @@ export async function boxHome(
   return res.stdout.trim();
 }
 
-/** Read the spec's files off the box, scrubbed, within the size limits. */
+/**
+ * Read the spec's files off the box within the size limits. `scrubbed` says a
+ * delivered secret was found in them; the files come back unchanged either way.
+ */
 export async function collectSessionFiles(args: {
   session: SnapshotFileSession;
   spec: SessionFileSpec;
   home: string;
   scrubber: SecretScrubber | null;
   abortSignal?: AbortSignal;
-}): Promise<SnapshotBundle["files"]> {
+}): Promise<{ files: SnapshotBundle["files"]; scrubbed: boolean }> {
   const { session, spec, home } = args;
   const listing = await session.run({
     command: spec.listCommand,
@@ -70,11 +79,15 @@ export async function collectSessionFiles(args: {
     );
   }
   const files: SnapshotBundle["files"] = [];
+  let scrubbed = false;
   for (let i = 0; i < listed.length; i += READ_CONCURRENCY) {
     const batch = listed.slice(i, i + READ_CONCURRENCY);
     const contents = await Promise.all(
       batch.map((file) =>
-        session.readTextFile({ path: `${home}/${file.path}` }),
+        session.readTextFile({
+          path: `${home}/${file.path}`,
+          ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
+        }),
       ),
     );
     batch.forEach((file, index) => {
@@ -82,13 +95,13 @@ export async function collectSessionFiles(args: {
       // Gone since the listing: the CLI rotated it. Nothing to keep.
       if (content == null) return;
       const complete = completeLines(file.path, content);
-      files.push({
-        path: file.path,
-        content: args.scrubber ? args.scrubber.scrubString(complete) : complete,
-      });
+      if (args.scrubber && args.scrubber.scrubString(complete) !== complete) {
+        scrubbed = true;
+      }
+      files.push({ path: file.path, content: complete });
     });
   }
-  return files;
+  return { files, scrubbed };
 }
 
 /**
@@ -100,23 +113,25 @@ function completeLines(path: string, content: string): string {
   return content.slice(0, content.lastIndexOf("\n") + 1);
 }
 
-export function encodeSnapshot(bundle: SnapshotBundle): Buffer {
-  return gzipSync(Buffer.from(JSON.stringify(bundle), "utf8"));
+export async function encodeSnapshot(
+  bundle: SnapshotBundle,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const gz = await gzipAsync(Buffer.from(JSON.stringify(bundle), "utf8"));
+  return new Uint8Array(gz);
 }
 
 /**
  * Parse a downloaded snapshot. Refuses one for another session or runtime, or
  * with any path outside the spec's root, rather than writing part of it.
  */
-export function decodeSnapshot(
+export async function decodeSnapshot(
   bytes: Uint8Array,
   expected: { spec: SessionFileSpec; home: string; harnessSessionId: string },
-): SnapshotBundle {
-  const parsed: unknown = JSON.parse(
-    gunzipSync(bytes, { maxOutputLength: MAX_SNAPSHOT_RAW_BYTES * 2 }).toString(
-      "utf8",
-    ),
-  );
+): Promise<SnapshotBundle> {
+  const json = await gunzipAsync(bytes, {
+    maxOutputLength: MAX_SNAPSHOT_RAW_BYTES * 2,
+  });
+  const parsed: unknown = JSON.parse(json.toString("utf8"));
   if (!parsed || typeof parsed !== "object") {
     throw new Error("snapshot is not an object");
   }
