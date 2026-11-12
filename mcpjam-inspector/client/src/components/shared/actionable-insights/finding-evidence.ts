@@ -6,4 +6,5 @@
  * inspects the shape of an id to guess which one it is.
  */
 export type FindingEvidenceLocator =
-  { kind: "iteration"; id: string } | { kind: "session"; id: string };
+  | { kind: "iteration"; id: string }
+  | { kind: "session"; id: string };
