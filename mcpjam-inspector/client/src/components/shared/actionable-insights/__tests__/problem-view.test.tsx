@@ -217,7 +217,7 @@ describe("the observation view", () => {
     ).toBeVisible();
     expect(
       within(lead).getByText(
-        "Cause checked for 2 of 3 iterations. 1 iteration has no checked cause or analysis option.",
+        "Evidence reviewed for 2 of 3 iterations. 1 iteration has no checked cause or analysis option.",
       ),
     ).toBeVisible();
     expect(
@@ -361,6 +361,9 @@ describe("problem details", () => {
     // The alternative's prompt never carries the recommendation's change.
     expect(clipboard.text).not.toContain("takes the id returned by");
     expect(clipboard.text).toContain("## Weakens it if");
+    expect(clipboard.text).toContain("## Reviewed explanation");
+    expect(clipboard.text).not.toContain("## Checked cause");
+    expect(screen.getByText(/You decide the next action and start any rerun/)).toBeVisible();
   });
 
   it("shows the prompt to select when the clipboard refuses", async () => {
@@ -399,7 +402,7 @@ describe("coverageLine", () => {
           },
         }),
       ),
-    ).toBe("Cause checked for 1 of 1 iteration.");
+    ).toBe("Evidence reviewed for 1 of 1 iteration.");
   });
 });
 

@@ -114,7 +114,7 @@ export function ProblemSummary({
       </div>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
-          className="w-full gap-0 overflow-y-auto sm:max-w-[620px]"
+          className="w-full gap-0 overflow-y-auto sm:max-w-[620px] [&>button]:z-20"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             trigger.current?.focus();

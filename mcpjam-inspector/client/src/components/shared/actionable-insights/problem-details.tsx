@@ -59,7 +59,7 @@ export function coverageLine(problem: FindingProblem): string {
   const state = problem.outcome?.state;
   const parts = [
     explained > 0
-      ? `Cause checked for ${explained} of ${plural(observed, "iteration")}.`
+      ? `Evidence reviewed for ${explained} of ${plural(observed, "iteration")}.`
       : ((state && state !== "explained" && state !== "addressed"
           ? OUTCOME_LINE[state]
           : undefined) ?? "Cause not established."),
@@ -175,13 +175,14 @@ export function ProblemDetailsContent({
                 }}
               >
                 <SelectTrigger
+                  className="w-full min-w-0 [&>span]:block [&>span]:truncate"
                   id={`problem-option-${problem.id}`}
                   aria-label="Choose an option"
                   data-testid="problem-option-select"
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[var(--radix-select-trigger-width)]">
                   {problem.options.map((row) => (
                     <SelectItem key={row.id} value={row.id}>
                       {row.id === problem.recommendedOptionId
@@ -276,7 +277,7 @@ export function ProblemDetailsContent({
       ) : null}
       {problem.explanations.length > 0 ? (
         <section className="border-t border-border/60 pt-5">
-          <h5 className="mb-2 font-semibold">Checked cause</h5>
+          <h5 className="mb-2 font-semibold">Reviewed explanation</h5>
           <ul className="list-disc space-y-1 pl-5">
             {problem.explanations.map((row) => (
               <li key={row.id}>
@@ -300,7 +301,7 @@ export function ProblemDetailsContent({
           ariaLabel="Affected iterations"
           detail={(row) =>
             explained.has(row.iterationId)
-              ? "Cause checked"
+              ? "Evidence reviewed"
               : unresolved.has(row.iterationId)
                 ? "Unresolved"
                 : scope.has(row.iterationId)
@@ -320,7 +321,7 @@ export function ProblemDetailsContent({
           {option.source === "analysis"
             ? "Proposed by the trace analysis from cited evidence. Nothing has been changed or rerun."
             : "Guidance from the recorded facts alone; no model was asked."}{" "}
-          You edit the server and start the rerun.
+          You decide the next action and start any rerun.
         </p>
       ) : null}
     </div>
