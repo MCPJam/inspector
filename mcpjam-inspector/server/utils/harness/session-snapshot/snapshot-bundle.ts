@@ -37,6 +37,8 @@ export type SnapshotBundle = {
 /** More than any real session holds; a larger one is not saved. */
 export const MAX_SNAPSHOT_FILES = 500;
 export const MAX_SNAPSHOT_RAW_BYTES = 32 * 1024 * 1024;
+/** What a restore inflates at most: the raw limit plus room for escaping. */
+const MAX_DECODED_BYTES = MAX_SNAPSHOT_RAW_BYTES * 2;
 const READ_CONCURRENCY = 8;
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -71,6 +73,11 @@ export async function collectSessionFiles(args: {
     command: spec.listCommand,
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
   });
+  // A listing that failed after printing some paths would save part of a
+  // session; one that printed nothing (no session folder yet) saves nothing.
+  if (listing.exitCode !== 0 && listing.stdout.trim()) {
+    throw new Error(`session file listing failed (exit ${listing.exitCode})`);
+  }
   const listed = parseFileListing(listing.stdout, home, spec.root);
   const total = listed.reduce((sum, file) => sum + file.bytes, 0);
   if (listed.length > MAX_SNAPSHOT_FILES || total > MAX_SNAPSHOT_RAW_BYTES) {
@@ -110,14 +117,26 @@ export async function collectSessionFiles(args: {
  */
 function completeLines(path: string, content: string): string {
   if (!path.endsWith(".jsonl") || content.endsWith("\n")) return content;
-  return content.slice(0, content.lastIndexOf("\n") + 1);
+  const cut = content.lastIndexOf("\n") + 1;
+  try {
+    // A whole final record without its newline is still a record.
+    JSON.parse(content.slice(cut));
+    return content;
+  } catch {
+    // Half a record: the writer is mid-append.
+    return content.slice(0, cut);
+  }
 }
 
 export async function encodeSnapshot(
   bundle: SnapshotBundle,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const gz = await gzipAsync(Buffer.from(JSON.stringify(bundle), "utf8"));
-  return new Uint8Array(gz);
+  const json = Buffer.from(JSON.stringify(bundle), "utf8");
+  // JSON escaping can grow text past what a restore will inflate.
+  if (json.byteLength > MAX_DECODED_BYTES) {
+    throw new SnapshotTooLargeError("snapshot JSON exceeds the decode limit");
+  }
+  return new Uint8Array(await gzipAsync(json));
 }
 
 /**
@@ -128,9 +147,7 @@ export async function decodeSnapshot(
   bytes: Uint8Array,
   expected: { spec: SessionFileSpec; home: string; harnessSessionId: string },
 ): Promise<SnapshotBundle> {
-  const json = await gunzipAsync(bytes, {
-    maxOutputLength: MAX_SNAPSHOT_RAW_BYTES * 2,
-  });
+  const json = await gunzipAsync(bytes, { maxOutputLength: MAX_DECODED_BYTES });
   const parsed: unknown = JSON.parse(json.toString("utf8"));
   if (!parsed || typeof parsed !== "object") {
     throw new Error("snapshot is not an object");

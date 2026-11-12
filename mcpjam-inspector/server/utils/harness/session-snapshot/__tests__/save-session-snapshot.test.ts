@@ -4,6 +4,7 @@ import type { HarnessOwnerRef } from "../../harness-session-state";
 import {
   saveSessionSnapshot,
   sessionSnapshotSaver,
+  startSessionSnapshotSave,
   type SaveSessionSnapshotArgs,
 } from "../save-session-snapshot";
 import type { SnapshotFileSession } from "../snapshot-bundle";
@@ -75,7 +76,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = ORIGINAL_FETCH;
-  process.env.CONVEX_HTTP_URL = ORIGINAL_URL;
+  if (ORIGINAL_URL === undefined) delete process.env.CONVEX_HTTP_URL;
+  else process.env.CONVEX_HTTP_URL = ORIGINAL_URL;
   vi.restoreAllMocks();
 });
 
@@ -144,6 +146,36 @@ describe("saveSessionSnapshot", () => {
     const calls = mockBackend({ ...RESERVED, maxBytes: 10 });
     expect(await saveSessionSnapshot(args())).toBe("too-large");
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("startSessionSnapshotSave", () => {
+  it("runs two saves at once and the newest waiting save per chat after them", async () => {
+    const begins: string[] = [];
+    const release: Array<() => void> = [];
+    globalThis.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/snapshot/begin")) {
+          return new Response("not found", { status: 404 });
+        }
+        begins.push(JSON.parse(String(init?.body)).chatSessionId);
+        await new Promise<void>((resolve) => release.push(resolve));
+        return Response.json({ ok: true, enabled: false, reason: "disabled" });
+      },
+    ) as typeof fetch;
+    const chat = (id: string) =>
+      args({ owner: { ...OWNER, chatSessionId: id } });
+
+    startSessionSnapshotSave(chat("a"));
+    startSessionSnapshotSave(chat("b"));
+    startSessionSnapshotSave(chat("c"));
+    startSessionSnapshotSave(chat("c"));
+    await vi.waitFor(() => expect(begins).toEqual(["a", "b"]));
+
+    release.shift()!();
+    await vi.waitFor(() => expect(begins).toEqual(["a", "b", "c"]));
+    release.splice(0).forEach((resolve) => resolve());
+    await vi.waitFor(() => expect(release).toHaveLength(0));
   });
 });
 

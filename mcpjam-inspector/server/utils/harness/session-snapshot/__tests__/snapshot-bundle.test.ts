@@ -85,6 +85,36 @@ describe("collectSessionFiles", () => {
     expect(files[0]!.content).toBe('{"a":1}\n');
   });
 
+  it("keeps a whole final record that has no newline", async () => {
+    const box = fakeBox({ [TRANSCRIPT]: '{"a":1}\n{"b":2}' });
+    const { files } = await collectSessionFiles({
+      session: box.session,
+      spec: SPEC,
+      home: HOME,
+      scrubber: null,
+    });
+    expect(files[0]!.content).toBe('{"a":1}\n{"b":2}');
+  });
+
+  it("saves nothing from a listing that failed partway", async () => {
+    const box = fakeBox({ [TRANSCRIPT]: "{}\n" });
+    const failing: SnapshotFileSession = {
+      ...box.session,
+      run: async (input) => ({
+        ...(await box.session.run(input)),
+        exitCode: 1,
+      }),
+    };
+    await expect(
+      collectSessionFiles({
+        session: failing,
+        spec: SPEC,
+        home: HOME,
+        scrubber: null,
+      }),
+    ).rejects.toThrow(/listing failed/);
+  });
+
   it("refuses a session larger than the limit before reading anything", async () => {
     const box = fakeBox(
       {},
