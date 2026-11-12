@@ -216,8 +216,12 @@ function logOutcome(
 export function startSessionSnapshotSave(args: SaveSessionSnapshotArgs): void {
   if (runningSaves >= MAX_CONCURRENT_SAVES) {
     const lane = laneKey(args.owner);
-    waitingSaves.delete(lane);
-    waitingSaves.set(lane, args);
+    // Bearers can resolve out of order, so the newer turn wins, not the later call.
+    const waiting = waitingSaves.get(lane);
+    if (!waiting || waiting.stateVersion <= args.stateVersion) {
+      waitingSaves.delete(lane);
+      waitingSaves.set(lane, args);
+    }
     if (waitingSaves.size > MAX_WAITING_SAVES) {
       const [oldest] = waitingSaves;
       if (oldest) {
