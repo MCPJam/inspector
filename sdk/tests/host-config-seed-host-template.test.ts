@@ -199,7 +199,6 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
-    // Bumped with the 2026-11-11 re-probe, from 2.1.310.
     expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.312");
   });
 
@@ -357,8 +356,8 @@ describe("seedHostTemplate", () => {
         media: true,
       },
     });
-    // The 2026-11-11 sweep blocked every undeclared CDN origin on connect and
-    // resource loads, so only the frame directive is left in the baseline.
+    // Every undeclared CDN origin is blocked on connect and resource loads, so
+    // only the frame directive is in the baseline.
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
       "frame-src": ["'self'", "data:", "blob:"],
     });
@@ -368,9 +367,8 @@ describe("seedHostTemplate", () => {
     const cspDirectivesOf = (id: HostTemplateId) =>
       seedHostTemplate(id, { theme: "dark" }).mcpProfile?.apps?.sandbox?.csp
         ?.cspDirectives ?? {};
-    // ChatGPT and Codex used to load esm.sh undeclared. The 2026-11-11 sweep
-    // blocked it on both, with the other CDN canaries, so neither keeps any
-    // connect or resource baseline.
+    // ChatGPT and Codex block esm.sh undeclared, with the other CDN canaries,
+    // so neither keeps any connect or resource baseline.
     for (const id of ["chatgpt", "codex"] as const) {
       const directives = cspDirectivesOf(id);
       for (const directive of [
@@ -396,7 +394,6 @@ describe("seedHostTemplate", () => {
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {
     const config = seedHostTemplate("cursor", { theme: "dark" });
-    // Bumped with the 2026-11-11 re-probe, from 3.27.14.
     expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
       "3.29.9"
     );

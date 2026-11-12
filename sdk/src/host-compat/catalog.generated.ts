@@ -3696,6 +3696,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
                 clipboardWrite: true,
               },
             },
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
             sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {

@@ -2608,6 +2608,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
@@ -2737,6 +2742,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
         "sandbox": {
+          "browserStorage": {
+            "indexedDB": true,
+            "localStorage": true,
+            "sessionStorage": true,
+          },
           "csp": {
             "mode": "declared",
           },
