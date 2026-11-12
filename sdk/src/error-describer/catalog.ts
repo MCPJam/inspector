@@ -139,6 +139,10 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // MCPJam retired the model the request names. Nothing failed: the backend
   // refused before any provider work, and choosing a current model is the fix.
   "provider/model_retired": "user_config",
+  // The request needs a provider that keeps no data and doesn't train on it
+  // (MCPJam pays for it, or the organization requires it), and none of the
+  // model's providers qualifies. Choosing another model is the fix.
+  "provider/no_zdr_endpoint": "user_config",
   // The provider failed and the saved selection forbids a fallback. Whose
   // failure it was is not settled by the refusal itself — MCPJam's Gateway,
   // the upstream model provider, or a transient network fault — so it never
@@ -877,6 +881,20 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     ["Choose a newer model, then run again."],
     "model-retired",
+    "warning",
+  ),
+  // The backend's `policy_no_zdr_endpoint` code. The rule is MCPJam's for
+  // requests it pays for and the organization's otherwise, so the copy names
+  // neither.
+  "provider/no_zdr_endpoint": entry(
+    "provider/no_zdr_endpoint",
+    "No private provider for this model",
+    "This request needs a provider that keeps no data and doesn't train on it, and none of this model's providers qualifies. Choose another model.",
+    [
+      "MCPJam requires this for requests it pays for, and an organization can require it for every request.",
+    ],
+    ["Choose a different model."],
+    "no-private-provider-for-this-model",
     "warning",
   ),
   // The backend refuses on one of two allowances and says which in its own

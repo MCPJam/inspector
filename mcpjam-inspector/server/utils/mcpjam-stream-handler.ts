@@ -713,6 +713,14 @@ const FALLBACK_PROHIBITED_CODE = "fallback_prohibited";
 const MODEL_RETIRED_CODE = "model_retired";
 
 /**
+ * Backend refusal code (convex `lib/modelResolution.ts`, `stream/routes.ts`
+ * `categorizeError`): the request needs a zero-retention, no-training endpoint
+ * and the model has none, or its provider refused those flags. Arrives as
+ * HTTP 422.
+ */
+const NO_ZDR_ENDPOINT_CODE = "policy_no_zdr_endpoint";
+
+/**
  * Backend refusal code (convex `stream/orgRoutes.ts`): the organization's own
  * provider connection does not serve this model (OpenRouter's selected models,
  * Azure's deployments). Arrives as HTTP 400.
@@ -788,6 +796,10 @@ export function describeBackendStreamFailure(
   // only exempts a 200, so the 413 reached `internal/unknown` and paged.
   if (code === GUEST_INPUT_TOO_LARGE_CODE)
     return describeAsSlug("account/guest_input_too_large", detail);
+  // And at 422: the model has no provider that meets the privacy rule, so
+  // choosing another model is the fix.
+  if (code === NO_ZDR_ENDPOINT_CODE)
+    return describeAsSlug("provider/no_zdr_endpoint", detail);
 
   if (status !== undefined && status >= 500) {
     return { ...backendFailureSlug(status, detail), origin: "mcpjam" };

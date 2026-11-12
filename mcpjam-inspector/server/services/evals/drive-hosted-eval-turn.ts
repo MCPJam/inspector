@@ -1106,8 +1106,13 @@ export async function driveHostedEvalTurn(
     // `logger.error` with no error object always captures. An empty step was
     // already reported once by the engine, which decided whether it is ours
     // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines.
-    if (lastEngineError?.code === "provider_empty_response") {
+    // page on the provider-owned ones that verdict declines. A model with no
+    // private provider is the user's to fix, and the engine already reported
+    // it as such.
+    if (
+      lastEngineError?.code === "provider_empty_response" ||
+      lastEngineError?.code === "policy_no_zdr_endpoint"
+    ) {
       logger.warn(logLine);
     } else {
       logger.error(logLine);

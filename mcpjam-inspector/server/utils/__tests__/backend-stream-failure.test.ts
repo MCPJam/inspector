@@ -115,6 +115,17 @@ describe("describeBackendStreamFailure", () => {
     expect(originOf(normalized)).toBe("user_config");
   });
 
+  it("reads a 422 policy_no_zdr_endpoint as the user's model choice, not an MCPJam fault", () => {
+    const normalized = describeBackendStreamFailure(
+      422,
+      "openai/gpt-5 has no Gateway or OpenRouter endpoint that satisfies the required zero-retention / no-training policy.",
+      "policy_no_zdr_endpoint",
+    );
+
+    expect(normalized.slug).toBe("provider/no_zdr_endpoint");
+    expect(originOf(normalized)).toBe("user_config");
+  });
+
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
   // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —

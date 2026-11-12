@@ -688,6 +688,18 @@ This model has been retired and is no longer available on MCPJam. Retrying won't
 **Next steps**
 - Choose a newer model, then run again.
 
+### No private provider for this model
+
+`provider/no_zdr_endpoint`
+
+This request needs a provider that keeps no data and doesn't train on it, and none of this model's providers qualifies. Retrying won't help.
+
+**Likely causes**
+- MCPJam requires this for requests it pays for, and an organization can require it for every request.
+
+**Next steps**
+- Choose a different model.
+
 ### Provider quota
 
 `provider/quota`
