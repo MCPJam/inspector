@@ -175,6 +175,7 @@ import {
   applySandboxHostPartition,
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
+import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
@@ -464,6 +465,10 @@ const mcpClientManager = new MCPClientManager(
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   },
 );
+// Local App documents answer their own `localhost` subdomains before any
+// other middleware or route sees the request.
+mountLocalSandboxViewHost(app);
+
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
