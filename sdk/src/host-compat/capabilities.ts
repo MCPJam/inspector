@@ -78,10 +78,9 @@ export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
  * declared connect list. The fetch/xhr canaries are blocked too, and the
  * catalog row carries no connect or resource baseline.
  *
- * The 2026-08-23 paired probe (captured 2026-08-24Z) declared
- * `fastly.jsdelivr.net`, outside that baseline, and every declared resource
- * subtype loaded in the treatment fixture, so the resource declaration is
- * honored.
+ * The 2026-08-23 paired probe (captured 2026-08-24Z) loaded every resource
+ * subtype from `fastly.jsdelivr.net`, an origin the widget declared, in the
+ * treatment fixture, so the resource declaration is honored.
  */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,

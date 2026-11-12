@@ -1252,17 +1252,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             cspBaseUriDomains: true,
             // One directive, one answer: the declared wss endpoint connected
             // while an undeclared one took a real connect-src violation
-            // (2026-08-19 probe). The fetch/xhr canary passed because it is in
-            // ChatGPT's own baseline allowlist, carried as `cspDirectives`.
+            // (2026-08-19 probe). The fetch/xhr canaries are blocked too, and
+            // the template carries no connect or resource baseline.
             cspConnectDomains: {
               fetch: true,
               xhr: true,
               websocket: true,
             },
-            // The 2026-08-23 paired probe (captured 2026-08-24Z) declared
-            // fastly.jsdelivr.net, an
-            // origin outside the baseline above, and every declared resource
-            // subtype loaded in the treatment fixture.
+            // The 2026-08-23 paired probe (captured 2026-08-24Z) loaded every
+            // resource subtype from fastly.jsdelivr.net, an origin the widget
+            // declared, in the treatment fixture.
             cspResourceDomains: {
               script: true,
               stylesheet: true,
@@ -1355,8 +1354,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `clipboard-write *; local-network-access *; microphone *;
             // midi *`:
             //   - clipboard-write + microphone → spec features, modeled
-            //     in `permissions.allow` above (clipboard-write stops at the
-            //     outer frame; see there).
+            //     in `permissions.allow` above; both are delegated to the
+            //     widget frame.
             //   - local-network-access + midi → ALREADY in MCPJam's
             //     renderer baseline (sandboxed-iframe.tsx's
             //     `outerAllowAttribute` memo), auto-granted to every
