@@ -596,6 +596,7 @@ export async function resolveManagedTurnSetup(args: {
     const availability = checkHarnessRuntimeAvailable({
       mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
+      surface: turnMode === "recorded" ? "user-testing" : "playground",
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,

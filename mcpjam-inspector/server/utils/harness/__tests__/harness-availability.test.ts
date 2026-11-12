@@ -14,6 +14,7 @@ import {
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
 import { registeredHarnessIds } from "../registry";
+import { HARNESS_SURFACES, harnessSurfaceRefusal } from "@/shared/harness-descriptors";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
 // The capability-driven preflight that lets the chat-v2 routes fail closed with a
@@ -55,6 +56,7 @@ function args(
 ) {
   return {
     harnessId: "claude-code" as HarnessId,
+    surface: "playground" as const,
     requireToolApproval: false,
     hasSelectedMcpServers: false,
     // The RESOLVED model. Eligibility and the canonical id are derived from it
@@ -64,6 +66,49 @@ function args(
     ...overrides,
   };
 }
+
+describe("checkHarnessRuntimeAvailable surface support", () => {
+  const surfaces = HARNESS_SURFACES.filter(
+    (surface): surface is Exclude<typeof surface, "guests" | "local"> =>
+      surface !== "guests" && surface !== "local",
+  );
+  // Every registered runtime on every surface, local and hosted: a runtime
+  // added later is covered here without a new test.
+  for (const harnessId of registeredHarnessIds()) {
+    for (const surface of surfaces) {
+      for (const localExecution of [false, true]) {
+        it(`${harnessId} on ${surface}${localExecution ? " (local)" : ""}`, () => {
+          const declared =
+            harnessSurfaceRefusal(harnessId, surface) ??
+            (localExecution ? harnessSurfaceRefusal(harnessId, "local") : undefined);
+          const result = checkHarnessRuntimeAvailable(
+            args({ harnessId, surface, localExecution }),
+          );
+          if (declared) {
+            expect(result).toEqual({
+              ok: false,
+              kind: "surface-unsupported",
+              reason: declared,
+            });
+          } else {
+            expect(result.ok ? undefined : result.kind).not.toBe(
+              "surface-unsupported",
+            );
+          }
+        });
+      }
+    }
+  }
+
+  it("runs GitHub Copilot CLI in evals, swarms and User Testing", () => {
+    for (const surface of ["evals", "swarms", "user-testing"] as const) {
+      const result = checkHarnessRuntimeAvailable(
+        args({ harnessId: "copilot-cli", surface }),
+      );
+      expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+    }
+  });
+});
 
 describe("checkHarnessRuntimeAvailable", () => {
   it.each([

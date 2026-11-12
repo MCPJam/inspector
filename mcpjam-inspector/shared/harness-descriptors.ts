@@ -94,48 +94,97 @@ const LOOP_CONTROLS: Record<
   },
 };
 
+/** Everywhere a runtime can run. Keep parity with the backend's list. */
+export const HARNESS_SURFACES = [
+  "playground", "api", "evals", "events", "swarms", "user-testing", "guests", "local",
+] as const;
+export type HarnessSurface = (typeof HARNESS_SURFACES)[number];
+
+/** The surface a turn's `sourceType` names. `direct` is the Playground or the
+ *  v1 API, so it names neither: each of those routes says which it is. */
+export function harnessSurfaceOfSource(sourceType: string | undefined): HarnessSurface | undefined {
+  switch (sourceType) {
+    case "scenario": return "user-testing";
+    case "eval": return "evals";
+    case "swarm": return "swarms";
+    case "event": return "events";
+    default: return undefined;
+  }
+}
+
 /**
  * Runtime facts shared by the adapters, admission gates and client controls.
  * `protocol` is the wire API the harness speaks to its model; `orgKeys` says
  * whether it may run on an organization connection that serves that API.
+ * A runtime runs on every surface except those `unavailableOn` names, each
+ * with the reason a user reads when a turn there is refused.
  */
 export const HARNESS_DESCRIPTORS = {
   "claude-code": {
     displayName: "Claude Code", runtimeVersion: "2.1.290", mcpClient: "harness",
-    modelAccess: "broker", local: true, guest: true, orgKeys: true,
+    modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
+    unavailableOn: {},
     controls: LOOP_CONTROLS["claude-code"], reasoningEfforts: HARNESS_REASONING_EFFORTS["claude-code"],
   },
   codex: {
     displayName: "Codex", runtimeVersion: "0.163.0", mcpClient: "mcpjam",
-    modelAccess: "broker", local: true, guest: true, orgKeys: true,
+    modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
+    unavailableOn: {},
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
     displayName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false, orgKeys: true,
+    modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
+    unavailableOn: {
+      local: "GitHub Copilot CLI can't run on your computer yet. Run it in the cloud instead.",
+    },
     controls: LOOP_CONTROLS["copilot-cli"], reasoningEfforts: HARNESS_REASONING_EFFORTS["copilot-cli"],
   },
   cursor: {
     displayName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
-    modelAccess: "external-account", local: false, guest: false,
-    orgKeys: false, protocol: null,
+    modelAccess: "external-account", orgKeys: false, protocol: null,
+    unavailableOn: {
+      api: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
+      events: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
+      "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study.",
+      local: "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
+      guests: "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
+    },
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
       binding: { hosts: ["api2.cursor.sh"], header: "authorization", template: "Bearer {}" } },
     controls: LOOP_CONTROLS.cursor, reasoningEfforts: HARNESS_REASONING_EFFORTS.cursor,
   },
   opencode: {
     displayName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
-    modelAccess: "broker", local: false, guest: false, orgKeys: true,
+    modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
+    unavailableOn: {
+      local: "OpenCode can't run on your computer yet. Run it in the cloud instead.",
+      guests: "OpenCode isn't available to guests until it's tested with them.",
+    },
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
-} as const satisfies Record<Harness, object>;
+} as const satisfies Record<
+  Harness,
+  { unavailableOn: Partial<Record<HarnessSurface, string>>; [fact: string]: unknown }
+>;
+
+/** Why `id` does not run on `surface`, or `undefined` where it does. */
+export function harnessSurfaceRefusal(id: Harness, surface: HarnessSurface): string | undefined {
+  const unavailableOn: Partial<Record<HarnessSurface, string>> = HARNESS_DESCRIPTORS[id].unavailableOn;
+  return unavailableOn[surface];
+}
+
+/** The runtimes that declare no exception for `surface`. */
+export type HarnessIdOn<S extends HarnessSurface> = {
+  [K in Harness]: S extends keyof (typeof HARNESS_DESCRIPTORS)[K]["unavailableOn"] ? never : K;
+}[Harness];
 
 export const LOCAL_HARNESS_IDS = HARNESS_IDS.filter(
-  (id): id is "claude-code" | "codex" => HARNESS_DESCRIPTORS[id].local,
+  (id): id is HarnessIdOn<"local"> => !harnessSurfaceRefusal(id, "local"),
 );
 
 /** The harness a client config runs: its agent loop when set, else its harness. */

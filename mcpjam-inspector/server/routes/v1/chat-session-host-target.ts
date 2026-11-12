@@ -308,6 +308,8 @@ export function resolveChatSessionEngine(args: {
 
   const availability = checkHarnessRuntimeAvailable({
     harnessId: harness,
+    // Its turn runs the Playground's box path; runtime resolution checks `api`.
+    surface: "playground",
     requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
     model: args.model,
