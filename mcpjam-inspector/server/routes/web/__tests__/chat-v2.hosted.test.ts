@@ -1652,12 +1652,12 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect(response.status).toBe(200);
 
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
+      expect(args.skills.runtime).toEqual({ kind: "agent" });
       // Live, so a connected server's SEP-2640 skills compose on top rather than
       // being displaced by the project's.
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(args.skills.agent).toEqual({ kind: "live" });
       expect(
-        args.skillsSource.capabilities.standaloneSkills.map(
+        args.skills.set.standaloneSkills.map(
           (skill: { ref: string }) => skill.ref
         )
       ).toEqual(["release-notes"]);
@@ -1678,9 +1678,9 @@ describe("web routes — chat-v2 hosted mode", () => {
       // "This project has no skills" is an answer, not a gap: the source is still
       // resolved and still live, it is simply empty.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource.kind).toBe("resolved");
-      expect(args.skillsSource.capabilities.standaloneSkills).toEqual([]);
-      expect(args.skillsSource.composeLiveServerSkills).toBe(true);
+      expect(args.skills.runtime).toEqual({ kind: "agent" });
+      expect(args.skills.set.standaloneSkills).toEqual([]);
+      expect(args.skills.agent).toEqual({ kind: "live" });
     });
 
     it("loses the turn's project skills, and nothing else, when the catalog fails", async () => {
@@ -1699,9 +1699,9 @@ describe("web routes — chat-v2 hosted mode", () => {
       // The shared setup retains the connected server set even if project
       // skills are unavailable.
       const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-      expect(args.skillsSource).toMatchObject({
-        kind: "resolved",
-        capabilities: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
+      expect(args.skills).toMatchObject({
+        runtime: { kind: "agent" },
+        set: { standaloneSkills: [], effectiveServerIds: ["server-1"] },
       });
     });
   });

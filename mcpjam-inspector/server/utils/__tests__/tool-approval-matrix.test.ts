@@ -53,7 +53,14 @@ import { buildBrowserTools } from "../built-in-tools/browser";
 import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
 import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
-import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
+import {
+  createEffectiveSkillTools,
+  getEffectiveSkillToolsAndPrompt,
+} from "../computers/effective-skill-tools";
+import {
+  buildLiveEffectiveCapabilities,
+  withLiveServerSkills,
+} from "../../services/environments/effective-capabilities";
 import { handleLocalOrgChatModel } from "../org-model-stream-handler";
 import { applyActingServerSkillGate } from "../server-skill-acting-gate";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner";
@@ -306,6 +313,38 @@ function effectiveSkillTools(opts: { serverOrigin: boolean }) {
       ? new Set([SERVER_SKILL_REF])
       : new Set<string>(),
   }) as unknown as ToolSet;
+}
+
+/**
+ * A live turn's skill tools with one connected server's skill in the set.
+ * "Live Billing" slugs to the ref below.
+ */
+const LIVE_SERVER_SKILL_REF = "live-billing/refunds";
+function liveServerSkillTools(): ToolSet {
+  const uri = "skill://live/refunds/SKILL.md";
+  const set = withLiveServerSkills(buildLiveEffectiveCapabilities({}), {
+    manager: {} as never,
+    providers: [
+      {
+        serverId: "srv_live",
+        serverLabel: "Live Billing",
+        serverSlug: "live-billing",
+      },
+    ],
+    skills: [
+      {
+        serverId: "srv_live",
+        skillUri: uri,
+        name: "refunds",
+        description: "Refunds.",
+        frontmatter: { name: "refunds", description: "Refunds." },
+        resources: [{ uri, digest: `sha256:${"a".repeat(64)}` }],
+        ref: LIVE_SERVER_SKILL_REF,
+        serverLabel: "Live Billing",
+      },
+    ],
+  });
+  return getEffectiveSkillToolsAndPrompt(set).tools as ToolSet;
 }
 
 interface MatrixRow {
@@ -742,6 +781,23 @@ const MATRIX: MatrixRow[] = [
     },
   },
   {
+    // Floor: setting. A connected server's own skill on a live turn: SEP-2640
+    // asks for origin tagging on a load (the banner), not a prompt, so its
+    // load follows the switch like a Library skill's.
+    family: "live server skill ref",
+    name: "loadSkill",
+    input: { name: LIVE_SERVER_SKILL_REF },
+    tools: (flag) =>
+      applySkillToolApproval(
+        liveServerSkillTools() as unknown as Record<string, unknown>,
+        { pinned: false, requireToolApproval: flag },
+      ) as unknown as ToolSet,
+    expected: {
+      mcpjam: { on: "gate", off: "free" },
+      byok: { on: "gate", off: "free" },
+    },
+  },
+  {
     // Floor: never — never set on this family.
     family: "app_*",
     name: "app_ab12cd34",
@@ -845,9 +901,8 @@ describe("one mechanism", () => {
       it(`${row.family} · switch ${label} → both engines answer the same`, async () => {
         // A FRESH toolset per engine, as production gives each turn. Sharing
         // one would hand the same function-form declaration to two readers
-        // under the same `toolCallId`, and a second evaluation of the SEP-2640
-        // gate re-fetches the manifest and can overwrite the binding it exists
-        // to check — the hazard the memoisation test next door is about.
+        // under the same `toolCallId` — the case the memoisation test next
+        // door is about.
         const [mcpjam, byok] = [
           await mcpjamVerdict({
             name: row.name,
@@ -1172,11 +1227,10 @@ describe("toolCallNeedsApproval — the MCPJam gate", () => {
   });
 
   it("evaluates a function ONCE per tool call, however often it is asked", async () => {
-    // Not an optimization. The SEP-2640 declaration RECORDS the manifest
-    // digest `execute` re-checks, and this engine asks about the same call
-    // three times (emit gate, unresolved re-scan, auto-deny re-scan). A second
-    // evaluation would re-fetch the manifest and could overwrite the binding
-    // it exists to check.
+    // Not an optimization. A function-form declaration answers from the
+    // call's messages, and this engine asks about the same call three times
+    // (emit gate, unresolved re-scan, auto-deny re-scan). Each ask must get
+    // the answer the pill was sent, or not sent, on.
     let calls = 0;
     const tools = {
       loadSkill: {

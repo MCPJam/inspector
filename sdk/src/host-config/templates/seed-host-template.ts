@@ -550,6 +550,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 1.0,
         requireToolApproval: false,
       });
+      // Claude's default Tool access mode is Auto, represented by omission.
+      delete base.progressiveToolDiscovery;
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -796,6 +798,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 1.0,
         requireToolApproval: false,
       });
+      // Claude Desktop shares Claude's default Auto tool access mode.
+      delete base.progressiveToolDiscovery;
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -1070,10 +1074,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         elicitation: { form: {}, url: {} },
         extensions: { "io.modelcontextprotocol/tasks": {} },
       };
-      // The real Claude Code owns native tool discovery from the generated
-      // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
-      // so `search_mcp_tools` never looks like a Claude Code built-in.
-      base.progressiveToolDiscovery = false;
+      // Records Claude Code's default. The native harness owns discovery and
+      // the orchestrator disables MCPJam's meta-tools for harness turns.
+      base.progressiveToolDiscovery = true;
       // CLI client: no widget rendering, so `hostContext` stays the
       // empty object.
       //
@@ -1805,6 +1808,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
+        progressiveToolDiscovery: true,
         // Canonical id (anthropic/<slug>) so the chat-composer model
         // picker resolves it. Bare "claude-sonnet-4-5" never matched a
         // SUPPORTED_MODELS entry → silently fell back. Sonnet 4.5 is in
@@ -1952,6 +1956,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // surface colors + the shimmering "Thinking" indicator). See
         // CODEX_HOST_STYLE in client-styles/built-ins.ts.
         hostStyle: "codex",
+        progressiveToolDiscovery: true,
         // Canonical hosted id so the chat-composer model picker resolves it.
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
@@ -2137,7 +2142,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "copilot-cli",
         computer: { kind: "personal" },
       }),
-      progressiveToolDiscovery: false,
+      // Native Copilot CLI enables search automatically above ~30 tools.
+      progressiveToolDiscovery: undefined,
       clientCapabilities: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
@@ -2401,6 +2407,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "vscode",
+        // Tool search defaults on for supported Claude models.
+        progressiveToolDiscovery: true,
         // VS Code Copilot Chat offers both OpenAI and Anthropic models;
         // default to the same guest-allowed Anthropic model as Cursor
         // (Sonnet 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App

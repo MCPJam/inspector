@@ -47,7 +47,9 @@ const {
   acquirePlaygroundHarnessBoxMock,
   releaseBoxMock,
   playgroundCredentialRefusalMock,
+  listCloudRuntimeSkillsMock,
   backend,
+  environmentSets,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -63,7 +65,9 @@ const {
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
   playgroundCredentialRefusalMock: vi.fn(),
+  listCloudRuntimeSkillsMock: vi.fn(),
   backend: { chatEnvironments: true },
+  environmentSets: { resolve: false },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
@@ -150,23 +154,41 @@ vi.mock("../../../utils/chat-ingestion.js", () => ({
 }));
 
 vi.mock("../../../utils/computers/cloud-skill-tools.js", () => ({
-  listCloudRuntimeSkills: async () => [],
+  listCloudRuntimeSkills: (...args: unknown[]) =>
+    listCloudRuntimeSkillsMock(...args),
 }));
 
 vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
 }));
 
-vi.mock("../../../services/environments/effective-capabilities.js", () => ({
-  resolveEffectiveCapabilities: () => undefined,
-  buildLiveEffectiveCapabilities: () => undefined,
-}));
+// The real set builders: every turn plans its skills from one. An
+// environment's own set is stubbed out unless a test resolves it.
+vi.mock(
+  "../../../services/environments/effective-capabilities.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../../services/environments/effective-capabilities.js")
+      >();
+    return {
+      ...actual,
+      resolveEffectiveCapabilities: (
+        ...args: Parameters<typeof actual.resolveEffectiveCapabilities>
+      ) =>
+        environmentSets.resolve
+          ? actual.resolveEffectiveCapabilities(...args)
+          : undefined,
+    };
+  },
+);
 
 vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},
 }));
 
 import chatSessions from "../chat-sessions.js";
+import type { TurnSkills } from "../../../services/environments/turn-skills.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
@@ -229,6 +251,8 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   vi.clearAllMocks();
   backend.chatEnvironments = true;
+  environmentSets.resolve = false;
+  listCloudRuntimeSkillsMock.mockResolvedValue([]);
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex.test";
   // Everything `isComputersDataPlaneConfigured()` reads. Set here rather than
@@ -1089,6 +1113,38 @@ describe("an environment's skills reach the engine that runs", () => {
     expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
       expect.objectContaining({ runtimeSkillsOverride: [ENV_SKILL] }),
     );
+  });
+
+  it("plans an EMULATED turn's skills from the environment's set, not the project catalog", async () => {
+    environmentSets.resolve = true;
+    listCloudRuntimeSkillsMock.mockResolvedValue([
+      {
+        skillId: "sk_project",
+        ref: "triage",
+        name: "triage",
+        description: "the project's own",
+        content: "# triage",
+        aggregateHash: "hash_2",
+        channels: [],
+      },
+    ]);
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({}),
+      skills: [ENV_SKILL],
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("emulated");
+    const [{ skills }] = prepareChatV2Mock.mock.calls.at(-1) as [
+      { skills: TurnSkills },
+    ];
+    // An environment's server skills were captured with it, so its plan adds
+    // no live ones, and the project's pool is never read.
+    expect(skills.agent).toEqual({ kind: "environment" });
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_env"]);
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
   it("delivers an environment's EMPTY set as empty rather than falling back", async () => {

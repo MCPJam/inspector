@@ -79,6 +79,11 @@ export interface RunPinnedSkill {
   skillUri?: string;
   serverSkillVersionNumber?: number;
   serverSkillCapturedAt?: number;
+  /** Which revision of an authored skill this is, and whether the
+   *  environment named that revision itself. */
+  projectSkillVersionId?: string;
+  projectSkillVersionNumber?: number;
+  versionPinned?: boolean;
   name: string;
   description: string;
   content: string;
@@ -161,6 +166,60 @@ function isServerSkillPin(pin: RunPinnedSkill): boolean {
     pin.serverSkillId !== undefined ||
     (pin.channels ?? []).includes("mcp-server")
   );
+}
+
+/**
+ * The id a pin goes by in the run's capability set. An older pin may carry no
+ * `skillId`, and the set keys attribution and collision reporting by it, so it
+ * gets a stable stand-in from its ref rather than colliding on `undefined`.
+ */
+export function pinnedSkillId(pin: RunPinnedSkill): string {
+  return (
+    (isServerSkillPin(pin) ? pin.serverSkillId : pin.skillId) ??
+    `pin:${pin.modelRef ?? pin.name}`
+  );
+}
+
+/**
+ * The backend's `pinnedSkillMetaWireValidator` fields beyond the four every
+ * row has. Listed rather than spread: that validator rejects any other field,
+ * and a pin also carries its body and signed file URLs.
+ */
+const PINNED_SKILL_META_FIELDS = [
+  "skillId",
+  "serverSkillId",
+  "serverSkillVersionId",
+  "serverId",
+  "serverLabel",
+  "skillUri",
+  "serverSkillVersionNumber",
+  "serverSkillCapturedAt",
+  "projectSkillVersionId",
+  "projectSkillVersionNumber",
+  "versionPinned",
+  "aggregateHash",
+  "modelRef",
+  "channels",
+] as const satisfies ReadonlyArray<keyof RunPinnedSkill>;
+
+/**
+ * A pin's metadata row, as a turn's `skillsAtTurn` records it. None without
+ * `sharing`, which the row requires and an older backend does not send.
+ */
+export function pinnedSkillMeta(
+  pin: RunPinnedSkill
+): Record<string, unknown> | undefined {
+  if (!pin.sharing) return undefined;
+  const row: Record<string, unknown> = {
+    name: pin.name,
+    description: pin.description,
+    contentHash: pin.contentHash,
+    sharing: pin.sharing,
+  };
+  for (const field of PINNED_SKILL_META_FIELDS) {
+    if (pin[field] !== undefined) row[field] = pin[field];
+  }
+  return row;
 }
 
 /**
@@ -323,10 +382,7 @@ export function buildRunCapabilitySet(args: {
         })),
       },
       skills: regularPins.map((pin) => ({
-        // A pre-BE-5 pin may carry no `skillId`. INS-3 keys attribution and
-        // collision reporting by it, so mint a stable stand-in from the ref
-        // rather than colliding every such pin on `undefined`.
-        skillId: pin.skillId ?? `pin:${pin.modelRef ?? pin.name}`,
+        skillId: pinnedSkillId(pin),
         name: pin.name,
         description: pin.description,
         content: pin.content,

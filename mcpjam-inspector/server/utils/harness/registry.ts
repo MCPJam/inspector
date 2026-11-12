@@ -852,12 +852,17 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // "allow-reads", NOT "allow-edits" — and the difference is what makes MCP
   // tools approvable at all.
   //
-  // The adapter's in-sandbox bridge routes EVERY tool call through a
-  // `canUseTool` callback before the CLI may run it, MCP tools included: it
+  // Not every tool call reaches the host. Under "allow-all" the adapter's
+  // in-sandbox bridge runs the CLI with `bypassPermissions` and no `canUseTool`
+  // callback. Under the other modes the CLI calls `canUseTool` only for a call
+  // its own permission check would ask about. The callback allows MCPJam's host
+  // tools (`mcp__harness-tools__*`) without asking; for any other tool the
+  // bridge's `nativeToolRequiresApproval` decides by kind, and a gated call
   // emits `tool-approval-request` over the bridge socket and awaits the host's
-  // `submitToolApproval`. Which calls reach that pause is decided by the
-  // bridge's `nativeToolRequiresApproval`, and the load-bearing line is its
-  // default: a tool name it does not recognize is treated as kind "edit".
+  // `submitToolApproval`. Read-only kinds (Read, Glob, Grep, WebFetch,
+  // WebSearch, ReadMcpResource, Skill, …) are never gated. The load-bearing
+  // line is the kind table's default: a tool name it does not recognize is
+  // treated as kind "edit".
   // An external MCP tool (`mcp__<server>__<tool>`) is never in that table, so
   //   - "allow-all"   → never pauses.
   //   - "allow-edits" → pauses only on kind "bash", so MCP tools run free.

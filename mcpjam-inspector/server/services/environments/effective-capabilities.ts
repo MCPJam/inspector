@@ -40,6 +40,7 @@ import type {
   AttributedPluginVersion,
   PluginRuntimeAttribution,
 } from "./plugin-attribution.js";
+import type { LiveServerSkills } from "../../utils/computers/live-server-skills.js";
 
 /** Identity + reproducibility anchor of one version that contributed to a turn. */
 export interface RuntimePluginVersion {
@@ -185,6 +186,12 @@ export interface EffectiveCapabilitySet {
   serverSkills: RuntimeServerSkill[];
   /** Skills on the inspector's own filesystem. Empty in hosted deployments. */
   localSkills: RuntimeLocalSkill[];
+  /**
+   * The connected servers' own skills (SEP-2640), on a live turn's set once
+   * its servers are connected and listed ({@link withLiveServerSkills}).
+   * Read and verified when the model asks, never captured.
+   */
+  liveServerSkills?: LiveServerSkills;
   /** Every version that contributed to this turn, in pin order. */
   pluginVersions: RuntimePluginVersion[];
   problems: RuntimeCapabilityProblem[];
@@ -567,6 +574,36 @@ export function withLiveProjectSkills(
     localSkills: [...set.localSkills, ...localSkills],
     problems,
   };
+}
+
+/**
+ * A live turn's set with its connected servers' own skills added after its
+ * own, once the servers are connected and listed (`listLiveServerSkills`).
+ * They come last, so the set's own skills have first claim on the prompt's
+ * skill-list budget.
+ *
+ * The set's entries win, as in every builder here: a server skill whose ref
+ * another entry already holds is left out and reported. A server's slug is
+ * never `local`, so this happens only beside a captured copy of the same
+ * server's skill.
+ */
+export function withLiveServerSkills(
+  set: EffectiveCapabilitySet,
+  live: LiveServerSkills,
+): EffectiveCapabilitySet {
+  const usedRefs = new Set(allEffectiveSkills(set).map((skill) => skill.ref));
+  const problems = [...set.problems];
+  const skills = live.skills.filter((skill) => {
+    if (!usedRefs.has(skill.ref)) return true;
+    problems.push({
+      code: "skill_ref_collision",
+      message: `Two skills resolved to the reference "${skill.ref}"; only the first is loadable.`,
+      ref: skill.ref,
+      skillId: skill.skillUri,
+    });
+    return false;
+  });
+  return { ...set, liveServerSkills: { ...live, skills }, problems };
 }
 
 export function allEffectiveSkills(
