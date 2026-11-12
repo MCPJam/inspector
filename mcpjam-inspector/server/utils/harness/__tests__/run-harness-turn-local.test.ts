@@ -369,6 +369,22 @@ describe("runHarnessTurn local continuity", () => {
     }
   });
 
+  it("runs the turn through when the box write's report throws", async () => {
+    // The report runs before the session's cleanup is armed, so a throw from
+    // it must not end the turn there.
+    harnessState.invokeSandboxCallback = true;
+    harnessState.supportsSkills = true;
+    const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
+    const onBoxSkillsWritten = vi.fn(() => {
+      throw new Error("report failed");
+    });
+    const onEngineError = vi.fn();
+    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
+    expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(harnessState.streamStarted).toHaveBeenCalled();
+  });
+
   it("fails the turn before the model runs when the box writer's SKILL.md step throws", async () => {
     // The step throws only when it can neither rewrite nor remove a SKILL.md
     // that may grant tools. The turn must stop, not swallow it, and the

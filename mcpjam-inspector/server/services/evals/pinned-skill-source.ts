@@ -1,7 +1,8 @@
 /**
  * Turn a run's COMMITTED skill pins into the two frozen-skill channels the
- * runner consumes. Shared by suite runs (pins frozen on the run snapshot) and
- * environment quick runs (pins frozen on each committed iteration), so the two
+ * runner consumes. Shared by suite runs and their replays (pins frozen on the
+ * run snapshot), environment quick runs (pins frozen on each committed
+ * iteration) and swarm targets (pins frozen on the swarm's snapshot), so the
  * surfaces cannot drift in how a pin becomes a skill.
  *
  * Strict throughout — every failure throws before any model call:
@@ -10,7 +11,7 @@
  *     file");
  *   - the harness shape downloads those same files, here in preparation rather
  *     than per iteration.
- * A run stopped here reports its skills-delivered event as `failed`.
+ * An eval run stopped here reports its skills-delivered event as `failed`.
  *
  * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
  * `[]` (the harness selects its pinned source by presence, and `undefined`
@@ -47,6 +48,13 @@ export async function buildPinnedSkillSource(args: {
   /** The committed pins, content joined. `[]` means "delivers no skills". */
   pins: readonly RunPinnedSkill[];
   /**
+   * The copies a harness writes to its box, one per pin in pin order, when the
+   * caller fetched them itself: a swarm target's, which the swarm runner
+   * fetches and caches by content. Absent: built from the pins here, with
+   * every supporting file downloaded.
+   */
+  harnessSkills?: readonly PinnedSkillArtifact[];
+  /**
    * The plugin versions the commit recorded — the snapshot's own record, never
    * re-resolved to a plugin's active version.
    */
@@ -57,12 +65,17 @@ export async function buildPinnedSkillSource(args: {
   effectiveServerIds: readonly string[];
   /** Display names index-aligned with `effectiveServerIds`; may be empty. */
   serverNames?: readonly string[];
+  /**
+   * False for a swarm target: a failure here reports an eval run's
+   * skills-delivered event, and swarm turns report none yet.
+   */
+  reportsFailure?: boolean;
 }): Promise<BuiltPinnedSkillSource> {
   try {
     assertPinnedSkillFilesReachable(args.pins);
-    const pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
-      args.pins,
-    );
+    const pinnedHarnessSkills = args.harnessSkills
+      ? [...args.harnessSkills]
+      : await runPinnedSkillsToHarnessArtifacts(args.pins);
     return {
       pinnedHarnessSkills,
       pinnedSkillSource: {
@@ -82,7 +95,9 @@ export async function buildPinnedSkillSource(args: {
       },
     };
   } catch (error) {
-    reportSkillsUndelivered("eval", args.pins.length);
+    if (args.reportsFailure !== false) {
+      reportSkillsUndelivered("eval", args.pins.length);
+    }
     throw error;
   }
 }
