@@ -63,6 +63,8 @@ export type GuestSessionFetchResult =
   | {
       kind: "miss";
       setCookies: string[];
+      /** 404 when the miss is an upstream 404 on `lookup_only`, not a 204. */
+      upstreamStatus?: 404;
     }
   | {
       kind: "error";
@@ -275,7 +277,7 @@ export async function fetchGuestSession(
       return { kind: "miss", setCookies };
     }
     if (response.status === 404 && mode === "lookup_only") {
-      return { kind: "miss", setCookies };
+      return { kind: "miss", setCookies, upstreamStatus: 404 };
     }
 
     if (!response.ok) {

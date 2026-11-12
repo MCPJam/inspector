@@ -357,12 +357,11 @@ export function useEnsureDbUser() {
             if (cancelled || activeEnsureIdentityRef.current !== identityKey) {
               return;
             }
-            // The cookie belongs to another guest, so the marked guest can
-            // never be promoted from this browser; drop its marker so later
-            // sign-ins skip the lookup. A null is not proof the guest is gone
-            // (the server turns an upstream 404 into a miss), and a failed
-            // lookup throws, so both keep the marker.
-            if (guestId !== null && guestId !== markedGuestId) {
+            // No usable guest, or the cookie belongs to another one: the
+            // marked guest can never be promoted from this browser, so drop
+            // its marker and later sign-ins skip the lookup. A failed lookup
+            // throws and keeps it.
+            if (guestId !== markedGuestId) {
               clearGuestActivation(markedGuestId);
             }
           } catch (err) {
@@ -457,9 +456,9 @@ export function useEnsureDbUser() {
       if (isWorkOsAuth && guestProofJwt) {
         try {
           // The marker never expires on its own; left set, every later
-          // sign-in would wait on the guest lookup again. Only a confirmed
-          // revoke drops it: a cookie that survived a failed request is
-          // still an activated guest.
+          // sign-in would wait on the guest lookup again. Any 2xx expires
+          // the cookie, so it drops the marker; a cookie that survived a
+          // failed request is still an activated guest.
           if (await revokeGuestSessionAndCookie() && promotionGuestId) {
             clearGuestActivation(promotionGuestId);
           }

@@ -275,6 +275,27 @@ describe("POST /guest-session", () => {
     expect(res.status).toBe(204);
   });
 
+  // The browser reads a 204 as "no guest" and drops the guest's promotion
+  // marker, so a 404 that may be a misrouted upstream must not become one.
+  it("answers an upstream 404 on lookup_only as a failure, not a 204", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 404 })) as typeof fetch;
+
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "lookup_only" }),
+    });
+
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { details?: Record<string, unknown> };
+    expect(body.details).toMatchObject({
+      reason: "upstream_status",
+      upstreamStatus: 404,
+    });
+  });
+
   it("returns 403 with passthrough Set-Cookie when upstream revokes", async () => {
     const expiredCookie =
       "__Host-mcpjam_guest_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";

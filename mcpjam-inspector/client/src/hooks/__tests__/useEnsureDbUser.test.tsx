@@ -509,7 +509,7 @@ describe("useEnsureDbUser", () => {
     );
   });
 
-  it("keeps the marker when the promoted guest's cookie revoke is not confirmed", async () => {
+  it("keeps the marker when the promoted guest's cookie revoke fails", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.getExistingGuestId.mockResolvedValue("guest-activated");
@@ -525,9 +525,7 @@ describe("useEnsureDbUser", () => {
     expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
   });
 
-  // The server answers an upstream 404 on lookup_only with the same 204 as
-  // a real miss, so a null cannot prove the marked guest is gone.
-  it("keeps the marker when the lookup finds no guest cookie", async () => {
+  it("clears the marker when the lookup finds no guest", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.getActivatedGuestId.mockReturnValue("guest-marked");
@@ -536,7 +534,9 @@ describe("useEnsureDbUser", () => {
     const { result } = renderHook(() => useEnsureDbUser());
 
     await waitFor(() => expect(result.current.isUserReady).toBe(true));
-    expect(mockState.clearGuestActivation).not.toHaveBeenCalled();
+    expect(mockState.clearGuestActivation).toHaveBeenCalledExactlyOnceWith(
+      "guest-marked",
+    );
     expect(mockState.getGuestPromotionProof).not.toHaveBeenCalled();
   });
 

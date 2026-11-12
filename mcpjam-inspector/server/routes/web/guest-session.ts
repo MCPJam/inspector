@@ -170,7 +170,16 @@ guestSession.post("/", async (c) => {
   }
 
   if (result.kind === "miss") {
-    return c.body(null, 204);
+    // The browser drops a guest's promotion marker on a 204, so an upstream
+    // 404 (possibly a misrouted or redeploying upstream) answers as a failure.
+    if (result.upstreamStatus === undefined) return c.body(null, 204);
+    result = {
+      kind: "error",
+      status: 503,
+      setCookies: result.setCookies,
+      reason: "upstream_status",
+      upstreamStatus: result.upstreamStatus,
+    };
   }
 
   if (result.status === 403 && result.guestAccessDisabled) {

@@ -678,6 +678,33 @@ describe("guest-session module", () => {
     });
   });
 
+  describe("revokeGuestSessionAndCookie", () => {
+    // After a promotion, ensureUser has already revoked the guest's rows, so
+    // the backend answers `revoked: false` while still expiring the cookie.
+    it("reports success on a 2xx even when no row was left to revoke", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ revoked: false }),
+      } as Response);
+
+      await expect(guestSession.revokeGuestSessionAndCookie()).resolves.toBe(
+        true,
+      );
+    });
+
+    it("reports failure when the revoke request fails", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(global.fetch).mockRejectedValue(
+        new TypeError("Failed to fetch"),
+      );
+
+      await expect(guestSession.revokeGuestSessionAndCookie()).resolves.toBe(
+        false,
+      );
+    });
+  });
+
   describe("clearGuestActivation", () => {
     it("clears only the marker of the given guest", () => {
       guestSession.markGuestActivated("guest-new");
@@ -699,6 +726,48 @@ describe("guest-session module", () => {
       } as Response);
 
       await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("returns null when the cookie's guest is revoked", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: { get: () => null },
+        json: async () => ({
+          code: "FORBIDDEN",
+          message: "Guest session revoked.",
+        }),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("returns null when guest access is turned off", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_ACCESS_DISABLED" : null,
+        },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    it("throws on a server failure so callers can keep the activation marker", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        headers: { get: () => null },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(/503/);
     });
 
     it("throws on a failed lookup so callers can keep the activation marker", async () => {

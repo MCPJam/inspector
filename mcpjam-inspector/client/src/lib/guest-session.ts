@@ -602,12 +602,19 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
   return session?.token ?? null;
 }
 
+/** A refusal that a retry will not change, unlike a rate limit or an outage. */
+function isFinalGuestRefusal(error: unknown): boolean {
+  return error instanceof GuestSessionRefusedError
+    ? error.reason === "guest_access_disabled"
+    : error instanceof GuestSessionRequestError && error.status === 403;
+}
+
 /**
  * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
  * minting a new guest. Prefers the in-memory cache (the common same-tab
  * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
- * null when the server answers that there is no guest (its 204 also covers an
- * upstream 404), and throws on a failed lookup.
+ * null when the server answers that there is no usable guest: a 204, a
+ * revoked guest, or guest access turned off. Throws on a failed lookup.
  *
  * Used by the promotion path to look up the activation marker for the cookie
  * actually present, so an incidental document-bootstrap cookie (never
@@ -618,7 +625,10 @@ export async function getExistingGuestId(): Promise<string | null> {
   if (cached?.guestId) {
     return cached.guestId;
   }
-  const token = await getExistingGuestBearerToken();
+  const token = await getExistingGuestBearerToken().catch((error: unknown) => {
+    if (isFinalGuestRefusal(error)) return null;
+    throw error;
+  });
   if (token === null) return null;
   const guestId = getCachedGuestSession()?.guestId;
   // A session cleared while the lookup was in flight is not a confirmed miss.
@@ -650,15 +660,14 @@ export function clearGuestSession(): void {
  * who later signs out cannot resurrect the previous guest identity by
  * replaying the cookie.
  *
- * Idempotent: returns false if no cookie was present or revocation
- * failed; returns true on success. Always also clears the in-memory
- * cache so subsequent guest-token reads in this tab fall through to
- * a fresh `lookup_or_create` call.
+ * Idempotent. Returns true on any 2xx, which always expires the cookie even
+ * when the body says `revoked: false` (no cookie, or rows a promotion already
+ * revoked), and false when the request failed. Always clears the in-memory
+ * cache so later guest-token reads fall through to `lookup_or_create`.
  */
 export async function revokeGuestSessionAndCookie(): Promise<boolean> {
   const guestId = cachedSession?.guestId;
   const finishTransition = guestId ? guestTabRecovery.begin(guestId) : undefined;
-  let revoked = false;
   let succeeded = false;
   try {
     const response = await fetch("/api/web/guest-session/revoke", {
@@ -666,22 +675,14 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
     });
-    if (response.ok) {
-      succeeded = true;
-      try {
-        const body = (await response.json()) as { revoked?: unknown };
-        revoked = body?.revoked === true;
-      } catch {
-        revoked = false;
-      }
-    }
+    succeeded = response.ok;
   } catch (error) {
     console.error("Failed to revoke guest session:", error);
   } finally {
     clearGuestSession();
     finishTransition?.(succeeded);
   }
-  return revoked;
+  return succeeded;
 }
 
 /**
