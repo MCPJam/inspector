@@ -158,22 +158,25 @@ describe("startSessionSnapshotSave", () => {
         if (!String(input).endsWith("/snapshot/begin")) {
           return new Response("not found", { status: 404 });
         }
-        begins.push(JSON.parse(String(init?.body)).chatSessionId);
+        const body = JSON.parse(String(init?.body));
+        begins.push(`${body.chatSessionId}@${body.stateVersion}`);
         await new Promise<void>((resolve) => release.push(resolve));
         return Response.json({ ok: true, enabled: false, reason: "disabled" });
       },
     ) as typeof fetch;
-    const chat = (id: string) =>
-      args({ owner: { ...OWNER, chatSessionId: id } });
+    const chat = (id: string, stateVersion = 3) =>
+      args({ owner: { ...OWNER, chatSessionId: id }, stateVersion });
 
     startSessionSnapshotSave(chat("a"));
     startSessionSnapshotSave(chat("b"));
-    startSessionSnapshotSave(chat("c"));
-    startSessionSnapshotSave(chat("c"));
-    await vi.waitFor(() => expect(begins).toEqual(["a", "b"]));
+    startSessionSnapshotSave(chat("c", 4));
+    startSessionSnapshotSave(chat("c", 6));
+    // An older turn's save that arrives late never displaces a newer one.
+    startSessionSnapshotSave(chat("c", 5));
+    await vi.waitFor(() => expect(begins).toEqual(["a@3", "b@3"]));
 
     release.shift()!();
-    await vi.waitFor(() => expect(begins).toEqual(["a", "b", "c"]));
+    await vi.waitFor(() => expect(begins).toEqual(["a@3", "b@3", "c@6"]));
     release.splice(0).forEach((resolve) => resolve());
     await vi.waitFor(() => expect(release).toHaveLength(0));
   });
