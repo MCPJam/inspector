@@ -261,6 +261,17 @@ jobs:
         if: matrix.node_arch != ''
         run: test "$(node -p process.arch)" = "${{ matrix.node_arch }}"
 
+      # The vendor CLI's first `git` goes through xcrun, which asks xcodebuild
+      # for the SDK. Under Rosetta that first x64 launch is translated on the
+      # spot, slowly enough that a scenario can stop the session while those
+      # lookups are still starting, and they outlive stop(). `npm ci` used to
+      # warm them as a side effect. An Intel Mac never translates.
+      - name: Warm the x64 developer tools
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/xcrun --show-sdk-path
+          arch -x86_64 /usr/bin/git --version
+
       # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
       # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
       # SDK's extract script to run. pnpm 9 reads the same file and fails with
@@ -762,6 +773,12 @@ jobs:
       - name: Check the leg runs the target's architecture
         if: matrix.node_arch != ''
         run: test "$(node -p process.arch)" = "${{ matrix.node_arch }}"
+      # As in `scenarios`: translate the developer tools before a session needs them.
+      - name: Warm the x64 developer tools
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/xcrun --show-sdk-path
+          arch -x86_64 /usr/bin/git --version
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
