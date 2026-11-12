@@ -71,6 +71,24 @@ describe("seedHostTemplate", () => {
     }
   );
 
+  // Both follow Claude's embedded-sites doc, so a client seeded here loads a
+  // view's declared frame origins exactly when a catalog-created one does.
+  it.each(["claude", "claude-desktop"] as const)(
+    "seeds the %s frame domains the bundled host catalog ships",
+    (id) => {
+      type Overrides = { cspFrameDomains?: boolean };
+      const catalogOverrides = (
+        BUNDLED_HOST_COMPAT_CATALOG.hostsById as Record<
+          string,
+          { mcpProfile?: { apps?: { mcpAppsOverrides?: Overrides } } }
+        >
+      )[id]?.mcpProfile?.apps?.mcpAppsOverrides;
+      const seeded = seedHostTemplate(id).mcpProfile?.apps?.mcpAppsOverrides;
+      expect(seeded?.cspFrameDomains).toBe(true);
+      expect(seeded?.cspFrameDomains).toBe(catalogOverrides?.cspFrameDomains);
+    }
+  );
+
   it("seeds the documented sign-in knobs, and only on Claude, Claude Code and ChatGPT", () => {
     const KEYS = [
       "unauthorizedChallenge",
@@ -193,7 +211,7 @@ describe("seedHostTemplate", () => {
     expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
   });
 
-  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+  it("keeps Claude protocol and app capabilities faithful to the probe, with frameDomains from Claude's docs", () => {
     const config = seedHostTemplate("claude", { theme: "dark" });
     const profile = config.mcpProfile;
 
@@ -215,7 +233,7 @@ describe("seedHostTemplate", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
+      cspFrameDomains: true,
       cspBaseUriDomains: false,
       requestTeardown: false,
       resourceCacheTtl: true,

@@ -26,11 +26,12 @@ import type {
 } from "./turn-skills.js";
 
 /**
- * Where the turn ran. A surface joins when its turns plan with
- * `resolveTurnSkills`: add it here and to `surface` in the strict schema, then
- * report each turn with {@link reportSkillsDelivered}.
+ * Where the turn ran: an eval iteration, a Playground chat, a User Testing
+ * session (`scenario`) or chat over the API. A surface joins when its turns
+ * plan with `resolveTurnSkills`: add it here and to `surface` in the strict
+ * schema, then report each turn with {@link reportSkillsDelivered}.
  */
-export type SkillsDeliveredSurface = "eval";
+export type SkillsDeliveredSurface = "eval" | "playground" | "scenario" | "api";
 
 type SkillFamily = "library" | "plugin" | "mcp-server" | "local";
 

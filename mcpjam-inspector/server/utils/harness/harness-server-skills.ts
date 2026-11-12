@@ -96,6 +96,9 @@ export async function harnessServerSkills(
   args: {
     localUnattended: boolean;
     mode: HarnessSkillSource["mode"];
+    /** A live turn (`HarnessTurnSkills.live`): its servers are connected, so
+     *  their own skills are listed beside the captured ones. */
+    live: boolean;
     pinnedHarnessSkills?: readonly PinnedSkillArtifact[];
     /** An environment turn's set, which holds its captured server skills. */
     effectiveCapabilities?: EffectiveCapabilitySet;
@@ -116,16 +119,15 @@ export async function harnessServerSkills(
         : (args.effectiveCapabilities?.serverSkills ?? []);
   // Labelled by server id, as MCPJam's agent is when it has no labels: the id
   // is host-assigned, so a server can't choose the namespace its refs take.
-  const live =
-    args.mode === "live" || args.mode === "live_plus"
-      ? await listLiveServerSkills(
-          args.manager,
-          args.serverIds.map((serverId) => ({
-            serverId,
-            serverLabel: serverId,
-          })),
-        )
-      : undefined;
+  const live = args.live
+    ? await listLiveServerSkills(
+        args.manager,
+        args.serverIds.map((serverId) => ({
+          serverId,
+          serverLabel: serverId,
+        })),
+      )
+    : undefined;
   const set: EffectiveCapabilitySet = {
     ...buildLiveEffectiveCapabilities({}),
     serverSkills: captured,

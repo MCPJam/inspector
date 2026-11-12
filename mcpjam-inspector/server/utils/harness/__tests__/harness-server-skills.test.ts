@@ -82,6 +82,7 @@ describe("which turns serve server skills through the tools", () => {
     const run = await preparedRunSkills();
     const turn = {
       mode: "pinned" as const,
+      live: false,
       pinnedHarnessSkills: run.pinnedHarnessSkills,
       manager: NO_SERVERS,
       serverIds: [],
@@ -106,6 +107,7 @@ describe("whether the gate holds the turn", () => {
   it("does when the turn offers server skills", async () => {
     const turn = await serve({
       mode: "pinned",
+      live: false,
       pinnedHarnessSkills: (await preparedRunSkills()).pinnedHarnessSkills,
       manager: NO_SERVERS,
       serverIds: [],
@@ -127,6 +129,7 @@ describe("whether the gate holds the turn", () => {
     });
     const turn = await serve({
       mode: "live",
+      live: true,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [{ role: "user", content: [{ type: "text", text: picked }] }],
@@ -138,6 +141,7 @@ describe("whether the gate holds the turn", () => {
   it("does not otherwise, and the runtime keeps its own mode", async () => {
     const turn = await serve({
       mode: "live",
+      live: true,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
@@ -152,6 +156,7 @@ describe("the turn's box report", () => {
   it("names the captured skills the tools served", async () => {
     const turn = await serve({
       mode: "pinned",
+      live: false,
       pinnedHarnessSkills: (await preparedRunSkills()).pinnedHarnessSkills,
       manager: NO_SERVERS,
       serverIds: [],
@@ -166,6 +171,7 @@ describe("the turn's box report", () => {
   it("is the box writer's own when the tools served none", async () => {
     const turn = await serve({
       mode: "live",
+      live: true,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],
@@ -185,6 +191,7 @@ describe("a pinned run's server skills", () => {
     ]);
     return serve({
       mode: "pinned",
+      live: false,
       pinnedHarnessSkills: run.pinnedHarnessSkills,
       manager: NO_SERVERS,
       serverIds: [],
@@ -262,6 +269,7 @@ describe("an environment turn's captured server skills", () => {
     const { spec, attribution } = evalEnvironment();
     const turn = await serve({
       mode: "environment",
+      live: false,
       effectiveCapabilities: resolveEffectiveCapabilities(spec, attribution),
       manager: NO_SERVERS,
       serverIds: [],
@@ -272,6 +280,39 @@ describe("an environment turn's captured server skills", () => {
       { skillId: "ss_docs_search", name: "search" },
     ]);
   });
+
+  it("adds the connected servers' own skills on a live turn only", async () => {
+    const { spec, attribution } = evalEnvironment();
+    const effectiveCapabilities = resolveEffectiveCapabilities(
+      spec,
+      attribution,
+    );
+    const live = await serve({
+      mode: "environment",
+      live: true,
+      effectiveCapabilities,
+      manager: await makeServerSkillWire(),
+      serverIds: ["srv1"],
+      messages: [],
+    });
+    expect(live.promptSection).toContain("**docs/search**");
+    expect(live.promptSection).toContain("**srv1/refunds**");
+    // Only the captured skill counts against the environment's plan.
+    expect(live.served).toEqual([
+      { skillId: "ss_docs_search", name: "search" },
+    ]);
+
+    const named = await serve({
+      mode: "environment",
+      live: false,
+      effectiveCapabilities,
+      manager: await makeServerSkillWire(),
+      serverIds: ["srv1"],
+      messages: [],
+    });
+    expect(named.promptSection).toContain("**docs/search**");
+    expect(named.promptSection).not.toContain("srv1/refunds");
+  });
 });
 
 describe("a live turn's connected servers' skills", () => {
@@ -279,6 +320,7 @@ describe("a live turn's connected servers' skills", () => {
     const wire = await makeServerSkillWire();
     const turn = await serve({
       mode: "live",
+      live: true,
       manager: wire,
       serverIds: ["srv1"],
       messages: [],
@@ -296,6 +338,7 @@ describe("a live turn's connected servers' skills", () => {
   it("serves nothing, and offers no tools, when no server serves skills", async () => {
     const turn = await serve({
       mode: "live",
+      live: true,
       manager: await makeServerSkillWire({ active: false }),
       serverIds: ["srv1"],
       messages: [],
@@ -307,6 +350,7 @@ describe("a live turn's connected servers' skills", () => {
   it("refuses a file read on a later turn once the server changed the skill", async () => {
     const first = await serve({
       mode: "live",
+      live: true,
       manager: await makeServerSkillWire(),
       serverIds: ["srv1"],
       messages: [],
@@ -336,6 +380,7 @@ describe("a live turn's connected servers' skills", () => {
     }));
     const next = await serve({
       mode: "live",
+      live: true,
       manager: changed,
       serverIds: ["srv1"],
       messages: first.transcript.messages(),
@@ -357,6 +402,7 @@ describe("joining the turn's host tools", () => {
     const run = await preparedRunSkills();
     const turn = await serve({
       mode: "pinned",
+      live: false,
       pinnedHarnessSkills: run.pinnedHarnessSkills,
       manager: NO_SERVERS,
       serverIds: [],

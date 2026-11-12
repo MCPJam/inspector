@@ -859,8 +859,8 @@ export async function runHarnessTurn(
     scenarioParticipant,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
-    includeProjectSkills,
     effectiveCapabilities,
+    liveTurn,
     environmentId,
     environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
@@ -1866,8 +1866,8 @@ export async function runHarnessTurn(
         pinnedHarnessSkills,
         serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
         runtimeSkillsOverride,
-        ...(includeProjectSkills ? { includeProjectSkills } : {}),
         ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+        liveTurn,
         // The turn already refused to start without both.
         project: {
           skills: () => fetchRuntimeSkills(authHeader, projectId, executionScope),
@@ -2019,6 +2019,7 @@ export async function runHarnessTurn(
         localUnattended:
           !!harnessExecutionTarget && localScope === "unattended",
         mode: turnSkills.mode,
+        live: turnSkills.live,
         pinnedHarnessSkills,
         effectiveCapabilities,
         manager: mcpClientManager,

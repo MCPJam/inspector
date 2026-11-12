@@ -39,7 +39,6 @@ import {
 } from "../../utils/harness/harness-server-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
-import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import {
   harnessTurnSkills,
   selectHarnessSkillSource,
@@ -325,13 +324,21 @@ function turnServerSkills(
   source: Parameters<typeof harnessTurnSkills>[0],
   environment?: EffectiveCapabilitySet,
 ) {
+  const selected = selectHarnessSkillSource(source);
+  // The set the turn carries: `runHarnessTurn` hands it to both the box and
+  // the tools.
+  const effectiveCapabilities = environment ?? source.effectiveCapabilities;
   return harnessServerSkills(getHarnessAdapter(harnessId), {
     localUnattended: false,
-    mode: selectHarnessSkillSource(source).mode,
+    mode: selected.mode,
+    // `HarnessTurnSkills.live`: the project's pool, or a client's environment.
+    live:
+      selected.mode === "live" ||
+      (selected.mode === "environment" && source.liveTurn === true),
     ...(source.pinnedHarnessSkills
       ? { pinnedHarnessSkills: source.pinnedHarnessSkills }
       : {}),
-    ...(environment ? { effectiveCapabilities: environment } : {}),
+    ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
     manager: NO_SERVERS,
     serverIds: [],
     messages: [],
@@ -455,42 +462,60 @@ export function evalEnvironment(): {
   };
 }
 
-/** A skill only its author sees, as a harness turn reads the caller's
- *  project pool (`listSkillsForRuntime`). */
-export function personalRuntimeSkill(): RuntimeSkill {
+/** A skill only its author sees, in the caller's own pool. */
+export function personalSkill(): RuntimeStandaloneSkill {
   return {
     skillId: "sk_my_notes",
+    ref: "my-notes",
     name: "my-notes",
     description: "My own notes.",
     content: "# My notes",
     aggregateHash: "agg-my-notes",
+    files: [],
+    channels: [],
   };
-}
-
-/** The same skill in the caller's live pool, as a turn's plan takes it. */
-export function personalSkill(): RuntimeStandaloneSkill {
-  const skill = personalRuntimeSkill();
-  return { ...skill, ref: skill.name, files: [], channels: [] };
 }
 
 /**
- * A live environment turn's skill source, as a harness turn reads it: the
- * environment's skills, or in live-plus mode a client's `pool` beside them.
+ * The eval fixture's environment as the hidden environment of a Playground
+ * client whose selection is all visible: the backend's scope adds the
+ * caller's visible skills after the row's own (`skillScope: 'visible'`), a
+ * personal one included.
  */
+export function visibleScopeEnvironment(): ReturnType<typeof evalEnvironment> {
+  const { spec, attribution } = evalEnvironment();
+  const mine = personalSkill();
+  return {
+    spec: {
+      ...spec,
+      environmentOrigin: "adhoc",
+      skills: [
+        ...(spec.skills ?? []),
+        {
+          skillId: mine.skillId,
+          name: mine.name,
+          description: mine.description,
+          content: "# My notes",
+          aggregateHash: mine.aggregateHash,
+          channels: ["host"],
+          provenance: {
+            skillId: mine.skillId,
+            name: mine.name,
+            sharing: "user",
+            channels: ["host"],
+            projectSkillVersionNumber: 4,
+          },
+          files: [],
+        },
+      ],
+    },
+    attribution,
+  };
+}
+
+/** A live environment turn's skill source, as a harness turn reads it. */
 export function liveTurnSource(
   spec: Pick<ResolvedEnvironmentRuntime, "skills">,
-  pool?: RuntimeSkill[],
 ): Parameters<typeof harnessTurnSkills>[0] {
-  return {
-    runtimeSkillsOverride: runtimeSkills(spec),
-    ...(pool
-      ? {
-          includeProjectSkills: true,
-          project: {
-            skills: async () => ({ ok: true as const, skills: pool }),
-            files: async () => ({ ok: true as const, files: [] }),
-          },
-        }
-      : {}),
-  };
+  return { runtimeSkillsOverride: runtimeSkills(spec) };
 }
