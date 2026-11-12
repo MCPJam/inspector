@@ -102,6 +102,15 @@ describe("App document admission route authority", () => {
     expect(calls.prepare.mock.calls[0][0].html).toBe(html);
   });
 
+  it("puts local App documents on the port the browser used for the Inspector", async () => {
+    const response = await app(true).request("http://127.0.0.1:8080/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ ...body(), projectId: "project", serverId: "server" }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.prepare.mock.calls[0][2]).toBe("8080");
+  });
+
   it("accepts exactly the route's 16MiB envelope and refuses one more byte", async () => {
     const json = JSON.stringify({ ...body(), projectId: "project", serverId: "server" });
     const envelope = json + " ".repeat(SANDBOX_VIEW_REQUEST_MAX_BYTES - Buffer.byteLength(json));
