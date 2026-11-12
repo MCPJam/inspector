@@ -152,7 +152,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
   {
     id: "credits-free-member",
     label: "Free, member",
-    note: "A member on Free (PLB-176). Cannot upgrade, so the action is a request to the owner: by email, or copied for Slack or browser Gmail.",
+    note: "A member on Free. Asks an owner to upgrade by email, or copies the request for Slack.",
     props: {
       ...CREDITS_SHARED,
       description:

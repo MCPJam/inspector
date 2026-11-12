@@ -217,7 +217,7 @@ describe("RequestUpgradeButton", () => {
     );
   });
 
-  it("says so when the copy fails instead of claiming it worked", async () => {
+  it("shows the request as selectable text when the clipboard refuses it", async () => {
     const user = userEvent.setup();
     copyToClipboardMock.mockResolvedValueOnce(false);
     render(
@@ -230,10 +230,26 @@ describe("RequestUpgradeButton", () => {
       />,
     );
 
+    expect(
+      screen.queryByTestId("request-upgrade-copy-fallback"),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByTestId("request-upgrade-copy"));
 
-    expect(screen.getByTestId("request-upgrade-copy")).toHaveTextContent(
-      "Couldn't copy",
+    // Never claims a copy that didn't happen, and leaves a way forward.
+    expect(screen.getByTestId("request-upgrade-copy")).not.toHaveTextContent(
+      "Copied",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Select the text below and copy it to send the request.",
+    );
+    const fallback = screen.getByRole("textbox", {
+      name: "Request to send to the owner",
+    }) as HTMLTextAreaElement;
+    expect(fallback.value).toContain(
+      "Upgrade request: MCPJam Team plan for Acme Robotics",
+    );
+    expect(fallback.value).toContain(
+      "1. Open MCPJam, go to Organizations, then Billing.",
     );
     expect(trackMock).toHaveBeenCalledWith(
       "plan_limit_upgrade_requested",

@@ -140,6 +140,7 @@ interface RequestUpgradeButtonProps {
   engagementContext?: CreditEngagementContext;
 }
 
+/** `failed` shows the request as selectable text, since the clipboard refused it. */
 type CopyState = "idle" | "copied" | "failed";
 
 /**
@@ -206,19 +207,27 @@ export function RequestUpgradeButton({
       ...extra,
     });
 
+  const { subject, body } = buildUpgradeRequestMessage(params);
+  const requestText = `${subject}\n\n${body}`;
+
   const handleCopy = async () => {
-    const { subject, body } = buildUpgradeRequestMessage(params);
-    const ok = await copyToClipboard(`${subject}\n\n${body}`);
+    const ok = await copyToClipboard(requestText);
     trackRequest("request_copied", { copy_succeeded: ok });
-    setCopyState(ok ? "copied" : "failed");
     if (resetTimer.current) clearTimeout(resetTimer.current);
+    if (!ok) {
+      // Stays open: the text below is the way forward when the clipboard is
+      // refused, so it must not vanish on a timer.
+      setCopyState("failed");
+      return;
+    }
+    setCopyState("copied");
     resetTimer.current = setTimeout(() => setCopyState("idle"), 2000);
   };
 
   return (
     <div className="space-y-3">
       <p
-        className="text-sm text-foreground"
+        className="text-sm text-muted-foreground"
         data-testid="request-upgrade-owners"
       >
         {describeRequestOwners(recipients)}
@@ -247,20 +256,28 @@ export function RequestUpgradeButton({
           ) : (
             <Copy aria-hidden="true" />
           )}
-          {copyState === "copied"
-            ? "Copied"
-            : copyState === "failed"
-              ? "Couldn't copy"
-              : "Copy request"}
+          {copyState === "copied" ? "Copied" : "Copy request"}
         </Button>
       </div>
       <span className="sr-only" aria-live="polite">
-        {copyState === "copied"
-          ? "Request copied to clipboard"
-          : copyState === "failed"
-            ? "Couldn't copy the request"
-            : ""}
+        {copyState === "copied" ? "Request copied to clipboard" : ""}
       </span>
+      {copyState === "failed" ? (
+        <div className="space-y-1.5" data-testid="request-upgrade-copy-fallback">
+          <p className="text-sm text-muted-foreground" role="status">
+            Select the text below and copy it to send the request.
+          </p>
+          <textarea
+            readOnly
+            autoFocus
+            rows={6}
+            value={requestText}
+            aria-label="Request to send to the owner"
+            onFocus={(event) => event.currentTarget.select()}
+            className="w-full resize-none rounded-md border bg-background p-2 font-mono text-xs"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
