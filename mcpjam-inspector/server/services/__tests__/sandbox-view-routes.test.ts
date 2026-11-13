@@ -175,6 +175,34 @@ describe("App document admission route authority", () => {
     expect(calls.prepare).not.toHaveBeenCalled();
   });
 
+  it("admits a saved App copy whose server is no longer connected", async () => {
+    // A saved copy carries no receipt: its bytes come from the saved run.
+    const response = await app().request("/api/apps/mcp-apps/view-admissions", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        ...body(),
+        source: { ...body().source, serverId: "gone" },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a live App read whose server is no longer connected", async () => {
+    const response = await app().request("/api/apps/mcp-apps/view-admissions", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        ...body(),
+        source: { ...body().source, serverId: "gone" },
+        sourceReceipt: "v1.live-read-receipt",
+      }),
+    });
+    expect(response.status).toBe(404);
+    expect(calls.prepare).not.toHaveBeenCalled();
+  });
+
   it("requires matching web server identity and reauthorizes every renewal", async () => {
     const instance = app(true);
     const url = "/api/web/apps/mcp-apps/view-admissions";

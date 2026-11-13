@@ -56,6 +56,7 @@ import {
 } from "./targets.js";
 import { isSelectablePack, manifestWithExpectedBundleDigest } from "./runtime-install.js";
 import { supportsOwnershipProof } from "./process-identity.js";
+import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 
 export type LocalHarnessUnavailableStatus =
   | "server-disabled"
@@ -188,7 +189,7 @@ export async function resolveLocalHarnessAvailability(
   if (!enabled) {
     return unavailable(
       "server-disabled",
-      `${query.target.harnessId === "codex" ? "Codex" : "Claude Code"} can’t run on this computer. Ask your MCPJam administrator to enable local execution.`,
+      `${harnessDisplayName(query.target.harnessId)} can’t run on this computer. Ask your MCPJam administrator to enable local execution.`,
     );
   }
   if (!isActorEligibleForLocalHarness(query.actor, query.scope)) {

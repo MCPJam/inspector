@@ -47,12 +47,13 @@ Per platform, for `local-native`:
 | darwin   | Yes            | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity                                                                                                                 |
 | win32    | Yes            | No process group; the verified `mcpjam-job-launcher.exe` inside the pack puts the tree in a Job Object with `KILL_ON_JOB_CLOSE`, and PowerShell's `Get-Process` gives a FILETIME birth identity. Refused on a machine whose pack lacks the launcher. Not filesystem or network isolation, same as the other two |
 
-Per harness:
+Per harness (each row is a definition in `runtimes/`; the runner reads everything it needs about a runtime from there):
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.162` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
 | codex       | Eligible (darwin-arm64, linux-x64), dark until conformance is recorded | Only on MCPJam's app-server adapter (`codex-appserver/`), never `@ai-sdk/harness-codex` (which refuses every mode but `allow-all`). Attended: `allow-reads`/`allow-edits` → Codex `untrusted`, real approval requests. Unattended: `allow-all` only inside Codex's own command sandbox with the explicit D2 policy, and only on targets in `unattendedSandboxTargets` (none yet). |
+| copilot-cli | Eligible (darwin, linux, win32), dark until conformance is recorded | MCPJam's bridge over `@github/copilot-sdk@1.0.11` and the pinned `@github/copilot@1.0.92`. The bridge turns off every built-in tool (`excludedTools: ["builtin:*"]`), so the CLI only calls the host tools and MCP servers a turn hands it, each under Tool Approval. Its model calls go through the local gateway with a session capability, never a key. Conformance: `run-gateway-turn.ts copilot-cli` |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
 `isolatedBackends` is empty for every harness: no backend has passed escape
@@ -64,7 +65,8 @@ native.**
 | Module                   | Responsibility                                                                                                               |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `targets.ts`             | The three execution targets, permission profiles, policy versions, and the honesty predicates                                |
-| `compatibility.ts`       | The Inspector-owned manifest. An adapter cannot self-assert local compatibility                                              |
+| `runtimes/<harnessId>.ts` | One definition per local runtime: its manifest, command shapes, layer files, rehash policy, vendor probe, reserved secret names, model credential and Windows shell. `runtimes/index.ts` lists the steps that make a runtime local |
+| `compatibility.ts`       | The manifest's shape and its resolution. Each manifest lives in its runtime's definition; an adapter cannot self-assert local compatibility |
 | `argv-policy.ts`         | Structural + capability checks on every argument the supervisor passes                                                       |
 | `command-translation.ts` | The closed adapter command grammar → structured operations. **No shell, ever**                                               |
 | `runtime-identity.ts`    | Managed-bundle resolution, the launch identity (`runtimeId`), system-install discovery, and re-verification before spawn     |
@@ -403,7 +405,9 @@ enforced in code, not by convention.
    (`runtime-compat.generated.json`, generated, never hand-typed). A release
    proves it: conformance evidence for the build's layer digest × each pack it
    may select × every advertised target (`check-local-harness-release.mjs
-   --evidence`), attested as `runtime-contract.json`. A pack becomes desired
+   --evidence`), recorded at the release commit or at one with the same
+   conformance inputs digest (`scripts/conformance-inputs-digest.mjs`), and
+   attested as `runtime-contract.json`. A pack becomes desired
    only through the version PR that pins it: `prepare-release.yml` runs
    `local-harness-pack-pipeline.yml` per harness and writes the pin once this
    layer passed conformance on the pack; the pack being replaced

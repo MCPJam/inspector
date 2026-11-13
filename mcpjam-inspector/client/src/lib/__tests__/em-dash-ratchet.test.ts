@@ -50,7 +50,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/chat-v2/thread/csp-workbench/BlockedRequestCard.tsx", 3],
   ["components/chat-v2/thread/csp-workbench/classify.ts", 2],
   ["components/chat-v2/thread/csp-workbench/OriginCard.tsx", 3],
-  ["components/chat-v2/thread/part-switch.tsx", 1],
   ["components/chat-v2/thread/parts/ask-user-part.tsx", 2],
   ["components/CiEvalsTab.tsx", 1],
   ["components/client-config/ClientConfigEditor.tsx", 8],
