@@ -144,6 +144,28 @@ function renderForm(
 }
 
 describe("SimpleCaseForm", () => {
+  it("offers the tool error switch when the editor can save it", async () => {
+    const user = userEvent.setup();
+    const onFailOnToolErrorChange = vi.fn();
+    render(
+      <SimpleCaseForm
+        steps={promptOnly}
+        onStepsChange={vi.fn()}
+        onMatchOptionsChange={vi.fn()}
+        onExpectedOutputChange={vi.fn()}
+        onPredicatesChange={vi.fn()}
+        onFailOnToolErrorChange={onFailOnToolErrorChange}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      }),
+    );
+    expect(onFailOnToolErrorChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("writes the capability and regression matchOptions trios", async () => {
     const user = userEvent.setup();
     const { onMatchOptionsChange } = renderForm({

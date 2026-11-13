@@ -172,6 +172,10 @@ import {
   type WidgetAssertion,
 } from "@/shared/steps";
 import { appendScenarioPredicatesAsAssertSteps } from "@/shared/predicate-migration";
+import {
+  failsOnToolError,
+  withFailOnToolError,
+} from "@/shared/tool-error-policy";
 
 /**
  * Seed the editor's `editForm.steps` from a test case. The backend stores
@@ -2015,6 +2019,10 @@ export function TestTemplateEditor({
     () => normalizeAdvancedConfig(currentTestCase?.advancedConfig),
     [currentTestCase],
   );
+  // `updateTestCase` keeps a field it is not sent and stores `null` as is, so
+  // clearing the case's last advanced setting has to send an empty object.
+  const advancedConfigForSave = (next: Record<string, unknown> | undefined) =>
+    next ?? (currentAdvancedConfig ? {} : undefined);
 
   // True when today's case scenario differs from the snapshot of the run being
   // replayed — drives the "edited since this run" banner on the read-only
@@ -2484,6 +2492,17 @@ export function TestTemplateEditor({
     setEditForm((current) => (current ? { ...current, steps: next } : current));
   }, []);
 
+  const setFailOnToolError = useCallback((next: boolean) => {
+    setEditForm((current) =>
+      current
+        ? {
+            ...current,
+            advancedConfig: withFailOnToolError(current.advancedConfig, next),
+          }
+        : current,
+    );
+  }, []);
+
   // Latest `steps` mirrored into a ref so the recorder's append (a stable
   // callback) can read the current step list without putting `editForm` in its
   // deps — that would churn `previewRecorder`'s identity on every keystroke and
@@ -2883,6 +2902,7 @@ export function TestTemplateEditor({
         // And for the judge opt-out, so turning the switch back off actually
         // removes the stored override rather than leaving it in place.
         judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
+        advancedConfig: advancedConfigForSave(savePayload.advancedConfig),
       });
       track("eval_test_case_edited", {
         location: "test_template_editor",
@@ -3065,6 +3085,7 @@ export function TestTemplateEditor({
             matchOptions: savePayload.matchOptions ?? null,
             predicates: savePayload.predicates ?? null,
             judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
+            advancedConfig: advancedConfigForSave(savePayload.advancedConfig),
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -5302,6 +5323,10 @@ export function TestTemplateEditor({
                       }
                       suiteJudgeConfig={suite?.judgeConfig}
                       suiteJudgeRubric={suite?.judgeRubric}
+                      failOnToolError={failsOnToolError(
+                        editForm.advancedConfig,
+                      )}
+                      onFailOnToolErrorChange={setFailOnToolError}
                       capabilities={caseCapabilities.capabilities}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
@@ -5423,6 +5448,10 @@ export function TestTemplateEditor({
                       }
                       suiteJudgeConfig={suite?.judgeConfig}
                       suiteJudgeRubric={suite?.judgeRubric}
+                      failOnToolError={failsOnToolError(
+                        editForm.advancedConfig,
+                      )}
+                      onFailOnToolErrorChange={setFailOnToolError}
                       capabilities={caseCapabilities.capabilities}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}

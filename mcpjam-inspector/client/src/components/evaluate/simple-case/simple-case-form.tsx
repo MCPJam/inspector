@@ -42,6 +42,7 @@ import {
   withCaseJudgeSkipped,
 } from "../case-scorecard/case-scorecard-model";
 import { CaseScorecard } from "../case-scorecard/case-scorecard";
+import { ToolErrorSwitch } from "../tool-error-switch";
 import type { ToolCatalogStatus } from "../case-scorecard/route-row";
 import { AlsoInThisCase } from "./also-in-this-case";
 import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "./status-dot";
@@ -107,6 +108,9 @@ export type SimpleCaseFormProps = {
   /** Read-only judge facts: which model grades this, and against what. */
   suiteJudgeConfig?: EvalJudgeConfig;
   suiteJudgeRubric?: EvalJudgeRubric;
+  /** Whether a tool error fails this case; the switch shows with a handler. */
+  failOnToolError?: boolean;
+  onFailOnToolErrorChange?: (next: boolean) => void;
   /** Gates the role control. Unavailable behaves exactly like unsupported. */
   capabilities?: SuiteCapabilities | null;
   /**
@@ -156,6 +160,8 @@ export function SimpleCaseForm({
   onJudgeConfigOverrideChange,
   suiteJudgeConfig,
   suiteJudgeRubric,
+  failOnToolError = true,
+  onFailOnToolErrorChange,
   capabilities,
   snapshotPredicates,
   onOpenSuiteSettings,
@@ -464,6 +470,12 @@ export function SimpleCaseForm({
         onAddTool={addTool}
         onSetKind={setKind}
       />
+      {!readOnly && onFailOnToolErrorChange ? (
+        <ToolErrorSwitch
+          checked={failOnToolError}
+          onCheckedChange={onFailOnToolErrorChange}
+        />
+      ) : null}
 
       <AlsoInThisCase
         steps={leftovers}
