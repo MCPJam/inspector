@@ -59,19 +59,20 @@ vi.mock("../supervised-provider.js", async (importOriginal) => ({
   createSupervisedLocalHarnessProvider: (...a: unknown[]) =>
     createSupervisedLocalHarnessProvider(...(a as [])),
 }));
+const readRuntimeInstallStatus = vi.hoisted(() => vi.fn(async () => ({
+  state: "ready" as const,
+  // A pack version and digest as well, because the turn now takes a runtime
+  // USE reservation keyed on the pack identity before it verifies anything —
+  // that reservation is what stops another Inspector replacing the tree these
+  // children execute from.
+  packVersion: "test-pack-1",
+  digest: `sha256:${"a".repeat(64)}`,
+  // The RUNTIME root stays unreachable: these tests are about what happens
+  // when a later step fails, and the bundle never has to resolve.
+  runtimeRoot: "/nonexistent/runtime-root",
+})));
 vi.mock("../runtime-install.js", () => ({
-  readRuntimeInstallStatus: async () => ({
-    state: "ready",
-    // A pack version and digest as well, because the turn now takes a runtime
-    // USE reservation keyed on the pack identity before it verifies anything —
-    // that reservation is what stops another Inspector replacing the tree these
-    // children execute from.
-    packVersion: "test-pack-1",
-    digest: `sha256:${"a".repeat(64)}`,
-    // The RUNTIME root stays unreachable: these tests are about what happens
-    // when a later step fails, and the bundle never has to resolve.
-    runtimeRoot: "/nonexistent/runtime-root",
-  }),
+  readRuntimeInstallStatus: () => readRuntimeInstallStatus(),
   // The INSTALL root must be writable, though — the reservation is a real file
   // in a real directory. Pointing it at `/nonexistent` made every test in this
   // file fail with EACCES on any machine that is not root, which is what CI
@@ -140,6 +141,7 @@ vi.mock("../supervisor.js", () => ({
 }));
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
+const { noteTurnRuntimeStatus } = await import("../turn-runtime-status.js");
 const { resetApprovalParkForTests, describeParkedLocalSession } = await import(
   "../approval-park.js"
 );
@@ -796,6 +798,25 @@ describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on a
   });
 });
 
+it("reads the runtime selection once a turn, taking the one readiness resolved the target from", async () => {
+  const args = codexArgs();
+  noteTurnRuntimeStatus(args.target, {
+    state: "ready",
+    packVersion: "test-pack-1",
+    digest: `sha256:${"a".repeat(64)}`,
+    runtimeRoot: "/nonexistent/runtime-root",
+  });
+  const first = await prepareLocalHarnessTurn(args);
+  if (!first.ok) throw new Error(first.message);
+  expect(readRuntimeInstallStatus).not.toHaveBeenCalled();
+  await first.prepared.teardown();
+  // Taken once: the same target prepared again (or one readiness did not
+  // mint) reads the selection itself.
+  const again = await prepareLocalHarnessTurn(args);
+  if (!again.ok) throw new Error(again.message);
+  expect(readRuntimeInstallStatus).toHaveBeenCalledOnce();
+  await again.prepared.teardown();
+});
 it("verifies the runtime once a turn: at the spawn, or at an adopted runtime's own spawn", async () => {
   // The provider re-verifies right before it spawns (`assertCanStart`), and
   // an adopted runtime can spawn nothing (`forbidNewProcesses`), so neither

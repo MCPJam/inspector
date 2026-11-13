@@ -19,6 +19,7 @@ import { localHarnessManifestsForDevelopment } from "./availability.js";
 import { currentLocalPlatform, localPackTarget, LOCAL_HARNESS_POLICY_VERSION, type SupportedLocalHarnessId } from "./targets.js";
 import { readLocalInstanceIdentity, setRegisteredKeyId } from "./instance-key.js";
 import { registerLocalInstance } from "../harness-model-broker.js";
+import { noteTurnRuntimeStatus } from "./turn-runtime-status.js";
 
 import { evaluateLocalHarnessRollout } from "../../analytics.js";
 import { localHarnessRolloutFlag } from "../../../../shared/harness-descriptors.js";
@@ -152,13 +153,17 @@ export async function ensureLocalHarnessTarget(args: {
     harnessId, targetKind: "local-native", runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, scope: args.scope,
   }, { ttlMs: args.scope === "attended" ? 15 * 60_000 : 12 * 60 * 60_000 });
+  const target = {
+    kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,
+    permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, grantToken: granted.token, actingUserId: actor.userId,
+  } satisfies LocalHarnessExecutionTarget;
+  // The turn this target is for prepares from the same selection rather
+  // than reading it a second time (`turn-runtime-status.ts`).
+  noteTurnRuntimeStatus(target, status);
   return { grantId: granted.grantId, expiresAt: granted.expiresAt,
     workspaceDisplayRoot: (workspace.canonicalPath === homedir() || workspace.canonicalPath.startsWith(`${homedir()}${sep}`)) ? `~${workspace.canonicalPath.slice(homedir().length)}` : workspace.canonicalPath,
     runtime: { runtimeId: runtime.runtime.runtimeId, adapterVersion: runtime.runtime.adapterVersion, digest: runtime.runtime.digest, packVersion: status.packVersion },
-    target: {
-    kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,
-    permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, grantToken: granted.token, actingUserId: actor.userId,
-  } satisfies LocalHarnessExecutionTarget };
+    target };
 }
 
 /** Account eligibility is checked with backend-verified properties, never renderer flags. */

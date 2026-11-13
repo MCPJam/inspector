@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
   workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
   background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
+  refresh: vi.fn(async () => ({ state: "skipped", list: null })),
 }));
+vi.mock("../runtime-revocation.js", () => ({ refreshRevocations: mocks.refresh }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
 vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
@@ -22,6 +24,7 @@ vi.mock("../grants.js", () => ({
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
 import { ensureLocalHarnessTarget, localHarnessAccountEnabled, setupLocalHarness } from "../readiness.js";
+import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,6 +43,17 @@ describe("shared local readiness", () => {
     expect(ready.target).toMatchObject({ workspaceGrantId: "saved-workspace", runtimeId: "verified-runtime", grantToken: "fresh-token", permissionProfile: "workspace-edits" });
     expect(mocks.authorization).toHaveBeenCalledWith("authkit:user", "machine", "project", "claude-code");
     expect(mocks.install).not.toHaveBeenCalled();
+  });
+  it("hands the turn the runtime selection it resolved the target from, once", async () => {
+    const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.status).toHaveBeenCalledOnce();
+    expect(takeTurnRuntimeStatus(ready.target)).toEqual({ state: "ready", runtimeRoot: "/runtime", packVersion: "1" });
+    expect(takeTurnRuntimeStatus(ready.target)).toBeUndefined();
+  });
+  it("still refreshes the revocation list on every turn", async () => {
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
   });
   it("rechecks membership and refuses revoked authorization before minting a grant", async () => {
     mocks.query.mockResolvedValue([]);
