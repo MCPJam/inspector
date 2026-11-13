@@ -720,10 +720,11 @@ export function SuiteIterationsView({
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const selectedRunState = useSelectedRun(suite._id, selectedRunId);
   const selectedRunDetails = selectedRunState.run;
-  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
-    suite._id,
-    listedRuns,
-  );
+  const {
+    runs: groupRuns,
+    loadGroup,
+    groupStatus,
+  } = useRunGroupSummaries(suite._id, listedRuns);
   const runs = useMemo(() => {
     if (route.type !== "run-detail") return listedRuns;
     if (!selectedRunDetails) return groupRuns;
@@ -1205,6 +1206,19 @@ export function SuiteIterationsView({
     [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
   );
   const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A result page can name a sibling column, so it waits for the launch's
+  // full membership; an unknown sibling is a failed read, not a missing result.
+  const launchGroupId = selectedRunDetails?.runGroupId;
+  const launchGroupStatus = launchGroupId
+    ? groupStatus(launchGroupId)
+    : "ready";
+  const resultPageFailedRunIds = useMemo(
+    () =>
+      launchGroupStatus === "failed" && selectedRunDetails
+        ? new Set(detailRows.failedRunIds).add(selectedRunDetails._id)
+        : detailRows.failedRunIds,
+    [launchGroupStatus, selectedRunDetails, detailRows.failedRunIds],
+  );
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
@@ -2365,13 +2379,14 @@ export function SuiteIterationsView({
                 loading={
                   !selectedRunDetails
                     ? !selectedRunState.isUnavailable
-                    : launchRuns(selectedRunDetails, runs).some(
+                    : launchGroupStatus === "loading" ||
+                      launchRuns(selectedRunDetails, runs).some(
                         ({ _id: id }) =>
                           !detailRows.byRun.has(id) &&
                           !detailRows.failedRunIds.has(id),
                       )
                 }
-                failedRunIds={detailRows.failedRunIds}
+                failedRunIds={resultPageFailedRunIds}
                 projectId={projectId}
                 decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
                 onEditCase={
