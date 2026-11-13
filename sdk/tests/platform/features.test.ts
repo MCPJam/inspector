@@ -235,6 +235,9 @@ describe("disabledOperations", () => {
         "create_directory_submission",
         "start_directory_submission_run",
         "update_directory_submission",
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
       ].sort()
     );
     expect(operationFeature("start_claude_readiness_run")).toBe("conformance");
@@ -245,6 +248,11 @@ describe("disabledOperations", () => {
       "get_directory_submission",
       "get_directory_submission_results",
       "delete_directory_submission",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
     ]) {
       expect(isOperationAvailable(name, {}), name).toBe(true);
     }
