@@ -337,6 +337,70 @@ describe("v1 directory submissions", () => {
       ).toBe("k1");
     });
 
+    describe("the idempotency key", () => {
+      const created = () => {
+        mutations["directorySubmissions:createDirectorySubmission"] = () => ({
+          submissionId: SUBMISSION,
+          revision: 1,
+          reused: false,
+        });
+      };
+      const keyOf = () =>
+        mutationArgs("directorySubmissions:createDirectorySubmission").idempotencyKey;
+
+      it.each([
+        ["the header only", { "idempotency-key": "h1" }, undefined, "h1"],
+        ["the body only", {}, "b1", "b1"],
+        ["both, equal", { "idempotency-key": "same" }, "same", "same"],
+      ])("is read from %s", async (_label, headers, bodyKey, expected) => {
+        created();
+        const res = await request("POST", BASE, {
+          headers,
+          body: {
+            flowId: "claude-connector",
+            serverId: SERVER,
+            ...(bodyKey ? { idempotencyKey: bodyKey } : {}),
+          },
+        });
+        expect(res.status).toBe(201);
+        expect(keyOf()).toBe(expected);
+      });
+
+      it("refuses a header and a body that differ, before anything is written", async () => {
+        const res = await request("POST", BASE, {
+          headers: { "idempotency-key": "h1" },
+          body: { flowId: "claude-connector", serverId: SERVER, idempotencyKey: "b1" },
+        });
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(await res.json())).toContain("different keys");
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+
+      it("refuses a header over 200 characters", async () => {
+        const res = await request("POST", BASE, {
+          headers: { "idempotency-key": "k".repeat(201) },
+          body: { flowId: "claude-connector", serverId: SERVER },
+        });
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      });
+
+      it("returns the first result on a replay through the header", async () => {
+        mutations["directorySubmissions:createDirectorySubmission"] = () => ({
+          submissionId: SUBMISSION,
+          revision: 3,
+          reused: true,
+        });
+        const res = await request("POST", BASE, {
+          headers: { "idempotency-key": "h1" },
+          body: { flowId: "claude-connector", serverId: SERVER },
+        });
+        expect(res.status).toBe(201);
+        expect(((await res.json()) as { replayed?: boolean }).replayed).toBe(true);
+        expect(keyOf()).toBe("h1");
+      });
+    });
+
     it.each([
       ["an unknown key", { flowId: "claude-connector", serverId: SERVER, answers: {} }],
       ["a missing server", { flowId: "claude-connector" }],
@@ -724,6 +788,22 @@ describe("v1 directory submissions", () => {
         publisher: "claude",
         submissionId: SUBMISSION,
       });
+    });
+
+    it("starts a run under the idempotency-key header, and refuses a different body key", async () => {
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        headers: { "idempotency-key": "r2" },
+        body: {},
+      });
+      expect(res.status).toBe(202);
+      expect(mutationArgs("claudeReadinessRuns:requestReadinessRun").idempotencyKey).toBe("r2");
+      convexMutationMock.mockClear();
+      const clash = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        headers: { "idempotency-key": "r2" },
+        body: { idempotencyKey: "r3" },
+      });
+      expect(clash.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
     it("refuses a run the backend says does not match the submission", async () => {

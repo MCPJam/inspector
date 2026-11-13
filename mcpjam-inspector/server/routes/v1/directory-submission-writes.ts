@@ -21,6 +21,7 @@ import {
   type DirectoryFlowField,
 } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { IDEMPOTENCY_KEY_TRANSPORT_HEADER } from "../../utils/idempotency.js";
 import { resolveAgentSurface } from "../../utils/agent-attribution.js";
 import { readLaunchContext } from "../../utils/launch-context.js";
 import { logger } from "../../utils/logger.js";
@@ -97,6 +98,39 @@ export function planAnswerChange(
     ...(confirm.length > 0 ? { confirm } : {}),
     ...(unset.length > 0 ? { unset } : {}),
   };
+}
+
+/** The body field's own bound, so the header holds the same limit. */
+export const MAX_SUBMISSION_KEY_LENGTH = 200;
+
+/**
+ * The idempotency key of a write: the `idempotency-key` header the agent route
+ * and the SDK client send, or the body field, or both when they agree. A
+ * retried agent turn carries only the header, so reading the body alone would
+ * create a second submission or start a second run.
+ */
+export function submissionIdempotencyKey(
+  c: Context,
+  bodyKey: string | undefined,
+): string | undefined {
+  const raw = c.req.header(IDEMPOTENCY_KEY_TRANSPORT_HEADER);
+  if (raw === undefined) return bodyKey;
+  const headerKey = raw.trim();
+  if (headerKey.length === 0 || headerKey.length > MAX_SUBMISSION_KEY_LENGTH) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `The ${IDEMPOTENCY_KEY_TRANSPORT_HEADER} header must be 1 to ${MAX_SUBMISSION_KEY_LENGTH} characters. Send a shorter key, or omit the header.`,
+    );
+  }
+  if (bodyKey !== undefined && bodyKey !== headerKey) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `The ${IDEMPOTENCY_KEY_TRANSPORT_HEADER} header and the idempotencyKey field carry different keys. Send one key.`,
+    );
+  }
+  return headerKey;
 }
 
 /**

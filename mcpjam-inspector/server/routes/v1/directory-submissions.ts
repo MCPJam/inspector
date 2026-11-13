@@ -41,6 +41,7 @@ import {
   accountPrefill,
   actorLabel,
   planAnswerChange,
+  submissionIdempotencyKey,
   writeChannel,
 } from "./directory-submission-writes.js";
 import {
@@ -179,6 +180,7 @@ directorySubmissions.post("/projects/:projectId/directory-submissions", async (c
     );
   }
   const serverId = idParam(body.serverId, "serverId", "Server not found");
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   let created: { submissionId: string; reused: boolean };
   try {
@@ -188,7 +190,7 @@ directorySubmissions.post("/projects/:projectId/directory-submissions", async (c
       flowId: flow.id,
       flowVersion: flow.version,
       ...(body.title !== undefined ? { title: body.title } : {}),
-      ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
+      ...(key ? { idempotencyKey: key } : {}),
       prefill: await accountPrefill(convex, projectId, flow),
     });
   } catch (error) {
@@ -237,6 +239,7 @@ directorySubmissions.get(ONE, async (c) => {
 directorySubmissions.patch(ONE, async (c) => {
   const { projectId, submissionId } = scopeOf(c);
   const body = parseWithSchema(updateSchema, await readJsonObjectBody(c));
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
   const convex = createConvexClient(await getConvexBearerForRequest(c));
   const row = await readSubmission(convex, projectId, submissionId);
   const change = planAnswerChange(flowOf(row), row.answers, body);
@@ -250,7 +253,7 @@ directorySubmissions.patch(ONE, async (c) => {
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(label ? { actorLabel: label } : {}),
       setVia: writeChannel(c),
-      ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
+      ...(key ? { idempotencyKey: key } : {}),
     });
   } catch (error) {
     const refusal = translateConvexWriteError(error, { resource: RESOURCE });
@@ -292,6 +295,7 @@ directorySubmissions.delete(ONE, async (c) => {
 directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const { projectId, submissionId } = scopeOf(c);
   const body = parseWithSchema(startSchema, await readJsonObjectBody(c));
+  const key = submissionIdempotencyKey(c, body.idempotencyKey);
   const convexAuthToken = await getConvexBearerForRequest(c);
   const convex = createConvexClient(convexAuthToken);
   const row = await readSubmission(convex, projectId, submissionId);
@@ -308,7 +312,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     projectId,
     serverId: row.serverId,
     publisher: flow.directory,
-    idempotencyKey: body.idempotencyKey,
+    idempotencyKey: key,
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
