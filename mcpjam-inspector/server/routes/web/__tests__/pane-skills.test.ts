@@ -94,7 +94,7 @@ describe("per-pane Skills preview", () => {
   it.each([
     ["claude-code", viaTools, 3, null],
     ["codex", viaTools, 3, null],
-    ["cursor", "takes Library and plugin skills", 2, "server-skill-unsupported"],
+    ["cursor", viaTools, 3, null],
     ["not-a-harness", "takes no skills", 0, "unsupported-harness"],
     [undefined, "is MCPJam's agent", 3, null],
   ])(
