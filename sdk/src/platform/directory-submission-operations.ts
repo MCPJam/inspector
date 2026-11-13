@@ -88,6 +88,16 @@ const updateInput = submissionInput.extend({
     "Declarations to confirm as true, by field key, under the wording the flow shows now."
   ),
   title: z.string().max(200).optional(),
+  plugin: z
+    .object({ pluginId: id().optional(), pluginVersionId: id().optional() })
+    .nullable()
+    .optional()
+    .describe(
+      "A ChatGPT plugin submission's plugin, stored in the project: `pluginVersionId` names the version to submit and brings its plugin (a plugin's `activeVersionId` from list_project_plugins). Replaces the plugin whole; `null` clears it."
+    ),
+  attempt: z.number().int().min(1).nullable().optional().describe(
+    "Which attempt at the directory this rehearses: 1 for a first submission, one more per resubmission. `null` clears it."
+  ),
   expectedRevision: z.number().int().min(1).optional().describe(
     "The `revision` you read. Omitted, the operation reads the current one first."
   ),
@@ -102,6 +112,9 @@ const startInput = submissionInput.extend({
   ),
   idempotencyKey: idempotencyKey.describe(
     "Replay guard. A retry with the same key returns the run it already started."
+  ),
+  pluginVersionId: id().optional().describe(
+    "Required for a ChatGPT plugin submission, refused for any other: the stored plugin version whose package the run grades with the saved server, such as the submission's `pluginVersionId`. Never read from the submission."
   ),
 });
 
@@ -258,23 +271,33 @@ export const getDirectorySubmissionOperation: Op<DirectorySubmissionScopedInput,
 export const updateDirectorySubmissionOperation: Op<UpdateDirectorySubmissionInput, DirectorySubmissionResult> = {
   name: "update_directory_submission",
   title: "Save answers to a directory submission",
-  description: `Save answers to a directory submission. \`answers\` maps a field key from get_directory_flow to its value, and \`null\` removes an answer. \`confirm\` lists declarations (data handling, acknowledgments) to record as true under the wording the portal shows now: confirm one only when the person you work for says it is true. Each answer you write records you as its author, the channel and the time. Send the \`revision\` you read as \`expectedRevision\`: the write is refused with 409 only when a field you touch changed since, and the refusal names those \`conflictingKeys\` and carries the submission as it is now. To retry a call whose answer you did not get, send the same change with the same \`expectedRevision\` (or \`idempotencyKey\`): it is answered from the first write (\`replayed: true\`), not refused. ${GATED_BETA}`,
+  description: `Save answers to a directory submission. \`answers\` maps a field key from get_directory_flow to its value, and \`null\` removes an answer. \`confirm\` lists declarations (data handling, acknowledgments) to record as true under the wording the portal shows now: confirm one only when the person you work for says it is true. On a ChatGPT plugin submission, \`plugin\` names the stored plugin and version being submitted; \`attempt\` says which submission this is. Each answer you write records you as its author, the channel and the time. Send the \`revision\` you read as \`expectedRevision\`: the write is refused with 409 only when a field you touch changed since, and the refusal names those \`conflictingKeys\` and carries the submission as it is now. To retry a call whose answer you did not get, send the same change with the same \`expectedRevision\` (or \`idempotencyKey\`): it is answered from the first write (\`replayed: true\`), not refused. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: updateInput,
   async execute(input, context) {
+    const { answers, confirm, title, plugin, attempt } = input;
     // Here, not in the schema: the CLI calls `execute` without parsing.
-    if (!input.answers && !input.confirm && input.title === undefined) {
-      throw operationInputError("Nothing to save. Pass answers, confirm or title.");
+    if (
+      !answers &&
+      !confirm &&
+      [title, plugin, attempt].every((value) => value === undefined)
+    ) {
+      throw operationInputError(
+        "Nothing to save. Pass answers, confirm, title, plugin or attempt."
+      );
     }
     const { client, signal, scope, info } = await resolveScope(input, context);
     const body = {
       expectedRevision:
         input.expectedRevision ?? (await client.getDirectorySubmission(scope, { signal })).revision,
-      ...(input.answers ? { answers: input.answers } : {}),
-      ...(input.confirm ? { confirm: input.confirm } : {}),
-      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(answers ? { answers } : {}),
+      ...(confirm ? { confirm } : {}),
+      ...(title !== undefined ? { title } : {}),
+      // `null` is a change: it clears.
+      ...(plugin !== undefined ? { plugin } : {}),
+      ...(attempt !== undefined ? { attempt } : {}),
     };
     // Derived rather than random, so an identical retry of a call whose
     // answer was lost carries the same key, and the backend answers it from
@@ -306,16 +329,16 @@ export const deleteDirectorySubmissionOperation: Op<DirectorySubmissionScopedInp
 export const startDirectorySubmissionRunOperation: Op<StartDirectorySubmissionRunInput, StartDirectorySubmissionRunResult> = {
   name: "start_directory_submission_run",
   title: "Run a directory submission's checks",
-  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
+  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: startInput,
   async execute(input, context) {
     const { client, signal, scope, info } = await resolveScope(input, context);
-    const { includeLlmObservations, idempotencyKey } = input;
+    const { includeLlmObservations, idempotencyKey, pluginVersionId } = input;
     const run = await client.startDirectorySubmissionRun(
-      { ...scope, includeLlmObservations, idempotencyKey },
+      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId },
       { signal }
     );
     return { project: info, submissionId: input.submission, run };
