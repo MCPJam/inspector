@@ -234,12 +234,21 @@ describe("seed templates", () => {
     for (const template of HOST_TEMPLATES) {
       const seeded = template.seed() as unknown as Parameters<typeof resolvePluginExtensions>[0] & HostConfigInputV2;
       const resolved = resolvePluginExtensions(seeded);
-      const seededOn = template.id === "codex" || template.id === "chatgpt";
+      const seededOn = [
+        "codex",
+        "chatgpt",
+        "chatgpt-desktop",
+        "chatgpt-work",
+        "chatgpt-work-desktop",
+      ].includes(template.id);
+      // Codex CLI saves `false`: the CLI sends no OpenAI extension claims,
+      // although the Codex harness would turn them on.
+      const seededOff = template.id === "codex-cli";
       // Claude's templates save nothing; the style default turns them on.
       const claude =
         template.id === "claude" || template.id === "claude-desktop";
       expect(resolved.enabled, template.id).toBe(seededOn || claude);
-      expect(resolved.explicit, template.id).toBe(seededOn);
+      expect(resolved.explicit, template.id).toBe(seededOn || seededOff);
     }
   });
 

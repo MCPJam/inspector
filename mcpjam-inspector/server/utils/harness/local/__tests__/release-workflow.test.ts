@@ -203,7 +203,10 @@ describe("packs are part of starting a release", () => {
         declared.add(key);
       }
     }
-    expect([...declared].filter((path) => !filters.some((filter) => filter.test(path)))).toEqual([]);
+    expect(
+      [...declared].filter((path) => !filters.some((filter) => filter.test(path))),
+      "add these to the push paths of local-harness-pack-prebuild.yml",
+    ).toEqual([]);
   });
 
   it("never lets an approval of an older version PR cover new pins", () => {
@@ -399,7 +402,7 @@ describe("pack release boundaries", () => {
     const unit = jobs.unit.steps.map((step: any) => step.run ?? "").join("\n");
     expect(unit).toMatch(/npm run build:sdk[\s\S]*npm run pretest[\s\S]*tar -czf/);
     const handOff = jobs.unit.steps.find((step: any) => String(step.with?.name ?? "").startsWith("conformance-adapter-build-"));
-    for (const name of ["scenarios", "windows", "codex-scenarios"]) {
+    for (const name of ["scenarios", "windows", "codex-scenarios", "runtime-scenarios"]) {
       const steps = jobs[name].steps;
       expect(steps.map((step: any) => step.run ?? "").join("\n"), name).not.toMatch(/npm run (build:sdk|pretest)/);
       const download = steps.find((step: any) => String(step.uses).startsWith("actions/download-artifact"));
@@ -424,7 +427,7 @@ describe("pack release boundaries", () => {
   it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
     const { jobs } = workflow("local-harness-conformance");
     expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);
-    for (const name of ["scenarios", "windows", "codex-scenarios"]) {
+    for (const name of ["scenarios", "windows", "codex-scenarios", "runtime-scenarios"]) {
       const steps = jobs[name].steps;
       expect(steps.some((step: any) => /write-conformance-evidence\.mjs/.test(step.run ?? "")), name).toBe(true);
       expect(

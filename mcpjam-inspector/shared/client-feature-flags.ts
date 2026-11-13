@@ -32,6 +32,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "local-browser-enabled",
   "local-codex-enabled",
   "local-computer-enabled",
+  "local-copilot-cli-enabled",
   "local-harness-enabled",
   "mcp-events-enabled",
   "mcp-tasks",

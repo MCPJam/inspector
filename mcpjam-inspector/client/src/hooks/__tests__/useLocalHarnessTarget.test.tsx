@@ -47,6 +47,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessRollouts: () => ({
     "claude-code": flagMock() === true,
     codex: codexFlag.value === true,
+    "copilot-cli": false,
   }),
 }));
 vi.mock("@/lib/local-harness-consent", async () => {

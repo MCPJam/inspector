@@ -192,6 +192,9 @@ describe("the origin matrix", () => {
     expect(result.enhancedSystemPrompt).not.toContain("**srv/refunds**");
     expect(manager.listServerSkills).not.toHaveBeenCalled();
     expect(result.liveServerSkills).toBe(false);
+    expect(result.effectiveSkills?.delivered.map(({ ref }) => ref)).toEqual([
+      "code-review",
+    ]);
   });
 
   it("a live turn against the same server DOES compose it", async () => {
@@ -216,6 +219,24 @@ describe("the origin matrix", () => {
     );
     expect(Object.keys(result.allTools)).not.toContain("listSkills");
     expect(result.liveServerSkills).toBe(true);
+    // What the delivery event reports: the plan's skill, then the server's.
+    expect(result.effectiveSkills?.delivered.map(({ ref }) => ref)).toEqual([
+      "code-review",
+      "srv/refunds",
+    ]);
+  });
+
+  it("a live turn with no skills of its own still holds the server's", async () => {
+    const result = await prepareChatV2({
+      ...base,
+      selectedServers: ["srv"],
+      mcpClientManager: liveSkillsManager(),
+      skills: turnSkillsFromLegacySource(undefined),
+    } as never);
+
+    expect(result.effectiveSkills?.delivered.map(({ ref }) => ref)).toEqual([
+      "srv/refunds",
+    ]);
   });
 
   it("an eval run: pinned content only, and never under approval", async () => {

@@ -388,6 +388,15 @@ describe("display-mode rows on a host that renders no MCP Apps", () => {
     const cfg = makeConfig({
       hostStyle: "claude",
       rendersMcpApps: true,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
     } as Partial<HostConfigDtoV2>);
     for (const id of DISPLAY_MODE_FIELDS) {
       expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
@@ -402,6 +411,59 @@ describe("display-mode rows on a host that renders no MCP Apps", () => {
     for (const id of DISPLAY_MODE_FIELDS) {
       expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
     }
+  });
+});
+
+describe("values a catalog row left out", () => {
+  // A catalog row stores only what its probe measured. Filling a blank from
+  // the client style's default would publish a guess as a fact.
+  const catalogRow = (overrides: Record<string, unknown>) =>
+    makeConfig({
+      hostStyle: "chatgpt",
+      rendersMcpApps: true,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: overrides },
+      },
+    } as Partial<HostConfigDtoV2>);
+
+  it("reads a measured app value and leaves a blank one undefined", () => {
+    const cfg = catalogRow({ toolInputPartial: true, downloadFile: false });
+    expect(fieldById("appsCap.toolInputPartial").read(cfg)).toBe(true);
+    expect(fieldById("appsCap.downloadFile").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.toolCancelled").read(cfg)).toBeUndefined();
+    expect(fieldById("appsCap.availableDisplayModes").read(cfg)).toBeUndefined();
+    expect(
+      fieldById("appsCap.widgetDisplayModeRequests").read(cfg)
+    ).toBeUndefined();
+  });
+
+  it("leaves the image rows undefined when the catalog row stores none", () => {
+    const cfg = catalogRow({});
+    for (const id of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
+      "mcpToolResultImageRendering.directContent.image",
+    ]) {
+      expect(fieldById(id).read(cfg), id).toBeUndefined();
+    }
+    const measured = makeConfig({
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: { directContent: { image: false } },
+    } as Partial<HostConfigDtoV2>);
+    expect(
+      fieldById("modelVisibleMcpToolResults.directContent.image").read(measured)
+    ).toBe(false);
+  });
+
+  it("keeps the effective value on a host the user built", () => {
+    // No catalog facts: the resolver's answer is the host's real setting.
+    const cfg = makeConfig({ hostStyle: "chatgpt" });
+    expect(fieldById("appsCap.toolCancelled").read(cfg)).toBeTypeOf("boolean");
+    expect(
+      fieldById("modelVisibleMcpToolResults.directContent.image").read(cfg)
+    ).toBeTypeOf("boolean");
   });
 });
 
