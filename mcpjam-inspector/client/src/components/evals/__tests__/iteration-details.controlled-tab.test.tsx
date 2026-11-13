@@ -138,6 +138,8 @@ describe("IterationDetails with a controlled tab", () => {
       />
     );
     const { rerender } = render(details("steps"));
+    // A click moves the component's own tab state off the default too.
+    fireEvent.click(screen.getByTestId("trace-viewer-steps-tab"));
     expect(screen.queryByTestId("mock-scorecard")).not.toBeInTheDocument();
     rerender(details("browser"));
     expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
