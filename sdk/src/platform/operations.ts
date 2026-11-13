@@ -138,6 +138,13 @@ import {
   startDirectorySubmissionRunOperation,
   updateDirectorySubmissionOperation,
 } from "./directory-submission-operations.js";
+import {
+  cancelReviewerAttemptOperation,
+  createReviewerAttemptOperation,
+  getReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  resumeReviewerAttemptOperation,
+} from "./directory-reviewer-attempt-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2461,6 +2468,7 @@ export type {
 
 // Directory submission operations, from a module that exports nothing else.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19361,6 +19369,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  // A submission's reviewer sign-in attempts.
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
