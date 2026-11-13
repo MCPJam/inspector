@@ -146,7 +146,11 @@ import type {
   EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
+import type {
+  EvalRoute,
+  SuiteOverviewView,
+  SuiteSettingsTab,
+} from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   canCommit,
@@ -175,6 +179,10 @@ import {
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
+import {
+  useSuiteSettingsTabs,
+  useSuiteSettingsTabsFlag,
+} from "./suite-settings-tabs";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -217,7 +225,12 @@ export interface SuiteNavigation {
       fromEvalServer?: string;
     },
   ) => void;
-  toSuiteEdit: (suiteId: string, fromCaseChecks?: string) => void;
+  toSuiteEdit: (
+    suiteId: string,
+    fromCaseChecks?: string,
+    tab?: SuiteSettingsTab,
+    options?: { replace?: boolean },
+  ) => void;
 }
 
 const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
@@ -1031,8 +1044,21 @@ export function SuiteIterationsView({
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S saves from the run list, and
   // the edits they were told they were leaving behind are still there.
-  useUnsavedChangesGuard(hasUnsavedSettings, () =>
-    dispatchDraft({ type: "discard" }),
+  const settingsTabs = useSuiteSettingsTabs({
+    enabled: useSuiteSettingsTabsFlag() && isEditMode,
+    route,
+    suiteId: suite._id,
+    toSuiteEdit: navigation.toSuiteEdit,
+    hasUnsavedChanges: hasUnsavedSettings,
+    isCommitting,
+    onDiscard: () => dispatchDraft({ type: "discard" }),
+  });
+  useUnsavedChangesGuard(
+    hasUnsavedSettings,
+    () => dispatchDraft({ type: "discard" }),
+    undefined,
+    isCommitting,
+    settingsTabs.isSamePage,
   );
 
   // The suite moved under us. An untouched row simply refreshes; a row the
@@ -2080,9 +2106,11 @@ export function SuiteIterationsView({
       {showSuiteHeader ? (
         <div className="shrink-0">
           <SuiteHeader
+            settingsTabStrip={settingsTabs.strip}
             settingsActions={
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <Button
+                  hidden={settingsTabs.enabled}
                   variant="ghost"
                   size="sm"
                   onClick={() => navigation.toSuiteOverview(suite._id)}
@@ -2112,7 +2140,10 @@ export function SuiteIterationsView({
                         ? [
                             {
                               message: passOrFailRowError.message,
-                              onFix: () => openSetting("passOrFail"),
+                              onFix: () =>
+                                settingsTabs.goToSetting("passOrFail", openSetting, {
+                                  fromFix: true,
+                                }),
                             },
                           ]
                         : []),
@@ -2279,6 +2310,7 @@ export function SuiteIterationsView({
                       route.type === "test-edit" && route.checks
                         ? selectedTestId
                         : undefined,
+                      "evaluators",
                     )
                   }
                 />
@@ -2771,11 +2803,16 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div ref={settingsScrollRef} className="flex-1 min-h-0 overflow-auto">
-          <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-8">
+          <div
+            className="group/settings mx-auto w-full max-w-5xl space-y-8 px-6 py-8"
+            data-settings-layout={settingsTabs.enabled ? "inline" : undefined}
+          >
+            {settingsTabs.dialog}
             {configLocked ? (
               <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
             ) : null}
             <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
               disabled={editingDisabled}
               className="m-0 min-w-0 space-y-8 border-0 p-0"
               data-testid={
@@ -3074,8 +3111,11 @@ export function SuiteIterationsView({
             {/* Each person's own choice, not suite configuration, so the CI
                 lock stops here: a CI-owned suite keeps its Run controls, and a
                 run started from it uses the starter's accounts. */}
-            <SuiteAccountsRow suite={suite} projectId={projectId} />
+            <div hidden={settingsTabs.hiddenUnless("settings")}>
+              <SuiteAccountsRow suite={suite} projectId={projectId} />
+            </div>
             <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
               disabled={editingDisabled}
               className="m-0 min-w-0 space-y-8 border-0 p-0"
             >
@@ -3194,6 +3234,12 @@ export function SuiteIterationsView({
                   />
                 }
               />
+            </fieldset>
+            <fieldset
+              hidden={settingsTabs.hiddenUnless("evaluators")}
+              disabled={editingDisabled}
+              className="m-0 min-w-0 border-0 p-0"
+            >
               <div data-setting-key="passOrFail" className="space-y-4">
                 <SuitePassOrFailSection
                   capabilities={capabilitiesReady ? capabilities : null}
@@ -3205,7 +3251,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                     discovery: (
@@ -3215,7 +3263,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                   }}

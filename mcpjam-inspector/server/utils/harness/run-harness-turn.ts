@@ -220,9 +220,9 @@ import {
 } from "./external-account-plan-wall.js";
 import { resolveOrgKeyCredentialPlan } from "./external-account-credentials.js";
 import {
-  orgKeyHarnessSurfaceRefusal,
-  orgKeyRefusedSurfaceFor,
-} from "./org-key-surfaces.js";
+  harnessSurfaceOfSource,
+  harnessSurfaceRefusal,
+} from "@/shared/harness-descriptors";
 import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
@@ -900,14 +900,6 @@ export async function runHarnessTurn(
   // Codex turn must see the app-server arm here exactly as its preflight did.
   const harnessAdapter = getHarnessAdapter(harness);
   const copilotCli = harnessAdapter.id === "copilot-cli";
-  if (
-    copilotCli &&
-    (!isWarmChatManager(mcpClientManager) || sourceType !== "direct" ||
-      harnessExecutionTarget || !harnessSandboxBinding || harnessMcpProxy?.plane !== "web-authorized")
-  ) {
-    // Enrolled VS Code and Microsoft 365 Copilot clients run here too, so name the runtime.
-    throw new Error("GitHub Copilot CLI runs only in the signed-in hosted Playground. Open this client there.");
-  }
   // A warm agent exits after its box's idle window, so it runs only on a box
   // whose window the backend sent.
   const warmWindowMs = harnessSandboxBinding?.idleMs;
@@ -1911,17 +1903,13 @@ export async function runHarnessTurn(
             "Ask the study owner to choose a different agent.",
         );
       }
-      // User Testing and MCP Events never run it, whoever reached the turn;
-      // their callers refuse first (`managed-setup.ts`, `resolveTurnRuntime`).
-      const refusedSurface =
-        harnessAdapter.modelAccess === "external-account"
-          ? orgKeyRefusedSurfaceFor(sourceType)
-          : undefined;
-      if (refusedSurface) {
-        throw new Error(
-          orgKeyHarnessSurfaceRefusal(harnessAdapter.id, refusedSurface),
-        );
-      }
+      // A runtime never runs on a surface it declares it does not run on (Cursor
+      // in User Testing and MCP Events), whoever reached the turn. The callers'
+      // pre-turn checks refuse first; `direct` turns are checked by their routes.
+      const sourceSurface = harnessSurfaceOfSource(sourceType);
+      const surfaceRefusal =
+        sourceSurface && harnessSurfaceRefusal(harnessAdapter.id, sourceSurface);
+      if (surfaceRefusal) throw new Error(surfaceRefusal);
       const externalAccountCredentialNames =
         harnessAdapter.modelAccess === "external-account"
           ? harnessAdapter.externalAccountCredentialEnv

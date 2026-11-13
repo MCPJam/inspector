@@ -2,8 +2,8 @@ import { computeHarnessPackInputs, computePackInputs } from "./check-local-harne
 import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
 import {
   advertisedTargetsOf,
-  parseManifestFacts,
   parsePackTables,
+  readManifestFacts,
   RUNTIME_COMPAT_PATH,
   TARGETS_BY_PLATFORM,
 } from "./local-harness-pack-tables.mjs";
@@ -88,8 +88,9 @@ const inspectorRoot = join(scriptDir, "..");
 /**
  * The pins and the conformance stamp come from the generated JSON record
  * (`runtime-compat.generated.json`); the reviewed POLICY (native platforms and
- * targets) is parsed out of `compatibility.ts`. Both are read as COMMITTED,
- * not as a build step could have rewritten them on the way past.
+ * targets) is parsed out of each runtime's definition (`runtimes/<id>.ts`).
+ * Both are read as COMMITTED, not as a build step could have rewritten them on
+ * the way past.
  *
  * Returns one entry per harness that has a manifest entry or a record entry:
  * `{ [harnessId]: { expectedVersion, records, permitted, conformance,
@@ -97,12 +98,8 @@ const inspectorRoot = join(scriptDir, "..");
  */
 async function readCommittedFacts() {
   const compatRecord = await readFile(RUNTIME_COMPAT_PATH, "utf8");
-  const compatSource = await readFile(
-    join(inspectorRoot, "server/utils/harness/local/compatibility.ts"),
-    "utf8",
-  );
   const tables = parsePackTables(compatRecord);
-  const manifests = parseManifestFacts(compatSource);
+  const manifests = readManifestFacts(join(inspectorRoot, "server/utils/harness/local/runtimes"));
   const facts = {};
   for (const harnessId of [...new Set([...Object.keys(manifests), ...Object.keys(tables)])].sort()) {
     facts[harnessId] = {
@@ -355,7 +352,7 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
     notShipped.push(
       `${harnessId} records no lifecycleConformanceVersion, so local execution ` +
         "is offered on no platform. Run the lifecycle conformance suite on " +
-        "every advertised platform and record its version in compatibility.ts " +
+        "every advertised platform and record its version in the runtime record " +
         "— a green run on one platform is not evidence for the others.",
     );
   }
@@ -374,8 +371,8 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
     const targets = TARGETS_BY_PLATFORM[platform];
     if (targets === undefined) {
       blockers.push(
-        `compatibility.ts advertises an unknown platform ${platform} for ` +
-          `${harnessId}; this check does not know which pack targets it needs.`,
+        `runtimes/${harnessId}.ts advertises an unknown platform ${platform}; ` +
+          `this check does not know which pack targets it needs.`,
       );
       continue;
     }

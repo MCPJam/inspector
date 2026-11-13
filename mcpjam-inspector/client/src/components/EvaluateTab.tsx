@@ -1314,7 +1314,7 @@ function EvaluateTabContent({
           ? (suiteDetails?.testCases.find(
               (testCase) => testCase._id === route.fromCaseChecks,
             )?.title ?? "Test case")
-          : "Test Suite Evaluators"
+          : "Suite settings"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1680,7 +1680,7 @@ function EvaluateTabContent({
                           { checks: true },
                         ),
                     },
-                    { label: "Test Suite Evaluators" },
+                    { label: "Suite settings" },
                   ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
