@@ -34,7 +34,7 @@
  * cannot write into the attempt that replaced it.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
@@ -196,8 +196,8 @@ function toRunDto(run: Record<string, any>, projectId: string) {
  * worse than no event, since an unmatched `distinct_id` pollutes person
  * profiles.
  */
-function readinessAnalyticsActor(
-  c: any,
+export function readinessAnalyticsActor(
+  c: Context,
   projectId: string,
 ): ServerAnalyticsActor | undefined {
   const ctx = c.var?.requestLogContext as RequestLogContext | undefined;
