@@ -44,6 +44,7 @@ import {
   type InfraFailureEvidence,
   type ModelEndpointOwnership,
 } from "../infra-failure-evidence.js";
+import { waitOutBoxPreparation } from "./box-preparing-wait.js";
 import {
   orgHarnessSelection,
   type OrgHarnessSelection,
@@ -180,14 +181,15 @@ export class OrgLeaseTurn {
    * concurrency control. An org selection is resolved by the backend HERE,
    * before anything is installed, and one it refused is a CONFIGURATION
    * failure that keeps the backend's own code (`provider_mismatch`, …).
+   * A preparation holding the box is waited out (`box-preparing-wait.ts`).
    */
   async reserve(
     args: Omit<Parameters<typeof reserveHarnessBox>[0], "modelSelection">,
   ): Promise<void> {
-    const reservation = await reserveHarnessBox({
-      ...args,
-      ...this.selectionField,
-    });
+    const reservation = await waitOutBoxPreparation(
+      () => reserveHarnessBox({ ...args, ...this.selectionField }),
+      args.signal,
+    );
     if (!reservation.ok) {
       throw new HarnessInfraSetupError(reservation.error, {
         source: "sandbox_setup",
@@ -203,7 +205,8 @@ export class OrgLeaseTurn {
 
   /**
    * Start the box's lease. An org start carries the revision `/reserve`
-   * prepared, so a key replaced since is refused.
+   * prepared, so a key replaced since is refused. A preparation holding the
+   * box is waited out first (`box-preparing-wait.ts`).
    */
   async start(
     args: Omit<
@@ -211,13 +214,17 @@ export class OrgLeaseTurn {
       "modelSelection" | "expectedCredentialRevision"
     >,
   ) {
-    const broker = await startHarnessModelBroker({
-      ...args,
-      ...this.requestedSelectionField(args.reasoningEffort),
-      ...(this.selection && this.preparedRevision
-        ? { expectedCredentialRevision: this.preparedRevision }
-        : {}),
-    });
+    const broker = await waitOutBoxPreparation(
+      () =>
+        startHarnessModelBroker({
+          ...args,
+          ...this.requestedSelectionField(args.reasoningEffort),
+          ...(this.selection && this.preparedRevision
+            ? { expectedCredentialRevision: this.preparedRevision }
+            : {}),
+        }),
+      args.signal,
+    );
     if (broker.ok) {
       this.leaseRunId = args.runId;
       if (this.selection) this.upstream = broker.orgUpstream;

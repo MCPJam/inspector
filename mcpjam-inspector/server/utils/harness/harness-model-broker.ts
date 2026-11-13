@@ -616,6 +616,7 @@ export async function reserveHarnessBox(args: {
   runId: string;
   /** See `startHarnessModelBroker`: an org selection is checked here first. */
   modelSelection?: ModelSelection | null;
+  purpose?: "prepare";
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessBoxReservationResult> {
@@ -645,15 +646,14 @@ export async function reserveHarnessBox(args: {
       },
       body: JSON.stringify({
         ...boxRequestFields(args.box),
-        // The same harness + model the lease will name: the backend authorizes a
-        // reservation exactly as it authorizes a lease, which for an ephemeral
-        // box means checking both against what the run actually pinned.
+        ...(args.purpose ? { purpose: args.purpose } : {}),
+        // The harness + model the lease will name, authorized as a lease is:
+        // for an ephemeral box, against what the run actually pinned.
         harnessId: args.harnessId,
         ...harnessRuntimeVersionField(args.harnessId),
         modelId: args.modelId,
         runId: args.runId,
-        // An org selection is resolved HERE, before the box installs
-        // anything: a disabled or mismatched connection fails early.
+        // An org selection is resolved HERE: a bad connection fails pre-install.
         ...leaseSelectionField(args.modelSelection),
       }),
       signal: args.signal,

@@ -817,6 +817,40 @@ export async function provisionPlaygroundTerminalSandbox(args: {
   return outOfTime();
 }
 
+/** What a preparation's provision answers: its new box, or why it booted none. */
+export type PreparedPlaygroundTerminal =
+  | ({ outcome: "prepared" } & PlaygroundTerminalSandbox)
+  | { outcome: "skipped"; reason: string };
+
+/**
+ * Boot a new Playground conversation's box before its first message
+ * (`purpose: "prepare"`). One attempt, never retried: a preparation that
+ * cannot boot a box now is skipped, and the Send boots one as before.
+ */
+export async function preparePlaygroundTerminalSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  projectEnvironmentId?: string;
+  harness: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<PreparedPlaygroundTerminal>> {
+  return postJson<PreparedPlaygroundTerminal>(
+    "/playground/sandbox/terminal/provision",
+    bearerHeader(args.bearer),
+    {
+      projectId: args.projectId,
+      chatSessionId: args.chatSessionId,
+      ...(args.projectEnvironmentId
+        ? { projectEnvironmentId: args.projectEnvironmentId }
+        : {}),
+      harness: args.harness,
+      purpose: "prepare",
+    },
+    args.signal,
+  );
+}
+
 /**
  * Provision (or re-obtain) the ephemeral sandbox for ONE journey attempt —
  * user-bearer auth, the launching member's token.
