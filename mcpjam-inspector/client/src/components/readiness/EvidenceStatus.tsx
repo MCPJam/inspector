@@ -66,7 +66,7 @@ export function evidenceNote(
     case "blocked":
       return reason
         ? `Blocked because ${reason}. Run checks again once that is fixed.`
-        : "Blocked because the run lacked something this check needs. Run checks again once it is available.";
+        : "Blocked because a check it depends on did not finish in this run. Run checks again to retry both.";
     case "not-tested":
       return reason
         ? `Not tested because ${reason}.`
