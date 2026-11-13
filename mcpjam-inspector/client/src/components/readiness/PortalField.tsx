@@ -39,6 +39,9 @@ export interface PortalFieldProps {
   findings?: readonly PlacedFinding[];
   /** The submission's server, which a `server` field selects. */
   serverUrl?: string;
+  serverName?: string;
+  /** The portal's words for the field where a widget draws it, in place of its label. */
+  label?: string;
   onChange: (value: DirectoryAnswerValue) => void;
 }
 
@@ -187,7 +190,7 @@ function Pairs({ field, id, value, onChange }: ControlProps) {
 }
 
 function Control(props: ControlProps) {
-  const { field, id, value, invalid, serverUrl, onChange } = props;
+  const { field, id, value, invalid, serverUrl, serverName, onChange } = props;
   const text = typeof value === "string" ? value : "";
   const options = field.options ?? [];
   switch (field.control) {
@@ -282,10 +285,19 @@ function Control(props: ControlProps) {
       );
     case "server":
       return (
-        <div className="flex items-center gap-4 rounded-xl bg-card px-4 py-3 text-sm">
+        <div
+          role="group"
+          aria-labelledby={`${id}-label`}
+          className="flex items-center gap-4 rounded-xl bg-card px-4 py-3 text-sm"
+        >
           <span className="min-w-0 flex-1 truncate">
-            {serverUrl ??
-              "This server has no URL. Claude lists remote servers only."}
+            {serverName ? (
+              <span className="block font-medium">{serverName}</span>
+            ) : null}
+            <span className={cn(serverName && "text-muted-foreground")}>
+              {serverUrl ??
+                "This server has no URL. Claude lists remote servers only."}
+            </span>
           </span>
           {!serverUrl ? null : value === serverUrl ? (
             <span className="rounded-full bg-success/15 px-2.5 py-0.5 text-xs">
@@ -317,9 +329,12 @@ function Control(props: ControlProps) {
   }
 }
 
+/** The id of a field's control, for a widget that moves focus to it. */
+export const portalFieldId = (key: string) => `portal-${key}`;
+
 export function PortalField(props: PortalFieldProps) {
-  const { field, value, issue, findings = [] } = props;
-  const id = `portal-${field.key}`;
+  const { field, value, issue, findings = [], label } = props;
+  const id = portalFieldId(field.key);
   const length = typeof value === "string" ? value.length : 0;
   const over = field.maxLength !== undefined && length > field.maxLength;
   // The review page alone asks for these, so the form shows no mark.
@@ -330,10 +345,13 @@ export function PortalField(props: PortalFieldProps) {
         <label
           id={`${id}-label`}
           htmlFor={LABELLED.includes(field.control) ? id : undefined}
-          className="block text-sm font-medium"
+          className={cn(
+            "block text-sm",
+            label ? "text-muted-foreground" : "font-medium",
+          )}
         >
-          {field.label}
-          {required ? REQUIRED : null}
+          {label ?? field.label}
+          {required && !label ? REQUIRED : null}
         </label>
       )}
       <Control {...props} id={id} invalid={Boolean(issue) || over} />

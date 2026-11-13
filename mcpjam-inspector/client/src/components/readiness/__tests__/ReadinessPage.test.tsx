@@ -3,7 +3,7 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -212,5 +212,54 @@ describe("ReadinessRoute", () => {
       screen.getByText("Add a one-liner of 200 characters or fewer."),
     ).toBeVisible();
     expect(screen.getByText("1 blocker")).toBeVisible();
+  });
+
+  it("ends on the portal's review page, with copy where the portal submits", async () => {
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    await screen.findByRole("heading", { level: 1, name: "Connection" });
+    const rail = within(
+      screen.getByRole("navigation", { name: "Claude submission steps" }),
+    );
+    // A step is marked once left; the review page marks them all.
+    expect(rail.queryByText("to fix")).toBeNull();
+    await userEvent.click(rail.getByRole("button", { name: /Review/ }));
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Review and submit" }),
+    ).toBeVisible();
+
+    // The rail counts seven missing listing answers and the blocker; the
+    // review page counts the seven and the author, which only it asks for.
+    expect(rail.getByRole("button", { name: /Listing/ })).toHaveTextContent(
+      "8 to fix",
+    );
+    const listing = screen.getByRole("button", { name: "Edit Listing" })
+      .parentElement?.parentElement;
+    if (!listing) throw new Error("No Listing section");
+    expect(within(listing).getByText("8 fields to fix")).toBeVisible();
+    expect(within(listing).getByText("MCPJam · 1 blocker")).toBeVisible();
+    expect(
+      within(listing).getByText(/^Error: An author is required/),
+    ).toBeVisible();
+
+    expect(
+      screen.getByRole("button", { name: "Copy for the portal" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: /Open the real Claude portal/ }),
+    ).toHaveAttribute("href", CLAUDE_CONNECTOR_FLOW.submissionUrl);
+    expect(
+      screen.getByText(
+        "Some steps are missing required fields — submit to highlight them.",
+      ),
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit Listing" }));
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Listing" }),
+    ).toBeVisible();
+    expect(screen.getByText("Error: Slug is required")).toBeVisible();
   });
 });
