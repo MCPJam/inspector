@@ -42,7 +42,7 @@ const listOf = (
   Array.isArray(value) ? value : [];
 
 /** An answer in the portal's words: option labels, the text, "Yes", or a dash. */
-function answerText(
+export function answerText(
   field: DirectoryFlowField | undefined,
   value: DirectoryAnswerValue | undefined,
 ): string {
