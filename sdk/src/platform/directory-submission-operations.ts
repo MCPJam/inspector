@@ -93,7 +93,7 @@ const updateInput = submissionInput.extend({
     .nullable()
     .optional()
     .describe(
-      "A ChatGPT plugin submission's plugin, stored in the project: `pluginVersionId` names the version to submit and brings its plugin (a plugin's `activeVersionId` from list_project_plugins). Replaces the plugin whole; `null` clears it."
+      "A ChatGPT plugin submission's plugin, stored in the project: `pluginVersionId` names the version to submit and brings its plugin (a plugin's `activeVersionId`, shown on the project's Plugins page). Replaces the plugin whole; `null` clears it."
     ),
   attempt: z.number().int().min(1).nullable().optional().describe(
     "Which attempt at the directory this rehearses: 1 for a first submission, one more per resubmission. `null` clears it."
