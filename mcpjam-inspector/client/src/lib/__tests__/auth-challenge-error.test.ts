@@ -32,14 +32,26 @@ const PASSTHROUGH = {
 
 describe("passthroughChallengeErrorText", () => {
   it.each([
-    [undefined, "The server refused the request with HTTP 401."],
-    ["Sign in", "The server refused the request with HTTP 401: Sign in."],
-    ["Sign in.", "The server refused the request with HTTP 401: Sign in."],
-  ])("names the 401 for description %j", (errorDescription, expected) => {
-    expect(
-      passthroughChallengeErrorText(PASSTHROUGH, signal({ errorDescription })),
-    ).toBe(expected);
-  });
+    [undefined, "The server asked for sign-in, so the call failed."],
+    [
+      "Sign in",
+      "The server asked for sign-in, so the call failed. The server said: Sign in.",
+    ],
+    [
+      "Sign in.",
+      "The server asked for sign-in, so the call failed. The server said: Sign in.",
+    ],
+  ])(
+    "says the call failed for description %j",
+    (errorDescription, expected) => {
+      expect(
+        passthroughChallengeErrorText(
+          PASSTHROUGH,
+          signal({ errorDescription }),
+        ),
+      ).toBe(expected);
+    },
+  );
 
   it("leaves a _meta challenge to the completed result", () => {
     expect(

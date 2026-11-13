@@ -62,7 +62,7 @@ const SIGNAL = {
   },
 };
 const REFUSAL =
-  "The server refused the request with HTTP 401: Sign in to see orders.";
+  "The server asked for sign-in, so the call failed. The server said: Sign in to see orders.";
 
 /**
  * A call the server refuses with a sign-in challenge: the API reports the
@@ -141,7 +141,7 @@ describe("mid-session sign-in on resources and prompts", () => {
       }));
       await run();
       await screen.findByTestId("auth-challenge-notice");
-      expect(await screen.findByText(new RegExp(REFUSAL))).toBeInTheDocument();
+      expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
       expect(screen.queryByText(/HTTP 401 Unauthorized/)).toBeNull();
       expect(screen.queryByTestId("auth-challenge-card")).toBeNull();
     },

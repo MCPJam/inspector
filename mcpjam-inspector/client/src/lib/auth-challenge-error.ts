@@ -19,7 +19,8 @@ export function isSignInChallengeError(error: unknown): boolean {
  * A pass-through host treats the refusal as an ordinary failure, so the call
  * must still read as failed. The text comes from the parsed challenge, not the
  * transport error: hosted reports a sign-in request as 403
- * UPSTREAM_AUTH_FAILED, which would read as a permissions problem. A
+ * UPSTREAM_AUTH_FAILED, which would read as a permissions problem. The notice
+ * beside it names the 401 and what the host needs, so this line does not. A
  * `_meta` challenge arrives on a completed result, which shows on its own.
  */
 export function passthroughChallengeErrorText(
@@ -30,8 +31,9 @@ export function passthroughChallengeErrorText(
     return null;
   if (signal.source !== "http_401") return null;
   const description = signal.errorDescription?.trim();
-  if (!description) return "The server refused the request with HTTP 401.";
+  const failed = "The server asked for sign-in, so the call failed.";
+  if (!description) return failed;
   return /[.!?]$/.test(description)
-    ? `The server refused the request with HTTP 401: ${description}`
-    : `The server refused the request with HTTP 401: ${description}.`;
+    ? `${failed} The server said: ${description}`
+    : `${failed} The server said: ${description}.`;
 }

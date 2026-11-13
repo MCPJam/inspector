@@ -315,7 +315,7 @@ describe("ToolsTab mid-session sign-in", () => {
     }));
     try {
       // Hosted reports the sign-in request as 403 UPSTREAM_AUTH_FAILED; the
-      // refusal shown must name the 401 the server sent.
+      // refusal shown must say sign-in, not a permissions problem.
       mockExecuteToolApi.mockResolvedValue({
         error: 'Server "orders" asked for sign-in to complete this request.',
         status: 403,
@@ -327,7 +327,7 @@ describe("ToolsTab mid-session sign-in", () => {
       await screen.findByTestId("auth-challenge-notice");
       expect(
         await screen.findByText(
-          "The server refused the request with HTTP 401: Sign in to see orders.",
+          "The server asked for sign-in, so the call failed. The server said: Sign in to see orders.",
         ),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("auth-challenge-card")).toBeNull();
