@@ -40,7 +40,12 @@ const TAB_OPTIONS = (["settings", "evaluators"] as const).map((value) => ({
   label: SUITE_SETTINGS_TAB_LABEL[value],
 }));
 
-/** The settings that live on Default evaluators; everything else is on Settings. */
+/**
+ * The settings that live on Default evaluators; everything else is on Settings.
+ * Keep in step with the fieldset `suite-iterations-view.tsx` hides with
+ * `hiddenUnless("evaluators")`: a key missing here sends `goToSetting` to the
+ * wrong tab, where its section is hidden and the scroll does nothing.
+ */
 const EVALUATOR_SETTING_KEYS: ReadonlySet<string> = new Set(["passOrFail"]);
 
 export function suiteSettingsTabForKey(key: string): SuiteSettingsTab {
@@ -97,6 +102,7 @@ export function useSuiteSettingsTabs({
   const settingsRoute = route.type === "suite-edit" ? route : null;
   const tab = settingsRoute?.tab ?? "settings";
   const fromCaseChecks = settingsRoute?.fromCaseChecks;
+  const onSettingsPage = settingsRoute !== null;
   const onNavigate = useCallback(
     (next: SuiteSettingsTab) =>
       toSuiteEdit(suiteId, fromCaseChecks, next, { replace: true }),
@@ -105,10 +111,17 @@ export function useSuiteSettingsTabs({
   const [pendingTab, setPendingTab] = useState<SuiteSettingsTab | null>(null);
 
   useEffect(() => {
-    if (pendingTab === null || hasUnsavedChanges) return;
+    if (pendingTab === null) return;
+    // Left the page (Back confirmed in the leave prompt): drop the switch, or
+    // it would navigate straight back to settings.
+    if (!onSettingsPage) {
+      setPendingTab(null);
+      return;
+    }
+    if (hasUnsavedChanges) return;
     setPendingTab(null);
     if (pendingTab !== tab) onNavigate(pendingTab);
-  }, [hasUnsavedChanges, onNavigate, pendingTab, tab]);
+  }, [hasUnsavedChanges, onNavigate, onSettingsPage, pendingTab, tab]);
 
   const requestTab = useCallback(
     (next: SuiteSettingsTab) => {
@@ -127,10 +140,11 @@ export function useSuiteSettingsTabs({
   );
   useEffect(() => {
     const pending = afterSwitch.current;
-    if (pending?.tab !== tab) return;
+    if (!onSettingsPage) afterSwitch.current = null;
+    if (!onSettingsPage || pending?.tab !== tab) return;
     afterSwitch.current = null;
     pending.run();
-  }, [tab]);
+  }, [onSettingsPage, tab]);
 
   /**
    * Open the tab that holds `key`, then `scroll` to it. Only the commit bar's
@@ -146,11 +160,14 @@ export function useSuiteSettingsTabs({
       const target = suiteSettingsTabForKey(key);
       const run = () => scroll(key);
       if (!enabled || target === tab) return run();
+      // Armed only when a switch will happen, so a later tab change from
+      // Back or Forward never fires a stale scroll.
+      if (!options?.fromFix && isCommitting) return;
       afterSwitch.current = { tab: target, run };
       if (options?.fromFix) onNavigate(target);
       else requestTab(target);
     },
-    [enabled, onNavigate, requestTab, tab],
+    [enabled, isCommitting, onNavigate, requestTab, tab],
   );
 
   const onTabClick = (next: SuiteSettingsTab) => {
@@ -166,6 +183,7 @@ export function useSuiteSettingsTabs({
         setPendingTab(null);
       }}
       onDiscard={onDiscard}
+      isCommitting={isCommitting}
     />
   );
 
@@ -224,10 +242,13 @@ function SuiteSettingsDiscardDialog({
   to,
   onKeepEditing,
   onDiscard,
+  isCommitting,
 }: {
   to: SuiteSettingsTab | null;
   onKeepEditing: () => void;
   onDiscard: () => void;
+  /** ⌘S works behind the dialog; a save in flight would land after Discard. */
+  isCommitting: boolean;
 }) {
   return (
     <AlertDialog
@@ -250,6 +271,7 @@ function SuiteSettingsDiscardDialog({
           <button
             type="button"
             className={buttonVariants({ variant: "destructive" })}
+            disabled={isCommitting}
             onClick={onDiscard}
           >
             Discard

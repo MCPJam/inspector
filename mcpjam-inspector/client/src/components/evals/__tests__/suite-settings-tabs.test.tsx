@@ -25,6 +25,7 @@ function Harness({ committing = false }: { committing?: boolean }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(committing);
   // Read at scroll time, like the real scroll reads the DOM.
   const path = useRef(location.pathname);
   path.current = location.pathname;
@@ -48,14 +49,14 @@ function Harness({ committing = false }: { committing?: boolean }) {
         { replace: options?.replace },
       ),
     hasUnsavedChanges: dirty,
-    isCommitting: committing,
+    isCommitting: saving,
     onDiscard: () => setDirty(false),
   });
   useUnsavedChangesGuard(
     dirty,
     () => setDirty(false),
     undefined,
-    committing,
+    saving,
     tabs.isSamePage,
   );
   return (
@@ -67,6 +68,9 @@ function Harness({ committing = false }: { committing?: boolean }) {
       </button>
       <button type="button" onClick={() => setDirty(false)}>
         Save
+      </button>
+      <button type="button" onClick={() => setSaving(!saving)}>
+        Toggle saving
       </button>
       <button
         type="button"
@@ -101,9 +105,11 @@ function renderAt(path: string, committing = false) {
     [
       { path: "/evaluate/suite/:suiteId/settings", element },
       { path: "/evaluate/suite/:suiteId/settings/evaluators", element },
+      // The suite page renders the same view, as in the app.
+      { path: "/evaluate/suite/:suiteId", element },
       { path: "/elsewhere", element: <p>Elsewhere</p> },
     ],
-    { initialEntries: ["/elsewhere", path], initialIndex: 1 },
+    { initialEntries: ["/evaluate/suite/s1", path], initialIndex: 1 },
   );
   render(<RouterProvider router={router} />);
   return router;
@@ -221,5 +227,41 @@ describe("Suite settings tabs", () => {
 
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(state()).toBe("/evaluate/suite/s1/settings dirty=true");
+  });
+
+  it("drops a pending switch when Back is confirmed with the dialog open", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const router = renderAt("/evaluate/suite/s1/settings");
+    fireEvent.click(screen.getByRole("button", { name: "Edit a setting" }));
+    fireEvent.click(tab("Default evaluators"));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(state()).toBe("/evaluate/suite/s1 dirty=false");
+  });
+
+  it("disables Discard while a save is in flight", () => {
+    renderAt("/evaluate/suite/s1/settings");
+    fireEvent.click(screen.getByRole("button", { name: "Edit a setting" }));
+    fireEvent.click(tab("Default evaluators"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Toggle saving", hidden: true }),
+    );
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
+  });
+
+  it("does not arm a scroll it will not run while saving", async () => {
+    const router = renderAt("/evaluate/suite/s1/settings/evaluators", true);
+    fireEvent.click(screen.getByRole("button", { name: "Go to Where it runs" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle saving" }));
+    await act(async () => {
+      await router.navigate("/evaluate/suite/s1/settings", { replace: true });
+    });
+    expect(scrolled).not.toHaveBeenCalled();
   });
 });

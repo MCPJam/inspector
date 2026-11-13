@@ -102,7 +102,11 @@ export function parseEvalRouteFromUrl(
     return {
       type: "suite-edit",
       suiteId,
-      ...(rest[1] === "evaluators" ? { tab: "evaluators" as const } : {}),
+      // An old `edit` link with `fromCaseChecks` came from a case's evaluators.
+      ...(rest[1] === "evaluators" ||
+      (rest[0] === "edit" && params.get("fromCaseChecks"))
+        ? { tab: "evaluators" as const }
+        : {}),
       ...(params.get("fromCaseChecks")
         ? { fromCaseChecks: params.get("fromCaseChecks")! }
         : {}),

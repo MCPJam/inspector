@@ -115,11 +115,16 @@ function AppEntryLandingRoute() {
 /**
  * Suite settings moved from `…/suite/:id/edit` to `…/suite/:id/settings`. Old
  * links live in CI comments and PRs, so the old path stays as a redirect that
- * keeps the project prefix and the query (`fromCaseChecks`).
+ * keeps the project prefix and the query (`fromCaseChecks`). A link with
+ * `fromCaseChecks` came from a test case's evaluators, so it opens Default
+ * evaluators.
  */
 export function redirectSuiteEditToSettings({ request }: { request: Request }) {
   const url = new URL(request.url);
-  return redirect(url.pathname.replace(/\/edit\/?$/, "/settings") + url.search);
+  const target = url.searchParams.has("fromCaseChecks")
+    ? "/settings/evaluators"
+    : "/settings";
+  return redirect(url.pathname.replace(/\/edit\/?$/, target) + url.search);
 }
 
 const ROUTE_ELEMENTS: Record<
