@@ -6,8 +6,10 @@
  * releases its claim within seconds, so the Send retries with backoff for at
  * most `BOX_PREPARING_WAIT_MS`, longer than an agent install on a box without
  * the baked runtime takes. Past that the preparer may have died, and its claim
- * holds until the claim's TTL: the Send never runs beside it. It stops before
- * any sandbox command, with an error the person can retry.
+ * holds until its TTL (the backend's `HARNESS_BOX_PREPARATION_TTL_MS`, five
+ * minutes): the Send never runs beside it. It stops before any sandbox
+ * command, with an error the person can retry; a retry once the claim has
+ * lapsed proceeds.
  */
 import { setTimeout as delay } from "node:timers/promises";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";

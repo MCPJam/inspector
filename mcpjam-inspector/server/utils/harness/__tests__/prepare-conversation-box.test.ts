@@ -52,12 +52,14 @@ type Run = {
 /**
  * A box the bootstrap runs against. `baked` answers every recipe marker;
  * otherwise the framework installs. `hang` makes the install wait on its
- * signal, as a long `pnpm install` does; `installing` settles once it runs.
+ * signal, as a long `pnpm install` does, until `finishInstall`; `installing`
+ * settles once it runs.
  */
 function fakeBox(opts: { baked?: boolean; hang?: boolean } = {}) {
   const runs: Run[] = [];
   const spawn = vi.fn();
   let installStarted = () => {};
+  let finishInstall = () => {};
   const installing = new Promise<void>((resolve) => {
     installStarted = resolve;
   });
@@ -73,11 +75,12 @@ function fakeBox(opts: { baked?: boolean; hang?: boolean } = {}) {
       mocks.log.push("command");
       if (opts.hang && run.command.includes("install")) {
         installStarted();
-        await new Promise((_, reject) =>
+        await new Promise<void>((resolve, reject) => {
+          finishInstall = resolve;
           run.abortSignal?.addEventListener("abort", () =>
             reject(new Error("aborted")),
-          ),
-        );
+          );
+        });
       }
       return {
         exitCode: 0,
@@ -91,7 +94,13 @@ function fakeBox(opts: { baked?: boolean; hang?: boolean } = {}) {
   mocks.createProvider.mockImplementation(() => ({
     createSession: vi.fn(async () => session),
   }));
-  return { runs, spawn, session, installing };
+  return {
+    runs,
+    spawn,
+    session,
+    installing,
+    finishInstall: () => finishInstall(),
+  };
 }
 
 function prepare() {
@@ -251,6 +260,50 @@ describe("preparing a new chat's box", () => {
       stderr: "",
     }));
     await expect(prepare()).resolves.toEqual({ outcome: "failed" });
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("a command whose call dropped may still be running, so the claim is left to expire", async () => {
+    const box = fakeBox();
+    box.session.run.mockImplementation(async (run: Run) => {
+      if (!run.command.includes("$HOME")) throw new Error("connection reset");
+      return { exitCode: 0, stdout: "/home/user", stderr: "" };
+    });
+    await expect(prepare()).resolves.toEqual({ outcome: "failed" });
+    expect(mocks.release).not.toHaveBeenCalled();
+  });
+
+  it("after a stall, starts nothing its claim might not outlive, by the clock and not a timer", async () => {
+    vi.useFakeTimers();
+    const box = fakeBox({ hang: true });
+    const prepared = prepare();
+    await box.installing;
+    const started = box.runs.length;
+    const written = box.session.writeTextFile.mock.calls.length;
+    // The process stalls: the clock moves on, no timer fires, nothing renews.
+    vi.setSystemTime(Date.now() + 2 * 60_000);
+    box.finishInstall();
+    await expect(prepared).resolves.toEqual({ outcome: "failed" });
+    expect(mocks.renew).not.toHaveBeenCalled();
+    // Not the install's marker, nor anything after it.
+    expect(box.runs).toHaveLength(started);
+    expect(box.session.writeTextFile).toHaveBeenCalledTimes(written);
+    // Nothing it started is still running, so the box is handed back.
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts nothing once a renewal goes unanswered past one interval and one call", async () => {
+    vi.useFakeTimers();
+    const box = fakeBox({ hang: true });
+    mocks.renew.mockImplementation(() => new Promise(() => {}));
+    const prepared = prepare();
+    await box.installing;
+    const started = box.runs.length;
+    await vi.advanceTimersByTimeAsync(80_000);
+    expect(mocks.renew).toHaveBeenCalledTimes(1);
+    box.finishInstall();
+    await expect(prepared).resolves.toEqual({ outcome: "failed" });
+    expect(box.runs).toHaveLength(started);
     expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 

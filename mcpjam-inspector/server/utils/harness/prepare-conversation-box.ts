@@ -14,11 +14,13 @@
  * warm marker. The Send does all of that, with fresh authority, as before.
  *
  * The claim is taken before the first sandbox command and released after the
- * last, renewed meanwhile, and a lost renewal stops the preparation. A Send
- * that arrives meanwhile is answered `box_preparing` and waits
- * (`box-preparing-wait.ts`). A preparation stopped by its own deadline or a
- * lost claim may leave a command running in the box, so it leaves the claim
- * to expire instead of releasing it: no Send ever runs beside that command,
+ * last, renewed meanwhile, and a renewal it cannot confirm stops the
+ * preparation. A command starts only while the claim is freshly confirmed
+ * (`preparation-fence.ts`), so the claim outlives every command it covers. A
+ * Send that arrives meanwhile is answered `box_preparing` and waits
+ * (`box-preparing-wait.ts`). A command whose call never returned (an abort, a
+ * dropped connection) may still be running in the box, so the claim is then
+ * left to expire instead of released: no Send ever runs beside that command,
  * which E2B ends within `PREPARATION_DEADLINE_MS`, inside the claim's TTL.
  */
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
@@ -32,6 +34,7 @@ import {
   reserveHarnessBox,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
+import { PreparationFence, StaleClaimError } from "./preparation-fence.js";
 import { buildBrokerDummyAuth, getHarnessAdapter } from "./registry.js";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
@@ -71,14 +74,17 @@ export type BoxPreparationOutcome =
 
 /**
  * The whole preparation's bound, and each of its sandbox commands' (E2B ends
- * a command at its timeout). Well past a healthy install, well inside the
- * claim's TTL.
+ * a command at its timeout). Well past a healthy install. The backend derives
+ * a preparation claim's TTL (`HARNESS_BOX_PREPARATION_TTL_MS`) from this and
+ * the two below: change them together.
  */
 export const PREPARATION_DEADLINE_MS = 3 * 60_000;
 /** The turn path's renewal cadence for a claim it holds without a lease. */
 const CLAIM_RENEWAL_MS = 60_000;
 /** Each renewal or release call's own bound, as the turn path's. */
 const CLAIM_CALL_TIMEOUT_MS = 15_000;
+/** A command starts only this soon after the claim was last confirmed. */
+const CLAIM_FRESH_MS = CLAIM_RENEWAL_MS + CLAIM_CALL_TIMEOUT_MS;
 /** A dummy proxy for runtimes built only for their recipes; none is started. */
 const NO_PROXY_URL = "http://prepare.invalid";
 
@@ -148,16 +154,23 @@ export async function prepareConversationBox(args: {
     modelId: args.modelId,
     runId: crypto.randomUUID(),
   };
+  const claimBearer = await args.authorization();
+  const claimSentAt = Date.now();
   const claimed = await reserveHarnessBox({
     ...claim,
     purpose: "prepare",
-    bearer: await args.authorization(),
+    bearer: claimBearer,
   });
   if (!claimed.ok) return skipped("box_busy");
 
   // Aborted at the deadline or when the claim is lost.
   const stop = new AbortController();
   const { signal } = stop;
+  const fence = new PreparationFence({
+    sentAt: claimSentAt,
+    freshMs: CLAIM_FRESH_MS,
+    signal,
+  });
   const deadline = setTimeout(
     () => stop.abort(new Error("The preparation ran out of time.")),
     PREPARATION_DEADLINE_MS,
@@ -165,15 +178,18 @@ export async function prepareConversationBox(args: {
   const renewal = setInterval(() => {
     void args
       .authorization()
-      .then((bearer) =>
-        renewHarnessBoxReservation({
+      .then(async (bearer) => {
+        const sentAt = Date.now();
+        const renewed = await renewHarnessBoxReservation({
           ...claim,
           bearer,
           signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
-        }),
-      )
+        });
+        if (renewed.ok) fence.confirm(sentAt);
+        return renewed.ok;
+      })
       .then(
-        (renewed) => renewed.ok,
+        (held) => held,
         () => false,
       )
       .then((held) => {
@@ -188,14 +204,15 @@ export async function prepareConversationBox(args: {
   deadline.unref?.();
   renewal.unref?.();
 
-  // True once every sandbox command this preparation started has ended.
-  let settled = false;
   try {
     const provider = createHarnessSandboxProvider({
       sandboxId,
       commandTimeoutMs: PREPARATION_DEADLINE_MS,
     });
-    const session = await provider.createSession({ abortSignal: signal });
+    // Attaching runs the pnpm guard, a command like the bootstrap's.
+    const session = await fence.command(() =>
+      provider.createSession({ abortSignal: signal }),
+    );
     for (const runtime of hostedBootstrapRuntimes(
       args.harnessId,
       args.modelId,
@@ -203,14 +220,11 @@ export async function prepareConversationBox(args: {
       const template = await createHarnessSandboxTemplate({
         harnesses: [runtime],
       });
-      // Nothing new starts once the deadline passed or the claim was lost.
-      signal.throwIfAborted();
       await template?.prepare({
-        session: session.restricted(),
+        session: fence.session(session.restricted()),
         abortSignal: signal,
       });
     }
-    settled = true;
     const observed = await harnessBootstrapObservation(provider);
     logger.info("[harness-prepare] box prepared", {
       harness: args.harnessId,
@@ -218,21 +232,22 @@ export async function prepareConversationBox(args: {
     });
     return { outcome: "prepared" };
   } catch (error) {
-    // An abort can leave the interrupted command running; any other failure
-    // came back from a call that ended.
-    settled = !signal.aborted;
     // Speculative work: the Send prepares the box itself, as it always has.
     // Only the error's class is logged: E2B messages carry ids and output.
     logger.warn("[harness-prepare] box preparation stopped", {
       harness: args.harnessId,
-      stoppedBy: signal.aborted ? "deadline_or_lost_claim" : "sandbox",
+      stoppedBy: signal.aborted
+        ? "deadline_or_lost_claim"
+        : error instanceof StaleClaimError
+          ? "stale_claim"
+          : "sandbox",
       errorName: error instanceof Error ? error.name : typeof error,
     });
     return { outcome: "failed" };
   } finally {
     clearTimeout(deadline);
     clearInterval(renewal);
-    if (settled) {
+    if (fence.idle) {
       await args
         .cleanupAuthorization()
         .then((bearer) =>
