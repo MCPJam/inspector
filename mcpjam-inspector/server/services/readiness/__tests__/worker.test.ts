@@ -22,11 +22,15 @@ const heartbeatReadinessRun = vi.fn();
 const finalizeReadinessRun = vi.fn();
 const failReadinessRun = vi.fn();
 const requestManagedObservations = vi.fn();
+const getReadinessRunSubmission = vi.fn();
 
-// The real class, imported rather than restated: the worker distinguishes it
-// with `instanceof`, and a look-alike would make the test pass while the
+// The real classes, imported rather than restated: the worker distinguishes
+// them with `instanceof`, and a look-alike would make the test pass while the
 // production path fell through to the failure branch.
 const { ReadinessLeaseLostError } = await import("../runner.js");
+const { ReadinessSubmissionUnreadableError } = await vi.importActual<
+  typeof import("../backend-client.js")
+>("../backend-client.js");
 
 vi.mock("../backend-client.js", () => ({
   heartbeatReadinessRun: (...args: unknown[]) => heartbeatReadinessRun(...args),
@@ -34,7 +38,10 @@ vi.mock("../backend-client.js", () => ({
   failReadinessRun: (...args: unknown[]) => failReadinessRun(...args),
   requestManagedObservations: (...args: unknown[]) =>
     requestManagedObservations(...args),
+  getReadinessRunSubmission: (...args: unknown[]) =>
+    getReadinessRunSubmission(...args),
   ReadinessLeaseLostError,
+  ReadinessSubmissionUnreadableError,
 }));
 
 // DYNAMIC, and it has to stay that way. `vi.mock` is hoisted, but its factory
@@ -387,6 +394,102 @@ describe("the failure exits", () => {
     // against a worker that caught the finalize failure and gave up — which
     // is the exact bug the case above is meant to be paired with.
     expect(failReadinessRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a run that grades a directory submission", () => {
+  const FROZEN = {
+    submissionId: "sub_1",
+    submissionRevision: 4,
+    flowId: "claude-connector",
+    flowVersion: "2026-11-13",
+    answers: [
+      // Over the portal's 200 characters, so the listing check must fail.
+      { key: "listing.oneLiner", value: "x".repeat(201), origin: "set", revision: 4 },
+    ],
+  };
+
+  function run(fetchFn: typeof fetch = wireFetch()) {
+    return executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn,
+      includeLlmObservations: false,
+      submissionId: "sub_1",
+    });
+  }
+
+  function listingStatus(): string | undefined {
+    const report = finalizeReadinessRun.mock.calls[0]![2] as {
+      findings: Array<{ id: string; status: string }>;
+    };
+    return report.findings.find(
+      (finding) => finding.id === "claude.submission.listing-fields",
+    )?.status;
+  }
+
+  it("grades the frozen answers, read once before anything dials", async () => {
+    getReadinessRunSubmission.mockResolvedValue(FROZEN);
+    await run();
+
+    expect(getReadinessRunSubmission).toHaveBeenCalledTimes(1);
+    expect(getReadinessRunSubmission).toHaveBeenCalledWith(LEASE);
+    expect(failReadinessRun).not.toHaveBeenCalled();
+    expect(listingStatus()).toBe("violated");
+  });
+
+  it.each([
+    [
+      "answers that cannot be read",
+      () =>
+        getReadinessRunSubmission.mockRejectedValue(
+          new ReadinessSubmissionUnreadableError(
+            "This run's saved answers were not found, so it was not graded. Start a new run from the submission.",
+          ),
+        ),
+      /were not found/,
+    ],
+    [
+      "answers to a form this server cannot grade",
+      () =>
+        getReadinessRunSubmission.mockResolvedValue({
+          ...FROZEN,
+          flowId: "chatgpt-plugin",
+        }),
+      /chatgpt-plugin/,
+    ],
+  ])("fails, before dialling anything, on %s", async (_label, arrange, reason) => {
+    arrange();
+    const fetchFn = vi.fn(wireFetch());
+    await run(fetchFn as unknown as typeof fetch);
+
+    // Never graded as an empty form: nothing dialled, nothing finalized.
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    const [lease, terminalReason, message] = failReadinessRun.mock.calls[0]!;
+    expect(lease).toEqual(LEASE);
+    expect(terminalReason).toBe("submission_unreadable");
+    expect(String(message)).toMatch(reason);
+  });
+
+  it("writes nothing when the lease is lost while reading the answers", async () => {
+    getReadinessRunSubmission.mockRejectedValue(new ReadinessLeaseLostError());
+    await run();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    expect(failReadinessRun).not.toHaveBeenCalled();
+  });
+
+  it("reads no answers for a run started from a server", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(getReadinessRunSubmission).not.toHaveBeenCalled();
+    expect(listingStatus()).toBe("not-evaluated");
   });
 });
 

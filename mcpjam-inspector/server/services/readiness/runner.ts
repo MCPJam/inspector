@@ -33,6 +33,7 @@ import {
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
   type ClaudeReadinessResult,
+  type DirectoryAnswer,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
   type DirectoryFeatureClaim,
@@ -103,6 +104,8 @@ export interface RunReadinessOptions {
   lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Features the submitter claims. */
   claimedFeatures?: DirectoryFeatureClaim[];
+  /** A Claude connector submission's answers, graded with the portal's rules. */
+  submissionAnswers?: readonly DirectoryAnswer[];
   now?: () => Date;
 }
 
@@ -455,6 +458,9 @@ export async function runDirectoryReadiness(
     result: gradeClaudeReadiness({
       ...evidence,
       llmObservations: observations,
+      ...(options.submissionAnswers
+        ? { submissionAnswers: options.submissionAnswers }
+        : {}),
     }),
     observations,
   };

@@ -86,6 +86,12 @@ export interface StartHostedReadinessRunInput {
   lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Features the submitter claims. Reported as claimed, never as verified. */
   claimedFeatures?: DirectoryFeatureClaim[];
+  /**
+   * The directory submission this run grades. The backend checks it belongs
+   * to this project, server and directory, and freezes its answers with the
+   * run; the worker grades that frozen copy.
+   */
+  submissionId?: string;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -185,6 +191,7 @@ export async function startHostedReadinessRun(
         input.claimedFeatures.length > 0
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
+        ...(input.submissionId ? { submissionId: input.submissionId } : {}),
       },
     );
   } catch (error) {
@@ -246,6 +253,7 @@ export async function startHostedReadinessRun(
       ...(input.claimedFeatures !== undefined
         ? { claimedFeatures: input.claimedFeatures }
         : {}),
+      ...(input.submissionId ? { submissionId: input.submissionId } : {}),
       analyticsActor: input.analyticsActor,
     }).catch((error) => {
       // `executeHostedReadinessRun` never throws — every exit lands the run
@@ -320,6 +328,8 @@ export function toReadinessRunDto(
     hasReport,
     reportUrl:
       hasReport && options.reportUrl ? options.reportUrl(run.id) : null,
+    submissionId: run.submissionId ?? null,
+    submissionRevision: run.submissionRevision ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
