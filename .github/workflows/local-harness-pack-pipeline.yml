@@ -73,6 +73,9 @@ jobs:
       codex_version: ${{ inputs.harness == 'codex' && steps.plan.outputs.version || '' }}
       claude_previous: ${{ inputs.harness == 'claude-code' && steps.plan.outputs.pinned_version || '' }}
       codex_previous: ${{ inputs.harness == 'codex' && steps.plan.outputs.pinned_version || '' }}
+      # Every other runtime as a `<harnessId>=<version>` pair.
+      runtime_version: ${{ inputs.harness != 'claude-code' && inputs.harness != 'codex' && steps.plan.outputs.version && format('{0}={1}', inputs.harness, steps.plan.outputs.version) || '' }}
+      runtime_previous: ${{ inputs.harness != 'claude-code' && inputs.harness != 'codex' && steps.plan.outputs.pinned_version && format('{0}={1}', inputs.harness, steps.plan.outputs.pinned_version) || '' }}
     steps:
       - name: Enforce main
         env:
@@ -235,6 +238,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.plan.outputs.claude_version }}
       codex_published_pack_version: ${{ needs.plan.outputs.codex_version }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_version }}
       harnesses: ${{ inputs.harness }}
       candidate: true
 
@@ -253,6 +257,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.plan.outputs.claude_previous }}
       codex_published_pack_version: ${{ needs.plan.outputs.codex_previous }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_previous }}
       harnesses: ${{ inputs.harness }}
 
   pin:

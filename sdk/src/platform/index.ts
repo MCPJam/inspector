@@ -98,6 +98,12 @@ export type {
   PlatformWidgetSessionClosed,
   PlatformWidgetRenderBody,
 } from "./widget-session-types.js";
+export type {
+  PlatformServerAccount,
+  PlatformServerAccountDeleted,
+  PlatformServerAccountTokens,
+  PlatformServerAccountUpload,
+} from "./server-account-types.js";
 
 export {
   computeRunTargets,
@@ -549,6 +555,11 @@ export {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
   getConformanceCheckOperation,
   listClientsOperation,
   listHostsOperation,
@@ -719,6 +730,13 @@ export {
   type GetServerRevisionResult,
   type DiffServerRevisionsInput,
   type DiffServerRevisionsResult,
+  type ServerAccountInput,
+  type ServerAccountResult,
+  type ListServerAccountsResult,
+  type UploadServerAccountTokensInput,
+  type UploadServerAccountTokensResult,
+  type UpdateServerAccountInput,
+  type DeleteServerAccountResult,
   type GetConformanceReportInput,
   type GetConformanceReportResult,
   type GetConformanceCheckInput,

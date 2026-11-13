@@ -26,7 +26,7 @@ import {
 } from "../../server/utils/history-provenance";
 import { convertToMcpjamModelMessages } from "../../server/utils/mcp-tool-result-model-output";
 import { applyActingServerSkillGate } from "../../server/utils/server-skill-acting-gate";
-import { heldEntryConflict } from "../../server/utils/server-skill-held-entry";
+import { heldEntryConflict } from "../../server/utils/computers/server-skill-held-entry";
 import { buildServerSkillToolOutput } from "../server-skill-banner";
 import { manifestDigestSetHash, skillUriHashHex } from "../server-skill-refs";
 import { TOOL_OUTPUT_TEXT_DEPTH } from "../tool-output-envelope";

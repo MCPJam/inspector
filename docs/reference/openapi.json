@@ -74,6 +74,10 @@
       "description": "Connect an MCP server URL to a project, authorizing in a browser when the server requires it."
     },
     {
+      "name": "Server accounts",
+      "description": "The accounts a saved server signs in with, addressed by id or by name. Tokens are write-only: an upload takes them and no route returns one."
+    },
+    {
       "name": "OAuth",
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
@@ -3819,12 +3823,327 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/accounts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/serverId"
+        }
+      ],
+      "get": {
+        "operationId": "listServerAccounts",
+        "tags": ["Server accounts"],
+        "summary": "List a server's accounts",
+        "description": "The accounts this server signs in with that you can see: your own personal accounts, or, on a server shared with the project, its project accounts. Another member's personal account never appears. METADATA ONLY: no account response carries a token.",
+        "responses": {
+          "200": {
+            "description": "The accounts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccountPage"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "id": "acct_7f3a9c",
+                      "name": "test-automation-1",
+                      "kind": "personal",
+                      "isDefault": false,
+                      "needsReconnect": false,
+                      "hostedOnly": true,
+                      "expiresAt": 1781142000000,
+                      "createdAt": 1781138400000,
+                      "updatedAt": 1781138400000
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/accounts/{account}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/serverId"
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "operationId": "getServerAccount",
+        "tags": ["Server accounts"],
+        "summary": "Get a server account",
+        "description": "One account, by id or name. Another member's personal account answers `404`, the same as a missing one. A name two accounts share answers `409` with `details.code: \"account_name_ambiguous\"` and both ids in `details.accountIds`.",
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccount"
+                },
+                "example": {
+                  "id": "acct_7f3a9c",
+                  "name": "test-automation-1",
+                  "kind": "personal",
+                  "isDefault": false,
+                  "needsReconnect": false,
+                  "hostedOnly": true,
+                  "expiresAt": 1781142000000,
+                  "createdAt": 1781138400000,
+                  "updatedAt": 1781138400000
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "uploadServerAccountTokens",
+        "tags": ["Server accounts"],
+        "summary": "Upload tokens to a server account",
+        "description": "Creates the account (`201`) or replaces its token in place (`200`, same id). A well-formed account id never creates one: an unknown id is `404`. Any other reference is a name, and a name no account has creates the account.\n\nNothing checks who a token belongs to. The name is your own label, and replacing a token replaces it whoever it belongs to.\n\nThe account becomes **hosted-only**: hosted runs use it, and no local app, browser or sandbox ever receives its token. Tokens are used with the server URL saved in the project, so the body takes no URL. ID tokens are refused. Each token field is at most 16 KB.\n\nUploads to one server are budgeted per person: 60, refilling at 120 an hour. Past it the answer is `429` with `Retry-After` and `details.retryAfterMs`. On a server shared with the project, only project admins upload, and a member gets `403`.\n\nThe answer is the account, never a token.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerAccountTokensRequest"
+              },
+              "example": {
+                "tokens": {
+                  "access_token": "at_…",
+                  "expires_in": 3600
+                },
+                "clientInformation": {
+                  "clientId": "client_123"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The token was replaced; the account keeps its id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccount"
+                },
+                "example": {
+                  "id": "acct_7f3a9c",
+                  "name": "test-automation-1",
+                  "kind": "personal",
+                  "isDefault": false,
+                  "needsReconnect": false,
+                  "hostedOnly": true,
+                  "expiresAt": 1781142000000,
+                  "createdAt": 1781138400000,
+                  "updatedAt": 1781138400000
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The account was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccount"
+                },
+                "example": {
+                  "id": "acct_7f3a9c",
+                  "name": "test-automation-1",
+                  "kind": "personal",
+                  "isDefault": false,
+                  "needsReconnect": false,
+                  "hostedOnly": true,
+                  "expiresAt": 1781142000000,
+                  "createdAt": 1781138400000,
+                  "updatedAt": 1781138400000
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateServerAccount",
+        "tags": ["Server accounts"],
+        "summary": "Rename a server account or make it the default",
+        "description": "Rename the account, make it the default, or both; a rename applies first. A name another account on the server uses answers `409` with `details.code: \"account_name_taken\"`.\n\nRuns with no saved account choice act as the default. To run evals from CI as one account, make it the default before you start the run, and don't run the same key's runs at the same time with different defaults.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerAccountUpdateRequest"
+              },
+              "example": {
+                "isDefault": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccount"
+                },
+                "example": {
+                  "id": "acct_7f3a9c",
+                  "name": "test-automation-1",
+                  "kind": "personal",
+                  "isDefault": false,
+                  "needsReconnect": false,
+                  "hostedOnly": true,
+                  "expiresAt": 1781142000000,
+                  "createdAt": 1781138400000,
+                  "updatedAt": 1781138400000
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServerAccount",
+        "tags": ["Server accounts"],
+        "summary": "Delete a server account",
+        "description": "Deletes the account and its stored token. The token's issuer is asked to revoke it where the issuer supports revocation (best effort), which also invalidates any copy of the same token you hold.\n\nThe default account is refused with `409` and `details.code: \"account_is_default\"` while other accounts exist, so a delete never changes which account runs act as. Make another account the default first. Send no body.",
+        "responses": {
+          "200": {
+            "description": "The account was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerAccountDeleted"
+                },
+                "example": {
+                  "account": "test-automation-1",
+                  "deleted": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/servers/{serverId}/oauth/import-tokens": {
       "post": {
         "operationId": "importOAuthTokens",
         "tags": ["OAuth"],
         "summary": "Import OAuth tokens",
-        "description": "Stores OAuth tokens you obtained yourself (e.g. via the SDK's `runOAuthLogin` — interactive loopback, headless, or client-credentials) for this server, scoped to your user, project, and server. Subsequent API calls against the server inject the stored access token automatically, and `401`s from the server trigger a server-side refresh — no further caller involvement.\n\nThis closes the loop after an `OAUTH_REQUIRED` error.",
+        "deprecated": true,
+        "description": "**Deprecated.** Use `PUT /projects/{projectId}/servers/{serverId}/accounts/{account}`. This route uploads to your default account on the server, creating an unnamed one when the server has none, and is removed 90 days after the accounts API shipped. Every answer carries `Deprecation: true`, a `Sunset` date and a `Link` to its successor.\n\nAn account this route creates is hosted-only: hosted runs use it, and no local app, browser or sandbox receives its token. An existing default it writes into keeps whatever rule it had.\n\n`serverUrl` must be the server URL saved in the project, or the answer is `400` with `details.code: \"server_url_mismatch\"`. `authorizationServerUrl`, `oauthResourceUrl` and `tokens.id_token` are accepted and ignored. Nothing checks who the token belongs to.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3857,6 +4176,26 @@
         "responses": {
           "200": {
             "description": "Tokens stored.",
+            "headers": {
+              "Deprecation": {
+                "description": "Always `true`: this route is deprecated.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Sunset": {
+                "description": "The HTTP date after which the route is removed.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Link": {
+                "description": "The successor: `</api/v1/projects/{projectId}/servers/{serverId}/accounts>; rel=\"successor-version\"`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -15350,6 +15689,15 @@
         "schema": {
           "type": "string"
         }
+      },
+      "account": {
+        "name": "account",
+        "in": "path",
+        "required": true,
+        "description": "The account's id, or its name. A well-formed account id is matched as an id; anything else is a name, matched ignoring case.",
+        "schema": {
+          "type": "string"
+        }
       }
     },
     "requestBodies": {
@@ -24214,19 +24562,19 @@
       },
       "ImportTokensRequest": {
         "type": "object",
-        "required": ["serverUrl", "tokens"],
+        "required": ["serverUrl", "clientInformation", "tokens"],
         "properties": {
           "serverUrl": {
             "type": "string",
-            "description": "The MCP server URL the tokens were obtained for."
+            "description": "The MCP server URL the tokens were obtained for. It must be the URL saved in the project."
           },
           "oauthResourceUrl": {
             "type": "string",
-            "description": "OAuth protected-resource URL, when it differs from `serverUrl`."
+            "description": "Accepted and ignored: tokens are used with the server URL saved in the project."
           },
           "clientInformation": {
             "type": "object",
-            "description": "OAuth client used to obtain the tokens. Optional, but without it server-side refresh cannot run — always include it when you provide a `refresh_token`.",
+            "description": "The OAuth client used to obtain the tokens.",
             "required": ["clientId"],
             "properties": {
               "clientId": {
@@ -24262,7 +24610,8 @@
               },
               "id_token": {
                 "type": "string",
-                "format": "password"
+                "format": "password",
+                "description": "Accepted and ignored: ID tokens are not stored."
               }
             }
           }
@@ -25641,6 +25990,153 @@
           "nextCursor": {
             "type": "string",
             "description": "Pass as `before` to fetch the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ServerAccount": {
+        "type": "object",
+        "description": "One account a saved server signs in with. METADATA ONLY: no account response carries a token, a vault id, an email or any other recorded profile field.",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "isDefault",
+          "needsReconnect",
+          "hostedOnly",
+          "expiresAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Never changes, including while the account needs reconnecting. An eval suite's saved account choice stores it."
+          },
+          "name": {
+            "type": ["string", "null"],
+            "description": "Your own label, or `null` for an account nobody named. Nothing checks it against who the token belongs to."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["personal", "project"],
+            "description": "`project` accounts belong to a server shared with the project; project admins manage them."
+          },
+          "isDefault": {
+            "type": "boolean",
+            "description": "The effective default: the account marked as default, else the oldest. Runs with no saved account choice act as it."
+          },
+          "needsReconnect": {
+            "type": "boolean",
+            "description": "The issuer rejected a refresh, or the token expired with no refresh token stored. Upload a fresh token to restore it; the id stays."
+          },
+          "hostedOnly": {
+            "type": "boolean",
+            "description": "Hosted runs use the account, and no local app, browser or sandbox receives its token. True for accounts written by `PUT .../accounts/{account}` and for project accounts."
+          },
+          "expiresAt": {
+            "type": ["integer", "null"],
+            "description": "When the access token expires, epoch milliseconds."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "ServerAccountPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServerAccount"
+            }
+          }
+        }
+      },
+      "ServerAccountTokensRequest": {
+        "type": "object",
+        "description": "Tokens and the OAuth client they were issued to, and nothing else. A URL field (`serverUrl`, `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token` answers `400` with `details.code: \"field_not_accepted\"`; any other unknown field answers `400`.",
+        "additionalProperties": false,
+        "required": ["tokens", "clientInformation"],
+        "properties": {
+          "tokens": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["access_token"],
+            "properties": {
+              "access_token": {
+                "type": "string",
+                "format": "password",
+                "description": "At most 16 KB; a larger one answers `400` with `details.code: \"token_too_large\"`."
+              },
+              "refresh_token": {
+                "type": "string",
+                "format": "password",
+                "description": "Optional, and best omitted when CI uploads a fresh token before each run or when the issuer rejects refreshes: stored, it only adds a long-lived credential. At most 16 KB."
+              },
+              "expires_in": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Seconds until the access token expires."
+              },
+              "token_type": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              }
+            }
+          },
+          "clientInformation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["clientId"],
+            "properties": {
+              "clientId": {
+                "type": "string",
+                "description": "The OAuth client the token was issued to."
+              },
+              "clientSecret": {
+                "type": "string",
+                "format": "password"
+              }
+            }
+          }
+        }
+      },
+      "ServerAccountUpdateRequest": {
+        "type": "object",
+        "description": "At least one of the two.",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "description": "Letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters. A name outside the rule answers `400` with `details.code: \"invalid_account_name\"` rather than being cleaned up, and so does a name that is also a well-formed account id. Unique on the server, ignoring case."
+          },
+          "isDefault": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "Make this the default account. `false` is refused: to move the default, set it on another account."
+          }
+        }
+      },
+      "ServerAccountDeleted": {
+        "type": "object",
+        "required": ["account", "deleted"],
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "The id or name the request addressed."
+          },
+          "deleted": {
+            "type": "boolean",
+            "enum": [true]
           }
         }
       },
