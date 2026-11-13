@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import {
   GATEWAY_APIS,
+  gatewayBaseKey,
   type GatewayApi,
   type GatewayApiTestResult,
   type GatewayConnectionTestResult,
@@ -67,11 +68,12 @@ export function useGatewayDraft({
   const focusRequest = useRef<GatewayField | null>(null);
   // The latest Test run; a reset or a newer run makes an earlier answer stale.
   const testRun = useRef(0);
-  // The base URL the latest Test ran against. A new provider's APIs and
-  // models come from its Test, so they start over only when a Test runs
-  // against another address; testing the same address again, from either
-  // side or with another key, keeps the admin's mappings and hand-added models.
-  const testedBaseUrl = useRef<string | null>(null);
+  // The address a Test last answered from, compared the way the backend
+  // compares base URLs. A new provider's APIs and models start over once
+  // another address answers. A Test that gets no answer, or one against the
+  // same address from the other side or with another key, keeps the admin's
+  // mappings and hand-added models.
+  const answeredBaseKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -91,7 +93,7 @@ export function useGatewayDraft({
     setOutcome(null);
     setKeyRequested(false);
     setDirty(false);
-    testedBaseUrl.current = null;
+    answeredBaseKey.current = null;
   }, [open, editProvider]);
 
   useEffect(() => {
@@ -145,11 +147,7 @@ export function useGatewayDraft({
     setTesting(true);
     setOutcome(null);
     setTested(null);
-    if (!editProvider && baseUrl.trim() !== testedBaseUrl.current) {
-      setApis([]);
-      setModels([]);
-    }
-    testedBaseUrl.current = baseUrl.trim();
+    const baseKey = gatewayBaseKey(baseUrl.trim());
     let response: Awaited<ReturnType<typeof testConnection>>;
     try {
       response = await testConnection({
@@ -166,6 +164,13 @@ export function useGatewayDraft({
     const next = gatewayTestOutcome(response);
     if (!("error" in response)) {
       setTested(response);
+      if (response.reachable && !response.refusal) {
+        if (!editProvider && baseKey !== answeredBaseKey.current) {
+          setApis([]);
+          setModels([]);
+        }
+        answeredBaseKey.current = baseKey;
+      }
       const answered = apisFromTest(response);
       if (answered.length > 0) setApis(answered);
       if (response.models.length > 0) {
@@ -211,11 +216,6 @@ export function useGatewayDraft({
     answered,
     /** The URL, key and runtime are still the saved provider's. */
     asSaved,
-    /**
-     * The latest Test answered cleanly. An answer with a failure (a 404 on
-     * the model list, no API answering) still lets the admin fill in by hand.
-     */
-    passed: answered && outcome?.tone !== "destructive",
     dirty,
     keyProblem: baseUrlKeyProblem(editProvider, baseUrl, secret),
     setBaseUrl: editProbe(setBaseUrl),
