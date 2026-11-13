@@ -1,5 +1,6 @@
 /**
- * Directory flows: each directory's submission form as data.
+ * Directory flows: each directory's submission form as data, the portal's
+ * own checks over answers, and where a readiness run's findings belong.
  *
  * Pure data and pure functions, so this whole barrel is safe from the
  * browser entry; nothing added here may change that.
@@ -26,6 +27,10 @@ export {
   directoryFlowField,
   withDirectoryFlowDefaults,
 } from "./fields.js";
+export {
+  validateDirectoryAnswerInput,
+  validateDirectoryAnswers,
+} from "./validate.js";
 export type {
   DirectoryAnswer,
   DirectoryAnswerOrigin,

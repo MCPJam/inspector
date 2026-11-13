@@ -67,3 +67,20 @@ export function directoryFieldWordingRevision(
   const field = directoryFlowField(flow, key);
   return field && (field.wordingRevision ?? flow.version);
 }
+
+/** No answer at all: empty text, an unticked box, an empty list, no complete row. */
+export function isBlankAnswer(
+  field: DirectoryFlowField,
+  value: DirectoryAnswerValue | undefined
+): boolean {
+  if (value === undefined || value === null || value === false) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (!Array.isArray(value)) return false;
+  const columns = field.pairs?.keys;
+  if (!columns) return value.length === 0;
+  return !(value as ReadonlyArray<string | Record<string, string>>).some(
+    (row) =>
+      typeof row === "object" &&
+      columns.every((column) => (row[column] ?? "").trim() !== "")
+  );
+}
