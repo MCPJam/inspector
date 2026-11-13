@@ -15,15 +15,19 @@ import {
   type RunResultsMatrixData,
 } from "../run-results-matrix-model";
 import { outcomeDotTone, outcomeLabel, outcomeTextTone } from "./outcome";
+import { followLink } from "./result-page-links";
 
 export function CaseIterations({
   target,
   caseKey,
   onSelectIteration,
+  iterationHref,
 }: {
   target: RunResultsMatrixData["targets"][number];
   caseKey: string;
   onSelectIteration: (iterationId: string) => void;
+  /** When set, each row is a link to its iteration page. */
+  iterationHref?: (iterationId: string) => string;
 }) {
   const items = target.cells.get(caseKey) ?? [];
   if (!items.length) {
@@ -154,12 +158,27 @@ export function CaseIterations({
                 </span>
               </>
             );
-            return (
+            const rowProps = {
+              className:
+                "grid w-full grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              "aria-label": `Open iteration ${item.iterationNumber ?? index + 1} details`,
+            };
+            return iterationHref ? (
+              <a
+                key={item._id}
+                {...rowProps}
+                href={iterationHref(item._id)}
+                onClick={(event) =>
+                  followLink(event, () => onSelectIteration(item._id))
+                }
+              >
+                {row}
+              </a>
+            ) : (
               <button
                 key={item._id}
                 type="button"
-                className="grid w-full grid-cols-[minmax(130px,1fr)_minmax(180px,1fr)_120px_120px_110px_70px] items-center gap-2 border-t border-border px-3 py-2.5 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                aria-label={`Open iteration ${item.iterationNumber ?? index + 1} details`}
+                {...rowProps}
                 onClick={() => onSelectIteration(item._id)}
               >
                 {row}

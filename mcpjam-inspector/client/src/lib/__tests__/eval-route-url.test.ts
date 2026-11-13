@@ -424,4 +424,49 @@ describe("eval-route-url", () => {
       iteration: undefined,
     });
   });
+
+  describe("run result pages", () => {
+    const roundTrip = (route: Parameters<typeof buildEvaluatePath>[0]) => {
+      const url = buildEvaluatePath(route);
+      const [path, search = ""] = url.split("?");
+      return { url, parsed: parseEvalRouteFromUrl("/evaluate", path, search) };
+    };
+
+    it("round-trips a test case page with its column", () => {
+      const route = {
+        type: "run-detail" as const,
+        suiteId: "s1",
+        runId: "r1",
+        resultPage: { caseKey: "c1", target: "r2~claude-sonnet:high/x" },
+      };
+      const { url, parsed } = roundTrip(route);
+      expect(url).toBe(
+        "/evaluate/suite/s1/runs/r1/cases/c1?target=r2%7Eclaude-sonnet%3Ahigh%2Fx",
+      );
+      expect(parsed).toEqual(route);
+    });
+
+    it("round-trips an iteration page with a title case key", () => {
+      const route = {
+        type: "run-detail" as const,
+        suiteId: "s1",
+        runId: "r1",
+        resultPage: {
+          caseKey: "title:Refund / partial?",
+          iterationId: "i1",
+        },
+      };
+      const { url, parsed } = roundTrip(route);
+      expect(url).toBe(
+        "/evaluate/suite/s1/runs/r1/cases/title%3ARefund%20%2F%20partial%3F/iterations/i1",
+      );
+      expect(parsed).toEqual(route);
+    });
+
+    it("keeps the pages off other prefixes", () => {
+      expect(
+        parseEvalRouteFromUrl("/evals", "/evals/suite/s1/runs/r1/cases/c1"),
+      ).toEqual({ type: "list" });
+    });
+  });
 });

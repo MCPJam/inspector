@@ -63,6 +63,7 @@ import {
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
+import type { RunResultCrumbs } from "./evaluate/run-result-pages/run-result-page";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -1331,6 +1332,11 @@ function EvaluateTabContent({
     label?: string;
   } | null>(null);
 
+  // Reported by an open run result page; cleared when it unmounts.
+  const [resultCrumbs, setResultCrumbs] = useState<RunResultCrumbs | null>(
+    null,
+  );
+
   const renderPlaygroundBreadcrumb = () => {
     if (generatingCases) return generatingCases.label ?? "Generate test cases";
     if (!hasDetailRoute) return null;
@@ -1613,6 +1619,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           onGeneratingChange={setGeneratingCases}
+          onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1684,7 +1691,7 @@ function EvaluateTabContent({
                   ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
-                  : undefined
+                  : resultCrumbs?.crumbs
             }
             onCurrentCrumbClick={
               route.type === "suite-edit" && route.fromCaseChecks
@@ -1699,7 +1706,7 @@ function EvaluateTabContent({
                         route.suiteId,
                         route.testId,
                       )
-                  : undefined
+                  : resultCrumbs?.onOpenRun
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}

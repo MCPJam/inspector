@@ -331,6 +331,12 @@ const ROUTE_ELEMENTS: Record<
   "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
+  "evaluate/suite/:suiteId/runs/:runId/cases/:caseId": {
+    element: <EvaluateRoute />,
+  },
+  "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId": {
+    element: <EvaluateRoute />,
+  },
   // Evaluate prefix only: the compare page mounts behind
   // `showEvaluateRunPage`, and the `/evals` builders never set
   // `comparison`, so there is no `/evals/.../compare` URL to register.

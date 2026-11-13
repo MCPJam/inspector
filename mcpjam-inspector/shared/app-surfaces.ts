@@ -448,6 +448,8 @@ export const APP_SURFACES = [
       "evaluate/suite/:suiteId/settings/evaluators",
       "evaluate/suite/:suiteId/runs/:runId",
       "evaluate/suite/:suiteId/runs/:runId/compare",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId",
       "evaluate/suite/:suiteId/test/:testId",
       "evaluate/suite/:suiteId/test/:testId/edit",
     ],

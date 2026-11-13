@@ -54,6 +54,10 @@ import {
   trackCaseResultViewed,
   trackIterationViewed,
 } from "./run-result-pages/run-view-events";
+import {
+  followLink,
+  type MatrixTarget,
+} from "./run-result-pages/result-page-links";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
 const STATUS_LABEL: Record<StatusFilter, string> = {
@@ -217,6 +221,8 @@ export function RunResultsMatrix({
   onFilterChange,
   onEditCase,
   onEditEvaluator,
+  caseResultHref,
+  onOpenCaseResult,
 }: {
   /** Target keys to show (`comparisonKey`; the bare model id when default). */
   modelIds?: readonly string[];
@@ -233,6 +239,9 @@ export function RunResultsMatrix({
   onFilterChange?: (filters: { search: string; status: string }) => void;
   onEditCase?: (testCaseId: string) => void;
   onEditEvaluator?: (testCaseId: string) => void;
+  /** When set, each cell is a link to its test case page instead of a drawer. */
+  caseResultHref?: (caseKey: string, target: MatrixTarget | null) => string;
+  onOpenCaseResult?: (caseKey: string, target: MatrixTarget | null) => void;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -244,6 +253,7 @@ export function RunResultsMatrix({
     });
     return {
       ...matrix,
+      columnCount: matrix.targets.length,
       targets: modelIds
         ? matrix.targets.filter((target) => modelIds.includes(target.targetKey))
         : matrix.targets,
@@ -320,6 +330,21 @@ export function RunResultsMatrix({
       : [];
   const selectedIteration =
     selectedItems.find((item) => item._id === selectedIterationId) ?? null;
+  const cellClass = cn(
+    "flex h-full w-full flex-col px-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    view === "results"
+      ? "min-h-16 justify-center py-4"
+      : "min-h-16 justify-center py-3",
+  );
+  const cellBody = (items: EvalIteration[]) =>
+    view === "results" ? (
+      <CellResults items={items} />
+    ) : (
+      <CellMetricValues items={items} />
+    );
+  // A link names its column whenever the grid could show more than one.
+  const linkTarget = (target: MatrixTarget) =>
+    data.columnCount > 1 || modelIds || extraFiltersActive ? target : null;
   // Views name the run whose page is open, even on a sibling run's column, so
   // each joins the one run visit that page recorded.
   const viewedRun = { suiteId: run.suiteId, runId: run._id };
@@ -510,7 +535,21 @@ export function RunResultsMatrix({
                       key={target.key}
                       className="border-l border-border/60 p-0 align-top"
                     >
-                      {items.length ? (
+                      {items.length && caseResultHref ? (
+                        <a
+                          href={caseResultHref(row.key, linkTarget(target))}
+                          onClick={(event) =>
+                            onOpenCaseResult &&
+                            followLink(event, () =>
+                              onOpenCaseResult(row.key, linkTarget(target)),
+                            )
+                          }
+                          aria-label={`Open ${row.title} on ${target.client} · ${target.model}`}
+                          className={cellClass}
+                        >
+                          {cellBody(items)}
+                        </a>
+                      ) : items.length ? (
                         <button
                           type="button"
                           onClick={() => {
@@ -526,18 +565,9 @@ export function RunResultsMatrix({
                             );
                           }}
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
-                          className={cn(
-                            "flex h-full w-full flex-col px-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                            view === "results"
-                              ? "min-h-16 justify-center py-4"
-                              : "min-h-16 justify-center py-3",
-                          )}
+                          className={cellClass}
                         >
-                          {view === "results" ? (
-                            <CellResults items={items} />
-                          ) : (
-                            <CellMetricValues items={items} />
-                          )}
+                          {cellBody(items)}
                         </button>
                       ) : (
                         <div className="p-4 text-muted-foreground">

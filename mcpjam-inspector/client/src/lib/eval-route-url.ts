@@ -133,6 +133,29 @@ export function parseEvalRouteFromUrl(
     };
   }
 
+  // Evaluate only: `runs/R/cases/C` and `runs/R/cases/C/iterations/I`.
+  if (
+    prefix === "/evaluate" &&
+    rest[0] === "runs" &&
+    rest[1] &&
+    rest[2] === "cases" &&
+    rest[3] &&
+    (rest.length === 4 ||
+      (rest.length === 6 && rest[4] === "iterations" && rest[5]))
+  ) {
+    const target = params.get("target");
+    return {
+      type: "run-detail",
+      suiteId,
+      runId: decodePathSegment(rest[1]),
+      resultPage: {
+        caseKey: decodePathSegment(rest[3]),
+        ...(target ? { target } : {}),
+        ...(rest[5] ? { iterationId: decodePathSegment(rest[5]) } : {}),
+      },
+    };
+  }
+
   if (rest[0] === "test" && rest[1]) {
     const testId = decodePathSegment(rest[1]);
     if (rest.length === 2) {

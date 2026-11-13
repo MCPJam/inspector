@@ -23,6 +23,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-suite-settings-tabs",
   "evaluate-enabled",
   "evaluate-observe-first",
+  "evaluate-run-result-pages",
   "evals-start-recording",
   "guest-credit-wall-copy",
   "hosted-browser-enabled",

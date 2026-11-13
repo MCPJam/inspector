@@ -45,6 +45,7 @@ import { UnifiedFindingsSection } from "./unified-findings-section";
 import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
+import { useCaseResultLinks } from "./run-result-pages/result-page-links";
 
 type MemberReport = {
   pending: boolean;
@@ -75,6 +76,7 @@ export function CombinedRunContent({
   onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
+  const caseResultLinks = useCaseResultLinks(routeRun);
   const history = useProjectRunHistory(
     projectId ?? "",
     runs,
@@ -334,6 +336,7 @@ export function CombinedRunContent({
             <RunResultsMatrix
               onEditCase={onEditCase}
               onEditEvaluator={onEditEvaluator}
+              {...caseResultLinks}
               run={selectedRuns[0]}
               suiteName={suiteName}
               runs={selectedRuns}

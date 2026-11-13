@@ -5,6 +5,8 @@ export const outcomeLabel = (result: string) =>
     pending: "In progress",
     cancelled: "Cancelled",
     timed_out: "Timed out",
+    setup_failed: "Setup failed",
+    skipped: "Skipped",
   })[result] ?? "Unknown";
 export const outcomeTextTone = (result: string) =>
   result === "passed"
