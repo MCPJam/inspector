@@ -53,7 +53,7 @@ import {
   descendants,
   freePort,
   isLoopbackListener,
-  listeners,
+  treeListeners,
   processEnvironment,
   running,
   startHelper,
@@ -263,7 +263,9 @@ async function main() {
   } else if (environments.includes(null)) {
     failures.push("a supervised process's environment could not be read, so the upstream key check proved nothing");
   }
-  const offLoopback = (await Promise.all(tree.map(listeners))).flat().filter((listener) => !isLoopbackListener(listener));
+  const listening = await treeListeners(tree);
+  if (listening === null) failures.push("a supervised process's listeners could not be read, so the loopback check proved nothing");
+  const offLoopback = (listening ?? []).filter((listener) => !isLoopbackListener(listener));
   if (offLoopback.length > 0) failures.push(`a supervised process listened off loopback: ${JSON.stringify(offLoopback)}`);
 
   const resumeState = await session.detach();
