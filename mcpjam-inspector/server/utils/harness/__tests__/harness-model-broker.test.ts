@@ -366,6 +366,19 @@ describe("harness box reservation", () => {
     });
   });
 
+  it("reads a 2xx whose body can't be read as unanswered: the claim may exist", async () => {
+    mockFetch(() => new Response("{", { status: 200 }));
+    await expect(
+      reserveHarnessBox({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toMatchObject({ ok: false, status: 502 });
+  });
+
   it("reserve names the pinned runtime version for every baked harness", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {

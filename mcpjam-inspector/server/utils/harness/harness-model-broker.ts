@@ -670,7 +670,8 @@ export async function reserveHarnessBox(args: {
   if (!response.ok || payload?.ok !== true) {
     return {
       ok: false,
-      status: response.status,
+      // A 2xx whose body can't be read may still have made the claim.
+      status: response.ok ? 502 : response.status,
       error:
         typeof payload?.error === "string"
           ? payload.error

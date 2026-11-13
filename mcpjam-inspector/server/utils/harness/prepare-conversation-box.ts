@@ -19,8 +19,8 @@
  * coreutils `timeout -s KILL` in the box (`preparation-fence.ts`); a box
  * without that `timeout` is skipped. A Send that arrives meanwhile is answered
  * `box_preparing` and waits (`box-preparing-wait.ts`). The claim is handed
- * back as soon as nothing it covers can still be running: at once, or, after
- * a command whose call never returned, once that command's bound has passed.
+ * back once every call in the box has returned; after one that never did, it
+ * is left to lapse at its TTL, since that call may still reach the box.
  */
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
@@ -194,7 +194,8 @@ export async function prepareConversationBox(args: {
     signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
   });
   if (!claimed.ok) {
-    // A call the backend did not answer may still have made the claim.
+    // A call the backend did not answer, or whose answer could not be read
+    // (502), may still have made the claim.
     if (claimed.status >= 500) await release();
     return skipped("box_busy");
   }
@@ -280,12 +281,12 @@ export async function prepareConversationBox(args: {
   } finally {
     clearTimeout(deadline);
     clearInterval(renewal);
-    // Handed back once nothing the claim covers can still be running.
-    const releasableAt = fence.releasableAt();
-    if (releasableAt !== undefined) {
-      const wait = releasableAt - performance.now();
-      if (wait <= 0) await release();
-      else setTimeout(() => void release(), wait).unref?.();
+    // Handed back only once nothing the claim covers can still be running.
+    if (fence.settled) await release();
+    else {
+      logger.info("[harness-prepare] box claim left to lapse", {
+        harness: args.harnessId,
+      });
     }
   }
 }

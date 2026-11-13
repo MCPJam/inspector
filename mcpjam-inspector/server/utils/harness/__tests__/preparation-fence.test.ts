@@ -122,26 +122,73 @@ describe("the fence around a preparation's work in the box", () => {
     const session = guard.session(innerSession());
     await session.run({ command: "true" });
     await session.writeTextFile({ path: "/x", content: "" });
-    expect(guard.releasableAt()).toBeLessThanOrEqual(performance.now());
+    expect(guard.settled).toBe(true);
   });
 
-  it("after a command whose call threw, only once its bound has passed", async () => {
+  it("leaves the claim to lapse after a command whose call threw, past its bound too", async () => {
     const guard = fence();
     const inner = innerSession();
-    const startedAt = performance.now();
     inner.run.mockRejectedValueOnce(new Error("connection reset"));
     await expect(guard.session(inner).run({ command: "x" })).rejects.toThrow();
-    expect(guard.releasableAt()).toBe(startedAt + BOUND_MS + MARGIN_MS);
+    // The request may have reached the box late: no bound counted here holds.
+    vi.advanceTimersByTime(BOUND_MS + MARGIN_MS + 1);
+    expect(guard.settled).toBe(false);
   });
 
-  it("never, while a write that threw may still land", async () => {
+  it("leaves the claim to lapse after a write that threw", async () => {
     const guard = fence();
     const inner = innerSession();
     inner.writeTextFile.mockRejectedValueOnce(new Error("connection reset"));
     await expect(
       guard.session(inner).writeTextFile({ path: "/x", content: "" }),
     ).rejects.toThrow();
-    expect(guard.releasableAt()).toBeUndefined();
+    expect(guard.settled).toBe(false);
+  });
+
+  it("never hands the claim back while a call has not settled", async () => {
+    const guard = fence();
+    const inner = innerSession();
+    inner.run.mockImplementationOnce(() => new Promise(() => {}));
+    void guard.session(inner).run({ command: "sleep 1" });
+    vi.advanceTimersByTime(BOUND_MS + MARGIN_MS + 1);
+    expect(guard.settled).toBe(false);
+  });
+
+  it("cuts a write's request off at the bound, keeping the caller's cancellation", async () => {
+    const inner = innerSession();
+    let seen: AbortSignal | undefined;
+    inner.writeTextFile.mockImplementationOnce(
+      ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+        seen = abortSignal;
+        return new Promise((_, reject) =>
+          abortSignal?.addEventListener("abort", () =>
+            reject(abortSignal.reason),
+          ),
+        );
+      },
+    );
+    const caller = new AbortController();
+    const write = fence()
+      .session(inner)
+      .writeTextFile({ path: "/x", content: "", abortSignal: caller.signal });
+    const failed = expect(write).rejects.toThrow("ran past its bound");
+    vi.advanceTimersByTime(BOUND_MS - 1);
+    expect(seen?.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    await failed;
+    expect(seen?.aborted).toBe(true);
+    // The caller's own cancellation still reaches the write.
+    let second: AbortSignal | undefined;
+    inner.writeTextFile.mockImplementationOnce(
+      async ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+        second = abortSignal;
+      },
+    );
+    await fence()
+      .session(inner)
+      .writeTextFile({ path: "/y", content: "", abortSignal: caller.signal });
+    caller.abort(new Error("stopped"));
+    expect(second?.aborted).toBe(true);
   });
 
   it("probes without the bound, still fenced", async () => {

@@ -6,15 +6,15 @@
  * TTL the backend answered, counted from when the request it answered was
  * sent, on the monotonic clock. A command runs in the box under coreutils
  * `timeout -s KILL`, which kills its whole process group at `commandBoundMs`
- * whatever E2B does with a timed-out command, so nothing starts unless now +
- * `commandBoundMs` + `marginMs` falls short of that expiry; the margin covers
- * the request's way to the box. Spawning is refused: a spawned process runs
- * with no timeout.
+ * whatever E2B does with a timed-out command, and a write's request is cut off
+ * at the same bound, so nothing starts unless now + `commandBoundMs` +
+ * `marginMs` falls short of that expiry; the margin covers the request's way
+ * to the box. Spawning is refused: a spawned process runs with no timeout.
  *
- * It also knows what may still be running. A call that returned has ended. A
- * command whose call threw (an abort, a dropped connection) is over once its
- * bound has passed. A write whose call threw has no bound in the box, so only
- * the claim's TTL is safe then.
+ * It also knows what may still be running. A call that returned has ended:
+ * the box answered it. A call that threw, or has not settled, may still reach
+ * the box late, past any bound counted here, so only the claim's own expiry
+ * is safe then: the claim is left to lapse.
  */
 import type { Experimental_SandboxSession } from "@ai-sdk/provider-utils";
 import { shellQuote } from "./shell-quote.js";
@@ -23,13 +23,10 @@ export class StaleClaimError extends Error {
   override readonly name = "StaleClaimError";
 }
 
-type Started = { kind: "command" | "write"; at: number };
-
 export class PreparationFence {
   private heldUntil = 0;
-  private quietAt = 0;
-  private unbounded = false;
-  private readonly inFlight = new Set<Started>();
+  private inFlight = 0;
+  private interrupted = false;
   private readonly commandBoundMs: number;
   private readonly marginMs: number;
   private readonly signal: AbortSignal;
@@ -52,23 +49,16 @@ export class PreparationFence {
   }
 
   /**
-   * When the claim can be handed back, on the monotonic clock: by now when
-   * nothing can be running, once every interrupted command's bound has
-   * passed, or never (undefined) while a write may still land.
+   * Whether the claim can be handed back now: every call it covered returned.
+   * Otherwise it is left to lapse at its TTL.
    */
-  releasableAt(): number | undefined {
-    if (this.unbounded) return undefined;
-    let at = this.quietAt;
-    for (const started of this.inFlight) {
-      if (started.kind === "write") return undefined;
-      at = Math.max(at, this.boundPassedAt(started.at));
-    }
-    return at;
+  get settled(): boolean {
+    return this.inFlight === 0 && !this.interrupted;
   }
 
   /** A command too short to need the bound, such as a version check. */
   probe(inner: Experimental_SandboxSession, command: string) {
-    return this.start("command", () => inner.run({ command }));
+    return this.start(() => inner.run({ command }));
   }
 
   /** The session a bootstrap gets: its writes and commands pass the fence. */
@@ -80,13 +70,13 @@ export class PreparationFence {
       readBinaryFile: (options) => inner.readBinaryFile(options),
       readTextFile: (options) => inner.readTextFile(options),
       writeFile: (options) =>
-        this.start("write", () => inner.writeFile(options)),
+        this.start((bound) => inner.writeFile(withBound(options, bound))),
       writeBinaryFile: (options) =>
-        this.start("write", () => inner.writeBinaryFile(options)),
+        this.start((bound) => inner.writeBinaryFile(withBound(options, bound))),
       writeTextFile: (options) =>
-        this.start("write", () => inner.writeTextFile(options)),
+        this.start((bound) => inner.writeTextFile(withBound(options, bound))),
       run: (options) =>
-        this.start("command", () =>
+        this.start(() =>
           inner.run({
             ...options,
             command: `timeout -s KILL ${seconds} bash -c ${shellQuote(options.command)}`,
@@ -98,30 +88,44 @@ export class PreparationFence {
     };
   }
 
-  private boundPassedAt(startedAt: number): number {
-    return startedAt + this.commandBoundMs + this.marginMs;
-  }
-
+  /** `call` gets a signal that aborts at the bound, for a write's request. */
   private async start<T>(
-    kind: Started["kind"],
-    call: () => PromiseLike<T>,
+    call: (bound: AbortSignal) => PromiseLike<T>,
   ): Promise<T> {
     this.signal.throwIfAborted();
-    const at = performance.now();
-    if (this.boundPassedAt(at) >= this.heldUntil) {
+    if (
+      performance.now() + this.commandBoundMs + this.marginMs >=
+      this.heldUntil
+    ) {
       throw new StaleClaimError("The box claim may lapse before this ends.");
     }
-    const started: Started = { kind, at };
-    this.inFlight.add(started);
+    const bound = new AbortController();
+    const timer = setTimeout(
+      () => bound.abort(new Error("The call ran past its bound.")),
+      this.commandBoundMs,
+    );
+    this.inFlight += 1;
     try {
-      const result = await call();
-      this.inFlight.delete(started);
-      return result;
+      return await call(bound.signal);
     } catch (error) {
-      this.inFlight.delete(started);
-      if (kind === "write") this.unbounded = true;
-      else this.quietAt = Math.max(this.quietAt, this.boundPassedAt(at));
+      this.interrupted = true;
       throw error;
+    } finally {
+      this.inFlight -= 1;
+      clearTimeout(timer);
     }
   }
+}
+
+/** The call's own cancellation, and the fence's bound. */
+function withBound<O extends { abortSignal?: AbortSignal }>(
+  options: O,
+  bound: AbortSignal,
+): O {
+  return {
+    ...options,
+    abortSignal: options.abortSignal
+      ? AbortSignal.any([options.abortSignal, bound])
+      : bound,
+  };
 }

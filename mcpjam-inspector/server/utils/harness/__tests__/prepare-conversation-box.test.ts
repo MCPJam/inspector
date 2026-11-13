@@ -261,7 +261,7 @@ describe("preparing a new chat's box", () => {
     expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
-  it("renews the claim while it runs, stops when it is lost, and hands it back once the bound has passed", async () => {
+  it("renews the claim while it runs, stops when it is lost, and leaves it to lapse", async () => {
     vi.useFakeTimers();
     const box = fakeBox({ hang: true });
     mocks.renew
@@ -283,15 +283,13 @@ describe("preparing a new chat's box", () => {
     const lostAt = mocks.log.lastIndexOf("renew");
     expect(mocks.log.slice(lostAt + 1)).not.toContain("command");
     expect(box.spawn).not.toHaveBeenCalled();
-    // The interrupted install, started at the claim, may run until its bound
-    // and the margin: not handed back before.
-    await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000 - 120_000 - 1);
+    // The interrupted install may still be running in the box, however late
+    // its request reached it: the claim is never handed back early.
+    await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
     expect(mocks.release).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2);
-    expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
-  it("past its deadline hands the claim back once the interrupted command's bound has passed", async () => {
+  it("past its deadline leaves the claim to lapse: the interrupted command may still be running", async () => {
     vi.useFakeTimers();
     // The guard takes a minute, so the install starts a minute in.
     const box = fakeBox({ hang: true, guardMs: 60_000 });
@@ -300,12 +298,8 @@ describe("preparing a new chat's box", () => {
     await box.installing;
     await vi.advanceTimersByTimeAsync(PREPARATION_DEADLINE_MS - 60_000);
     await expect(prepared).resolves.toEqual({ outcome: "failed" });
+    await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
     expect(mocks.release).not.toHaveBeenCalled();
-    // Started at one minute, bounded at its bound and the margin after.
-    await vi.advanceTimersByTimeAsync(60_000 - 1);
-    expect(mocks.release).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2);
-    expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
   it("a failed command ended, so the box is handed back at once", async () => {
@@ -319,7 +313,7 @@ describe("preparing a new chat's box", () => {
     expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
-  it("a command whose call dropped is handed back only once its bound has passed", async () => {
+  it("a command whose call dropped leaves the claim to lapse", async () => {
     vi.useFakeTimers();
     const box = fakeBox();
     const run = box.session.run.getMockImplementation()!;
@@ -328,10 +322,8 @@ describe("preparing a new chat's box", () => {
       return run(call);
     });
     await expect(prepare()).resolves.toEqual({ outcome: "failed" });
-    await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000 - 1);
+    await vi.advanceTimersByTimeAsync(COMMAND_BOUND_MS + 30_000);
     expect(mocks.release).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2);
-    expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 
   it("after a stall, starts nothing its claim might not outlive, by the clock and not a timer", async () => {
