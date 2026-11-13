@@ -31,10 +31,10 @@ const SEARCH_DESCRIPTION =
   "and field summary for up to `limit` matches.";
 
 const LOAD_DESCRIPTION =
-  "Load the full definitions for one or more MCP tools by name. After " +
-  "loading, the tools become available to call in the next step. Call this " +
-  "with the names returned by search_mcp_tools, then call each tool by that " +
-  "exact name.";
+  "Load the full definitions for one or more MCP tools by name, using the " +
+  "names returned by search_mcp_tools. Loaded tools can be called only in " +
+  "your next reply, after this call returns. Do not call them in the same " +
+  "reply as load_mcp_tools; they are not available yet and that call fails.";
 
 const searchSchema = z.object({
   query: z
@@ -59,7 +59,8 @@ const loadSchema = z
       .array(z.string())
       .optional()
       .describe(
-        "Tool names (from search_mcp_tools) to make callable on the next step."
+        "Tool names (from search_mcp_tools) to load. They can be called in " +
+          "your next reply, not this one."
       ),
     toolIds: z.array(z.string()).optional(),
   })

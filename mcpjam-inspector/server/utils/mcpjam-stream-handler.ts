@@ -134,6 +134,8 @@ import {
   gateToolsToActiveSubset,
   lookupToolIdByModelName,
   META_TOOL_SEARCH,
+  notLoadedToolMessage,
+  offersOnlyMetaTools,
   resolveActiveToolNames,
   META_TOOL_NAMES,
   shouldForceInitialToolSearch,
@@ -2536,6 +2538,9 @@ async function processStream(
   // The backend path this stream came from, so an error chunk's code can be
   // read per route (`credential_missing` on `/stream/org`).
   dispatchPath?: string,
+  // The sentence for a call the backend refused, given the refused tool and
+  // the backend's own message. Both the UI and the model read it.
+  describeRejectedCall?: (toolName: string, message: string) => string,
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2752,6 +2757,9 @@ async function processStream(
             unfinishedTools.delete(String(chunk.toolCallId));
           }
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
+          // What the UI shows for a refused call: the same sentence the model
+          // reads, never the backend's JSON envelope.
+          let refusedCallText: string | undefined;
           if (chunk.type === "tool-input-error") {
             const toolInputErrorText = (chunk as { errorText?: unknown })
               .errorText;
@@ -2776,12 +2784,15 @@ async function processStream(
                   : {},
               providerOptions: markRejectedToolCallMetadata(undefined),
             });
+            // The backend serializes its error chunks as JSON; the model
+            // should read the sentence, not the envelope.
+            const message = parseStreamErrorChunkText(errorText).message;
+            refusedCallText =
+              describeRejectedCall?.(chunk.toolName, message) ?? message;
             rejectedToolCalls.push({
               toolCallId,
               toolName: historyName,
-              // The backend serializes its error chunks as JSON; the model
-              // should read the sentence, not the envelope.
-              errorText: parseStreamErrorChunkText(errorText).message,
+              errorText: refusedCallText,
             });
           }
           const providerMetadata =
@@ -2794,6 +2805,9 @@ async function processStream(
           writer.write({
             ...chunk,
             toolCallId,
+            ...(refusedCallText !== undefined
+              ? { errorText: refusedCallText }
+              : {}),
             ...(providerMetadata ? { providerMetadata } : {}),
           });
           break;
@@ -3985,6 +3999,12 @@ async function processOneStep(ctx: StepContext): Promise<{
   // holds tool calls. A caller's own `toolChoice` in `extraBodyFields` (hosted
   // evals) still wins.
   const toolChoice = isFinalStep ? ("none" as const) : forcedToolChoice;
+  // Only search and load on offer: ask the backend for one tool call this
+  // step, so the model loads a tool before it calls it.
+  const singleToolCall = offersOnlyMetaTools(
+    progressivePlan,
+    activeToolDefs.map((def) => def.name),
+  );
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -4160,6 +4180,7 @@ async function processOneStep(ctx: StepContext): Promise<{
                 ),
               }
             : {}),
+          ...(singleToolCall ? { parallelToolCalls: false } : {}),
         }),
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
@@ -4441,6 +4462,15 @@ async function processOneStep(ctx: StepContext): Promise<{
     abortSignal,
     onToolCall,
     dispatchPath,
+    // A cataloged tool this step did not offer was called before it was
+    // loaded: say so, instead of the backend's "unavailable tool".
+    progressivePlan?.enabled
+      ? (toolName, message) =>
+          lookupToolIdByModelName(progressivePlan.catalog, toolName) &&
+          !activeToolDefs.some((def) => def.name === toolName)
+            ? notLoadedToolMessage(toolName)
+            : message
+      : undefined,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(

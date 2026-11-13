@@ -42,8 +42,10 @@ import {
   commitNewlyLoaded,
   gateToolsToActiveSubset,
   META_TOOL_SEARCH,
+  offersOnlyMetaTools,
   resolveActiveToolNames,
   shouldForceInitialToolSearch,
+  singleToolCallProviderOptions,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
@@ -824,12 +826,24 @@ export function runDirectChatTurn(
         activeTools?: string[];
         toolChoice?: ToolChoice<Record<string, AiTool>>;
         messages?: ModelMessage[];
+        providerOptions?: ProviderOptions;
       } = {};
       if (presentedMessages) {
         stepOptions.messages = presentedMessages;
       }
       if (activeToolNames !== undefined) {
         stepOptions.activeTools = activeToolNames;
+      }
+      // Only search and load on offer: one tool call this step, so the model
+      // loads a tool before it calls it. Merged into the call's own options.
+      const singleCall = offersOnlyMetaTools(
+        progressivePlan,
+        activeToolNames ?? [],
+      )
+        ? singleToolCallProviderOptions(provider)
+        : undefined;
+      if (singleCall) {
+        stepOptions.providerOptions = singleCall;
       }
       if (
         toolChoice === undefined &&

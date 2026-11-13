@@ -13,10 +13,13 @@ import {
   META_TOOL_LOAD,
   META_TOOL_NAMES,
   META_TOOL_SEARCH,
+  notLoadedToolMessage,
+  offersOnlyMetaTools,
   parseProgressiveToolsEnv,
   resolveActiveToolNames,
   searchToolCatalog,
   shouldForceInitialToolSearch,
+  singleToolCallProviderOptions,
   sumCatalogTokens,
 } from "../src/progressive-discovery/discovery.js";
 
@@ -545,5 +548,56 @@ describe("hydrateDiscoveryStateFromHistory", () => {
     );
     expect(added).toBe(1);
     expect([...state.loadedToolIds]).toEqual(["asana::asana_get_task"]);
+  });
+});
+
+describe("one tool call while only search and load are offered", () => {
+  const plan = { enabled: true } as Parameters<typeof offersOnlyMetaTools>[0];
+
+  it("is on only when every offered tool is a meta-tool", () => {
+    expect(offersOnlyMetaTools(plan, [...META_TOOL_NAMES])).toBe(true);
+    expect(offersOnlyMetaTools(plan, [...META_TOOL_NAMES, "show_squad"])).toBe(
+      false,
+    );
+    expect(offersOnlyMetaTools(plan, [])).toBe(false);
+    expect(
+      offersOnlyMetaTools({ enabled: false } as typeof plan, [
+        ...META_TOOL_NAMES,
+      ]),
+    ).toBe(false);
+    expect(offersOnlyMetaTools(undefined, [...META_TOOL_NAMES])).toBe(false);
+  });
+
+  it("maps each provider to its own option, and none where there is none", () => {
+    expect(singleToolCallProviderOptions("anthropic")).toEqual({
+      anthropic: { disableParallelToolUse: true },
+    });
+    expect(singleToolCallProviderOptions("bedrock")).toEqual({
+      anthropic: { disableParallelToolUse: true },
+    });
+    expect(singleToolCallProviderOptions("openai")).toEqual({
+      openai: { parallelToolCalls: false },
+    });
+    expect(singleToolCallProviderOptions("azure")).toEqual({
+      openai: { parallelToolCalls: false },
+    });
+    expect(singleToolCallProviderOptions("mistral")).toEqual({
+      mistral: { parallelToolCalls: false },
+    });
+    expect(singleToolCallProviderOptions("xai")).toEqual({
+      xai: { parallelToolCalls: false },
+    });
+    expect(singleToolCallProviderOptions("openrouter")).toEqual({
+      openrouter: { parallel_tool_calls: false },
+    });
+    for (const key of ["google", "deepseek", "ollama", "custom", undefined]) {
+      expect(singleToolCallProviderOptions(key)).toBeUndefined();
+    }
+  });
+
+  it("tells the model to call a not-loaded tool in its next reply", () => {
+    expect(notLoadedToolMessage("show_squad")).toMatch(
+      /not loaded in this step.*load_mcp_tools.*next reply/,
+    );
   });
 });
