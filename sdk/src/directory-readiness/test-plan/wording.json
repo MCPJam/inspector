@@ -48,6 +48,7 @@
     "notDrafted": "Its arguments are not drafted yet. Draft or enter them.",
     "fixtureMissing": "{fixture} was not found in the reviewer's account. Add it there, or update the fixture.",
     "fixtureNotCreated": "{fixture} was not created: case {creator} is {status}.",
+    "notCaptured": "Case {creator} returned no {value} for {fixture}. Correct the fixture's capture path, then run again.",
     "notRun": "It has not run yet.",
     "budget": "The sweep used its call budget before this case. Raise the budget and run again.",
     "deadline": "The run reached its time limit before this case. Run again to continue.",
