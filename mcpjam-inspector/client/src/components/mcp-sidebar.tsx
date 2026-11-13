@@ -137,7 +137,6 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-directory-readiness",
   "hosts-enabled",
   "home-page-enabled",
-  "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
   "evaluate-enabled",
@@ -339,7 +338,6 @@ export const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
-        featureFlag: "xaa",
       },
       {
         title: "Conformance",
@@ -552,7 +550,6 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
@@ -672,7 +669,6 @@ export function MCPSidebar({
       // purely auth-driven (signed-out users keep the legacy Servers item).
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
-      xaa: xaaEnabled === true,
       "project-environments-enabled": projectEnvironmentsEnabled,
       // Project-scoped like the two above: the feed needs a project, and
       // `SessionsRoute` renders a "needs a project" empty state without one.
@@ -693,7 +689,6 @@ export function MCPSidebar({
       conformanceEnabled,
       compatibilityEnabled,
       readinessEnabled,
-      xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
       evaluateEnabled,
