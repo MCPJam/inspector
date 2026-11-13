@@ -6002,73 +6002,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
-  it.each([
-    { path: "/conformance", enabled: true },
-    { path: "/conformance/runs/saved-run", enabled: true },
-    { path: "/conformance", enabled: false },
-    { path: "/conformance/runs/saved-run", enabled: false },
-  ])(
-    "waits for the conformance flag on $path before resolving to $enabled",
-    async ({ path, enabled }) => {
-      clearHostedOAuthPendingState();
-      clearScenarioSession();
-      window.history.replaceState({}, "", `${path}?view=history#saved`);
-      mockPosthogState.featureFlags.hasLoadedFlags = false;
-      let conformanceFlag: boolean | undefined;
-      mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-        flag === "mcpjam-conformance" ? conformanceFlag : false,
-      );
-
-      const { rerender } = render(<App />);
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(window.location.pathname).toBe(path);
-      expect(window.location.search).toBe("?view=history");
-      expect(window.location.hash).toBe("#saved");
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
-      expect(screen.queryByRole("tab", { name: "Overview" })).toBeNull();
-      expect(
-        screen.queryByRole("button", { name: "Run conformance checks" }),
-      ).toBeNull();
-
-      conformanceFlag = enabled;
-      mockPosthogState.featureFlags.hasLoadedFlags = true;
-      rerender(<App />);
-      await waitFor(() => {
-        expect(window.location.pathname).toBe(enabled ? path : "/home");
-      });
-      if (enabled) {
-        expect(window.location.search).toBe("?view=history");
-        expect(window.location.hash).toBe("#saved");
-      }
-    },
-  );
-
-  it("redirects conformance to home when the feature flag is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/conformance");
-    mockHandleOAuthCallback.mockReset();
-
-    mockUseFeatureFlagEnabled.mockImplementation(() => false);
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/home");
-    });
-  });
-
-  it.each([false, undefined])("keeps a conformance share link open when its flag is %s", async (conformanceFlag) => {
+  it("keeps a conformance share link open", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance/shared/share-token");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "mcpjam-conformance" ? conformanceFlag : false,
-    );
+    mockUseFeatureFlagEnabled.mockImplementation(() => false);
 
     render(<App />);
 
@@ -6087,9 +6027,6 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/conformance");
     localStorage.setItem("mcpjam.conformance.lastServer.v1", "beta");
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "mcpjam-conformance",
-    );
     const connected = (name: string) => ({
       name,
       config: { transportType: "http", url: `https://${name}.example/mcp` },

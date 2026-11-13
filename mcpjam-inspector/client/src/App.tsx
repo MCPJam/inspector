@@ -3136,7 +3136,6 @@ export default function App() {
   const posthog = usePostHog();
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
@@ -5870,12 +5869,6 @@ export default function App() {
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      activeTab === "conformance" &&
-      !isConformanceSharedRoute &&
-      conformanceEnabled === false
-    ) {
-      navigateToTarget(defaultHubRoute, { replace: true });
-    } else if (
       activeTab === "compatibility" &&
       compatibilityEnabled === false
     ) {
@@ -5886,8 +5879,6 @@ export default function App() {
       navigateToTarget(defaultHubRoute, { replace: true });
     }
   }, [
-    conformanceEnabled,
-    isConformanceSharedRoute,
     compatibilityEnabled,
     defaultHubRoute,
     registryEnabled,
@@ -6381,14 +6372,6 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute && !isFirstRunOAuthReturnActive) {
-    return <LoadingScreen />;
-  }
-
-  if (
-    activeTab === "conformance" &&
-    !isConformanceSharedRoute &&
-    conformanceEnabled === undefined
-  ) {
     return <LoadingScreen />;
   }
 
