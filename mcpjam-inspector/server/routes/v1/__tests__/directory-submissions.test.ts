@@ -763,6 +763,41 @@ describe("v1 directory submissions", () => {
       });
     });
 
+    it("forwards the test plan revision the start names, and only when named", async () => {
+      await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 2 },
+      });
+      await request("POST", `${BASE}/${SUBMISSION}/runs`, { body: {} });
+      const zero = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 0 },
+      });
+      expect(zero.status).toBe(400);
+      const starts = convexMutationMock.mock.calls
+        .filter(([ref]) => nameOf(ref) === "claudeReadinessRuns:requestReadinessRun")
+        .map(([, args]) => args as Record<string, unknown>);
+      expect(starts).toHaveLength(2);
+      expect(starts[0]).toMatchObject({ submissionId: SUBMISSION, testPlanRevision: 2 });
+      expect(starts[1]).not.toHaveProperty("testPlanRevision");
+    });
+
+    it("answers a stale test plan revision with the current one", async () => {
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
+        throw new ConvexError({
+          code: "CONFLICT",
+          message:
+            "The test plan changed since you read it. Read revision 3, then try again.",
+          currentRevision: 3,
+        });
+      };
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 2 },
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as Record<string, any>;
+      expect(body.details.currentRevision).toBe(3);
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
     it("refuses a run the backend says does not match the submission", async () => {
       mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
         throw new ConvexError({

@@ -60,6 +60,7 @@ import {
   type DirectoryReadinessResult,
   type ReadinessPublisher,
 } from "./runner.js";
+import { runDirectoryTestPlan } from "./test-plan-run.js";
 import {
   ReadinessPackageUnreadableError,
   readRunPackage,
@@ -359,6 +360,18 @@ export async function executeHostedReadinessRun(
         : undefined,
     });
 
+    // Test plans belong to submissions, so only a submission run has one.
+    const toolTests = options.submissionId
+      ? await runDirectoryTestPlan({
+          lease,
+          target: options.target,
+          fetchFn: options.fetchFn,
+          mcpHeaders: options.mcpHeaders,
+          signal: controller.signal,
+          deadlineAt: startedAtMs + RUN_DEADLINE_MS,
+        })
+      : undefined;
+
     await finalizeReadinessRun(
       lease,
       summarizeReadinessResult(result, options.sdkVersion),
@@ -389,6 +402,8 @@ export async function executeHostedReadinessRun(
       {
         ...redactConformanceReportForSharing(result),
         ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
+        // Redacted where it is built, so the plan issues' codes stay readable.
+        ...(toolTests ? { toolTests } : {}),
       },
     );
 

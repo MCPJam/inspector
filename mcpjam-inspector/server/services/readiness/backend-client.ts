@@ -111,7 +111,7 @@ export type ReadinessClaim =
 
 const CLAIM_TIMEOUT_MS = 10_000;
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text);
     return typeof value === "object" && value !== null

@@ -34,6 +34,11 @@ const { ReadinessSubmissionUnreadableError } = await vi.importActual<
   typeof import("../backend-client.js")
 >("../backend-client.js");
 
+const runDirectoryTestPlan = vi.fn();
+vi.mock("../test-plan-run.js", () => ({
+  runDirectoryTestPlan: (...args: unknown[]) => runDirectoryTestPlan(...args),
+}));
+
 vi.mock("../backend-client.js", () => ({
   claimReadinessRun: (...args: unknown[]) => claimReadinessRun(...args),
   heartbeatReadinessRun: (...args: unknown[]) => heartbeatReadinessRun(...args),
@@ -107,6 +112,7 @@ function wireFetch(): typeof fetch {
 }
 
 beforeEach(() => {
+  runDirectoryTestPlan.mockResolvedValue(undefined);
   claimReadinessRun.mockResolvedValue({ status: "claimed" });
   heartbeatReadinessRun.mockResolvedValue({ alive: true });
   finalizeReadinessRun.mockResolvedValue({ applied: true });
@@ -574,7 +580,46 @@ describe("a run that grades a directory submission", () => {
       includeLlmObservations: false,
     });
     expect(getReadinessRunSubmission).not.toHaveBeenCalled();
+    expect(runDirectoryTestPlan).not.toHaveBeenCalled();
     expect(listingStatus()).toBe("not-evaluated");
+  });
+
+  it("runs the submission's test plan after grading, and stores its tool tests with the report", async () => {
+    getReadinessRunSubmission.mockResolvedValue(FROZEN);
+    const toolTests = {
+      planRevision: 3,
+      status: "completed",
+      ambiguous: [],
+      tools: [{ tool: "search_docs", status: "valid-input-succeeded" }],
+      cleanup: [],
+    };
+    runDirectoryTestPlan.mockResolvedValue(toolTests);
+    const before = Date.now();
+    await run();
+
+    const [options] = runDirectoryTestPlan.mock.calls[0]!;
+    expect(options).toMatchObject({ lease: LEASE, target: TARGET });
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    // The sweep is bounded by the run's own deadline.
+    expect(options.deadlineAt).toBeGreaterThanOrEqual(before + 15 * 60_000);
+    const report = finalizeReadinessRun.mock.calls[0]![2] as Record<string, unknown>;
+    expect(report.toolTests).toEqual(toolTests);
+    expect(report).toHaveProperty("findings");
+  });
+
+  it("stores no tool tests for a run whose start named no plan", async () => {
+    getReadinessRunSubmission.mockResolvedValue(FROZEN);
+    await run();
+    expect(runDirectoryTestPlan).toHaveBeenCalledTimes(1);
+    expect(finalizeReadinessRun.mock.calls[0]![2]).not.toHaveProperty("toolTests");
+  });
+
+  it("writes nothing when the lease is lost during the tool tests", async () => {
+    getReadinessRunSubmission.mockResolvedValue(FROZEN);
+    runDirectoryTestPlan.mockRejectedValue(new ReadinessLeaseLostError());
+    await run();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    expect(failReadinessRun).not.toHaveBeenCalled();
   });
 });
 

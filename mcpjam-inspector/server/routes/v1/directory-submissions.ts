@@ -120,6 +120,8 @@ const startSchema = z.strictObject({
   pluginVersionId: optionalId,
   /** A running reviewer sign-in attempt of this submission, for the run to work on. */
   reviewerAttemptId: z.string().trim().min(1).max(100).optional(),
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision: z.number().int().min(1).optional(),
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -411,6 +413,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     submissionId,
     ...graded,
     ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
+    testPlanRevision: body.testPlanRevision,
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>

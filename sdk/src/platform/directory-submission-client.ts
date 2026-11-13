@@ -126,12 +126,14 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     options?: RequestOptions
   ): Promise<PlatformReadinessRunReceipt> {
     const { projectId, submissionId, idempotencyKey } = params;
-    const { includeLlmObservations, pluginVersionId, reviewerAttemptId } = params;
+    const { includeLlmObservations, pluginVersionId, reviewerAttemptId, testPlanRevision } =
+      params;
     const body = {
       idempotencyKey,
       includeLlmObservations,
       pluginVersionId,
       reviewerAttemptId,
+      testPlanRevision,
     };
     const target = path(projectId, submissionId, "runs");
     return this.request("POST", target, { body }, options);

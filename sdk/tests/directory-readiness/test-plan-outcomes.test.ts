@@ -363,6 +363,22 @@ describe("summarizeDirectoryToolTests", () => {
     expect(results.list_projects?.status).toBe("untested");
   });
 
+  it("blocks a case whose fixture's creator passed without returning the value it uses", () => {
+    const plan = completePlan();
+    const uncaptured = summarize(plan, [record(plan, "create_project#valid")]);
+    expect(uncaptured.rename_project?.cases[0]).toMatchObject({
+      status: "blocked",
+      reason:
+        "Case create_project#valid returned no id for scratchProject. Correct the fixture's capture path, then run again.",
+    });
+    const captured = record(plan, "create_project#valid", {
+      captured: { scratchProject: { id: "proj_scratch" } },
+    });
+    expect(summarize(plan, [captured]).rename_project?.cases[0]?.status).toBe(
+      "untested"
+    );
+  });
+
   it("keeps an ambiguous write ambiguous after the plan is edited", () => {
     const plan = completePlan();
     const ambiguous = record(plan, "rename_project#valid", {
