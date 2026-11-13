@@ -41,6 +41,11 @@ vi.mock("../../../services/plugin-host/request-runtime.js", () => ({
 vi.mock("../../../services/plugin-host/request-invocation.js", () => ({
   invokePluginRequest: f.invoke,
 }));
+vi.mock("../../../services/plugin-host/settings-state.js", async () =>
+  (await import("./settings-state-memory.js")).memorySettingsState((token) =>
+    f.get(token),
+  ),
+);
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "fixture-bearer",
 }));
@@ -48,6 +53,7 @@ vi.mock("../../../utils/tool-approval-token.js", () => ({
   toolApprovalSubjectFromAuthHeader: () => "verified-subject",
 }));
 import routes from "../plugin-settings";
+import { PluginInvocationError } from "../../../services/plugin-host/invocation";
 import { PLUGIN_APP_READ_RESULT_BYTES } from "../../../services/plugin-host/tool-call-validation";
 import { resolvePluginSettingsCatalog } from "../../../services/plugin-host/settings-catalog";
 import { settingsFixture } from "../../../../shared/__tests__/plugin-settings-fixture";
@@ -384,10 +390,14 @@ describe("owned structured settings", () => {
         expect((await response.json()).result).toEqual(result);
     },
   );
-  it("clears the private document on original owner close", async () => {
+  it("refuses actions once the Settings App's row is gone", async () => {
     await opened();
-    abort.abort();
-    expect((await post("actions", handle())).status).toBe(403);
+    f.get.mockImplementation(() => {
+      throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+    });
+    const response = await post("actions", handle());
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("INSTANCE_UNAVAILABLE");
   });
   it("rejects caller supplied authority before admission", async () => {
     expect(

@@ -295,6 +295,17 @@ describe("skillDeliveryLines", () => {
     ).toEqual(["Every client loads both skills."]);
   });
 
+  it("names the skills a client leaves out over the skill limit", () => {
+    expect(
+      skillDeliveryLines([
+        {
+          client: "Codex",
+          preview: preview(row("triage"), row("Reply", "over-cap")),
+        },
+      ]),
+    ).toContain("Codex leaves out Reply after reaching the skill limit.");
+  });
+
   it("names the clients that leave skills out, and why", () => {
     expect(
       skillDeliveryLines([

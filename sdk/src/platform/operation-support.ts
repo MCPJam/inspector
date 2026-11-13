@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import type { PlatformOperationContext } from "./operations.js";
+import type { PlatformResourceRef } from "./permalinks.js";
 import { resolveByIdOrName, resolutionError } from "./resource-selectors.js";
 import {
   projectResolutionError,
@@ -152,4 +153,52 @@ export function toServerInfo(
   server: PlatformProjectServer
 ): ResolvedServerInfo {
   return { id: server.id, name: server.name };
+}
+
+export type ServerResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+};
+
+/** Resolve the project and saved server an operation on stored data reads. */
+export async function resolveServerScope(
+  input: { project?: string; server: string },
+  context: PlatformOperationContext
+): Promise<{
+  client: PlatformApiClient;
+  scope: { projectId: string; serverId: string };
+  result: ServerResult;
+}> {
+  const { client, signal, onScopeResolved } = context;
+  const { project } = await resolveProjectOrThrow(
+    { client, signal, onScopeResolved },
+    input.project
+  );
+  // Stored data exists for every transport, stdio included, so this does not
+  // require a hosted-operable server the way live operations do.
+  const server = await resolveSavedServer(
+    client,
+    project,
+    input.server,
+    signal
+  );
+  return {
+    client,
+    scope: { projectId: project.id, serverId: server.id },
+    result: {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+    },
+  };
+}
+
+export function serverPermalink(result: ServerResult): PlatformResourceRef[] {
+  return [
+    {
+      type: "project_server",
+      id: result.server.id,
+      projectId: result.project?.id,
+      label: `Open ${result.server.name}`,
+    },
+  ];
 }
