@@ -32,6 +32,7 @@ const CLOUD_COMMAND_FILES = [
   "projects.ts",
   "registry.ts",
   "readiness-lazy-auth.ts",
+  "readiness-submission-handoff.ts",
   "readiness-submissions.ts",
   "studies.ts",
   "secrets.ts",
