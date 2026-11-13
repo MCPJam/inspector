@@ -28,6 +28,35 @@ import { DEFAULT_LOCAL_HARNESS_ID } from "./runtimes/index.js";
 
 import type { LocalHarnessExecutionTarget } from "./local-turn.js";
 
+/** How long PostHog's yes stands for one member and harness. */
+const ROLLOUT_ANSWER_TTL_MS = 60_000;
+const rolloutEnabledUntil = new Map<string, number>();
+
+/** Test seam: forget every kept rollout answer. */
+export function resetLocalHarnessRolloutForTests(): void {
+  rolloutEnabledUntil.clear();
+}
+
+/**
+ * The member's rollout for this harness, asked of PostHog at most once a
+ * minute while it says yes; every turn used to ask twice. Only a yes is
+ * kept: a no, or a failure to ask (which reads as no), is asked again next
+ * time, so one failed request never locks a member out for the minute. A
+ * rollback reaches a member within the minute, and the kill switch and the
+ * member's authorization are still read on every turn.
+ */
+async function localHarnessRolloutEnabled(subject: string, email: string | undefined, harnessId: SupportedLocalHarnessId): Promise<boolean> {
+  const flag = localHarnessRolloutFlag(harnessId);
+  const key = JSON.stringify([flag, subject, email ?? null]);
+  if ((rolloutEnabledUntil.get(key) ?? 0) > Date.now()) return true;
+  const enabled = await evaluateLocalHarnessRollout(subject, email, flag);
+  const now = Date.now();
+  for (const [kept, until] of rolloutEnabledUntil) if (until <= now) rolloutEnabledUntil.delete(kept);
+  if (enabled) rolloutEnabledUntil.set(key, now + ROLLOUT_ANSWER_TTL_MS);
+  else rolloutEnabledUntil.delete(key);
+  return enabled;
+}
+
 export function localHarnessBackend(bearer: string) {
   const url = process.env.CONVEX_URL;
   if (!url) throw new Error("CONVEX_URL is not configured");
@@ -47,7 +76,7 @@ export async function verifyLocalHarnessMember(bearer: string, projectId: string
   ]) as [Array<{ _id: string }>, { email?: string; externalId?: string } | null];
   if (trustedActor && user?.externalId !== trustedActor.subject) throw new Error("Background execution identity changed");
   if (!Array.isArray(projects) || !projects.some(p => String(p._id) === projectId)) throw new Error("Project membership is required for local execution");
-  if (!(await evaluateLocalHarnessRollout(actor.actor.subject, user?.email, localHarnessRolloutFlag(harnessId)))) throw new Error(`Local ${name} is not available for this account yet`);
+  if (!(await localHarnessRolloutEnabled(actor.actor.subject, user?.email, harnessId))) throw new Error(`Local ${name} is not available for this account yet`);
   return actor.actor;
 }
 
@@ -178,7 +207,7 @@ export async function localHarnessAccountEnabled(bearer: string | undefined, pro
   try {
     const client = localHarnessBackend(bearer);
     const user = await client.query("users:getCurrentUser" as never, {}) as { email?: string } | null;
-    const enabled = await evaluateLocalHarnessRollout(actor.actor.subject, user?.email, localHarnessRolloutFlag(harnessId));
+    const enabled = await localHarnessRolloutEnabled(actor.actor.subject, user?.email, harnessId);
     if (authorized && !enabled) throw new Error(`Local ${harnessDisplayName(harnessId)} authorization could not be verified. Retry when access is available.`);
     return enabled;
   } catch (error) {

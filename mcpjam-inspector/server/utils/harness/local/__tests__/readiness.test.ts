@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../runtime-revocation.js", () => ({ refreshRevocations: mocks.refresh }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
-vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
+const killSwitch = vi.hoisted(() => ({ enabled: true }));
+vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, get LOCAL_HARNESS_ENABLED() { return killSwitch.enabled; } }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: mocks.authorization, authorizeLocalHarness: vi.fn() }));
 vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout }));
@@ -23,11 +24,13 @@ vi.mock("../grants.js", () => ({
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
-import { ensureLocalHarnessTarget, localHarnessAccountEnabled, setupLocalHarness } from "../readiness.js";
+import { ensureLocalHarnessTarget, localHarnessAccountEnabled, resetLocalHarnessRolloutForTests, setupLocalHarness } from "../readiness.js";
 import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
   vi.clearAllMocks();
+  killSwitch.enabled = true;
+  resetLocalHarnessRolloutForTests();
   vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
   mocks.actor.mockResolvedValue({ ok: true, actor });
   mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "user" });
@@ -80,6 +83,43 @@ it("refuses rollout removal before issuing a grant", async () => {
   mocks.rollout.mockResolvedValue(false);
   await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
   expect(mocks.grant).not.toHaveBeenCalled();
+});
+
+describe("the rollout answer", () => {
+  it("is asked at most once a minute per member while it says yes", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+      await localHarnessAccountEnabled("session", "project");
+      await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+      expect(mocks.rollout).toHaveBeenCalledOnce();
+      // Another member, or another harness's cohort, is its own answer.
+      mocks.actor.mockResolvedValueOnce({ ok: true, actor: { ...actor, subject: "other", userId: "authkit:other" } });
+      await localHarnessAccountEnabled("session", "project");
+      await localHarnessAccountEnabled("session", "project", "codex");
+      expect(mocks.rollout).toHaveBeenCalledTimes(3);
+      now.mockReturnValue(1_000_000 + 60_000);
+      await localHarnessAccountEnabled("session", "project");
+      expect(mocks.rollout).toHaveBeenCalledTimes(4);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("keeps no answer but yes, so a refusal or a failed request is asked again", async () => {
+    mocks.rollout.mockResolvedValueOnce(false);
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.rollout).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not outlive the kill switch, which is read on every turn", async () => {
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    killSwitch.enabled = false;
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/unavailable on this server/);
+    await expect(localHarnessAccountEnabled("session", "project")).resolves.toBe(false);
+    expect(mocks.grant).toHaveBeenCalledOnce();
+  });
 });
 
 it("preserves local intent on rollout or verification failure after authorization", async () => {
