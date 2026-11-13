@@ -1,5 +1,6 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { runBridge } from "@ai-sdk/harness/bridge";
@@ -18,6 +19,7 @@ import {
   parseNativeMcpServers,
   stampNativeMcpCall,
 } from "./native-mcp.js";
+import { sessionSkillsAndTools } from "./session-skills.js";
 
 const { values } = parseArgs({
   options: {
@@ -84,7 +86,8 @@ await runBridge<Start>({
       parameters: inputSchema,
       defer: "never" as const,
       // The host's needsApproval gate owns dispatch. Forwarded MCP calls are
-      // approved at MCPJam's forwarder; every other CLI request is denied.
+      // approved at MCPJam's forwarder; every other CLI request is denied, and
+      // the only built-in tool exposed is `skill`.
       skipPermission: true,
       handler: async (input: unknown) => {
         turn.abortSignal.throwIfAborted();
@@ -100,12 +103,12 @@ await runBridge<Start>({
       streaming: true,
       model: start.model,
       tools,
-      availableTools: [
-        ...tools.map(({ name }) => "custom:" + name),
-        ...mcpToolPatterns,
-      ],
-      excludedTools: mcpServers ? ["builtin:*"] : ["builtin:*", "mcp:*"],
-      enableConfigDiscovery: false,
+      // This process keeps the box's home; the runtime's is `copilot-home`.
+      ...sessionSkillsAndTools(
+        homedir(),
+        tools.map(({ name }) => name),
+        mcpToolPatterns,
+      ),
       ...(mcpServers
         ? { mcpServers, hooks: { onPreMcpToolCall: stampNativeMcpCall } }
         : {}),
