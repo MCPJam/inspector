@@ -7,7 +7,8 @@ import { join, sep } from "node:path";
 import { HOSTED_MODE, LOCAL_HARNESS_ENABLED } from "../../../config.js";
 import { resolveLocalHarnessActor, type LocalHarnessActor } from "./acting-user.js";
 import { authorizeLocalHarness, readLocalHarnessAuthorization } from "./authorization.js";
-import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, resolveWorkspaceGrant } from "./grants.js";
+import { getLocalMachineId, grantLocalHarnessConsent, registerWorkspaceGrant, resolveWorkspaceGrant, type HarnessGrantBinding, type MintedHarnessGrant } from "./grants.js";
+import { rememberLaunchCredentials, reusableLaunchCredentials } from "./launch-credentials.js";
 import { readRuntimeInstallStatus, installRuntimePack, startRuntimeInstall, startBackgroundRuntimeUpdate, manifestWithExpectedBundleDigest, MANUAL_UPDATES_MESSAGE } from "./runtime-install.js";
 import { readLocalRuntimeUpdatePolicy, type RuntimeInstallTrigger } from "./runtime-update-policy.js";
 import { noteRuntimeMetricsActor } from "./runtime-metrics.js";
@@ -118,6 +119,9 @@ export async function ensureLocalHarnessTarget(args: {
   /** What asked: `gesture` for an explicit setup; background renewals default
    *  to `readiness`, which backs off after a failed attempt. */
   trigger?: RuntimeInstallTrigger;
+  /** A chat turn: reuse the registration and grant an earlier turn minted for
+   *  the same terms while the grant is good (`launch-credentials.ts`). */
+  reuseCredentials?: boolean;
 }) {
   const harnessId = args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID;
   const name = harnessDisplayName(harnessId);
@@ -168,20 +172,33 @@ export async function ensureLocalHarnessTarget(args: {
   const workspace = await resolveWorkspaceGrant(workspaceGrantId);
   if (!workspace.ok) throw new Error(workspace.message);
   const identity = await readLocalInstanceIdentity();
-  // Detached work reuses the instance registered by the original member setup.
-  if (args.trustedActor) {
-    if (!identity.keyId) throw new Error(`Reopen ${name} from Playground before starting local background work`);
-  } else {
-    const registration = await registerLocalInstance({ machineId, publicKey: identity.publicKey, bearer: args.bearer });
-    if (!registration.ok) throw new Error(registration.error);
-    setRegisteredKeyId(registration.keyId);
-  }
   const permissionProfile = args.scope === "unattended" ? "unrestricted" : "workspace-edits";
-  const granted = await grantLocalHarnessConsent({
+  const binding: HarnessGrantBinding = {
     userId: actor.userId, machineId, projectId: args.projectId, workspaceGrantId,
     harnessId, targetKind: "local-native", runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, scope: args.scope,
-  }, { ttlMs: args.scope === "attended" ? 15 * 60_000 : 12 * 60 * 60_000 });
+  };
+  const reuse = args.reuseCredentials === true && !args.trustedActor;
+  const reused = reuse ? await reusableLaunchCredentials(binding, identity.publicKey) : null;
+  let granted: MintedHarnessGrant;
+  if (reused) {
+    // This member's key id, should another member have registered since.
+    setRegisteredKeyId(reused.keyId);
+    granted = reused.grant;
+  } else {
+    let keyId: string | null = null;
+    // Detached work reuses the instance registered by the original member setup.
+    if (args.trustedActor) {
+      if (!identity.keyId) throw new Error(`Reopen ${name} from Playground before starting local background work`);
+    } else {
+      const registration = await registerLocalInstance({ machineId, publicKey: identity.publicKey, bearer: args.bearer });
+      if (!registration.ok) throw new Error(registration.error);
+      setRegisteredKeyId(registration.keyId);
+      keyId = registration.keyId;
+    }
+    granted = await grantLocalHarnessConsent(binding, { ttlMs: args.scope === "attended" ? 15 * 60_000 : 12 * 60 * 60_000 });
+    if (reuse && keyId !== null) rememberLaunchCredentials(binding, identity.publicKey, { keyId, grant: granted });
+  }
   const target = {
     kind: "local-native", machineId, workspaceGrantId, runtimeId: runtime.runtime.runtimeId,
     permissionProfile, policyVersion: LOCAL_HARNESS_POLICY_VERSION, grantToken: granted.token, actingUserId: actor.userId,
