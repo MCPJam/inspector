@@ -190,20 +190,28 @@ export function RunResultPage({
     matrix && target && iteration
       ? pagerPosition(matrix, target.key, caseKey, iteration._id)
       : null;
+  // Another run can supply the row while this column's own results failed to load.
+  const columnReadFailed = Boolean(
+    target &&
+    !iteration &&
+    failedRunIds?.has(target.run._id) &&
+    !target.cells.get(caseKey)?.length,
+  );
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
       data-testid="run-result-page"
     >
-      {!row || !target || (iterationId && !iteration) ? (
+      {!row || !target || (iterationId && !iteration) || columnReadFailed ? (
         <ResultNotFound
           runLabel={runNumber == null ? "This run" : `Run #${runNumber}`}
           onOpenRun={() => openResult(runRef)}
           readFailed={
-            run !== null &&
-            launchRuns<EvalSuiteRunListItem>(run, runs).some((item) =>
-              failedRunIds?.has(item._id),
-            )
+            columnReadFailed ||
+            (run !== null &&
+              launchRuns<EvalSuiteRunListItem>(run, runs).some((item) =>
+                failedRunIds?.has(item._id),
+              ))
           }
         />
       ) : iteration && iterationNumber !== null ? (
