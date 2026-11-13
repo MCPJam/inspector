@@ -34,6 +34,9 @@ import {
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
 import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
+import { CLAUDE_CONNECTOR_FLOW } from "../directory-readiness/flows/claude-connector.js";
+import type { DirectoryReviewerRunInput } from "../directory-readiness/reviewer/evidence.js";
+import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
 import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
 import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
 import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
@@ -44,6 +47,7 @@ import {
   type ClaudeEndpointEvidence,
 } from "./checks/endpoint.js";
 import { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+import { runClaudeReviewerChecks } from "./checks/reviewer.js";
 import {
   blockOnServerFailure,
   type ClaudeServerFailure,
@@ -99,8 +103,10 @@ import type { Tool } from "@modelcontextprotocol/client";
  * and a live connection, and grading it needs neither. Splitting them means
  * the grading half is a pure function that a test can drive with a fixture and
  * a hosted surface cannot accidentally point at `169.254.169.254`.
+ *
+ * A submission run also brings its reviewer path and client-signature probe.
  */
-export interface ClaudeReadinessInput {
+export interface ClaudeReadinessInput extends DirectoryReviewerRunInput {
   /** The connector URL exactly as the user entered it. */
   enteredUrl: string;
   authMode: ClaudeReadinessAuthMode;
@@ -327,6 +333,7 @@ export function gradeClaudeReadiness(
       stamp,
     ),
     ...runClaudeAnswerStepChecks(answers, stamp),
+    ...runClaudeReviewerChecks(input, stamp),
     ...optional.findings,
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
@@ -347,8 +354,16 @@ export function gradeClaudeReadiness(
     ],
     input.capabilities,
   );
-  // After the capability gate: when both apply, the server is the one to fix.
-  const findings = blockOnServerFailure(graded, input.serverFailure);
+  // After the capability gate and the reviewer-only rule: when either applies
+  // beside a server failure, the server is the one to fix.
+  const findings = blockOnServerFailure(
+    holdToReviewerAccount(
+      graded,
+      CLAUDE_CONNECTOR_FLOW,
+      input.reviewerPath?.account
+    ),
+    input.serverFailure
+  );
 
   const badges: ClaudeCapabilityBadge[] = [...auth.badges, ...optional.badges];
 

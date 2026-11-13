@@ -98,6 +98,8 @@ export type {
 export * from "./directory-readiness/flows/index.js";
 /** The decision scan, for the same reason: its barrel is pure by contract. */
 export * from "./directory-readiness/decisions/index.js";
+/** The reviewer path's fields and findings; its barrel is pure by contract. */
+export * from "./directory-readiness/reviewer/index.js";
 
 /**
  * Directory test plans, so a page can draft, edit and check a plan and show
