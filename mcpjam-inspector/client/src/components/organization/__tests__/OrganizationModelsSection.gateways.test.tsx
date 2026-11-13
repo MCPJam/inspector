@@ -96,7 +96,7 @@ describe("OrganizationModelsSection custom provider flag", () => {
     });
   });
 
-  it("shows a custom provider's host, models and what needs an admin, and each badge opens its editor", () => {
+  it("shows a custom provider's host, models and what needs an admin, and each badge opens the panel", () => {
     mocks.flag = true;
     mocks.providers = [LITELLM];
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
@@ -104,20 +104,23 @@ describe("OrganizationModelsSection custom provider flag", () => {
     expect(screen.getByText("3 models")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "3 features unavailable" }));
-    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
+    const panel = screen.getByRole("dialog", { name: "litellm" });
+    expect(panel).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Works with/ })).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("button", { name: "1 not mapped" }));
-    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "litellm" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Works with/ })).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("opens the editor from the row's edit button", () => {
+  it("opens the panel from the row's edit button", () => {
     mocks.flag = true;
     mocks.providers = [LITELLM];
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
     fireEvent.click(screen.getByRole("button", { name: "Configure litellm" }));
-    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.getByRole("dialog", { name: "litellm" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test again" })).toBeInTheDocument();
   });
 
   it("shows members the host and models but no badges to act on", () => {
