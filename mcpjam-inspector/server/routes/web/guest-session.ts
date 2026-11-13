@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import {
   GUEST_ACCESS_DISABLED_CODE,
   GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
   sanitizeGuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
 import type { Context } from "hono";
@@ -193,7 +194,10 @@ guestSession.post("/", async (c) => {
     );
   }
 
-  if (result.status === 403) {
+  // The browser drops a guest's promotion marker on this answer, so any other
+  // 403 (a mismatched shared secret, an edge refusal) falls through to the 503.
+  if (result.status === 403 && result.guestRevoked) {
+    c.header(GUEST_SESSION_REFUSAL_HEADER, GUEST_SESSION_REVOKED_CODE);
     return c.json(
       {
         code: ErrorCode.FORBIDDEN,

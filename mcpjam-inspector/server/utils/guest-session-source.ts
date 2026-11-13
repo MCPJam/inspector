@@ -1,6 +1,7 @@
 import {
   GUEST_ACCESS_DISABLED_CODE,
   GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
   type GuestSessionFailureReason,
 } from "@/shared/guest-session-failure";
 import { guestIpForwardHeaders } from "./guest-spend-ip.js";
@@ -80,6 +81,8 @@ export type GuestSessionFetchResult =
       networkCode?: string;
       /** The authority's 403 said this deployment issues no guests at all. */
       guestAccessDisabled?: true;
+      /** The authority's 403 said the cookie's guest is revoked or suspended. */
+      guestRevoked?: true;
     };
 
 /** Which kind of authority answered, for log lines. Never a URL or secret. */
@@ -188,15 +191,20 @@ function parseSessionPayload(raw: unknown): RemoteGuestSession | null {
 const BACKEND_GUEST_ACCESS_DISABLED_ERROR =
   "Guest access is disabled in non-production environments";
 
-async function isGuestAccessDisabledResponse(
+// The backend's answers for a guest that can never be used again.
+const BACKEND_GUEST_REVOKED_MESSAGE = "Guest session revoked";
+const BACKEND_ACCOUNT_SUSPENDED_CODE = "account_suspended";
+
+/**
+ * Name a 403 the browser may act on for good. Any other 403 (a mismatched
+ * shared secret, an edge or WAF refusal) is left unnamed.
+ */
+async function classifyForbiddenResponse(
   response: Response,
-): Promise<boolean> {
-  if (
-    response.headers.get(GUEST_SESSION_REFUSAL_HEADER) ===
-    GUEST_ACCESS_DISABLED_CODE
-  ) {
-    return true;
-  }
+): Promise<"guest_access_disabled" | "guest_revoked" | undefined> {
+  const refusal = response.headers.get(GUEST_SESSION_REFUSAL_HEADER);
+  if (refusal === GUEST_ACCESS_DISABLED_CODE) return "guest_access_disabled";
+  if (refusal === GUEST_SESSION_REVOKED_CODE) return "guest_revoked";
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     // The fetch's own timeout is ten seconds; a stalled 403 body must not
@@ -210,15 +218,24 @@ async function isGuestAccessDisabledResponse(
         );
       }),
     ]);
-    if (!raw || typeof raw !== "object") return false;
-    const { error, code } = raw as Record<string, unknown>;
-    return (
+    if (!raw || typeof raw !== "object") return undefined;
+    const { error, code, message } = raw as Record<string, unknown>;
+    if (
       error === BACKEND_GUEST_ACCESS_DISABLED_ERROR ||
       code === GUEST_ACCESS_DISABLED_CODE
-    );
+    ) {
+      return "guest_access_disabled";
+    }
+    if (
+      code === BACKEND_ACCOUNT_SUSPENDED_CODE ||
+      (code === "FORBIDDEN" && message === BACKEND_GUEST_REVOKED_MESSAGE)
+    ) {
+      return "guest_revoked";
+    }
+    return undefined;
   } catch {
     // An unreadable 403 body is an ordinary 403: the caller still answers it.
-    return false;
+    return undefined;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -288,9 +305,10 @@ export async function fetchGuestSession(
         response.status === 429
           ? parseRetryAfterSeconds(response.headers.get("retry-after"))
           : undefined;
-      const guestAccessDisabled =
-        response.status === 403 &&
-        (await isGuestAccessDisabledResponse(response));
+      const forbidden =
+        response.status === 403
+          ? await classifyForbiddenResponse(response)
+          : undefined;
       return {
         kind: "error",
         status: response.status,
@@ -298,7 +316,12 @@ export async function fetchGuestSession(
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
         reason: "upstream_status",
         upstreamStatus: response.status,
-        ...(guestAccessDisabled ? { guestAccessDisabled: true as const } : {}),
+        ...(forbidden === "guest_access_disabled"
+          ? { guestAccessDisabled: true as const }
+          : {}),
+        ...(forbidden === "guest_revoked"
+          ? { guestRevoked: true as const }
+          : {}),
       };
     }
 

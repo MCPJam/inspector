@@ -728,12 +728,15 @@ describe("guest-session module", () => {
       await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
     });
 
-    it("returns null when the cookie's guest is revoked", async () => {
+    it("returns null when the server names the cookie's guest as revoked", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: false,
         status: 403,
         statusText: "Forbidden",
-        headers: { get: () => null },
+        headers: {
+          get: (name: string) =>
+            name === "x-mcpjam-guest-refusal" ? "GUEST_SESSION_REVOKED" : null,
+        },
         json: async () => ({
           code: "FORBIDDEN",
           message: "Guest session revoked.",
@@ -741,6 +744,19 @@ describe("guest-session module", () => {
       } as unknown as Response);
 
       await expect(guestSession.getExistingGuestId()).resolves.toBeNull();
+    });
+
+    // An edge or WAF 403 says nothing about the guest behind the cookie.
+    it("throws on a 403 that does not name a revoke", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        headers: { get: () => null },
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await expect(guestSession.getExistingGuestId()).rejects.toThrow(/403/);
     });
 
     it("returns null when guest access is turned off", async () => {

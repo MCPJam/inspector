@@ -16,9 +16,19 @@ import { guestTabRecovery } from "./auth/guest-tab-recovery";
 import {
   GUEST_ACCESS_DISABLED_CODE,
   GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
   sanitizeGuestSessionFailureDetails,
   type GuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
+import {
+  GuestSessionRefusedError,
+  GuestSessionRequestError,
+  GuestSessionRevokedError,
+  isFinalGuestRefusal,
+  type GuestSessionRefusalReason,
+} from "./guest-session-errors";
+
+export { GuestSessionRefusedError, type GuestSessionRefusalReason };
 
 
 declare global {
@@ -67,7 +77,6 @@ const sessionListeners = new Set<() => void>();
 // deterministic for the rest of the window, so retrying only burns the
 // network — and the app offers sign-in instead.
 const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
-export type GuestSessionRefusalReason = "rate_limited" | "guest_access_disabled";
 export interface GuestSessionRefusal {
   /** Epoch ms after which a new attempt is allowed. */
   readonly until: number;
@@ -268,46 +277,6 @@ function deleteLegacyToken(): void {
   legacyMigrationConsumed = true;
 }
 
-class GuestSessionRequestError extends Error {
-  /**
-   * The HTTP status when the server answered with a non-ok response. Absent
-   * for a network error or an unreadable body — that absence is the signal
-   * that the request never got a real answer from the server.
-   */
-  readonly status?: number;
-  /**
-   * Why the server could not get a session from ITS upstream, from the 503
-   * body. On a self-hosted install that 503 is made on the user's machine, so
-   * this is the only place the cause shows up.
-   */
-  readonly upstreamFailure?: GuestSessionFailureDetails;
-  constructor(
-    message: string,
-    status?: number,
-    upstreamFailure?: GuestSessionFailureDetails,
-    // What `fetch` threw when there is no status. Kept as `cause` so a report
-    // can name the browser's own error class instead of this wrapper's.
-    cause?: unknown,
-  ) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "GuestSessionRequestError";
-    this.status = status;
-    this.upstreamFailure = upstreamFailure;
-  }
-}
-
-/** The server refused to create a guest. Not transient: do not retry. */
-export class GuestSessionRefusedError extends GuestSessionRequestError {
-  readonly retryAfterMs: number;
-  readonly reason: GuestSessionRefusalReason;
-  constructor(retryAfterMs: number, reason: GuestSessionRefusalReason) {
-    super("Couldn't start a guest session. Sign in to continue.");
-    this.name = "GuestSessionRefusedError";
-    this.retryAfterMs = retryAfterMs;
-    this.reason = reason;
-  }
-}
-
 // This fetch has no timeout, so reading a stalled error body without a bound
 // would hang the retry ladder behind a report that only wants a reason.
 const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
@@ -430,7 +399,11 @@ async function requestGuestSession(
     const upstreamFailure = sanitizeGuestSessionFailureDetails(
       errorBody?.details,
     );
-    throw new GuestSessionRequestError(
+    const revoked =
+      response.status === 403 &&
+      response.headers?.get?.(GUEST_SESSION_REFUSAL_HEADER) ===
+        GUEST_SESSION_REVOKED_CODE;
+    throw new (revoked ? GuestSessionRevokedError : GuestSessionRequestError)(
       `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
       response.status,
       upstreamFailure,
@@ -600,13 +573,6 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
 
   const session = await inFlightLookupOnly;
   return session?.token ?? null;
-}
-
-/** A refusal that a retry will not change, unlike a rate limit or an outage. */
-function isFinalGuestRefusal(error: unknown): boolean {
-  return error instanceof GuestSessionRefusedError
-    ? error.reason === "guest_access_disabled"
-    : error instanceof GuestSessionRequestError && error.status === 403;
 }
 
 /**
