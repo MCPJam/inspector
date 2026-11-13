@@ -32,13 +32,13 @@
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "fdda7be1417ea2a0",
+      "identity": "1eabb4479495ddbe",
       "runtimeVersion": "1.0.92"
     },
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "cc7333767a402780",
+      "identity": "7bb6b47cfbf18e62",
       "runtimeVersion": "1.0.92"
     },
     {

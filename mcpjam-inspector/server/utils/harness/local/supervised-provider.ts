@@ -828,7 +828,7 @@ export function createSupervisedLocalHarnessProvider(
       supplied: Readonly<Record<string, string>> | undefined,
     ): Record<string, string> => ({
       ...env,
-      ...filterBridgeSuppliedEnv(supplied),
+      ...filterBridgeSuppliedEnv(supplied, opts.harnessId),
     });
 
     const runTranslated = async (

@@ -1,5 +1,6 @@
 import { useLocalHarnessRollouts } from "@/hooks/useComputersEnabled";
 import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
+import { LOCAL_RUNTIME_COPY } from "@/components/harness/local-runtime-copy";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 import { hostConfigNeedsAccount } from "@/lib/host-config-computer";
@@ -358,10 +359,8 @@ export function CreateHostDialog({
         </div>
         {!HOSTED_MODE && selectedLocalHarness && (
           <p className="text-sm text-muted-foreground">
-            Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer. It runs commands in its project folder with your account’s permissions.{" "}
-            {selectedLocalHarness === "codex"
-              ? "Codex evals and swarms run locally on Apple silicon Macs and in the cloud elsewhere."
-              : "Evals and swarms use this client’s approval settings."}
+            Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer.{" "}
+            {LOCAL_RUNTIME_COPY[selectedLocalHarness].setup}
           </p>
         )}
         {needsSignIn && (

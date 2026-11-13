@@ -35,9 +35,11 @@ import {
   pinnedSkillMeta,
   type RunPinnedSkill,
 } from "../evals/run-plugin-snapshot.js";
+import type { LiveServerSkills } from "../../utils/computers/live-server-skills.js";
 import {
   allEffectiveSkills,
   buildLiveEffectiveCapabilities,
+  withLiveServerSkills,
   type EffectiveCapabilitySet,
 } from "./effective-capabilities.js";
 
@@ -225,6 +227,37 @@ function planSource(
       ? planBox(runtime, set, refs, box)
       : planAgentSet(set, [...refs, ...agentOnly], agent, modelContextTokens);
   return { ...plan, excluded: [...excluded, ...plan.excluded] };
+}
+
+/**
+ * A live plan once its connected servers' own skills have joined its set: what
+ * MCPJam's agent holds, which the plan cannot say, since only a connected
+ * server can say which skills it serves (`prepareChatV2`). Those skills are
+ * delivered after the plan's own, and the ones the prompt's skill list leaves
+ * out are marked as the plan marks its own. A skill MCPJam lists but declines
+ * to load (`unloadable`) is not delivered.
+ *
+ * The plan itself stays as it was: `skillsAtTurn` is recorded from it, and a
+ * skill read now rather than captured has no row to record.
+ */
+export function planWithLiveServerSkills(
+  plan: TurnSkills,
+  live: LiveServerSkills,
+  modelContextTokens?: number,
+): TurnSkills {
+  const set = withLiveServerSkills(plan.set, live);
+  const omitted = new Set(skillCatalogOmissions(set, modelContextTokens));
+  const served = (set.liveServerSkills?.skills ?? []).flatMap(
+    ({ skillUri, ref, name, unloadable }): SkillRef[] =>
+      unloadable
+        ? []
+        : [
+            omitted.has(ref)
+              ? { skillId: skillUri, ref, name, omittedFromCatalog: true }
+              : { skillId: skillUri, ref, name },
+          ],
+  );
+  return { ...plan, set, delivered: [...plan.delivered, ...served] };
 }
 
 /**

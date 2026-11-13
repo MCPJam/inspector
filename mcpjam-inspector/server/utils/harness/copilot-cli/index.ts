@@ -2,9 +2,10 @@ import type { HarnessV1 } from "@ai-sdk/harness";
 import { createRetainedBridgeHarness } from "../codex-appserver/codex-appserver-harness.js";
 import type { HarnessMcpJson } from "../mcp-config.js";
 import { bootstrapFiles } from "./generated/bootstrap.js";
+import { COPILOT_BOOTSTRAP_COMMANDS, COPILOT_BOOTSTRAP_DIR } from "./bootstrap-recipe.js";
 
 const harnessId = "copilot-cli";
-const bootstrapDir = ".harness-bootstrap/copilot-cli";
+const bootstrapDir = COPILOT_BOOTSTRAP_DIR;
 
 export function createCopilotCli(settings: {
   model: string;
@@ -25,15 +26,7 @@ export function createCopilotCli(settings: {
         path: `${bootstrapDir}/${name}`,
         content,
       })),
-      commands: [
-        {
-          command:
-            "pnpm install --frozen-lockfile --ignore-scripts --store-dir .pnpm-store",
-        },
-        {
-          command: "node node_modules/@github/copilot/npm-loader.js --version",
-        },
-      ],
+      commands: COPILOT_BOOTSTRAP_COMMANDS.map((command) => ({ command })),
     }),
   });
 }

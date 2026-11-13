@@ -45,6 +45,8 @@ jobs:
       claude_permitted: ${{ steps.packs.outputs.claude_permitted }}
       codex_permitted: ${{ steps.packs.outputs.codex_permitted }}
       permitted_harnesses: ${{ steps.packs.outputs.permitted_harnesses }}
+      runtime_desired: ${{ steps.packs.outputs.runtime_desired }}
+      runtime_permitted: ${{ steps.packs.outputs.runtime_permitted }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,6 +100,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.plan.outputs.claude_desired }}
       codex_published_pack_version: ${{ needs.plan.outputs.codex_desired }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_desired }}
       certified_only: true
 
   evidence-permitted:
@@ -107,6 +110,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.plan.outputs.claude_permitted }}
       codex_published_pack_version: ${{ needs.plan.outputs.codex_permitted }}
+      runtime_pack_versions: ${{ needs.plan.outputs.runtime_permitted }}
       harnesses: ${{ needs.plan.outputs.permitted_harnesses }}
       certified_only: true
 

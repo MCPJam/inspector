@@ -21,6 +21,19 @@ import {
   reportBoxSkillsDelivered,
   reportSkillsDelivered,
 } from "../skills-delivered-event";
+import {
+  planWithLiveServerSkills,
+  turnSkillsFromLegacySource,
+} from "../turn-skills";
+import {
+  buildLiveEffectiveCapabilities,
+  type RuntimeStandaloneSkill,
+} from "../effective-capabilities";
+import { listLiveServerSkills } from "../../../utils/computers/live-server-skills";
+import {
+  makeServerSkillWire,
+  type ServerSkillWireOptions,
+} from "../../../test/support/server-skill-wire";
 import { fakeSkillBox } from "../../../test/support/fake-skill-box";
 import {
   authoredPin,
@@ -357,6 +370,88 @@ describe("an eval run stopped before its first model call", () => {
       RunPluginSnapshotError,
     );
     expect(sent()).toEqual([]);
+  });
+});
+
+describe("a live turn on MCPJam's agent", () => {
+  const DEPLOY: RuntimeStandaloneSkill = {
+    skillId: "sk_deploy",
+    ref: "deploy",
+    name: "deploy",
+    description: "Deploy.",
+    content: "# Deploy",
+    aggregateHash: "h",
+    files: [],
+    channels: [],
+  };
+  /** The plan the turn starts with, and what it holds once its servers
+   *  are connected and listed (`prepareChatV2`). */
+  async function liveTurn(
+    own: RuntimeStandaloneSkill[],
+    wire: ServerSkillWireOptions = {},
+    modelContextTokens?: number,
+  ) {
+    const plan = turnSkillsFromLegacySource(
+      {
+        kind: "resolved",
+        capabilities: buildLiveEffectiveCapabilities({
+          standaloneSkills: own,
+        }),
+        composeLiveServerSkills: true,
+      },
+      modelContextTokens,
+    );
+    const live = await listLiveServerSkills(await makeServerSkillWire(wire), [
+      { serverId: "srv1", serverLabel: "Acme Billing" },
+    ]);
+    if (!plan || !live) throw new Error("A live turn plans and lists skills.");
+    return {
+      plan,
+      effective: planWithLiveServerSkills(plan, live, modelContextTokens),
+    };
+  }
+  const base = { ...NONE, surface: "playground", runtime: "agent" };
+
+  it("counts the connected server's skills beside the plan's own", async () => {
+    const { effective } = await liveTurn([DEPLOY]);
+    reportSkillsDelivered("playground", effective);
+    expect(sent()).toEqual([
+      {
+        ...base,
+        outcome: "ok",
+        delivered_library_count: 1,
+        delivered_mcp_server_count: 1,
+      },
+    ]);
+  });
+
+  it("reports a turn whose only skills are a connected server's", async () => {
+    const { plan, effective } = await liveTurn([]);
+    // The plan alone has nothing to report, which is why a live-only turn sent
+    // no event before the servers' skills joined it.
+    reportSkillsDelivered("playground", plan);
+    expect(capture).not.toHaveBeenCalled();
+    reportSkillsDelivered("playground", effective);
+    expect(sent()).toEqual([
+      { ...base, outcome: "ok", delivered_mcp_server_count: 1 },
+    ]);
+  });
+
+  it("counts a server skill the prompt's list leaves out, and not one MCPJam declines to load", async () => {
+    const small = await liveTurn([DEPLOY], {}, 1_000);
+    reportSkillsDelivered("playground", small.effective);
+    const unverifiable = await liveTurn([DEPLOY], { noResources: true });
+    reportSkillsDelivered("playground", unverifiable.effective);
+    expect(sent()).toEqual([
+      {
+        ...base,
+        outcome: "ok",
+        delivered_library_count: 1,
+        delivered_mcp_server_count: 1,
+        omitted_from_catalog_count: 1,
+      },
+      { ...base, outcome: "ok", delivered_library_count: 1 },
+    ]);
   });
 });
 

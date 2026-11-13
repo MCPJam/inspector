@@ -97,6 +97,12 @@
           }
         }
       }
+    },
+    "copilot-cli": {
+      "conformance": {
+        "version": ""
+      },
+      "targets": {}
     }
   }
 }

@@ -568,7 +568,7 @@ function matchBootstrapInstall(
   command: string,
   ctx: CommandTranslationContext,
 ): TranslatedCommand | null {
-  if (command === "pnpm install --frozen-lockfile --store-dir .pnpm-store") {
+  if (command === localRuntime(ctx.harnessId).commands.install) {
     return {
       kind: "noop",
       reason:

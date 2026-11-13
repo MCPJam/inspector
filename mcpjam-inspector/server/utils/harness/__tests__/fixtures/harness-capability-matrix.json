@@ -212,9 +212,7 @@
       "protocol": "openai-responses",
       "reasoningEfforts": [],
       "runtimeVersion": "1.0.92",
-      "unavailableOn": {
-        "local": "GitHub Copilot CLI can't run on your computer yet. Run it in the cloud instead."
-      }
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": []
   },
