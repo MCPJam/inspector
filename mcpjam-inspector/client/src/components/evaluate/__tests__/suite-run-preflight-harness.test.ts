@@ -69,7 +69,7 @@ describe("a harness client under the policy", () => {
       }),
       servers: {},
       orgConfig,
-    }).orgKeyProblems;
+    }).orgConfigProblems;
 
   it("lets an organization model on the harness's own vendor through", () => {
     expect(
@@ -274,7 +274,7 @@ describe("a harness client under the policy", () => {
       });
       expect(
         runPreflight({ ...targets, servers: {}, orgConfig: strict })
-          .orgKeyProblems,
+          .orgConfigProblems,
       ).toBeUndefined();
     },
   );
@@ -293,7 +293,7 @@ describe("a harness client under the policy", () => {
           },
         ],
         orgConfig: withKey(readiness),
-      }).orgKeyProblems;
+      }).orgConfigProblems;
     expect(cursorProblems("ready")).toBeUndefined();
     expect(cursorProblems("missing")).toEqual([
       "Ask an org admin to add a Cursor key in Organization → AI providers.",

@@ -4,6 +4,9 @@
  * of a launch can't run on the organization's providers. The backend refuses
  * the same launch; this lets the sheet say so before Start.
  *
+ * Also, with or without the policy: an Azure OpenAI model saved without a
+ * deployment, which no attempt can run.
+ *
  * Kept apart from `suite-run-preflight.tsx`, which composes these problems
  * with the server and environment checks.
  */
@@ -19,6 +22,13 @@ import {
   isRuntimeAccountModel,
 } from "@/shared/model-provider";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
+import {
+  AZURE_PROVIDER_KEY,
+  azureDeploymentMissingReason,
+  azureDeploymentName,
+  hasAzureConnection,
+} from "@/shared/azure-deployment";
 import {
   harnessDisplayName,
   harnessNoRunnableModelReason,
@@ -278,24 +288,90 @@ function orgKeyHarnessProblem(
   return `${prefix} ${reason}`;
 }
 
+/** An explicit judge, read as the model it grades with. */
+function judgePreflightModel(
+  judge: Extract<PreflightJudge, { kind: "explicit" }>,
+): PreflightModel {
+  return {
+    model: judge.modelId,
+    provider:
+      classifyModelIdProvider(judge.modelId)?.provider ??
+      judge.modelId.split("/")[0] ??
+      "",
+    selection: judge.selection ?? { source: "hosted" },
+  };
+}
+
 function orgKeyJudgeProblem(
   orgConfig: PreflightOrgConfig,
   judge: PreflightJudge,
 ): string | null {
   // No default judge runs on the organization's keys: a person picks one.
   if (judge.kind === "default") return CHOOSE_ORG_JUDGE_MODEL;
-  return orgKeyModelProblem(
-    orgConfig,
-    {
-      model: judge.modelId,
-      provider:
-        classifyModelIdProvider(judge.modelId)?.provider ??
-        judge.modelId.split("/")[0] ??
-        "",
-      selection: judge.selection ?? { source: "hosted" },
-    },
-    "The judge",
+  return orgKeyModelProblem(orgConfig, judgePreflightModel(judge), "The judge");
+}
+
+/**
+ * An Azure OpenAI model that runs on the organization's connection without a
+ * deployment: Azure runs only the deployments an admin named, so every
+ * attempt would be refused. A legacy or unlabelled row runs there too, and
+ * its saved id is what the runner sends. With no enabled Azure connection,
+ * the missing connection is the problem, as the runner reports it, so there
+ * is no deployment problem to name.
+ */
+function azureDeploymentProblem(
+  orgConfig: PreflightOrgConfig,
+  model: PreflightModel,
+): string | null {
+  if (model.selectionKnown === false) return null;
+  if (
+    orgModelConnection(orgConfig, model)?.providerKey !== AZURE_PROVIDER_KEY
+  ) {
+    return null;
+  }
+  if (!hasAzureConnection(orgConfig.providers)) return null;
+  const orgSelection =
+    model.selection?.source === "org" ? model.selection : undefined;
+  return azureDeploymentName({
+    modelId: orgSelection?.modelId ?? model.model,
+    nativeModelId: orgSelection?.nativeModelId,
+  })
+    ? null
+    : azureDeploymentMissingReason(model.model);
+}
+
+/**
+ * Every problem with the organization's AI configuration a launch can't
+ * start with, once each: under the key policy, {@link orgKeyProblemsOf}; with
+ * or without it, an Azure model or judge saved without a deployment. Like the
+ * runner, the policy is checked first: a model the policy already refuses
+ * gets no deployment problem, since adding a deployment wouldn't let it run.
+ */
+export function orgConfigProblemsOf(
+  orgConfig: PreflightOrgConfig,
+  models: readonly PreflightModel[],
+  judge?: PreflightJudge,
+): string[] {
+  const policy = orgRequiresOwnKeys(orgConfig);
+  const problems = new Set(
+    policy ? orgKeyProblemsOf(orgConfig, models, judge) : [],
   );
+  for (const model of models) {
+    if (policy && orgKeyProblemsOf(orgConfig, [model]).length > 0) continue;
+    const problem = azureDeploymentProblem(orgConfig, model);
+    if (problem) problems.add(problem);
+  }
+  if (
+    judge?.kind === "explicit" &&
+    !(policy && orgKeyJudgeProblem(orgConfig, judge))
+  ) {
+    const problem = azureDeploymentProblem(
+      orgConfig,
+      judgePreflightModel(judge),
+    );
+    if (problem) problems.add(problem);
+  }
+  return [...problems];
 }
 
 /**

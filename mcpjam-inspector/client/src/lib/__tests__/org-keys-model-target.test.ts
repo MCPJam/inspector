@@ -121,7 +121,7 @@ function setupRunProblems(
     ],
   });
   return runPreflight({ ...plan, servers: {}, orgConfig: config })
-    .orgKeyProblems;
+    .orgConfigProblems;
 }
 
 describe("GPT-5.1 from the organization eval picker", () => {

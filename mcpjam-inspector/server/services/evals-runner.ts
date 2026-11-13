@@ -163,14 +163,16 @@ import {
   withSelectionRouting,
 } from "../utils/selection-rail.js";
 import {
+  azureDeploymentRefusal,
   backendModelSelection,
+  isOrgConfigurationRefusal,
   ModelResolutionRefusalError,
   ORG_KEYS_REQUIRED_REASON,
   policyIneligibleRefusal,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
-import { isOrgKeyPolicyRefusalCode } from "../../shared/ai-execution-refusal.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
+import { hasAzureConnection } from "@/shared/azure-deployment";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -3676,6 +3678,21 @@ const executeTestCase = async (params: {
       ]);
     }
   }
+  // Azure runs only a named deployment. A case without a saved org selection
+  // (written as `{ model, provider }`, saved before selections, or a legacy
+  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  // After the policy check, in `resolveLocalModelSelection`'s order. Skipped
+  // only when the organization's config is known and has no Azure connection:
+  // then the missing connection is the problem, as on the run sheet. A config
+  // that failed to load is not that.
+  const azureRefusal =
+    orgByokRuntime?.kind === "cloud" &&
+    (!orgModelConfig || hasAzureConnection(orgModelConfig.providers))
+      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
+          modelId: String(modelDefinition.id),
+        })
+      : undefined;
+  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   // The case's settings, resolved ONCE for every iteration below on the
   // route it takes (per-run override > saved selection > host defaults).
   // Legacy cases (no selection) keep the runners' own host/override rule.
@@ -4674,14 +4691,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ) {
           throw result.reason;
         }
-        // Test failed entirely - log error but continue. A refusal by the
-        // organization's AI-key policy is the org's own configuration working
-        // as designed (choose an org model): recorded, never paged.
+        // Test failed entirely - log error but continue. A refusal the
+        // organization fixes in its own settings is recorded, never paged.
         if (
           result.reason instanceof ModelResolutionRefusalError &&
-          isOrgKeyPolicyRefusalCode(result.reason.code)
+          isOrgConfigurationRefusal(result.reason)
         ) {
-          logger.warn("[evals] Test case refused by the organization AI-key policy:", {
+          logger.warn("[evals] Test case refused by the organization's AI configuration:", {
             code: result.reason.code,
             message: result.reason.message,
           });
