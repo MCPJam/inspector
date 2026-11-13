@@ -58,6 +58,19 @@ export function Chip({
 const textOf = (value: unknown) =>
   typeof value === "string" && value.trim() ? value : undefined;
 
+/** Whether a result names a skill or tool, by its name or its folder. */
+export function mentions(entry: PlacedFinding, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const { remediation, details } = entry.finding;
+  return new RegExp(`(^|[^\\w-])${escaped}([^\\w-]|$)`).test(
+    JSON.stringify([remediation, details]),
+  );
+}
+
+/** A result that holds: checked on current evidence, with nothing open. */
+export const holds = (entry: PlacedFinding) =>
+  entry.evidenceStatus === "established" && !openResult(entry);
+
 /** The portal's coded rules a package result carries, in the portal's words. */
 function portalRules(entry: PlacedFinding): FindingRow[] {
   const rules = entry.finding.details?.portalIssues;
