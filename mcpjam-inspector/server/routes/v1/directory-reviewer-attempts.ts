@@ -30,6 +30,7 @@ import {
 import {
   ATTEMPT_NOT_FOUND,
   readReviewerAttempt,
+  reviewerAccountForRun,
   reviewerAttemptFunctions as fn,
 } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
@@ -143,8 +144,12 @@ async function startAttemptRun(
   attempt: Attempt,
   authorized: AuthorizedReadinessServer,
   runKey: string,
+  token: string,
 ) {
   const flow = flowOf(row);
+  const reviewer = await reviewerAccountForRun(convex, row.id, (connectionId) =>
+    authorizeServer(c, token, row.projectId, savedServerOf(row), { connectionId }),
+  );
   try {
     const receipt = await startHostedReadinessRun({
       convex,
@@ -156,6 +161,7 @@ async function startAttemptRun(
       submissionId: row.id,
       reviewerAttemptId: attempt.id,
       authorized,
+      reviewer,
       analyticsActor: readinessAnalyticsActor(c, row.projectId),
       translateError: (error) => translateConvexWriteError(error, { resource: "Readiness run" }),
     });
@@ -198,7 +204,7 @@ reviewerAttempts.post(BASE, async (c) => {
   // A replay of an attempt that has since ended starts nothing.
   const run =
     attempt.state === "running"
-      ? await startAttemptRun(c, convex, row, attempt, authorized, `reviewer-attempt:${attempt.id}`)
+      ? await startAttemptRun(c, convex, row, attempt, authorized, `reviewer-attempt:${attempt.id}`, token)
       : null;
   return v1Resource(c, { attempt, run, ...(replayed ? { replayed } : {}) }, 201);
 });
@@ -243,7 +249,7 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
     throw attemptWriteError(error);
   }
   const runKey = `reviewer-attempt:${attempt.id}:${attempt.resumedAt ?? attempt.updatedAt}`;
-  const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey);
+  const run = await startAttemptRun(c, convex, row, attempt, authorized, runKey, token);
   return v1Resource(c, { attempt, run }, 202);
 });
 

@@ -30,7 +30,10 @@ import {
   startHostedReadinessRun,
   toReadinessRunDto,
 } from "../shared/readiness-runs.js";
-import { runnableReviewerAttemptId } from "../shared/reviewer-attempts.js";
+import {
+  reviewerAccountForRun,
+  runnableReviewerAttemptId,
+} from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
@@ -392,7 +395,8 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
       ? undefined
       : idParam(body.pluginVersionId, "pluginVersionId", VERSION_NOT_FOUND),
   );
-  if (!row.serverId) {
+  const serverId = row.serverId;
+  if (!serverId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
@@ -407,7 +411,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
-    serverId: row.serverId,
+    serverId,
     publisher: flow.directory,
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
@@ -415,7 +419,10 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     ...graded,
     ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
     testPlanRevision: body.testPlanRevision,
-    authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
+    authorized: await authorizeServer(c, convexAuthToken, projectId, serverId),
+    reviewer: await reviewerAccountForRun(convex, submissionId, (connectionId) =>
+      authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
+    ),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>
       translateConvexWriteError(error, { resource: "Readiness run" }),

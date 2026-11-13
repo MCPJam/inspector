@@ -2,7 +2,7 @@
   "flowId": "chatgpt-plugin",
   "capturedAt": "2026-11-13",
   "checkedAgainstScreenshots": false,
-  "note": "The ChatGPT plugin portal's screens as text: OpenAI's submission docs and their screenshots, read on 2026-11-13, and captures of the live portal from 2026-10-29 for the Findings panel, the Review information drawer's five steps and the Submit for review dialog. Where the two disagree (the docs number Reviewer credentials as the drawer's first step; the live portal puts Countries and translations first), the live portal wins. Display name, Short description and Starter prompts are the names the portal's own error messages use; Domain verification token is MCPJam's field. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures.",
+  "note": "The ChatGPT plugin portal's screens as text: OpenAI's submission docs and their screenshots, read on 2026-11-13, and captures of the live portal from 2026-10-29 for the Findings panel, the Review information drawer's five steps and the Submit for review dialog. Where the two disagree (the docs number Reviewer credentials as the drawer's first step; the live portal puts Countries and translations first), the live portal wins. Display name, Short description and Starter prompts are the names the portal's own error messages use; Domain verification token and the reviewer check's fields, from Identity tool to Fixtures, are MCPJam's. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures.",
   "title": "Upload new or existing plugin",
   "steps": [
     {
@@ -164,6 +164,40 @@
     "reviewer.signInSteps": {
       "label": "Sign-in steps",
       "placeholder": "Steps for this account"
+    },
+    "reviewer.identityTool": {
+      "label": "Identity tool",
+      "placeholder": "whoami",
+      "helper": "MCPJam's own check, not part of the portal: a read-only tool on your server that returns the signed-in account. MCPJam calls it as the reviewer."
+    },
+    "reviewer.identityArgs": {
+      "label": "Identity tool arguments",
+      "placeholder": "{}",
+      "helper": "Fixed JSON arguments, if the identity tool takes any."
+    },
+    "reviewer.expectedIdentityPath": {
+      "label": "Identity path",
+      "placeholder": "$.user.email",
+      "helper": "Where the tool's result names the account, as a JSON path."
+    },
+    "reviewer.expectedIdentity": {
+      "label": "Expected reviewer",
+      "placeholder": "review@example.com",
+      "helper": "The account reviewers sign in as."
+    },
+    "reviewer.expectedOrganizationPath": {
+      "label": "Organization path",
+      "placeholder": "$.organization.name",
+      "helper": "Where the tool's result names the organization or project, as a JSON path."
+    },
+    "reviewer.expectedOrganization": {
+      "label": "Expected organization",
+      "placeholder": "Sample Org",
+      "helper": "The organization or project reviewers should land in."
+    },
+    "reviewer.fixtures": {
+      "label": "Fixtures",
+      "helper": "MCPJam's own check: resources your test cases name, each with a read-only tool call that finds it in the reviewer's account."
     },
     "reviewer.testCases": {
       "label": "Test cases"

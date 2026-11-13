@@ -13,6 +13,7 @@
  */
 
 import { CLAUDE_SUBMISSION_LIMITS as LIMITS } from "../../claude-readiness/profile.js";
+import { DIRECTORY_REVIEWER_FIXTURE_PAIRS } from "../reviewer/evidence.js";
 import data from "./claude-connector.json" with { type: "json" };
 import {
   placementsFrom,
@@ -110,6 +111,29 @@ const RULES: Record<FieldKey, FieldRules> = {
   "dataHandling.sponsored": req("radio", declared),
   "testLaunch.instructions": opt("textarea"),
   "testLaunch.selfTested": opt("checkbox", declared),
+  // MCPJam's own reviewer check, in Claude's reviewer section.
+  "testLaunch.identityTool": opt("text", {
+    requiredWith: [
+      "testLaunch.expectedIdentity",
+      "testLaunch.expectedOrganization",
+    ],
+  }),
+  "testLaunch.identityArgs": opt("text"),
+  "testLaunch.expectedIdentityPath": opt("text", {
+    requiredWith: ["testLaunch.expectedIdentity"],
+  }),
+  "testLaunch.expectedIdentity": opt("text", {
+    requiredWith: ["testLaunch.expectedIdentityPath"],
+  }),
+  "testLaunch.expectedOrganizationPath": opt("text", {
+    requiredWith: ["testLaunch.expectedOrganization"],
+  }),
+  "testLaunch.expectedOrganization": opt("text", {
+    requiredWith: ["testLaunch.expectedOrganizationPath"],
+  }),
+  "testLaunch.fixtures": opt("pairs", {
+    pairs: DIRECTORY_REVIEWER_FIXTURE_PAIRS,
+  }),
   "compliance.acknowledgments": req("checkbox-group", {
     ...declared,
     minItems: data.fields["compliance.acknowledgments"].options.length,
