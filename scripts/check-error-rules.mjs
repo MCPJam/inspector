@@ -16,6 +16,9 @@ export function checkErrorRules(design, skill, rubric) {
   if (section === undefined) errors.push('DESIGN.md has no "## Errors" section.');
   const headings = [...(section ?? "").matchAll(/\*\*(E\d+) —/g)].map(m => m[1]);
   const defined = new Set(headings);
+  for (const id of ["E1", "E2", "E3", "E4"]) {
+    if (!defined.has(id)) errors.push(`DESIGN.md is missing required ${id}.`);
+  }
   if (!defined.size) errors.push("DESIGN.md defines no E-rules.");
   if (headings.length !== defined.size) errors.push("DESIGN.md has duplicate E-rule definitions.");
   const order = skill.match(/(?:^|\n)## Order of decision\r?\n([\s\S]*?)(?=\n## |$)/)?.[1];

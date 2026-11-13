@@ -33,6 +33,15 @@ test("each canonical rule is defined, cited and applied", () => {
   assert.deepEqual(check(), []);
 });
 
+for (const id of ["E1", "E2", "E3", "E4"]) {
+  test(`dropping canonical ${id} from both sources fails`, () => {
+    const withoutDefinition = design.replace(new RegExp(`^\\*\\*${id} —.*\\n`, "m"), "");
+    const withoutReferences = reviewer.replace(new RegExp(`^.*\\b${id}\\b.*\\n?`, "gm"), "");
+    assert.ok(check(withoutDefinition, withoutReferences)
+      .some(error => error.includes(`missing required ${id}`)));
+  });
+}
+
 test("the Errors section can be the final section", () => {
   assert.deepEqual(check(design.split("## Other")[0]), []);
 });

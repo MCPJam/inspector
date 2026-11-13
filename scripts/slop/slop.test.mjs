@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -261,6 +262,33 @@ describe("copy review", () => {
     join(repo, ".agents/skills/ui-copy/SKILL.md"),
     "---\nname: ui-copy\n---\n# Rubric\nvague-error: say what failed.\n"
   );
+  writeFileSync(join(repo, "DESIGN.md"), "## Errors\nUntrusted PR design.\n");
+  const workflow = readFileSync(new URL("../../.github/workflows/ui-copy-review.yml", import.meta.url), "utf8");
+  const sparse = workflow.match(/path: \.reviewer\r?\n\s+sparse-checkout: \|\r?\n((?: {12}.+\r?\n)+)/)?.[1];
+  assert.ok(sparse, "The workflow must define the trusted .reviewer checkout.");
+  for (const path of sparse.trim().split(/\r?\n/).map(line => line.trim())) {
+    cpSync(new URL(`../../${path}`, import.meta.url), join(repo, ".reviewer", path), { recursive: true });
+  }
+  const runner = join(repo, "review-copy.mjs");
+  writeFileSync(runner, `
+    import assert from "node:assert/strict";
+    import { main } from "./.reviewer/scripts/slop/copy-review.mjs";
+    let calls = 0;
+    const code = await main(["--base", "HEAD", "--dry-run"], async request => {
+      calls += 1;
+      for (const id of ["E1", "E2", "E3", "E4"]) assert.ok(request.system.includes("**" + id + " —"));
+      assert.match(request.system, /vague-error/);
+      assert.doesNotMatch(request.system, /Untrusted PR design|# Rubric|## Order of decision/);
+      return { items: [], usage: {} };
+    });
+    assert.equal(calls, 1);
+    process.exitCode = code;
+  `);
+  const runSparse = () => spawnSync(process.execPath, [runner], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
+  });
   writeFileSync(join(repo, ui), '<p>Try again</p>\n');
   git("init", "-q");
   git("config", "user.email", "test@example.com");
@@ -280,6 +308,28 @@ describe("copy review", () => {
       process.chdir(cwd);
     }
   };
+
+  it("classifies added copy from the workflow-defined sparse .reviewer checkout", () => {
+    const result = runSparse();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /2 new strings, none matched a pattern/);
+  });
+
+  for (const path of ["scripts/check-error-rules.mjs", "DESIGN.md"]) {
+    it(`fails closed when the trusted checkout lacks ${path}`, () => {
+      const file = join(repo, ".reviewer", path);
+      const contents = readFileSync(file);
+      rmSync(file);
+      try {
+        const result = runSparse();
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /ERR_MODULE_NOT_FOUND|ENOENT/);
+        assert.ok(result.stderr.includes(path), result.stderr);
+      } finally {
+        writeFileSync(file, contents);
+      }
+    });
+  }
 
   it("lists the copy a change added with its source line", () => {
     const items = inRepo(() => collectAdded("HEAD"));

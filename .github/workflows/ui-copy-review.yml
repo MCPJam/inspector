@@ -75,6 +75,9 @@ jobs:
           sparse-checkout: |
             scripts/slop
             .agents/skills/ui-copy
+            scripts/check-error-rules.mjs
+            DESIGN.md
+          sparse-checkout-cone-mode: false
           fetch-depth: 1
           persist-credentials: false
 
