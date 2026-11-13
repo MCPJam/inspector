@@ -501,6 +501,38 @@ function rendersNoMcpApps(cfg: HostConfigDtoV2): boolean {
   return (cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps === false;
 }
 
+/**
+ * Whether a config is a catalog row: only catalog rows carry the catalog's
+ * `rendersMcpApps` fact. A host a user built has none.
+ */
+function isCatalogRow(cfg: HostConfigDtoV2): boolean {
+  return (cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps !== undefined;
+}
+
+/**
+ * A catalog row that renders MCP Apps but left this value out of its
+ * `mcpAppsOverrides`, because its probe did not measure it. The row reads
+ * `undefined` and renders as not yet tested. The effective value would be
+ * the client style's default, which is a guess about this host, not a
+ * measurement. A host a user built keeps showing its effective value.
+ */
+function untestedCatalogAppValue(
+  cfg: HostConfigDtoV2,
+  path: readonly string[]
+): boolean {
+  if ((cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps !== true) {
+    return false;
+  }
+  let value: unknown = cfg.mcpProfile?.apps?.mcpAppsOverrides;
+  for (const key of path) {
+    value =
+      value !== null && typeof value === "object"
+        ? (value as Record<string, unknown>)[key]
+        : undefined;
+  }
+  return value === undefined;
+}
+
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "appsCap.availableDisplayModes",
@@ -514,7 +546,9 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) =>
       rendersNoMcpApps(cfg)
         ? NOT_SUPPORTED
-        : effMcpApps(cfg).availableDisplayModes,
+        : untestedCatalogAppValue(cfg, ["availableDisplayModes"])
+          ? undefined
+          : effMcpApps(cfg).availableDisplayModes,
   },
   {
     id: "appsCap.widgetDisplayModeRequests",
@@ -527,7 +561,9 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) =>
       rendersNoMcpApps(cfg)
         ? NOT_SUPPORTED
-        : effMcpApps(cfg).widgetDisplayModeRequests,
+        : untestedCatalogAppValue(cfg, ["widgetDisplayModeRequests"])
+          ? undefined
+          : effMcpApps(cfg).widgetDisplayModeRequests,
   },
   ...MCP_APPS_DIMENSIONS.map(
     ({ key, description }): HostConfigFieldDef => ({
@@ -538,7 +574,8 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       path: `mcpProfile.apps.mcpAppsOverrides.${key} (effective)`,
       description,
       kind: { kind: "boolean" },
-      read: (cfg) => effMcpApps(cfg)[key],
+      read: (cfg) =>
+        untestedCatalogAppValue(cfg, [key]) ? undefined : effMcpApps(cfg)[key],
     })
   ),
   // Read the RESOLVED matrix, not the raw override, exactly like every
@@ -925,6 +962,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // so the matrix shows the resolved value, not "—".
     read: (cfg) => cfg.respectToolVisibility ?? true,
   },
+  // The image rows below read `undefined` for a catalog row that left the
+  // value out: its probe did not measure it, and the helpers' defaults would
+  // show a guess as a fact. A host a user built keeps the defaults.
   {
     id: "modelVisibleMcpToolResults.directContent.image",
     section: "agent",
@@ -934,7 +974,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Pass MCP image content from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
+      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.directContent?.image === undefined
+        ? undefined
+        : isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "modelVisibleMcpToolResults.embeddedResources.blob.image",
@@ -946,7 +988,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Pass MCP embedded resource images from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.embeddedResources?.blob?.image === undefined
+        ? undefined
+        : isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "modelVisibleMcpToolResults.linkedResources.blob.image",
@@ -957,7 +1001,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and pass them to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.linkedResources?.blob?.image === undefined
+        ? undefined
+        : isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "mcpToolResultImageRendering",
@@ -971,7 +1017,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       options: ["none", "collapsed", "inline"],
     },
     read: (cfg) =>
-      getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
+      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.placement === undefined
+        ? undefined
+        : getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.directContent.image",
@@ -982,7 +1030,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Render direct MCP image content from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
+      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.directContent?.image === undefined
+        ? undefined
+        : isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.embeddedResources.blob.image",
@@ -994,7 +1044,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Render MCP embedded resource images from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.embeddedResources?.blob?.image === undefined
+        ? undefined
+        : isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.linkedResources.blob.image",
@@ -1005,7 +1057,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and render them in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.linkedResources?.blob?.image === undefined
+        ? undefined
+        : isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "progressiveToolDiscovery",

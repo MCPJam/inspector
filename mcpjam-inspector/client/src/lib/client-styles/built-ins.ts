@@ -18,6 +18,9 @@ import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import mcpjamLogo from "/mcp_jam.svg";
 import geminiLogo from "/google_logo.png";
+import grokLogoLight from "/grok_light.svg";
+import grokLogoDark from "/grok_dark.png";
+import genericMcpLogo from "/mcp.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -141,6 +144,21 @@ export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
   requestClose: true,
 };
 
+/**
+ * The `window.openai` surface of OpenAI's desktop app, shared by ChatGPT
+ * Desktop, its work mode and the Codex app: no file upload, file selection,
+ * download URLs, checkout, open-in-app URL or height notifications.
+ */
+export const OPENAI_APPS_DESKTOP_SURFACE: ResolvedOpenAiAppsCapabilities = {
+  ...OPENAI_APPS_FULL_SURFACE,
+  notifyIntrinsicHeight: false,
+  setOpenInAppUrl: false,
+  uploadFile: false,
+  selectFiles: false,
+  getFileDownloadUrl: false,
+  requestCheckout: false,
+};
+
 export {
   MCP_APPS_FULL_SURFACE,
   MCP_APPS_CLAUDE_SURFACE,
@@ -236,6 +254,51 @@ export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+// Claude Code in the Claude desktop app and on the web. Its connectors use
+// Claude Desktop's and claude.ai's widget hosts, so both borrow Claude's
+// surface and differ in identity: Claude Code's label, logo and spinner. The
+// behavioural differences live in the catalog rows.
+export const CLAUDE_CODE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-code-desktop",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["claude-code-desktop"],
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    // Must match the catalog label byte-for-byte (see CLAUDE_DESKTOP_HOST_STYLE).
+    label: "Claude Code Desktop",
+    shortLabel: "Claude Code Desktop-style host",
+    pickerDescription: "Claude Code in the Claude desktop app",
+    logoSrc: claudeCodeLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeCodeCliIndicator,
+  },
+};
+
+export const CLAUDE_CODE_WEB_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-code-web",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: "web",
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["claude-code-web"],
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    // Must match the catalog label byte-for-byte (see CLAUDE_DESKTOP_HOST_STYLE).
+    label: "Claude Code Web",
+    shortLabel: "Claude Code Web-style host",
+    pickerDescription: "Claude Code on the web",
+    logoSrc: claudeCodeLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeCodeCliIndicator,
+  },
+};
 
 export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   id: "chatgpt",
@@ -258,6 +321,82 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     label: "ChatGPT",
     shortLabel: "ChatGPT-style host",
     pickerDescription: "OpenAI-style swarm chrome",
+    logoSrc: openaiLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
+    loadingIndicator: ChatGptDotIndicator,
+  },
+};
+
+// ChatGPT's desktop app and its work mode, on the web and in the desktop app.
+// All three run OpenAI's app runtime, so they borrow ChatGPT's surface and
+// differ in identity. The desktop builds expose the smaller `window.openai`
+// the Codex app has; the work mode on the web exposes ChatGPT's full one.
+export const CHATGPT_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "chatgpt-desktop",
+  mcp: {
+    protocolOverride: UIType.OPENAI_SDK,
+    platform: "desktop",
+    fontCss: CHATGPT_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["chatgpt-desktop"],
+    resolveStyleVariables: getChatGPTStyleVariables,
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_DESKTOP_SURFACE,
+    },
+  },
+  chatUi: {
+    label: "ChatGPT Desktop",
+    shortLabel: "ChatGPT Desktop-style host",
+    pickerDescription: "ChatGPT desktop app chrome",
+    logoSrc: openaiLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
+    loadingIndicator: ChatGptDotIndicator,
+  },
+};
+
+export const CHATGPT_WORK_HOST_STYLE: HostStyleDefinition = {
+  id: "chatgpt-work",
+  mcp: {
+    protocolOverride: UIType.OPENAI_SDK,
+    platform: CHATGPT_PLATFORM,
+    fontCss: CHATGPT_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["chatgpt-work"],
+    resolveStyleVariables: getChatGPTStyleVariables,
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+    },
+  },
+  chatUi: {
+    label: "ChatGPT Work",
+    shortLabel: "ChatGPT Work-style host",
+    pickerDescription: "ChatGPT work mode on the web",
+    logoSrc: openaiLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
+    loadingIndicator: ChatGptDotIndicator,
+  },
+};
+
+export const CHATGPT_WORK_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "chatgpt-work-desktop",
+  mcp: {
+    protocolOverride: UIType.OPENAI_SDK,
+    platform: "desktop",
+    fontCss: CHATGPT_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["chatgpt-work-desktop"],
+    resolveStyleVariables: getChatGPTStyleVariables,
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_DESKTOP_SURFACE,
+    },
+  },
+  chatUi: {
+    label: "ChatGPT Work Desktop",
+    shortLabel: "ChatGPT Work Desktop-style host",
+    pickerDescription: "ChatGPT work mode in the desktop app",
     logoSrc: openaiLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
@@ -498,6 +637,31 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Codex in a terminal. Borrows Codex's chrome and differs in identity; the
+ * capability claim drops to the no-claims preset, because the CLI renders no
+ * widgets (the same recipe as CURSOR_CLI_HOST_STYLE).
+ */
+export const CODEX_CLI_HOST_STYLE: HostStyleDefinition = {
+  id: "codex-cli",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CHATGPT_PLATFORM,
+    fontCss: CHATGPT_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES["codex-cli"],
+    resolveStyleVariables: getChatGPTStyleVariables,
+  },
+  chatUi: {
+    label: "Codex CLI",
+    shortLabel: "Codex CLI-style host",
+    pickerDescription: "OpenAI Codex in a terminal",
+    logoSrc: codexLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
+    loadingIndicator: CodexShineIndicator,
+  },
+};
+
+/**
  * Visual Studio Code 1.130.0 host style, captured from a live MCP base
  * initialize + MCP Apps ui/initialize probe on 2026-07-23. VS Code supplies
  * semantic `var(--vscode-...)` references; the resolver uses the corresponding
@@ -716,6 +880,56 @@ export const NOTION_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Muse and Grokbot: tools-only clients with no widget rendered during their
+ * probes, so the MCP matrix stays at the no-claims baseline. The chat chrome
+ * is MCPJam's neutral stand-in with each client's identity. Muse has no logo
+ * of its own yet, so it shows the generic MCP mark.
+ */
+export const MUSE_HOST_STYLE: HostStyleDefinition = {
+  id: "muse",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES.muse,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Muse",
+    shortLabel: "Muse-style host",
+    pickerDescription: "Muse MCP client (tools-only)",
+    logoSrc: genericMcpLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
+export const GROKBOT_HOST_STYLE: HostStyleDefinition = {
+  id: "grokbot",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES.grokbot,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "Grokbot",
+    shortLabel: "Grokbot-style host",
+    pickerDescription: "Grokbot MCP client (tools-only)",
+    logoSrc: grokLogoLight,
+    logoSrcByTheme: {
+      light: grokLogoLight,
+      dark: grokLogoDark,
+    },
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
+/**
  * MCPJam's own house chrome. Used as the inspector's default host style so
  * "no host selected" doesn't silently render as Claude. Capability blob is
  * the inspector's actual MCP Apps renderer support — same baseline as
@@ -758,6 +972,9 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  CHATGPT_DESKTOP_HOST_STYLE,
+  CHATGPT_WORK_HOST_STYLE,
+  CHATGPT_WORK_DESKTOP_HOST_STYLE,
   MISTRAL_HOST_STYLE,
   GOOSE_HOST_STYLE,
   SLACK_HOST_STYLE,
@@ -777,7 +994,10 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
+  CODEX_CLI_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
+  CLAUDE_CODE_DESKTOP_HOST_STYLE,
+  CLAUDE_CODE_WEB_HOST_STYLE,
   CLAUDE_DESKTOP_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
@@ -786,4 +1006,6 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   PERPLEXITY_HOST_STYLE,
   CLINE_HOST_STYLE,
   NOTION_HOST_STYLE,
+  MUSE_HOST_STYLE,
+  GROKBOT_HOST_STYLE,
 ];

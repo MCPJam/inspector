@@ -18,7 +18,12 @@ const ALL_IDS: HostTemplateId[] = [
   "claude",
   "claude-desktop",
   "claude-code",
+  "claude-code-desktop",
+  "claude-code-web",
   "chatgpt",
+  "chatgpt-desktop",
+  "chatgpt-work",
+  "chatgpt-work-desktop",
   "mistral",
   "goose",
   "slack",
@@ -26,6 +31,7 @@ const ALL_IDS: HostTemplateId[] = [
   "cursor-cli",
   "copilot-cli",
   "codex",
+  "codex-cli",
   "copilot",
   "vscode",
   "agentcore",
@@ -34,6 +40,8 @@ const ALL_IDS: HostTemplateId[] = [
   "perplexity",
   "cline",
   "notion",
+  "muse",
+  "grokbot",
 ];
 
 describe("seedHostTemplate", () => {
@@ -104,6 +112,13 @@ describe("seedHostTemplate", () => {
         unauthorizedChallengeTrigger: "bearer-header",
       },
       chatgpt: { toolResultAuthChallenge: "prompt" },
+      // Claude Code's app clients connect through claude.ai's connector stack,
+      // and the ChatGPT variants through ChatGPT's, so the same docs apply.
+      "claude-code-desktop": { unauthorizedChallengeTrigger: "bearer-header" },
+      "claude-code-web": { unauthorizedChallengeTrigger: "bearer-header" },
+      "chatgpt-desktop": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work": { toolResultAuthChallenge: "prompt" },
+      "chatgpt-work-desktop": { toolResultAuthChallenge: "prompt" },
     };
     for (const id of ALL_IDS) {
       const seeded = seedHostTemplate(id);
@@ -142,6 +157,9 @@ describe("seedHostTemplate", () => {
     ]);
     const onHosts = new Set<HostTemplateId>([
       "claude-code",
+      "claude-code-desktop",
+      "claude-code-web",
+      "codex-cli",
       "cursor",
       "codex",
       "vscode",

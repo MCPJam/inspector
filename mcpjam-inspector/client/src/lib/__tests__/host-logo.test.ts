@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveHostLogoByName, UNKNOWN_HOST_LOGO } from "@/lib/host-logo";
+import {
+  resolveHostLogoByName,
+  resolveHostStyleByName,
+  UNKNOWN_HOST_LOGO,
+} from "@/lib/host-logo";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 // Hosts don't persist the catalog template they came from, so both single-select
@@ -50,5 +54,25 @@ describe("resolveHostLogoByName", () => {
     expect(resolveHostLogoByName("Claude Code")).toBe(
       getHostLogoSrc("claude-code"),
     );
+  });
+
+  it("routes each variant client's name to its own id, not its family's", () => {
+    // Same ordering trap as Claude Desktop: the bare /claude code/ and
+    // /chatgpt/ hints would swallow these names.
+    expect(resolveHostStyleByName("Claude Code Desktop")).toBe(
+      "claude-code-desktop",
+    );
+    expect(resolveHostStyleByName("Claude Code Web")).toBe("claude-code-web");
+    expect(resolveHostStyleByName("ChatGPT Desktop")).toBe("chatgpt-desktop");
+    expect(resolveHostStyleByName("ChatGPT Work")).toBe("chatgpt-work");
+    expect(resolveHostStyleByName("ChatGPT Work Desktop")).toBe(
+      "chatgpt-work-desktop",
+    );
+    expect(resolveHostStyleByName("Codex CLI")).toBe("codex-cli");
+    expect(resolveHostStyleByName("Grokbot")).toBe("grokbot");
+    expect(resolveHostStyleByName("Muse")).toBe("muse");
+    // The families themselves are unaffected.
+    expect(resolveHostStyleByName("ChatGPT")).toBe("chatgpt");
+    expect(resolveHostStyleByName("Claude Code")).toBe("claude-code");
   });
 });

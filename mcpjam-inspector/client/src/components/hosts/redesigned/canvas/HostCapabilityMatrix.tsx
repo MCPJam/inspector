@@ -20,6 +20,8 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import geminiLogo from "/google_logo.png";
+import grokLogoLight from "/grok_light.svg";
+import grokLogoDark from "/grok_dark.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
@@ -59,7 +61,12 @@ function getClientLogo(
   // theme to stay visible: white goose on dark, black goose on light.
   if (haystack.includes("goose"))
     return themeMode === "dark" ? gooseLogoDark : gooseLogoLight;
+  // Grokbot sends Cursor's clientInfo, so its own name is checked first.
+  if (haystack.includes("grok"))
+    return themeMode === "dark" ? grokLogoDark : grokLogoLight;
   if (haystack.includes("cursor")) return cursorLogo;
+  // ChatGPT's work mode sends `openai-mcp (Codex)`; its name says ChatGPT.
+  if (haystack.includes("chatgpt")) return openaiLogo;
   if (haystack.includes("codex")) return codexLogo;
   if (haystack.includes("copilot")) return copilotLogo;
   // VS Code's clientInfo.name is "Visual Studio Code"; the host name is
