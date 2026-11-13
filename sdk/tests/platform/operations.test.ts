@@ -2419,6 +2419,18 @@ describe("operation catalog consistency", () => {
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
+    list_directory_flows: {},
+    get_directory_flow: { flow: "claude-connector" },
+    create_directory_submission: { server: "s", flow: "claude-connector" },
+    list_directory_submissions: {},
+    get_directory_submission: { submission: "sub" },
+    update_directory_submission: {
+      submission: "sub",
+      answers: { "listing.name": "Acme" },
+    },
+    delete_directory_submission: { submission: "sub" },
+    start_directory_submission_run: { submission: "sub" },
+    get_directory_submission_results: { submission: "sub" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
@@ -2768,6 +2780,12 @@ describe("operation catalog consistency", () => {
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
+      // Directory submissions: the answers are a saved record, and a run
+      // started from one dials the submission's server.
+      "create_directory_submission",
+      "update_directory_submission",
+      "delete_directory_submission",
+      "start_directory_submission_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",

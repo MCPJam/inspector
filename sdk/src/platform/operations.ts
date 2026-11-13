@@ -127,6 +127,17 @@ import {
   updateServerAccountOperation,
   uploadServerAccountTokensOperation,
 } from "./server-account-operations.js";
+import {
+  createDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  getDirectoryFlowOperation,
+  getDirectorySubmissionOperation,
+  getDirectorySubmissionResultsOperation,
+  listDirectoryFlowsOperation,
+  listDirectorySubmissionsOperation,
+  startDirectorySubmissionRunOperation,
+  updateDirectorySubmissionOperation,
+} from "./directory-submission-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -1961,7 +1972,7 @@ export const startClaudeReadinessRunOperation: PlatformOperation<
   name: "start_claude_readiness_run",
   title: "Start a Claude directory readiness run",
   description:
-    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2011,7 +2022,7 @@ export const startOpenAIReadinessRunOperation: PlatformOperation<
   name: "start_openai_readiness_run",
   title: "Start an OpenAI directory readiness run",
   description:
-    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget.",
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; the verdict is available on the run after completion. `includeLlmObservations` adds an optional model pass: included with MCPJam, so no customer credits are consumed either way; it is subject to MCPJam's daily analysis budget. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2060,7 +2071,7 @@ export const startMuseReadinessRunOperation: PlatformOperation<
   name: "start_muse_readiness_run",
   title: "Start a Muse directory readiness run",
   description:
-    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval.",
+    "Grade a saved MCP server against Meta's Muse connector guidelines. Starts a durable run and returns its id; the verdict is available on the run after completion, not in this response. Free: Muse readiness has no AI observations. Muse reviews every submission by hand, so a ready verdict is a preflight, not a prediction of approval. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink(
@@ -2109,7 +2120,7 @@ export const getReadinessRunOperation: PlatformOperation<
   name: "get_readiness_run",
   title: "Get a directory readiness run",
   description:
-    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
+    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2169,7 +2180,7 @@ export const listReadinessRunsOperation: PlatformOperation<
   name: "list_readiness_runs",
   title: "List directory readiness runs",
   description:
-    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2204,7 +2215,7 @@ export const cancelReadinessRunOperation: PlatformOperation<
   name: "cancel_readiness_run",
   title: "Cancel a directory readiness run",
   description:
-    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome.",
+    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome. Readiness is in beta; this stays open to every organization, so a run can always be found and stopped.",
   // A write, and it declares its risk as every write must — but cancelling
   // STOPS work rather than starting it: it spends nothing, destroys no record,
   // and the run it interrupts is one somebody is paying to keep running.
@@ -2286,7 +2297,7 @@ export const getReadinessReportOperation: PlatformOperation<
   name: "get_readiness_report",
   title: "Get a directory readiness report",
   description:
-    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
+    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app. In beta: an organization outside the beta is refused, and the error names the feature.",
   readOnly: true,
   permalink: noPermalink(
     "route-not-addressable",
@@ -2420,6 +2431,9 @@ export type {
   UploadServerAccountTokensInput,
   UploadServerAccountTokensResult,
 } from "./server-account-operations.js";
+
+// Directory submission operations, from a module that exports nothing else.
+export * from "./directory-submission-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19309,6 +19323,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  // Directory submissions: one directory's form for a saved server, graded by runs.
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

@@ -22,6 +22,15 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -227,18 +236,6 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   feature: string;
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
-  {
-    feature: "readiness",
-    operations: [
-      startClaudeReadinessRunOperation,
-      startOpenAIReadinessRunOperation,
-      startMuseReadinessRunOperation,
-      getReadinessRunOperation,
-      listReadinessRunsOperation,
-      cancelReadinessRunOperation,
-      getReadinessReportOperation,
-    ],
-  },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
   {
     feature: "the registry directory",
@@ -352,6 +349,8 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getServerSkillOperation,
   readServerSkillFileOperation,
   checkHostCompatibilityOperation,
+  // Directory readiness: in beta, yet listed for every caller. The backend refuses
+  // an organization outside the beta with the reason, and each description says so.
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   startMuseReadinessRunOperation,
@@ -359,6 +358,15 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -863,6 +871,8 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "publish_study",
   "create_client",
   "duplicate_client",
+  // A new rehearsal; a replayed key returns the one it made.
+  "create_directory_submission",
   "send_feedback",
 ]);
 
