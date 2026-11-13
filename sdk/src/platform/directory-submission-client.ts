@@ -83,8 +83,8 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     options?: RequestOptions
   ): View {
     const { projectId, submissionId, expectedRevision } = params;
-    const { answers, confirm, title, idempotencyKey } = params;
-    const body = { expectedRevision, answers, confirm, title, idempotencyKey };
+    const { answers, confirm, title, checkGate, idempotencyKey } = params;
+    const body = { expectedRevision, answers, confirm, title, checkGate, idempotencyKey };
     const target = path(projectId, submissionId);
     return this.request("PATCH", target, { body, declareLaunch: true }, options);
   }

@@ -73,10 +73,10 @@ beta; they are listed [after the table](#held-tools).
 | `create_directory_submission` | Start a rehearsal of a directory's form for a saved server, prefilled from your account. Nothing is sent to the directory. In beta. | — |
 | `list_directory_submissions` | List a project's directory submissions, newest first, optionally for one server or one flow. | — |
 | `get_directory_submission` | Read one submission: each answer with who set it and whether it was confirmed, the portal's checks, and the latest results by step. | — |
-| `update_directory_submission` | Save answers to a submission. A stale revision is refused only for the fields someone else changed since. In beta. | — |
+| `update_directory_submission` | Save answers to a submission, or its gate: which checks fail a run. A stale revision is refused only for the fields someone else changed since. In beta. | — |
 | `delete_directory_submission` | Delete a directory submission and its answers. | — |
 | `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
-| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale. | — |
+| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale, and the run's verdict under the submission's gate. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
