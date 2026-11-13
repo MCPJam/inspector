@@ -24,6 +24,7 @@ vi.mock("convex/react", () => ({
 vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => false }));
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useLocalHarnessEnabled: () => false,
+  useLocalHarnessRollouts: () => ({ "claude-code": false, codex: false }),
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
@@ -46,7 +47,6 @@ vi.mock("@/hooks/useClaudeCodeHostEnabled", () => ({
   useClaudeCodeHostEnabled: () => false,
 }));
 vi.mock("@/hooks/useCodexHostEnabled", () => ({
-  LOCAL_CODEX_FEATURE_FLAG: "local-codex",
   useCodexHostEnabled: () => false,
 }));
 vi.mock("@/hooks/useCursorHostEnabled", () => ({

@@ -26,6 +26,9 @@ export type SuiteOverviewView =
  * omitted from Suites URLs at runtime.
  */
 
+/** The Suite settings tabs that have their own address. */
+export type SuiteSettingsTab = "settings" | "evaluators";
+
 export type EvalRoute =
   | { type: "list" }
   | { type: "create" }
@@ -71,7 +74,13 @@ export type EvalRoute =
       /** Return to the Eval my server first-run preview after editing. */
       fromEvalServer?: string;
     }
-  | { type: "suite-edit"; suiteId: string; fromCaseChecks?: string }
+  | {
+      type: "suite-edit";
+      suiteId: string;
+      fromCaseChecks?: string;
+      /** Suite settings tab; absent means Settings. */
+      tab?: SuiteSettingsTab;
+    }
   | {
       type: "commit-detail";
       commitSha: string;
