@@ -5518,7 +5518,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         "2025-11-25",
         "2026-07-28",
       ],
-      verifiedAt: 1792972800000,
+      verifiedAt: 1794441600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -5589,6 +5589,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
+          "io.modelcontextprotocol/skills": {},
         },
       },
       hostCapabilitiesOverride: {
@@ -5754,6 +5755,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sessionStorage: true,
               indexedDB: true,
             },
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             safeAreaInsets: false,

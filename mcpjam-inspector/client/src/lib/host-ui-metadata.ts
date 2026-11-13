@@ -12,6 +12,8 @@ import codexLogo from "/codex-logo.svg";
 import openCodeLogoLight from "/opencode-logo-light.svg";
 import openCodeLogoDark from "/opencode-logo-dark.svg";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
@@ -49,7 +51,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   codex: codexLogo,
   "codex-cli": codexLogo,
   opencode: openCodeLogoLight,
-  "copilot-cli": copilotLogo,
+  // GitHub Copilot's mark; `copilot` below is Microsoft 365 Copilot.
+  "copilot-cli": githubCopilotLogoLight,
   copilot: copilotLogo,
   vscode: vscodeLogo,
   agentcore: bedrockLogo,
@@ -78,6 +81,10 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
   cline: {
     light: clineLogoLight,
     dark: clineLogoDark,
+  },
+  "copilot-cli": {
+    light: githubCopilotLogoLight,
+    dark: githubCopilotLogoDark,
   },
 };
 
