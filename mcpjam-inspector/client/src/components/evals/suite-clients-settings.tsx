@@ -36,6 +36,12 @@ import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
 import type { EvalSuite } from "./types";
+import {
+  SKILLS_READ_ONLY_REASON,
+  type SuiteSkillsChange,
+  type SuiteSkillsEdit,
+} from "./suite-skills";
+import { SuiteSkillsField, SuiteSkillsHints } from "./suite-skills-field";
 
 type Selections = Record<string, ModelSelection>;
 type Stack = Parameters<
@@ -49,7 +55,8 @@ type Stack = Parameters<
 export type SuiteClientsDerivation = {
   sourceEnvironmentId: string;
   expectedRevision: number;
-  overrides: {
+  /** A `skillScope` comes with `skillSelection: null`: no row holds both. */
+  overrides: SuiteSkillsChange & {
     hostId?: string;
     modelId?: string | null;
     /** The picked model's saved selection (source, connection, effort). */
@@ -103,7 +110,8 @@ export class AmbiguousSuiteTemplateError extends Error {
  *  - a template the browser cannot copy losslessly (plugin pins, captured
  *    server skills, secret grants — see `unpreservableReason`);
  *  - any resulting environment with no server group and no plugin pin, which
- *    would run with no servers.
+ *    would run with no servers;
+ *  - a Skills field edit without backend derivation.
  */
 export function planSuiteClients(
   suite: EvalSuite,
@@ -128,11 +136,17 @@ export function planSuiteClients(
      * id, and an environment is reused only while its effort is unchanged.
      */
     modelSelections?: boolean;
+    /**
+     * A Skills field edit. Only the backend derivation can carry it: it
+     * copies everything else from the stored row, pins included.
+     */
+    skills?: SuiteSkillsEdit;
   } = {},
 ): SuiteClientsPlanItem[] {
   const group = options.group ?? null;
   const sourceHosts = options.sourceHosts ?? {};
   const lossless = options.lossless === true;
+  if (options.skills && !lossless) throw new Error(SKILLS_READ_ONLY_REASON);
   const attached = (suite.environmentIds ?? []).map((id) => {
     const row = environments.find(
       (environment) =>
@@ -187,16 +201,21 @@ export function planSuiteClients(
       });
       if (matches.length) {
         for (const row of matches) {
-          if (group === null || row.serverAttachmentId === group) {
+          const regroup = group !== null && row.serverAttachmentId !== group;
+          const skills = options.skills?.(row);
+          if (!regroup && skills === undefined) {
             push({ environmentId: row.environmentId });
           } else if (lossless) {
-            // A new group for an existing environment: the backend copies
-            // everything else from the stored row.
+            // A new group or new skills for an existing environment: the
+            // backend copies everything else from the stored row.
             push({
               derive: {
                 sourceEnvironmentId: row.environmentId,
                 expectedRevision: row.revision,
-                overrides: { serverAttachmentId: group },
+                overrides: {
+                  ...(regroup ? { serverAttachmentId: group } : {}),
+                  ...skills,
+                },
                 replaces: row.environmentId,
               },
             });
@@ -339,6 +358,7 @@ function describeSetup(row: ProjectEnvironmentView): string {
           c.skillSelection.skillIds.length === 1 ? "" : "s"
         }`
       : null,
+    c.skillScope ? "all shared Library skills" : null,
     c.serverSkillSelection ? "server skills" : null,
     c.secretSelection ? "secrets" : null,
     c.pluginVersionIds
@@ -446,6 +466,7 @@ export function SuiteClientsSettings({
       group?: string | null;
       sourceHosts?: Record<string, string>;
       sourceEnvironmentId?: string;
+      skills?: SuiteSkillsEdit;
     } = {},
   ) => {
     if (inFlight.current || readOnly || loading || unresolved || !capable)
@@ -463,6 +484,7 @@ export function SuiteClientsSettings({
           lossless,
           sourceEnvironmentId: options.sourceEnvironmentId,
           modelSelections: modelSelectionsSupported,
+          skills: options.skills,
         });
       } catch (error) {
         if (error instanceof AmbiguousSuiteTemplateError) {
@@ -572,6 +594,14 @@ export function SuiteClientsSettings({
             disabled={disabled}
           />
         </div>
+        <SuiteSkillsField
+          projectId={projectId}
+          environments={attached}
+          disabled={disabled}
+          editable={lossless}
+          scopeOffered={capabilities?.allSharedLibrarySkillScope === true}
+          onEdit={(skills) => void commit(selections, { skills })}
+        />
       </div>
       <EvalTargetMatrix
         hideHeading
@@ -709,6 +739,13 @@ export function SuiteClientsSettings({
           every client to it.
         </p>
       ) : null}
+      {loading || unresolved ? null : (
+        <SuiteSkillsHints
+          projectId={projectId}
+          environments={attached}
+          findHost={(hostId) => hosts.find((host) => host.hostId === hostId)}
+        />
+      )}
     </div>
   );
 }

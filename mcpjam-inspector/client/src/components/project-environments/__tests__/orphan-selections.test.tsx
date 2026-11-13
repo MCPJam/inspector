@@ -115,10 +115,10 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
       /Unavailable skill sk-gone \(remove\)/i
     );
     fireEvent.click(orphanRow);
-    expect(onChange).toHaveBeenCalledWith({
-      mode: "explicit",
-      skillIds: ["sk-live"],
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      { mode: "explicit", skillIds: ["sk-live"] },
+      { kind: "remove", skillId: "sk-gone" },
+    );
   });
 
   it("still surfaces orphaned pins when the project library is empty", async () => {
@@ -144,6 +144,9 @@ describe("ProjectEnvironmentSkillsPicker — unresolvable pinned ids", () => {
 
     // Clearing the last pin emits null, never an empty array.
     fireEvent.click(orphanRow);
-    expect(onChange).toHaveBeenCalledWith(null);
+    expect(onChange).toHaveBeenCalledWith(null, {
+      kind: "remove",
+      skillId: "sk-gone",
+    });
   });
 });

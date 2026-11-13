@@ -47,10 +47,13 @@ import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/enviro
 import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useAvailableModels } from "@/hooks/use-available-models";
+import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { toast } from "@/lib/toast";
 import { EvalTargetMatrix } from "./eval-target-matrix";
 import type { HostAttachmentDraft } from "../evals/client-attachments-editor";
+import { SuiteSkillsField } from "../evals/suite-skills-field";
+import type { SuiteSkillsEdit } from "../evals/suite-skills";
 import {
   nextUnusedSuiteName,
   pickServerAttachmentIdForServer,
@@ -142,6 +145,20 @@ export function CreateSuitePage({
   const composerEnvironments = useProjectEnvironments(
     composeMode ? projectId : null,
   );
+  const capabilities = useEnvironmentCapabilities(projectId);
+  // Every environment the page composes carries the same skills, so the
+  // field edits them as one.
+  const editSkills = (edit: SuiteSkillsEdit) =>
+    setTarget((current) => {
+      const change = edit(current.stack);
+      return change
+        ? {
+            ...current,
+            customized: true,
+            stack: { ...current.stack, ...change },
+          }
+        : current;
+    });
 
   const { isAuthenticated } = useConvexAuth();
   const shouldFetchDefaults = hostsEnabled && projectId !== null;
@@ -488,6 +505,20 @@ export function CreateSuitePage({
                     environmentsVocabulary="client"
                   />
                 </div>
+
+                {composeMode ? (
+                  <SuiteSkillsField
+                    projectId={projectId}
+                    environments={[target.stack]}
+                    disabled={isSaving}
+                    editable
+                    labelAbove
+                    scopeOffered={
+                      capabilities?.allSharedLibrarySkillScope === true
+                    }
+                    onEdit={editSkills}
+                  />
+                ) : null}
 
                 <div className="space-y-2">
                   <EvalTargetMatrix

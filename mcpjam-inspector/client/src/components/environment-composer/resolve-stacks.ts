@@ -36,6 +36,8 @@ import {
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 import { clientDisplayName } from "@/lib/client-display-name";
 import type {
+  ProjectEnvironmentServerSkillSelection,
+  ProjectEnvironmentSkillScope,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -50,6 +52,8 @@ export type AdhocStackInput = {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection;
+  skillScope?: ProjectEnvironmentSkillScope;
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
@@ -145,10 +149,31 @@ function sharedFields(
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
     skillSelection: skillsEnabled ? stack.skillSelection ?? null : null,
+    serverSkillSelection: skillsEnabled
+      ? (stack.serverSkillSelection ?? null)
+      : null,
+    skillScope: skillsEnabled ? (stack.skillScope ?? null) : null,
     computerEnvironmentId: computersEnabled
       ? stack.computerEnvironmentId ?? null
       : null,
   };
+}
+
+/** Server-skill picks and pins, in order, as the backend fingerprints them. */
+function serverSkillsKey(
+  selection: ProjectEnvironmentServerSkillSelection | null | undefined,
+): string {
+  return JSON.stringify(
+    selection
+      ? [
+          selection.serverSkillIds,
+          (selection.versionPins ?? []).map((pin) => [
+            pin.serverSkillId,
+            pin.versionId,
+          ]),
+        ]
+      : null,
+  );
 }
 
 /**
@@ -211,6 +236,9 @@ function matchingNamedEnvironment(
       env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
     sameSavedSelection(modelId, env.modelSelection, modelSelection) &&
+    (env.skillScope ?? null) === fields.skillScope &&
+    serverSkillsKey(env.serverSkillSelection) ===
+      serverSkillsKey(fields.serverSkillSelection) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -488,6 +516,10 @@ export async function resolveComposerEnvironments(args: {
       ...(fields.skillSelection
         ? { skillSelection: fields.skillSelection }
         : {}),
+      ...(fields.serverSkillSelection
+        ? { serverSkillSelection: fields.serverSkillSelection }
+        : {}),
+      ...(fields.skillScope ? { skillScope: fields.skillScope } : {}),
       ...(fields.computerEnvironmentId
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),

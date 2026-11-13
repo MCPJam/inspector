@@ -10,9 +10,42 @@ import {
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem } from "@/shared/skill-types";
 import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnvironments";
+import {
+  AllLibrarySkillsRow,
+  allLibraryNote,
+  scopedRowState,
+  type AllLibraryChoice,
+} from "./all-library-skills";
+import {
+  ServerSkillsSection,
+  type ServerSkillsChoice,
+} from "./server-skills-section";
+import { RemoveEverywhere, SkillVersionSelect } from "./skill-row-controls";
 
-/** Backend cap on `skillSelection.skillIds`. */
+/**
+ * Backend cap on the skills an environment selects: `skillSelection.skillIds`
+ * and `serverSkillSelection.serverSkillIds` together.
+ */
 export const MAX_ENVIRONMENT_SKILLS = 20;
+
+/**
+ * The one change behind an `onChange`. A caller that edits several
+ * environments at once applies it to each environment's own selection, which
+ * the emitted selection cannot stand in for when they differ.
+ */
+export type SkillSelectionEdit =
+  | { kind: "add" | "remove"; skillId: string }
+  | { kind: "pin"; skillId: string; versionId: string | null };
+
+/** What a picker that edits several environments at once needs to know. */
+export type SkillSelectionAcross = {
+  /** Skills only some of the environments select, shown partly on. */
+  partialIds: ReadonlySet<string>;
+  /** The most skills any one environment selects. */
+  largestCount: number;
+  /** Whether every environment that would get this skill stays within the cap. */
+  canAdd: (skillId: string) => boolean;
+};
 
 /**
  * Why a listed skill can't be pinned, in the reader's words.
@@ -50,7 +83,7 @@ function pinRejection(skill: SkillListItem): string | null {
 function ineligibleReason(reason: string | undefined): string {
   switch (reason) {
     case "not_shared":
-      return "Personal skill — only skills in the project library can run in environments. An admin can publish it.";
+      return "Personal skill. Only skills in the project library can run in environments. An admin can publish it.";
     case "plugin_component":
       return "Delivered by its plugin, not pinned on its own. Pin the plugin version instead.";
     default:
@@ -94,14 +127,27 @@ export function ProjectEnvironmentSkillsPicker({
   value,
   onChange,
   disabled = false,
+  across,
+  allLibrary,
+  serverSkills,
 }: {
   projectId: string;
   value: ProjectEnvironmentSkillSelection | null | undefined;
-  onChange: (next: ProjectEnvironmentSkillSelection | null) => void;
+  onChange: (
+    next: ProjectEnvironmentSkillSelection | null,
+    edit: SkillSelectionEdit,
+  ) => void;
   disabled?: boolean;
+  across?: SkillSelectionAcross;
+  /** Offers "All shared Library skills"; absent hides it. */
+  allLibrary?: AllLibraryChoice;
+  /** Offers the "From MCP servers" section; absent hides it. */
+  serverSkills?: ServerSkillsChoice;
 }) {
   const [skills, setSkills] = useState<SkillListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** A member was unchecked under the scope while this picker was open. */
+  const [narrowed, setNarrowed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -139,7 +185,30 @@ export function ProjectEnvironmentSkillsPicker({
       new Map((value?.versionPins ?? []).map((p) => [p.skillId, p.versionId])),
     [value],
   );
-  const atCap = selectedIds.size >= MAX_ENVIRONMENT_SKILLS;
+  const partialIds = across?.partialIds;
+  const selectedCount = across?.largestCount ?? selectedIds.size;
+  const pinnedCount =
+    pinnedVersionBySkillId.size +
+    (serverSkills?.value?.versionPins?.length ?? 0);
+  const atCap = selectedCount >= MAX_ENVIRONMENT_SKILLS;
+  const canAdd = (skillId: string) =>
+    across ? across.canAdd(skillId) : !atCap;
+  const scope = allLibrary?.state ?? false;
+  // The scope's members: every Library skill an environment could pin.
+  const members = (skills ?? []).flatMap((skill) =>
+    pinRejection(skill) === null ? [skill.skillId!] : [],
+  );
+  const leaveOutTotal =
+    members.length - 1 + (allLibrary?.serverSkillCount ?? 0);
+  const leaveOutBlocked =
+    scope !== false && leaveOutTotal > MAX_ENVIRONMENT_SKILLS;
+  const leaveOut = (skillId: string) => {
+    setNarrowed(true);
+    allLibrary?.onLeaveOut(
+      skillId,
+      members.filter((id) => id !== skillId),
+    );
+  };
   // Pinned ids the shared-skills list doesn't return: the skill was unshared,
   // deleted, or moved out of the project. Without a row they are invisible AND
   // unremovable, yet they still count toward the footer and still ship on
@@ -149,17 +218,21 @@ export function ProjectEnvironmentSkillsPicker({
     () =>
       skills === null
         ? []
-        : Array.from(selectedIds).filter(
+        : [...selectedIds, ...(partialIds ?? [])].filter(
             (id) => !skills.some((s) => s.skillId === id),
           ),
-    [skills, selectedIds],
+    [skills, selectedIds, partialIds],
   );
 
   /** Emit a selection, dropping pins for skills that are no longer selected. */
-  const emit = (nextIds: Set<string>, nextPins: Map<string, string>): void => {
+  const emit = (
+    nextIds: Set<string>,
+    nextPins: Map<string, string>,
+    edit: SkillSelectionEdit,
+  ): void => {
     // Never emit an empty explicit selection — clearing means null.
     if (nextIds.size === 0) {
-      onChange(null);
+      onChange(null, edit);
       return;
     }
     const pins = Array.from(nextPins.entries())
@@ -167,23 +240,29 @@ export function ProjectEnvironmentSkillsPicker({
       // a silent passenger even if it weren't.
       .filter(([skillId]) => nextIds.has(skillId))
       .map(([skillId, versionId]) => ({ skillId, versionId }));
-    onChange({
-      mode: "explicit",
-      skillIds: Array.from(nextIds),
-      // Absent, not `[]`, when nothing is pinned.
-      ...(pins.length > 0 ? { versionPins: pins } : {}),
-    });
+    onChange(
+      {
+        mode: "explicit",
+        skillIds: Array.from(nextIds),
+        // Absent, not `[]`, when nothing is pinned.
+        ...(pins.length > 0 ? { versionPins: pins } : {}),
+      },
+      edit,
+    );
   };
 
   const toggle = (skillId: string, checked: boolean) => {
     const next = new Set(selectedIds);
     if (checked) {
-      if (next.size >= MAX_ENVIRONMENT_SKILLS) return;
+      if (!canAdd(skillId)) return;
       next.add(skillId);
     } else {
       next.delete(skillId);
     }
-    emit(next, pinnedVersionBySkillId);
+    emit(next, pinnedVersionBySkillId, {
+      kind: checked ? "add" : "remove",
+      skillId,
+    });
   };
 
   /** Pin one skill to an exact revision, or `null` to go back to Latest. */
@@ -191,7 +270,7 @@ export function ProjectEnvironmentSkillsPicker({
     const nextPins = new Map(pinnedVersionBySkillId);
     if (versionId === null) nextPins.delete(skillId);
     else nextPins.set(skillId, versionId);
-    emit(selectedIds, nextPins);
+    emit(selectedIds, nextPins, { kind: "pin", skillId, versionId });
   };
 
   if (loadError) {
@@ -210,34 +289,70 @@ export function ProjectEnvironmentSkillsPicker({
   }
   // Only the truly-empty case short-circuits. With orphaned pins we MUST fall
   // through to the list so they get detach-only rows — otherwise the pins are
-  // invisible, unremovable, and still sent on save.
-  if (skills.length === 0 && orphanSelectedIds.length === 0) {
-    return (
-      <p className="py-1 text-xs italic text-muted-foreground">
-        No skills in the project library yet. Add a skill to the library to pin
-        it here.
-      </p>
-    );
-  }
+  // invisible, unremovable, and still sent on save. Server skills are listed
+  // below an empty Library too.
+  const libraryEmpty = skills.length === 0 && orphanSelectedIds.length === 0;
+  const emptyLibrary = (
+    <p className="py-1 text-xs italic text-muted-foreground">
+      No skills in the project library yet. Add a skill to the library to pin it
+      here.
+    </p>
+  );
+  if (libraryEmpty && !serverSkills) return emptyLibrary;
 
   return (
     <div className="space-y-1">
       <div
         role="group"
         aria-label="Environment skills"
-        className="flex max-h-56 flex-col gap-1 overflow-y-auto pr-1"
+        className={cn(
+          "flex flex-col gap-1 overflow-y-auto pr-1",
+          serverSkills ? "max-h-80" : "max-h-56",
+        )}
       >
+        {allLibrary && (members.length > 0 || scope !== false) ? (
+          <AllLibrarySkillsRow
+            state={scope}
+            note={allLibraryNote({
+              state: scope,
+              leaveOutTotal,
+              limit: MAX_ENVIRONMENT_SKILLS,
+              narrowed,
+            })}
+            disabled={disabled}
+            onToggle={(on) => {
+              setNarrowed(false);
+              allLibrary.onToggle(on);
+            }}
+          />
+        ) : null}
+        {libraryEmpty ? emptyLibrary : null}
         {skills.map((skill) => {
           const skillId = skill.skillId!;
-          const checked = selectedIds.has(skillId);
           const rejection = pinRejection(skill);
           const ineligible = rejection !== null;
-          const capBlocked = !checked && atCap;
+          const { checked, partial } = scopedRowState(scope, !ineligible, {
+            checked: selectedIds.has(skillId),
+            partial: partialIds?.has(skillId) ?? false,
+            pinned: pinnedVersionBySkillId.has(skillId),
+          });
+          // Under the scope, unchecking a member keeps the others as a list.
+          const member = scope !== false && !ineligible;
+          const remove = () =>
+            member ? leaveOut(skillId) : toggle(skillId, false);
+          const leaveBlocked = member && leaveOutBlocked;
+          const capBlocked = !checked && !canAdd(skillId);
+          // Partly on but can't be turned on: only its own button removes it.
+          const removeOnly = partial && (ineligible || capBlocked);
           // Ineligibility (and the cap) block NEW selections only — a skill that
           // was pinned and later became ineligible must stay uncheckable so the
           // user can repair the selection.
           const rowDisabled =
-            disabled || capBlocked || (ineligible && !checked);
+            disabled ||
+            (!removeOnly &&
+              (capBlocked ||
+                (ineligible && !checked) ||
+                (checked && leaveBlocked)));
           const row = (
             <Label
               key={skillId}
@@ -248,9 +363,11 @@ export function ProjectEnvironmentSkillsPicker({
               )}
             >
               <Checkbox
-                checked={checked}
-                onCheckedChange={(next) => toggle(skillId, next === true)}
-                disabled={rowDisabled}
+                checked={partial ? "indeterminate" : checked}
+                onCheckedChange={(next) =>
+                  next === true ? toggle(skillId, true) : remove()
+                }
+                disabled={rowDisabled || removeOnly}
                 aria-label={skill.name}
               />
               <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
@@ -272,8 +389,16 @@ export function ProjectEnvironmentSkillsPicker({
                     {skill.description}
                   </span>
                 ) : null}
+                {removeOnly ? (
+                  <RemoveEverywhere
+                    disabled={disabled || leaveBlocked}
+                    onRemove={remove}
+                  />
+                ) : null}
               </span>
-              {checked ? (
+              {/* Partly-on rows have none: their versions may differ. Nor
+                  does the scope, which always runs Latest. */}
+              {checked && scope === false ? (
                 <SkillVersionControl
                   projectId={projectId}
                   skillId={skillId}
@@ -303,9 +428,9 @@ export function ProjectEnvironmentSkillsPicker({
                 There is no name to show; the row exists so the id is
                 removable rather than a silent passenger on every save. */}
             <Checkbox
-              checked
+              checked={selectedIds.has(skillId) ? true : "indeterminate"}
               onCheckedChange={() => toggle(skillId, false)}
-              disabled={disabled}
+              disabled={disabled || !selectedIds.has(skillId)}
               aria-label={`Unavailable skill ${skillId} (remove)`}
             />
             <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
@@ -317,34 +442,39 @@ export function ProjectEnvironmentSkillsPicker({
                 </span>
               </span>
               <span className="truncate text-[11px] text-muted-foreground">
-                No longer in the project library — remove it to save.
+                No longer in the project library. Remove it to save.
               </span>
+              {selectedIds.has(skillId) ? null : (
+                <RemoveEverywhere
+                  disabled={disabled}
+                  onRemove={() => toggle(skillId, false)}
+                />
+              )}
             </span>
           </Label>
         ))}
+        {serverSkills ? (
+          <ServerSkillsSection
+            projectId={projectId}
+            choice={serverSkills}
+            disabled={disabled}
+          />
+        ) : null}
       </div>
-      <p className="text-[11px] text-muted-foreground">
-        {selectedIds.size}/{MAX_ENVIRONMENT_SKILLS} skills selected
-        {pinnedVersionBySkillId.size > 0
-          ? ` (${pinnedVersionBySkillId.size} pinned to a version)`
-          : ""}
-        {atCap ? " — cap reached" : ""}. Library skills only.
-      </p>
+      {/* The scope runs every member, so a count would understate it. */}
+      {scope === true ? null : (
+        <p className="text-[11px] text-muted-foreground">
+          {selectedCount}/{MAX_ENVIRONMENT_SKILLS} skills selected
+          {pinnedCount > 0 ? ` (${pinnedCount} pinned to a version)` : ""}
+          {atCap ? ", the most an environment can hold" : ""}.
+          {serverSkills ? null : " Library skills only."}
+        </p>
+      )}
     </div>
   );
 }
 
-/**
- * "Latest" vs an exact revision, for ONE selected skill.
- *
- * History loads on first open, not on mount: a picker showing 20 skills would
- * otherwise fire 20 requests for lists nobody looked at. Until then the control
- * shows what it already knows from the list row — the current version number.
- *
- * Latest is the default and stays the default. Pinning is the deliberate act
- * (hold this environment at a known revision so a comparison means something),
- * so it is never selected on the user's behalf.
- */
+/** A Library skill's version control; its history comes from the skills API. */
 function SkillVersionControl({
   projectId,
   skillId,
@@ -379,50 +509,25 @@ function SkillVersionControl({
     }
   };
 
-  // What the trigger says before history arrives: the pinned number when we
-  // know it, else Latest (with its number when the list row carried one).
-  const pinned = versions?.find((v) => v.versionId === pinnedVersionId);
-  const label = pinnedVersionId
-    ? pinned
-      ? `v${pinned.versionNumber}`
-      : "Pinned"
-    : currentVersionNumber !== undefined
-    ? `Latest (v${currentVersionNumber})`
-    : "Latest";
-
   return (
-    <select
-      // eslint-disable-next-line jsx-a11y/no-onchange
-      className={cn(
-        "ml-auto shrink-0 rounded border border-border/60 bg-background px-1.5 py-0.5 text-[11px]",
-        pinnedVersionId && "border-warning/60",
-      )}
-      aria-label={`Version for ${skillId}`}
+    <SkillVersionSelect
+      label={`Version for ${skillId}`}
+      latestLabel={
+        currentVersionNumber !== undefined
+          ? `Latest (v${currentVersionNumber})`
+          : "Latest"
+      }
+      versions={
+        versions?.map((version) => ({
+          id: version.versionId,
+          label: `v${version.versionNumber}${version.isCurrent ? " (current)" : ""}`,
+        })) ?? null
+      }
+      loading={loading}
+      pinnedVersionId={pinnedVersionId}
       disabled={disabled}
-      value={pinnedVersionId ?? ""}
-      onMouseDown={(e) => {
-        // Opening the control is what triggers the fetch; stop the click from
-        // reaching the row Label, which would toggle the checkbox.
-        e.stopPropagation();
-        void loadVersions();
-      }}
-      onClick={(e) => e.stopPropagation()}
-      onFocus={() => void loadVersions()}
-      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
-    >
-      <option value="">{label === "Pinned" ? "Latest" : label}</option>
-      {loading ? <option disabled>Loading…</option> : null}
-      {(versions ?? []).map((version) => (
-        <option key={version.versionId} value={version.versionId}>
-          v{version.versionNumber}
-          {version.isCurrent ? " (current)" : ""}
-        </option>
-      ))}
-      {/* A pin whose history hasn't loaded still needs a selectable option, or
-          the control would silently reset it to Latest on first render. */}
-      {pinnedVersionId && !pinned ? (
-        <option value={pinnedVersionId}>Pinned version</option>
-      ) : null}
-    </select>
+      onOpen={() => void loadVersions()}
+      onChange={onChange}
+    />
   );
 }
