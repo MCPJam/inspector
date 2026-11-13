@@ -1,9 +1,10 @@
 import { track } from "@/lib/analytics";
 
 /**
- * View events for a run's results. Every event names its run so a run visit
- * (a distinct PostHog session and run id, counted when the metric is read)
- * can be joined to the case and iteration views made during it. Nothing is
+ * View events for a run's results. Every event names the run whose page is
+ * open, so a run visit (a distinct PostHog session and run id, counted when
+ * the metric is read) can be joined to the case and iteration views made
+ * during it, including views of a sibling run's column. Nothing is
  * deduplicated here: a per-tab guard would count pages opened in new tabs as
  * extra visits, which the drawers never were.
  */

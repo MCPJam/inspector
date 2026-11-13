@@ -248,7 +248,8 @@ describe("RunResultPage", () => {
     );
     expect(mocks.track).toHaveBeenCalledWith(
       "eval_iteration_viewed",
-      expect.objectContaining({ run_id: "two", surface: "page", via: "link" }),
+      // The view names the page's run so it joins this run visit.
+      expect.objectContaining({ run_id: "one", surface: "page", via: "link" }),
     );
   });
 

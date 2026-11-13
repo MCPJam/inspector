@@ -345,6 +345,9 @@ export function RunResultsMatrix({
   // A link names its column whenever the grid could show more than one.
   const linkTarget = (target: MatrixTarget) =>
     data.columnCount > 1 || modelIds || extraFiltersActive ? target : null;
+  // Views name the run whose page is open, even on a sibling run's column, so
+  // each joins the one run visit that page recorded.
+  const viewedRun = { suiteId: run.suiteId, runId: run._id };
 
   return (
     <section
@@ -554,13 +557,7 @@ export function RunResultsMatrix({
                               caseKey: row.key,
                               targetKey: target.key,
                             });
-                            trackCaseResultViewed(
-                              {
-                                suiteId: target.run.suiteId,
-                                runId: target.run._id,
-                              },
-                              "drawer",
-                            );
+                            trackCaseResultViewed(viewedRun, "drawer");
                           }}
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
                           className={cellClass}
@@ -675,14 +672,7 @@ export function RunResultsMatrix({
                   caseKey={selectedRow.key}
                   onSelectIteration={(iterationId) => {
                     setSelectedIterationId(iterationId);
-                    trackIterationViewed(
-                      {
-                        suiteId: selectedTarget.run.suiteId,
-                        runId: selectedTarget.run._id,
-                      },
-                      "drawer",
-                      "grid",
-                    );
+                    trackIterationViewed(viewedRun, "drawer", "grid");
                   }}
                 />
                 {onEditCase && selectedRow.testCaseId && (

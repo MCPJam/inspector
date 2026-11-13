@@ -114,14 +114,14 @@ export function RunResultPage({
   useEffect(() => {
     if (shown) trackRunViewed(runRef, surface);
   }, [shown, runRef, surface]);
-  const viewedRunId = target?.run._id;
+  // A view names the page's run, not its column's, so it joins this visit.
+  const viewedColumnRunId = target?.run._id;
   const viewedIterationId = iteration?._id;
   useEffect(() => {
-    if (!shown || !viewedRunId) return;
-    const ref = { suiteId, runId: viewedRunId };
-    if (!viewedIterationId) trackCaseResultViewed(ref, "page");
-    else trackIterationViewed(ref, "page", via);
-  }, [shown, suiteId, viewedRunId, caseKey, viewedIterationId, via]);
+    if (!shown || !viewedColumnRunId) return;
+    if (!viewedIterationId) trackCaseResultViewed(runRef, "page");
+    else trackIterationViewed(runRef, "page", via);
+  }, [shown, runRef, viewedColumnRunId, caseKey, viewedIterationId, via]);
 
   const caseTitle = row?.title;
   const iterationNumber = iteration

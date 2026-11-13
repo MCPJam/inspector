@@ -23,12 +23,12 @@ vi.mock("convex/react", async (importOriginal) => ({
 
 const ref = { suiteId: "suite", runId: "one" };
 
-function run(id: string): EvalSuiteRun {
+function run(id: string, namedHostId = "claude"): EvalSuiteRun {
   return {
     _id: id,
     suiteId: "suite",
     runGroupId: "launch",
-    namedHostId: "claude",
+    namedHostId,
     effectiveModelId: "sonnet",
     runNumber: 3,
     status: "completed",
@@ -138,5 +138,31 @@ describe("run view events", () => {
         },
       ],
     ]);
+  });
+
+  it("names the open page's run for a view on a sibling run's column", async () => {
+    render(
+      <RunResultsMatrix
+        run={run("one")}
+        runs={[run("two", "cursor")]}
+        iterations={[iteration("pass", "one"), iteration("other", "two")]}
+        hostNamesById={
+          new Map([
+            ["claude", "Claude"],
+            ["cursor", "Cursor"],
+          ])
+        }
+      />,
+    );
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: "Inspect Refund order on Cursor · sonnet",
+      }),
+    );
+
+    expect(track).toHaveBeenCalledWith(
+      "eval_case_result_viewed",
+      expect.objectContaining({ run_id: "one", surface: "drawer" }),
+    );
   });
 });
