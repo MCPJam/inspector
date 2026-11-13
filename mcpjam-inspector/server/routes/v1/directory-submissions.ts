@@ -99,6 +99,8 @@ const startSchema = z.strictObject({
   idempotencyKey,
   /** The one field that can spend. Off unless sent, as on the readiness starts. */
   includeLlmObservations: z.boolean().optional(),
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision: z.number().int().min(1).optional(),
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -311,6 +313,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
+    testPlanRevision: body.testPlanRevision,
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>
