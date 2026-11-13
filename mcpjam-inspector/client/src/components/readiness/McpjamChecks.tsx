@@ -6,6 +6,7 @@
  * directory's severity, and how far the evidence still holds. An unsure model
  * answer reads as a likely flag, never as a blocker.
  */
+import type { ReactNode } from "react";
 import type {
   DirectoryEvidenceStatus,
   PlacedFinding,
@@ -61,10 +62,24 @@ function severityOf({ finding }: PlacedFinding): {
   return { tone: finding.status === "informational" ? "pass" : "idle" };
 }
 
-export function McpjamMark() {
+/**
+ * A blocker or likely flag on current evidence, as the step counts them: the
+ * results the review page lists. Stale and untested ones stay on their step.
+ */
+export function openResult(entry: PlacedFinding): string | undefined {
+  const current =
+    entry.evidenceStatus === "established" ||
+    entry.evidenceStatus === "inconclusive";
+  const { label } = severityOf(entry);
+  return current && (label === "Blocker" || label === "Likely flag")
+    ? label
+    : undefined;
+}
+
+export function McpjamMark({ children }: { children?: ReactNode }) {
   return (
     <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-xs font-medium text-foreground">
-      MCPJam
+      MCPJam{children ? <> · {children}</> : null}
     </span>
   );
 }

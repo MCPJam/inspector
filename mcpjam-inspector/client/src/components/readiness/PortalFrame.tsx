@@ -2,7 +2,8 @@
  * The copy of the portal's form around one submission: the Submissions link
  * and the saved note, the step rail, the serif step title, and Back and Next.
  * Every step renders from the flow's layout, so a portal change is a data
- * change.
+ * change. The last step is the portal's review page, where MCPJam's copy
+ * button stands in for the portal's submit.
  */
 import { useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
@@ -10,6 +11,7 @@ import {
   directoryFlowField,
   type DirectoryFieldIssue,
   type DirectoryFlow,
+  type DirectoryFlowField,
   type DirectoryFlowStep,
   type DirectoryLayoutBlock,
   type PlacedFinding,
@@ -23,29 +25,48 @@ import type {
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { McpjamChecks, McpjamMark } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
+import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
+import { PortalWidget } from "./PortalWidgets";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
 
 function StepBody({
+  flow,
   step,
   values,
   issues,
   findings,
-  serverUrl,
+  server,
   onAnswer,
 }: {
+  flow: DirectoryFlow;
   step: DirectoryFlowStep;
   values: AnswerValues;
   /** Only once the step is marked, as the portal shows them. */
   issues: readonly DirectoryFieldIssue[];
   findings: readonly PlacedFinding[];
-  serverUrl?: string;
+  server: { url?: string; name?: string };
   onAnswer: (key: string, value: AnswerValues[string]) => void;
 }) {
   const blocks: DirectoryLayoutBlock[] =
     step.layout?.blocks ??
     step.fields.map((field) => ({ fields: [field.key] }));
   const shown = new Set(blocks.flatMap((block) => block.fields ?? []));
+  const fieldsOf = (block: DirectoryLayoutBlock) =>
+    step.fields.filter((field) => block.fields?.includes(field.key));
+  const renderField = (field: DirectoryFlowField, label?: string) => (
+    <PortalField
+      key={field.key}
+      field={field}
+      label={label}
+      value={values[field.key]}
+      issue={issues.find((issue) => issue.key === field.key)}
+      findings={findings.filter((entry) => entry.field === field.key)}
+      serverUrl={server.url}
+      serverName={server.name}
+      onChange={(value) => onAnswer(field.key, value)}
+    />
+  );
   return (
     <div className="space-y-7">
       {blocks.map((block, index) => (
@@ -58,28 +79,26 @@ function StepBody({
               ) : null}
             </div>
           ) : null}
-          <div
-            className={cn(
-              "grid gap-6",
-              (block.fields?.length ?? 0) > 1 && "md:grid-cols-2",
-            )}
-          >
-            {step.fields
-              .filter((field) => block.fields?.includes(field.key))
-              .map((field) => (
-                <PortalField
-                  key={field.key}
-                  field={field}
-                  value={values[field.key]}
-                  issue={issues.find((issue) => issue.key === field.key)}
-                  findings={findings.filter(
-                    (entry) => entry.field === field.key,
-                  )}
-                  serverUrl={serverUrl}
-                  onChange={(value) => onAnswer(field.key, value)}
-                />
-              ))}
-          </div>
+          {block.widget ? (
+            <PortalWidget
+              block={block}
+              flow={flow}
+              step={step}
+              fields={fieldsOf(block)}
+              values={values}
+              findings={findings}
+              renderField={renderField}
+            />
+          ) : (
+            <div
+              className={cn(
+                "grid gap-6",
+                (block.fields?.length ?? 0) > 1 && "md:grid-cols-2",
+              )}
+            >
+              {fieldsOf(block).map((field) => renderField(field))}
+            </div>
+          )}
         </div>
       ))}
       <McpjamChecks
@@ -156,12 +175,14 @@ export function PortalFrame({
   view,
   session,
   serverUrl,
+  serverName,
   onClose,
 }: {
   flow: DirectoryFlow;
   view: SubmissionView;
   session: DirectorySubmissionSession;
   serverUrl?: string;
+  serverName?: string;
   onClose: () => void;
 }) {
   const [active, setActive] = useState(0);
@@ -169,6 +190,10 @@ export function PortalFrame({
   const directory = DIRECTORY_NAMES[flow.directory];
   const last = flow.steps.length - 1;
   const step = flow.steps[Math.min(active, last)];
+  const review = Boolean(step.layout?.review);
+  const missing = step.layout?.blocks?.find(
+    (block) => block.widget === "submit",
+  )?.text?.missing;
   const marked = portalMarks(left, active, last, Boolean(view.lastRunId));
   const placed = (id: string) => view.steps.find((entry) => entry.step === id);
   const issuesOf = (id: string) =>
@@ -232,14 +257,31 @@ export function PortalFrame({
               </h1>
               <p className="text-muted-foreground">{step.intro}</p>
             </header>
-            <StepBody
-              step={step}
-              values={session.values}
-              issues={marked(active) ? issuesOf(step.id) : []}
-              findings={placed(step.id)?.findings ?? []}
-              serverUrl={serverUrl}
-              onAnswer={session.setAnswer}
-            />
+            {review ? (
+              <>
+                <PortalReview
+                  flow={flow}
+                  step={step}
+                  values={session.values}
+                  issues={session.reviewIssues}
+                  placed={view.steps}
+                  onEdit={(id) =>
+                    go(flow.steps.findIndex((entry) => entry.id === id))
+                  }
+                />
+                <McpjamChecks findings={placed(step.id)?.findings ?? []} />
+              </>
+            ) : (
+              <StepBody
+                flow={flow}
+                step={step}
+                values={session.values}
+                issues={marked(active) ? issuesOf(step.id) : []}
+                findings={placed(step.id)?.findings ?? []}
+                server={{ url: serverUrl, name: serverName }}
+                onAnswer={session.setAnswer}
+              />
+            )}
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
                 type="button"
@@ -254,16 +296,28 @@ export function PortalFrame({
                   Next
                 </Button>
               ) : (
-                <a
-                  href={view.submissionUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="ml-2 inline-flex items-center gap-1 text-sm text-ring underline underline-offset-2"
-                >
-                  Open the real {directory} portal
-                  <ExternalLink aria-hidden="true" className="size-3.5" />
-                </a>
+                <>
+                  {review ? (
+                    <CopyForPortal
+                      text={() => portalText(flow, session.values)}
+                    />
+                  ) : null}
+                  <a
+                    href={view.submissionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="ml-2 inline-flex items-center gap-1 text-sm text-ring underline underline-offset-2"
+                  >
+                    Open the real {directory} portal
+                    <ExternalLink aria-hidden="true" className="size-3.5" />
+                  </a>
+                </>
               )}
+              {missing && session.reviewIssues.length > 0 ? (
+                <p className="w-full text-sm text-muted-foreground">
+                  {missing}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

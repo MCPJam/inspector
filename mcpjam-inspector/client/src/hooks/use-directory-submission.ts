@@ -281,6 +281,12 @@ export function useDirectorySubmission({
     () => (flow ? validateDirectoryAnswers(flow, answers) : []),
     [flow, answers],
   );
+  // The review page also asks for what no step does, such as Claude's author.
+  const reviewIssues = useMemo(
+    () =>
+      flow ? validateDirectoryAnswers(flow, answers, { on: "review" }) : [],
+    [flow, answers],
+  );
   const startRun = useCallback(async () => {
     // A run grades the answers stored when it starts.
     await store.saveNow();
@@ -292,6 +298,7 @@ export function useDirectorySubmission({
     view,
     values,
     issues,
+    reviewIssues,
     ...status,
     run: runner.state,
     startRun,
