@@ -73,6 +73,8 @@ function outcomeLine(
     CONFIRMED_OMISSIONS.has(outcome.reason)
   )
     return "Analysis confirmed a cause but did not show it for this problem.";
+  if (outcome.state === "withheld" && outcome.reason === "trimmed")
+    return "Analysis reached a result for this problem, but it was cut to fit the size limit.";
   return OUTCOME_LINE[outcome.state];
 }
 
