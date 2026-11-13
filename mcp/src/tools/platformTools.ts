@@ -37,6 +37,10 @@ import {
   getReviewerAttemptOperation,
   resumeReviewerAttemptOperation,
   cancelReviewerAttemptOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -379,6 +383,10 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getReviewerAttemptOperation,
   resumeReviewerAttemptOperation,
   cancelReviewerAttemptOperation,
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -914,6 +922,9 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
  * runs a third party's tool cannot promise a repeat is harmless.
  */
 const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
+  // Saving the plan that is already current changes nothing and answers the
+  // saved revision with `replayed: true`, whatever revision it names.
+  "save_directory_submission_test_plan",
   "delete_project_server",
   "cancel_eval_run",
   "cancel_goal_run",

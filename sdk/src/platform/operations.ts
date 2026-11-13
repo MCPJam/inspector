@@ -145,6 +145,12 @@ import {
   listReviewerAttemptsOperation,
   resumeReviewerAttemptOperation,
 } from "./directory-reviewer-attempt-operations.js";
+import {
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+} from "./directory-test-plan-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2466,9 +2472,10 @@ export type {
   UploadServerAccountTokensResult,
 } from "./server-account-operations.js";
 
-// Directory submission operations, from a module that exports nothing else.
+// Directory submission operations, from modules that export nothing else.
 export * from "./directory-submission-operations.js";
 export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-test-plan-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19375,6 +19382,11 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getReviewerAttemptOperation,
   resumeReviewerAttemptOperation,
   cancelReviewerAttemptOperation,
+  // A submission's test plan: the calls its runs may make, and what they showed.
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
