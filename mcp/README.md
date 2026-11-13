@@ -77,6 +77,14 @@ beta; they are listed [after the table](#held-tools).
 | `delete_directory_submission` | Delete a directory submission and its answers. | — |
 | `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
 | `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale, and the run's verdict under the submission's gate. | — |
+| `get_directory_submission_handoff` | The first call when resuming a submission from its id or a link: status, blockers, missing answers, next actions and what only a person can still do in the portal. | — |
+| `list_directory_submission_findings` | Page through a submission's findings by status, step or lane; every finding is reachable however many there are. | — |
+| `get_directory_submission_finding` | Read one check's result on a submission with the evidence behind it. | — |
+| `export_directory_submission` | Export a submission's pack as JSON or Markdown, the same bytes the page and the CLI save, with no secret in it. | — |
+| `list_directory_submission_events` | List the statuses, snapshots and directory findings recorded about a submission, with who recorded each and how they knew. | — |
+| `record_directory_submission_status` | Record a submission's status in the directory, reported or observed, in the directory's own words. In beta. | — |
+| `record_directory_submission_snapshot` | Record which server revision a copy of the catalog holds, such as what the directory's client still has. In beta. | — |
+| `import_directory_finding` | Keep what a directory said about a submission, word for word, apart from MCPJam's own findings. In beta. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |

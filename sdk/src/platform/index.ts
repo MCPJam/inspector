@@ -128,8 +128,9 @@ export type {
   PlatformDirectorySubmissionSnapshotsView,
 } from "./directory-submission-handoff-types.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
-// The nine directory submission operations and their input and result types.
+// The directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-submission-handoff-operations.js";
 
 export {
   computeRunTargets,

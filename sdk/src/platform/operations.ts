@@ -138,6 +138,16 @@ import {
   startDirectorySubmissionRunOperation,
   updateDirectorySubmissionOperation,
 } from "./directory-submission-operations.js";
+import {
+  exportDirectorySubmissionOperation,
+  getDirectorySubmissionFindingOperation,
+  getDirectorySubmissionHandoffOperation,
+  importDirectoryFindingOperation,
+  listDirectorySubmissionEventsOperation,
+  listDirectorySubmissionFindingsOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  recordDirectorySubmissionStatusOperation,
+} from "./directory-submission-handoff-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2459,8 +2469,9 @@ export type {
   UploadServerAccountTokensResult,
 } from "./server-account-operations.js";
 
-// Directory submission operations, from a module that exports nothing else.
+// Directory submission operations, from modules that export nothing else.
 export * from "./directory-submission-operations.js";
+export * from "./directory-submission-handoff-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -19361,6 +19372,15 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  // Resuming one from its id: the summary, findings, pack and the records.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,

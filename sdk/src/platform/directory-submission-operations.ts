@@ -17,45 +17,35 @@ import type {
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
-import type { PlatformOperation, PlatformOperationContext } from "./operations.js";
 import {
-  PROJECT_SELECTOR_DESCRIPTION,
+  GATED_BETA,
+  OPEN_BETA,
+  SUBMISSION_PERMALINK,
+  id,
+  project,
+  resolveScope,
+  submissionInput,
+  type Op,
+  type ProjectResult,
+} from "./directory-submission-operation-support.js";
+import {
   resolveLiveServer,
-  resolveProjectOrThrow,
   resolveSavedServer,
   serverScopedInput,
-  toSelectedProjectInfo,
   toServerInfo,
   type ServerResult,
 } from "./operation-support.js";
 import { noPermalink } from "./permalinks.js";
 import { operationInputError, resolutionError } from "./resource-selectors.js";
-import type { SelectedProjectInfo } from "./show-servers.js";
 import type { PlatformReadinessRunReceipt } from "./types.js";
-
-/** Writes and runs are gated on the beta; reads and the delete stay open. */
-const GATED_BETA =
-  "In beta: an organization outside the directory readiness beta is refused, and the error names the feature.";
-const OPEN_BETA = "Directory readiness is in beta; this stays open to every organization.";
 
 const FLOW_PERMALINK = noPermalink(
   "no-addressable-resource",
   "A flow is a directory's submission form as product data, not a resource in anyone's project."
 );
-const SUBMISSION_PERMALINK = noPermalink(
-  "route-not-addressable",
-  "No app route opens one submission yet: the Readiness page is behind a client flag and does not select a submission from its URL. Owed: `readiness?submission=:submissionId`."
-);
 
-const id = () => z.string().trim().min(1);
-const project = id().optional().describe(PROJECT_SELECTOR_DESCRIPTION);
 const flowId = id().max(100);
 const idempotencyKey = id().max(200).optional();
-
-const submissionInput = z.object({
-  project,
-  submission: id().describe("The submission's id, from list_directory_submissions."),
-});
 
 const flowInput = z.object({
   flow: flowId.describe("The flow's id, such as `claude-connector`, from list_directory_flows."),
@@ -141,8 +131,6 @@ export type UpdateDirectorySubmissionInput = z.infer<typeof updateInput>;
 export type StartDirectorySubmissionRunInput = z.infer<typeof startInput>;
 export type GetDirectorySubmissionResultsInput = z.infer<typeof resultsInput>;
 
-type Op<TInput, TOutput> = PlatformOperation<TInput, TOutput>;
-type ProjectResult = { project: SelectedProjectInfo };
 export type ListDirectoryFlowsResult = { flows: PlatformDirectoryFlowSummary[] };
 export type CreateDirectorySubmissionResult = ServerResult & {
   submission: PlatformDirectorySubmissionView;
@@ -179,16 +167,6 @@ function withoutFindingDetails<T extends { steps: PlacedStep[] }>(value: T): T {
     }),
   }));
   return { ...value, steps };
-}
-
-/** The project the input names, and the submission in it when there is one. */
-async function resolveScope(
-  input: { project?: string; submission?: string },
-  { client, signal, onScopeResolved }: PlatformOperationContext
-) {
-  const { project } = await resolveProjectOrThrow({ client, signal, onScopeResolved }, input.project);
-  const scope = { projectId: project.id, submissionId: input.submission ?? "" };
-  return { client, signal, project, scope, info: toSelectedProjectInfo(project) };
 }
 
 export const listDirectoryFlowsOperation: Op<Record<string, never>, ListDirectoryFlowsResult> = {
