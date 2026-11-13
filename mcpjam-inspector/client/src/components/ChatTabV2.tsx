@@ -4,6 +4,7 @@ import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { useCompareSelections } from "@/hooks/use-compare-selections";
 import { useModelPickerEfforts } from "@/hooks/use-model-picker-efforts";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import {
   compareSelectionForRow,
   mergePickedRows,
@@ -1917,11 +1918,15 @@ export function ChatTabV2({
   // surfaces on failures where resending is the whole fix (see the
   // `canRetryLastMessage` gate below), so we don't risk firing this on
   // unrelated retryable errors.
+  // One send at a time for the composer and Retry (see `onSubmit`).
+  const composerSend = useSingleFlight();
   const handleRetryLastMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
-    sendMessage({ text, metadata: outgoingSenderMetadata });
-  }, [sendMessage, outgoingSenderMetadata]);
+    void composerSend.run(() =>
+      sendMessage({ text, metadata: outgoingSenderMetadata }),
+    );
+  }, [sendMessage, outgoingSenderMetadata, composerSend.run]);
 
   // Rewind to a past user message and re-run the turn from edited text. The
   // thread BRANCHES — `rewindToMessage` seeds a fresh session with the prefix,
@@ -2294,8 +2299,7 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitComposer = async () => {
     const hasContent =
       input.trim() ||
       mcpPromptResults.length > 0 ||
@@ -2366,12 +2370,15 @@ export function ChatTabV2({
     }
   };
 
-  const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
-    if (composerDisabled || sendBlocked) {
-      setInput(prompt);
-      return;
-    }
+  // One submit at a time: the history sync above runs with the draft still in
+  // the box, where a second Enter would send it again. `preventDefault` stays
+  // first so a refused submit never falls through to a native form submit.
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await composerSend.run(submitComposer);
+  };
+
+  const sendStarterPrompt = async (prompt: string) => {
     const threadReady = await ensureThreadReadyForSend();
     if (!threadReady) {
       return;
@@ -2406,6 +2413,18 @@ export function ChatTabV2({
     setFileAttachments([]);
   };
 
+  const handleStarterPrompt = (prompt: string) => {
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
+    if (composerDisabled || sendBlocked) {
+      setInput(prompt);
+      return;
+    }
+    // Shares the composer's lock: the chip clears the composer, so one
+    // clicked while a submit is being prepared would wipe that submit's
+    // attachments and the submit would still send its draft.
+    void composerSend.run(() => sendStarterPrompt(prompt));
+  };
+
   /**
    * What Up/Down walk through in the composer (BB-183): this thread's own user
    * messages, newest first. Derived from what is already on screen — no store,
@@ -2425,6 +2444,7 @@ export function ChatTabV2({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
     placeholder,
     currentModel: selectedModel,
     availableModels,

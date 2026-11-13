@@ -320,6 +320,8 @@ interface ChatInputProps {
   /** Why Send is off, shown in its tooltip (an out-of-credits model). */
   submitDisabledReason?: string;
   isLoading?: boolean;
+  /** A send is being prepared: Enter is refused and Send shows a spinner. */
+  isSubmitting?: boolean;
   canStop?: boolean;
   placeholder?: string;
   className?: string;
@@ -503,6 +505,7 @@ export function ChatInput({
   submitDisabled = false,
   submitDisabledReason,
   isLoading = false,
+  isSubmitting = false,
   canStop = false,
   placeholder = "Type your message...",
   className,
@@ -1542,6 +1545,7 @@ export function ChatInput({
         disabled ||
         submitDisabled ||
         isLoading ||
+        isSubmitting ||
         canStop ||
         // While recording/transcribing the textarea shows a placeholder but
         // `value` still holds the draft — don't let Enter submit it behind the
@@ -2444,6 +2448,19 @@ export function ChatInput({
                     </TooltipTrigger>
                     <TooltipContent>Stop generating</TooltipContent>
                   </Tooltip>
+                ) : isSubmitting ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    className={cn(
+                      "size-[34px] rounded-full transition-colors shadow-none",
+                      activeSubmitButtonClasses,
+                    )}
+                    aria-label="Sending message"
+                    disabled
+                  >
+                    <Loader2 size={16} className="animate-spin" />
+                  </Button>
                 ) : (
                   <DisabledReasonTooltip
                     reason={submitDisabledReason}
