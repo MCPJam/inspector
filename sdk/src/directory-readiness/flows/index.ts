@@ -31,6 +31,8 @@ export {
   validateDirectoryAnswerInput,
   validateDirectoryAnswers,
 } from "./validate.js";
+export { placeDirectoryResults } from "./place.js";
+export type { PlaceDirectoryResultsInput } from "./place.js";
 export type {
   DirectoryAnswer,
   DirectoryAnswerOrigin,

@@ -32,6 +32,8 @@ import {
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
+import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
+import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
 import {
   runClaudeEndpointChecks,
   type ClaudeEndpointEvidence,
@@ -114,8 +116,17 @@ export interface ClaudeReadinessInput {
   /** Why the tool listing is partial, in plain words. */
   toolListingError?: string;
 
-  /** Raw submission profile, validated here so its issues become findings. */
+  /**
+   * Raw submission profile, validated here so its issues become findings.
+   *
+   * @deprecated Pass `submissionAnswers`; a profile is ignored beside them.
+   */
   submissionProfile?: unknown;
+  /**
+   * A `claude-connector` submission's stored answers. Graded with the
+   * portal's rules, and its Authentication answers are the declared auth mode.
+   */
+  submissionAnswers?: readonly DirectoryAnswer[];
   /** Features the submitter claimed, if any. */
   claimedFeatures?: {
     lazyAuthentication?: boolean;
@@ -219,8 +230,11 @@ export function gradeClaudeReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation — the very thing the parse result exists to
   // prevent.
+  const answers =
+    input.submissionAnswers &&
+    claudeSubmissionEvidenceFromAnswers(input.submissionAnswers);
   const parsedProfile =
-    input.submissionProfile === undefined
+    answers || input.submissionProfile === undefined
       ? { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] }
       : parseClaudeSubmissionProfile(input.submissionProfile);
 
@@ -248,7 +262,9 @@ export function gradeClaudeReadiness(
   const authEvidence = {
     ...input.auth,
     declaredAuthMode:
-      parsedProfile.profile?.declaredAuthMode ?? input.auth.declaredAuthMode,
+      answers?.declaredAuthMode ??
+      parsedProfile.profile?.declaredAuthMode ??
+      input.auth.declaredAuthMode,
     ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
     ...(stepUpChallenge ? { insufficientScopeChallenge: stepUpChallenge } : {}),
   };
@@ -279,6 +295,7 @@ export function gradeClaudeReadiness(
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
+        answers,
         profile: parsedProfile.profile,
         profileIssues: parsedProfile.issues,
         observedAuthMode: input.observedAuthMode,
