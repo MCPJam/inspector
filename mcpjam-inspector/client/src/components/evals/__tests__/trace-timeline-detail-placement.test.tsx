@@ -120,4 +120,40 @@ describe("TraceTimeline detail placement", () => {
     expect(direction()).toBe("vertical");
     expect(panelSizes()).toEqual(["65", "35"]);
   });
+
+  it("measures a container that mounts only once spans arrive", () => {
+    width = 1280;
+    const { rerender } = render(
+      <TraceTimeline
+        recordedSpans={[]}
+        transcriptMessages={[]}
+        detailPlacement="auto"
+      />,
+    );
+    rerender(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[]}
+        detailPlacement="auto"
+      />,
+    );
+    expect(direction()).toBe("horizontal");
+  });
+
+  it("observes the new axis header after the layout changes direction", () => {
+    width = 1280;
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[]}
+        detailPlacement="auto"
+      />,
+    );
+    const before = observers.length;
+    width = 900;
+    act(() => observers.forEach((notify) => notify()));
+    expect(direction()).toBe("vertical");
+    // The remounted axis header gets an observer of its own.
+    expect(observers.length).toBeGreaterThan(before);
+  });
 });

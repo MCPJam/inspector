@@ -82,6 +82,7 @@ it("shows the last snapshot at once after an unmount, while it refreshes", async
   const snapshot = first.result.current.details.get("live");
   first.unmount();
 
+  mocks.query.mockClear();
   mocks.query.mockImplementation(() => new Promise(() => {}));
   const second = renderHook(() => useProjectRunHistory("remount", live, true));
   expect(second.result.current.details.get("live")).toBe(snapshot);

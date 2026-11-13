@@ -2054,7 +2054,8 @@ export function TraceTimeline({
     const ro = new ResizeObserver(readWidth);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // A direction change remounts the panel group and its axis header.
+  }, [direction]);
 
   const axisTicks = useMemo(
     () => selectAxisTickPercents(axisColumnWidthPx),
