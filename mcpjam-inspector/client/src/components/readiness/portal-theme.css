@@ -1,4 +1,4 @@
-/* The Claude portal's colours for the Readiness page's copy of it, a
+/* Each portal's colours for the Readiness page's copy of it, Claude's first, a
    documented exception to the role tokens (DESIGN.md, Colors). Inside the
    scope the role tokens take the portal's values, so components keep using
    role tokens. Dark values are sampled from captures of the portal; light
@@ -45,4 +45,50 @@
   --secondary-foreground: #ecebe6;
   --destructive: #e5787b;
   --ring: #5b8bd6;
+}
+
+/* The ChatGPT plugin portal (platform.openai.com), the same exception. Dark
+   values are sampled from the board's captures of the live portal; light
+   values are an approximation, since no capture is light. */
+.portal-openai {
+  --background: #ffffff;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #ffffff;
+  --popover-foreground: #0d0d0d;
+  --muted: #f7f7f7;
+  --muted-foreground: #6e6e6e;
+  --border: #e3e3e3;
+  --input: #cdcdcd;
+  --accent: #ececec;
+  --accent-foreground: #0d0d0d;
+  --primary: #0d0d0d;
+  --primary-foreground: #ffffff;
+  --secondary: #ececec;
+  --secondary-foreground: #0d0d0d;
+  --destructive: #d1242f;
+  --ring: #2f6fed;
+  --radius: 0.5rem;
+}
+
+.dark .portal-openai {
+  --background: #212121;
+  --foreground: #ececec;
+  --card: #212121;
+  --card-foreground: #ececec;
+  --popover: #303030;
+  --popover-foreground: #ececec;
+  --muted: #181818;
+  --muted-foreground: #a3a3a3;
+  --border: #3d3d3d;
+  --input: #4a4a4a;
+  --accent: #303030;
+  --accent-foreground: #ececec;
+  --primary: #f3f3f3;
+  --primary-foreground: #0d0d0d;
+  --secondary: #3a3a3a;
+  --secondary-foreground: #ececec;
+  --destructive: #f0736e;
+  --ring: #6a9bf4;
 }

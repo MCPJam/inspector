@@ -6,6 +6,7 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
@@ -14,6 +15,7 @@ import { readinessPlatformClient as client } from "@/lib/apis/directory-readines
 
 export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
+export type SubmissionPlugin = PlatformDirectorySubmissionPlugin;
 export type SubmissionScope = { projectId: string; submissionId: string };
 
 /** The flow as served by the API that stamps its wording on each write. */
@@ -46,7 +48,14 @@ export const updateDirectorySubmission = (
   body: PlatformDirectorySubmissionUpdateBody,
 ) => client().updateDirectorySubmission({ ...scope, ...body });
 
+/** A ChatGPT plugin's run also names the stored version it grades. */
 export const startDirectorySubmissionRun = (
   scope: SubmissionScope,
   idempotencyKey: string,
-) => client().startDirectorySubmissionRun({ ...scope, idempotencyKey });
+  pluginVersionId?: string,
+) =>
+  client().startDirectorySubmissionRun({
+    ...scope,
+    idempotencyKey,
+    pluginVersionId,
+  });

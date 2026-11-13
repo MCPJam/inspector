@@ -7,6 +7,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW,
   placeDirectoryResults,
   type DirectoryAnswer,
@@ -58,6 +59,14 @@ const api = vi.hoisted(() => ({
   startDirectorySubmissionRun: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
+vi.mock("@/hooks/usePluginImportApi", () => ({
+  useProjectPlugins: () => [],
+  useProjectPlugin: () => undefined,
+  usePluginVersion: () => undefined,
+}));
+vi.mock("@/hooks/usePluginsEnabled", () => ({
+  usePluginsEnabledState: () => true,
+}));
 
 function finding(
   id: string,
@@ -113,6 +122,21 @@ function submission(): SubmissionView {
     }),
     resultsRunId: "run_1",
     submissionUrl: CLAUDE_CONNECTOR_FLOW.submissionUrl,
+  };
+}
+
+/** A ChatGPT plugin rehearsal before its plugin is chosen. */
+function pluginSubmission(): SubmissionView {
+  return {
+    ...submission(),
+    id: "sub_2",
+    directory: "openai",
+    flowId: "chatgpt-plugin",
+    flowVersion: CHATGPT_PLUGIN_FLOW.version,
+    answers: [],
+    steps: placeDirectoryResults({ flow: CHATGPT_PLUGIN_FLOW, answers: [] }),
+    resultsRunId: null,
+    submissionUrl: CHATGPT_PLUGIN_FLOW.submissionUrl,
   };
 }
 
@@ -261,5 +285,30 @@ describe("ReadinessRoute", () => {
       screen.getByRole("heading", { level: 1, name: "Listing" }),
     ).toBeVisible();
     expect(screen.getByText("Error: Slug is required")).toBeVisible();
+  });
+
+  it("opens a saved ChatGPT plugin rehearsal on the plugin page, which waits for a version", async () => {
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
+    // Untitled, so the list names it by its flow.
+    api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
+    render(<ReadinessRoute />);
+    const saved = await screen.findByText("ChatGPT plugin");
+    const row = saved.closest("li");
+    if (!row) throw new Error("No saved rehearsal row");
+    await userEvent.click(within(row).getByRole("button", { name: "Open" }));
+
+    expect(
+      await screen.findByText(/Choose the stored plugin to rehearse\./),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "A copy of the ChatGPT portal. Nothing here is sent to ChatGPT.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Choose a plugin version to run checks."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run checks" })).toBeDisabled();
   });
 });

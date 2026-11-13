@@ -316,7 +316,7 @@ hub, sandbox proxy iframe, view iframe). They are role-based names for that one
 drawing. Do not reuse them as a general accent palette.
 
 **Directory portal copies are scoped.** The Readiness page copies a directory's
-submission portal one to one, so inside `.portal-claude`
+submission portal one to one, so inside `.portal-claude` and `.portal-openai`
 (`mcpjam-inspector/client/src/components/readiness/portal-theme.css`) the role
 tokens take that portal's colours, in light and dark. Components there still use
 role tokens; only the values change. The scope overrides the surface, text,
@@ -433,9 +433,10 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
   this file's prose. Role values belong in `design-system/src/tokens.css`, so
   there is one place to change. The exceptions are a package-local accent
   palette deliberately outside the role system — chat-ui's
-  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`),
-  which hold a portal's own colours. Adding another is a decision to make on
-  purpose: it won't track the theme, and nothing will check it.
+  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`,
+  `.portal-openai`), which hold a portal's own colours. Adding another is a
+  decision to make on purpose: it won't track the theme, and nothing will
+  check it.
 - Don't hand-edit generated regions: this file's front matter, the fenced blocks in
   `docs/style.css` and `chat-ui/src/styles.css`, or the derived color fields in
   `docs/docs.json`. CI fails on drift; run the sync script.
