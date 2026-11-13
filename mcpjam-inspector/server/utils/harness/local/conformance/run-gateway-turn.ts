@@ -74,6 +74,9 @@ const UPSTREAM_KEY_CANARY = `upstream-canary-${randomBytes(8).toString("hex")}`;
 const CAPABILITY = `cap_${randomBytes(24).toString("base64url")}`;
 const POP_SECRET = randomBytes(32).toString("hex");
 
+/** The scenario turns the mock saw, oldest first, from its COUNT reply. */
+const scenariosSeen = (text: string) => /SCENARIOS=([A-Z,]*)/.exec(text)?.[1] ?? "";
+
 /** The mock upstream for each model protocol, and how it names the probe. */
 const MOCKS: Partial<Record<string, { script: string; env: Record<string, string> }>> = {
   // MCPJam's host tools reach a non-Codex runtime as plain functions.
@@ -266,10 +269,12 @@ async function main() {
   const resumeState = await session.detach();
   session = await agent.createSession({ sessionId, resumeFrom: resumeState });
   turns.count = await runTurn("count-after-resume", agent, session, "COUNT");
-  // HELLO, MCPPROBE and this COUNT: an earlier turn missing after the resume
-  // shows as a lower count.
-  const seen = Number(/USER_TURNS=(\d+)/.exec(turns.count.text)?.[1] ?? 0);
-  if (seen < 3) failures.push(`after resume the model saw ${seen} scenario turns, expected 3`);
+  // Exactly HELLO, MCPPROBE and this COUNT, in order: a turn lost, repeated or
+  // reordered on resume fails here.
+  const afterResume = scenariosSeen(turns.count.text);
+  if (afterResume !== "HELLO,MCPPROBE,COUNT") {
+    failures.push(`after resume the model saw ${afterResume || "no scenario turns"}, expected HELLO,MCPPROBE,COUNT`);
+  }
 
   const stopAndCheck = async (current: HarnessAgentSession, label: string) => {
     const tree = [bridgePid, ...(await descendants(bridgePid))];
@@ -289,8 +294,10 @@ async function main() {
   // fresh bridge resumes the conversation from disk.
   session = await agent.createSession({ sessionId, resumeFrom: diskResumeState(resumeState) });
   turns.afterStop = await runTurn("after-stop", agent, session, "COUNT");
-  const continued = Number(/USER_TURNS=(\d+)/.exec(turns.afterStop.text)?.[1] ?? 0);
-  if (continued < seen + 1) failures.push(`after Stop the next message saw ${continued} scenario turns, expected ${seen + 1}`);
+  const afterStop = scenariosSeen(turns.afterStop.text);
+  if (afterStop !== "HELLO,MCPPROBE,COUNT,COUNT") {
+    failures.push(`after Stop the next message saw ${afterStop || "no scenario turns"}, expected HELLO,MCPPROBE,COUNT,COUNT`);
+  }
   await stopAndCheck(session, "the second Stop");
   owned = null;
   for (const [label, turn] of Object.entries(turns)) {

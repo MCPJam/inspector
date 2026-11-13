@@ -2,7 +2,8 @@
 // Deterministic: the scenario is chosen from the LAST user text in `input`.
 //   "SHELL <cmd>"  -> function_call exec_command {cmd}       (Codex's shell tool)
 //   "MCPPROBE"     -> function_call mcp__mcpjam / probe__echo (MCPJam's relay)
-//   "COUNT"        -> text: number of user turns in this request (continuity)
+//   "COUNT"        -> text: the user turns in this request, counted and listed
+//                     by scenario, oldest first (continuity)
 //   anything else  -> text echo
 // After a tool output arrives, answers with `TOOL RESULT RECEIVED: <output>`.
 // Verifies the gateway's proof-of-possession header and upstream key, like
@@ -172,8 +173,10 @@ const server = http.createServer((req, res) => {
     const userTexts = input.map(userText).filter((t) => typeof t === "string");
     // Codex prepends its own context as user messages (environment, AGENTS
     // instructions); only messages carrying a scenario keyword are the
-    // conversation's user turns.
-    const userTurns = userTexts.filter((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))).length;
+    // conversation's user turns. A turn's scenario is its last such line.
+    const scenarioLine = (text) => text.split("\n").map((l) => l.trim()).filter((l) => SCENARIO.test(l)).pop();
+    const turnScenarios = userTexts.map(scenarioLine).filter(Boolean).map((l) => SCENARIO.exec(l)[1]);
+    const userTurns = turnScenarios.length;
     const tools = Array.isArray(body.tools) ? body.tools.map((t) => t.name ?? t.type) : [];
     log(`#${requestCount} model=${body.model} stream=${body.stream} items=${input.length} userTurns=${userTurns} tools=${JSON.stringify(tools).slice(0, 200)} last=${last?.type ?? last?.role}`);
     const reply = (output) => respond(res, output, body.stream === true);
@@ -181,15 +184,17 @@ const server = http.createServer((req, res) => {
       const output = typeof last.output === "string" ? last.output : JSON.stringify(last.output);
       return reply({ text: `TOOL RESULT RECEIVED: ${String(output).slice(0, 400)}` });
     }
-    const latest = [...userTexts].reverse().find((t) => t.split("\n").some((line) => SCENARIO.test(line.trim()))) ?? userTexts[userTexts.length - 1] ?? "";
-    const line = latest.split("\n").map((l) => l.trim()).filter((l) => SCENARIO.test(l)).pop() ?? "";
+    const latest = [...userTexts].reverse().find((t) => scenarioLine(t)) ?? userTexts[userTexts.length - 1] ?? "";
+    const line = scenarioLine(latest) ?? "";
     const m = SCENARIO.exec(line);
     if (m) {
       const [, kind, arg] = m;
       if (kind === "SHELL") return reply({ calls: [{ name: "exec_command", arguments: { cmd: arg.trim(), yield_time_ms: 15_000 } }] });
       if (kind === "MCPPROBE") return reply({ calls: [{ ...(RELAY_NAMESPACE ? { namespace: RELAY_NAMESPACE } : {}), name: PROBE_TOOL, arguments: { message: "conformance" } }] });
       if (kind === "HOSTWRITE") return reply({ calls: [{ name: "probe__record_write", arguments: {} }] });
-      if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns}` });
+      // Which turns, not only how many: a lost turn shows even when a
+      // duplicated one keeps the count.
+      if (kind === "COUNT") return reply({ text: `USER_TURNS=${userTurns} SCENARIOS=${turnScenarios.join(",")}` });
     }
     return reply({ text: `ECHO: ${latest.slice(0, 80)}` });
   });
