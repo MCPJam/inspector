@@ -2839,8 +2839,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // probe-list-changed was not run.
         paginationTraversal: "full",
         toolListChanged: { listens: true },
+        // Pinned to the one revision it connected on. It sent `initialize`
+        // and never tried `server/discover`, which Auto would probe first.
+        mcpProtocolVersion: "2025-06-18",
         initialize: {
-          // The one revision it connected on, over `initialize`.
           supportedProtocolVersions: ["2025-06-18"],
           clientInfo: {
             name: "codex-mcp-client",

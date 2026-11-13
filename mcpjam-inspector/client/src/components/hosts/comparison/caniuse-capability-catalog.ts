@@ -272,7 +272,14 @@ export function getCaniuseSupportLevel(
   ) {
     return "unknown";
   }
-  return getSupportLevel(field, config) ?? "unknown";
+  const level = getSupportLevel(field, config);
+  if (level !== null) return level;
+  // The other boolean rows keep their established reading: absent is not
+  // supported.
+  if (field.kind.kind === "boolean" && field.read(config) === undefined) {
+    return "neutral";
+  }
+  return "unknown";
 }
 
 // Rows that describe a sandboxing choice rather than a feature a client can

@@ -29,8 +29,8 @@ import type {
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import {
-  isCatalogRow,
   untestedCatalogAppValue,
+  untestedCatalogImagePolicy,
 } from "@/lib/catalog-row-values";
 import {
   ALL_DISPLAY_MODES,
@@ -934,9 +934,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // so the matrix shows the resolved value, not "—".
     read: (cfg) => cfg.respectToolVisibility ?? true,
   },
-  // The image rows below read `undefined` for a catalog row that left the
-  // value out: its probe did not measure it, and the helpers' defaults would
-  // show a guess as a fact. A host a user built keeps the defaults.
+  // The image rows below read `undefined` for a catalog row that stores no
+  // image policy: its probe did not measure it, and the helpers' defaults
+  // would show a guess as a fact. A host a user built keeps the defaults.
   {
     id: "modelVisibleMcpToolResults.directContent.image",
     section: "agent",
@@ -946,7 +946,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Pass MCP image content from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.directContent?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
         ? undefined
         : isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
   },
@@ -960,7 +960,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Pass MCP embedded resource images from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.embeddedResources?.blob?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
         ? undefined
         : isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
@@ -973,7 +973,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and pass them to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.modelVisibleMcpToolResults?.linkedResources?.blob?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
         ? undefined
         : isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
@@ -989,7 +989,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       options: ["none", "collapsed", "inline"],
     },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.placement === undefined
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
         ? undefined
         : getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
   },
@@ -1002,7 +1002,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Render direct MCP image content from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.directContent?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
         ? undefined
         : isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
   },
@@ -1016,7 +1016,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Render MCP embedded resource images from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.embeddedResources?.blob?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
         ? undefined
         : isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
@@ -1029,7 +1029,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and render them in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isCatalogRow(cfg) && cfg.mcpToolResultImageRendering?.linkedResources?.blob?.image === undefined
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
         ? undefined
         : isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
