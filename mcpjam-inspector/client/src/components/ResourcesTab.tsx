@@ -47,6 +47,10 @@ import {
   authorizationRequiredCommandError,
   presentAuthChallenge,
 } from "@/lib/auth-challenge-lifecycle";
+import {
+  isSignInChallengeError,
+  passthroughChallengeErrorText,
+} from "@/lib/auth-challenge-error";
 import type { AuthChallengeSignal } from "@/lib/apis/insufficient-scope";
 import type { DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
 import {
@@ -475,6 +479,7 @@ export function ResourcesTab({
     uri: string,
     replay: DirectScopeStepUpReplayDescriptor,
     isCurrentRead: () => boolean,
+    showError: (message: string) => void,
   ) => {
     void presentAuthChallenge({
       server,
@@ -487,6 +492,8 @@ export function ResourcesTab({
       // A later read owns the notice area by now.
       if (!isCurrentRead()) return;
       if (presentation.kind === "notice") setAuthNotice(presentation.message);
+      const refusal = passthroughChallengeErrorText(presentation, signal);
+      if (refusal) showError(refusal);
     });
   };
 
@@ -546,6 +553,7 @@ export function ResourcesTab({
                 target: "resource",
               },
               () => readVersion === resourceReadVersionRef.current,
+              setError,
             ),
         },
       );
@@ -553,6 +561,8 @@ export function ResourcesTab({
       setResourceContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== resourceReadVersionRef.current) return;
+      // The Connect card or its notice replaces the raw 401.
+      if (isSignInChallengeError(err)) return;
       setError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === resourceReadVersionRef.current) {
@@ -631,6 +641,7 @@ export function ResourcesTab({
                 selection: selectedTemplate,
               },
               () => readVersion === templateReadVersionRef.current,
+              setTemplateError,
             ),
         },
       );
@@ -638,6 +649,8 @@ export function ResourcesTab({
       setTemplateContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== templateReadVersionRef.current) return;
+      // The Connect card or its notice replaces the raw 401.
+      if (isSignInChallengeError(err)) return;
       setTemplateError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === templateReadVersionRef.current) {

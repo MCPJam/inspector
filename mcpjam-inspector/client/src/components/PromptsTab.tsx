@@ -52,6 +52,10 @@ import {
   presentAuthChallenge,
 } from "@/lib/auth-challenge-lifecycle";
 import {
+  isSignInChallengeError,
+  passthroughChallengeErrorText,
+} from "@/lib/auth-challenge-error";
+import {
   AuthChallengeCards,
   authChallengeConnectMessage,
 } from "./auth-challenge/AuthChallengeCard";
@@ -372,6 +376,11 @@ export function PromptsTab({
                 if (presentation.kind === "notice") {
                   setAuthNotice(presentation.message);
                 }
+                const refusal = passthroughChallengeErrorText(
+                  presentation,
+                  signal,
+                );
+                if (refusal) setError(refusal);
               });
             },
           },
@@ -380,6 +389,8 @@ export function PromptsTab({
         setPromptContent(data.content);
       } catch (err) {
         if (getVersion !== promptGetVersionRef.current) return;
+        // The Connect card or its notice replaces the raw 401.
+        if (isSignInChallengeError(err)) return;
         const message =
           err instanceof Error ? err.message : `Error getting prompt: ${err}`;
         setError(message);
