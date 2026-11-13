@@ -295,9 +295,6 @@ function resolveResult(
   const own = targets.filter((column) => column.run._id === runId);
   return {
     target:
-      own.find(hasResults) ??
-      targets.find(hasResults) ??
-      own[0] ??
-      targets[0],
+      own.find(hasResults) ?? targets.find(hasResults) ?? own[0] ?? targets[0],
   };
 }
