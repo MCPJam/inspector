@@ -116,6 +116,12 @@ describe("API environment negotiation", () => {
     );
     expect(query).toHaveBeenCalledTimes(1);
   });
+  it("carries the project's organization from the backend's capabilities read", async () => {
+    query.mockResolvedValue({ chatEnvironmentVersion: 1, organizationId: "org_a" });
+    expect((await resolve()).organizationId).toBe("org_a");
+    query.mockResolvedValue({ chatEnvironmentVersion: 1, organizationId: null });
+    expect(await resolve()).not.toHaveProperty("organizationId");
+  });
   it("preserves the omitted-empty refusal for host defaults", async () => {
     await expect(
       resolveChatSessionEnvironment(

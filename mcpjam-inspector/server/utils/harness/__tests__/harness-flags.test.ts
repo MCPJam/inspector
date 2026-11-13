@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { hostedWarmAgentEnabled } from "../harness-flags.js";
+import { harnessApiWarmEnabled, hostedWarmAgentEnabled } from "../harness-flags.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -30,4 +30,14 @@ it("treats an empty restriction as unrestricted", () => {
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", undefined);
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", " , ");
   expect(hostedWarmAgentEnabled("organization-a")).toBe(true);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])("keeps API warm reuse off unless set to true (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", value);
+  expect(harnessApiWarmEnabled()).toBe(false);
+});
+
+it("turns API warm reuse on when set to true", () => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", "true");
+  expect(harnessApiWarmEnabled()).toBe(true);
 });

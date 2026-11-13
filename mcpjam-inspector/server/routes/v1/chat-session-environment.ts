@@ -32,6 +32,11 @@ export interface ResolvedTarget {
   host?: ChatSessionHostTarget;
   unappliedCapabilities?: string[];
   unavailableServerIds?: string[];
+  /**
+   * The project's organization, as the backend's capabilities read returned
+   * it for this caller (whose token is scoped to that organization).
+   */
+  organizationId?: string;
 }
 
 /** v1 reports client built-ins that this surface does not execute. */
@@ -49,7 +54,10 @@ export function unappliedBuiltInToolIds(
     : [];
 }
 
-type ChatCapabilities = { chatEnvironmentVersion?: number } | null;
+type ChatCapabilities = {
+  chatEnvironmentVersion?: number;
+  organizationId?: string | null;
+} | null;
 const capabilitiesRef = makeFunctionReference<
   "query",
   { projectId: string },
@@ -180,6 +188,9 @@ export async function resolveChatSessionEnvironment(
     clientTurn: !input.environmentId,
     ...(unavailableServerIds.length ? { unavailableServerIds } : {}),
     ...(unappliedCapabilities.length ? { unappliedCapabilities } : {}),
+    ...(capabilities.organizationId
+      ? { organizationId: capabilities.organizationId }
+      : {}),
     // Bare server lists retain the emulated API rail and the caller's model policy.
     ...(input.environmentId || input.hostId
       ? {
