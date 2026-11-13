@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
-import { CLAUDE_CONNECTOR_FLOW } from "@mcpjam/sdk";
+import { CHATGPT_PLUGIN_FLOW, CLAUDE_CONNECTOR_FLOW } from "@mcpjam/sdk";
 
 const {
   validateGuestTokenMock,
@@ -246,6 +246,12 @@ describe("v1 directory submissions", () => {
           directory: "claude",
           version: VERSION,
           submissionUrl: CLAUDE_CONNECTOR_FLOW.submissionUrl,
+        }),
+        expect.objectContaining({
+          id: "chatgpt-plugin",
+          directory: "openai",
+          version: CHATGPT_PLUGIN_FLOW.version,
+          submissionUrl: CHATGPT_PLUGIN_FLOW.submissionUrl,
         }),
       ]);
       expect(body.items[0]!.steps[0]).toEqual({
