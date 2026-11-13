@@ -333,7 +333,9 @@ describe("the failure exits", () => {
     expect(failReadinessRun).not.toHaveBeenCalled();
     expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
     const [, summary] = finalizeReadinessRun.mock.calls[0]!;
-    expect(summary.overallStatus).toBe("not-ready");
+    // Nothing answered, so the server checks are blocked rather than failed:
+    // the run is incomplete, not a verdict that the server is not ready.
+    expect(summary.overallStatus).toBe("incomplete");
   });
 
   it("fails the row when an OpenAI run declares no submission mode", async () => {
