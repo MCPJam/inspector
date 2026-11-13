@@ -63,8 +63,8 @@ describe("run view events", () => {
 
   it("names the suite and run on every event", () => {
     trackRunViewed(ref, "grid");
-    trackCaseResultViewed(ref, "page");
-    trackIterationViewed(ref, "page", "pager");
+    trackCaseResultViewed(ref, "two", "page");
+    trackIterationViewed(ref, "two", "page", "pager");
 
     expect(track.mock.calls).toEqual([
       [
@@ -82,6 +82,7 @@ describe("run view events", () => {
           location: "evaluate_tab",
           suite_id: "suite",
           run_id: "one",
+          result_run_id: "two",
           surface: "page",
         },
       ],
@@ -91,6 +92,7 @@ describe("run view events", () => {
           location: "evaluate_tab",
           suite_id: "suite",
           run_id: "one",
+          result_run_id: "two",
           surface: "page",
           via: "pager",
         },
@@ -124,6 +126,7 @@ describe("run view events", () => {
           location: "evaluate_tab",
           suite_id: "suite",
           run_id: "one",
+          result_run_id: "one",
           surface: "drawer",
         },
       ],
@@ -133,6 +136,7 @@ describe("run view events", () => {
           location: "evaluate_tab",
           suite_id: "suite",
           run_id: "one",
+          result_run_id: "one",
           surface: "drawer",
           via: "grid",
         },
@@ -162,7 +166,11 @@ describe("run view events", () => {
 
     expect(track).toHaveBeenCalledWith(
       "eval_case_result_viewed",
-      expect.objectContaining({ run_id: "one", surface: "drawer" }),
+      expect.objectContaining({
+        run_id: "one",
+        result_run_id: "two",
+        surface: "drawer",
+      }),
     );
   });
 });

@@ -11,7 +11,8 @@ import type {
   EvalSuiteRun,
   EvalSuiteRunListItem,
 } from "../../evals/types";
-import { buildRunResultsMatrix } from "../run-results-matrix-model";
+import { buildRunResultsMatrix, launchRuns } from "../run-results-matrix-model";
+import { trialChainDisplay } from "../case-scorecard/trial-chain-state";
 import { IterationResultsPage } from "./iteration-results-page";
 import { ResultNotFound, ResultPageSkeleton } from "./result-page-parts";
 import {
@@ -47,7 +48,7 @@ export function RunResultPage({
   allIterations,
   hostNamesById,
   loading,
-  readFailed = false,
+  failedRunIds,
   projectId,
   decisionSummaryEnabled,
   onEditCase,
@@ -63,8 +64,8 @@ export function RunResultPage({
   allIterations: readonly EvalIteration[];
   hostNamesById: ReadonlyMap<string, string | null>;
   loading: boolean;
-  /** A launch run's results failed to load, so a missing result may exist. */
-  readFailed?: boolean;
+  /** Runs whose results failed to load; one in this launch makes "no result" unknown. */
+  failedRunIds?: ReadonlySet<string>;
   projectId: string | null | undefined;
   decisionSummaryEnabled: boolean;
   onEditCase?: (testCaseId: string) => void;
@@ -133,8 +134,9 @@ export function RunResultPage({
   const viewedIterationId = iteration?._id;
   useEffect(() => {
     if (!shown || !viewedColumnRunId) return;
-    if (!viewedIterationId) trackCaseResultViewed(runRef, "page");
-    else trackIterationViewed(runRef, "page", via);
+    if (!viewedIterationId)
+      trackCaseResultViewed(runRef, viewedColumnRunId, "page");
+    else trackIterationViewed(runRef, viewedColumnRunId, "page", via);
   }, [shown, runRef, viewedColumnRunId, caseKey, viewedIterationId, via]);
 
   const caseTitle = row?.title;
@@ -195,7 +197,12 @@ export function RunResultPage({
         <ResultNotFound
           runLabel={runNumber == null ? "This run" : `Run #${runNumber}`}
           onOpenRun={() => openResult(runRef)}
-          readFailed={readFailed}
+          readFailed={
+            run !== null &&
+            launchRuns<EvalSuiteRunListItem>(run, runs).some((item) =>
+              failedRunIds?.has(item._id),
+            )
+          }
         />
       ) : iteration && iterationNumber !== null ? (
         <IterationResultsPage
@@ -207,13 +214,15 @@ export function RunResultPage({
             (item) => item.iterationId === iteration._id,
           )}
           chain={chains.chains.get(iteration._id)}
-          chainDisplay={
-            chains.status === "loading"
-              ? "loading"
-              : chains.status === "error"
-                ? "error"
-                : "settled"
-          }
+          chainDisplay={trialChainDisplay({
+            trialRunId: iteration.suiteRunId,
+            hasChain: chains.chains.has(iteration._id),
+            readRunId: iterationRun?._id,
+            readRun: iterationRun,
+            readRunLoading: false,
+            isTerminalRunStatus: isEvalRunTerminalStatus,
+            chains,
+          })}
           onRetryChain={chains.retry}
           onEditCase={editCase}
           pager={
