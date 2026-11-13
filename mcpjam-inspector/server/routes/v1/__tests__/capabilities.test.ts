@@ -10,8 +10,8 @@ import { Hono } from "hono";
  *
  *   - claiming a capability the caller lacks, which sends an agent into a task
  *     it will fail partway through, after telling someone it was doing it;
- *   - denying one they have, which is how an agent refuses to STOP a running
- *     fan-out because the org lost a beta flag — exactly when stopping matters.
+ *   - denying one they have, which is how an agent refuses work the platform
+ *     would have accepted.
  */
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
@@ -53,13 +53,6 @@ function row(overrides: Record<string, unknown> = {}) {
     role: "member",
     projectRole: "member",
     isProjectAdmin: false,
-    features: {
-      sandboxes: {
-        flagEnabled: true,
-        mode: "enforce",
-        enforced: false,
-      },
-    },
     plan: { name: "free", limits: {}, features: {} },
     ...overrides,
   };
@@ -196,33 +189,10 @@ describe("capability derivation", () => {
     expect(asGrantHolder.can.writeSwarms).toBe(false);
   });
 
-  it("keeps the eval keys out of the beta gate", async () => {
-    // Evals are not behind `sandboxes-enabled`. An org that loses the flag
-    // keeps every eval capability, and an agent that inferred otherwise would
-    // refuse work the platform still does.
-    queryMock.mockResolvedValue(
-      row({
-        role: "admin",
-        isProjectAdmin: true,
-        features: {
-          sandboxes: { flagEnabled: false, mode: "enforce", enforced: true },
-        },
-      })
-    );
-    const body = (await (await get()).json()) as Body;
-    expect(body.can.writeSwarms).toBe(false);
-    expect(body.can.writeEvalSuites).toBe(true);
-    expect(body.can.launchEvalRun).toBe(true);
-    expect(body.can.deleteAnyEvalSuite).toBe(true);
-  });
-
   it("reports whether the caller can start conformance runs, only when the backend says", async () => {
     queryMock.mockResolvedValue(
       row({
-        features: {
-          sandboxes: { flagEnabled: true, mode: "enforce", enforced: false },
-          conformance: { enabled: false },
-        },
+        features: { conformance: { enabled: false } },
       })
     );
     const reported = (await (await get()).json()) as {
@@ -246,60 +216,16 @@ describe("capability derivation", () => {
     expect((await get()).status).toBeGreaterThanOrEqual(500);
   });
 
-  it("keeps the STOPPING capabilities true for a gated org", async () => {
-    // The whole point of the exposure-direction rule: an org that has just
-    // lost the beta must still be able to stop a run and take a scenario down.
-    // An agent that inferred "no flag ⇒ nothing works" would refuse precisely
-    // when it matters most.
-    queryMock.mockResolvedValue(
-      row({
-        role: "admin",
-        isProjectAdmin: true,
-        features: {
-          sandboxes: { flagEnabled: false, mode: "enforce", enforced: true },
-        },
-      })
-    );
+  it("reports Swarms as available and nothing enforced", async () => {
+    // The block survives for callers that read it, carrying the answer that
+    // is now always the same: Swarms has no rollout gate to refuse anyone.
+    queryMock.mockResolvedValue(row());
     const body = (await (await get()).json()) as Body;
-    expect(body.can.cancelJourneyRun).toBe(true);
-    expect(body.can.unpublishUserTestingScenario).toBe(true);
-    // The scenario controls stay true too: none of the scenario mutations
-    // behind them (mode, members, rotate, guest execution) check the beta
-    // flag — only publish/rebind do. Claiming otherwise would deny writes
-    // the backend accepts.
-    expect(body.can.changeUserTestingExposure).toBe(true);
-    expect(body.can.manageUserTestingGuestExecution).toBe(true);
-    // …while the exposure-creating half is refused.
-    expect(body.can.writeSwarms).toBe(false);
-    expect(body.can.publishUserTestingScenario).toBe(false);
-  });
-
-  it("does not treat a DARK gate as a refusal", async () => {
-    // In `dark` the flag is evaluated and logged but not applied, so a
-    // would-be denial is not a denial. Planning around it would have an agent
-    // refuse work the platform would have done.
-    queryMock.mockResolvedValue(
-      row({
-        features: {
-          sandboxes: { flagEnabled: false, mode: "dark", enforced: false },
-        },
-      })
-    );
-    const body = (await (await get()).json()) as Body;
-    expect(body.features.sandboxes.enabled).toBe(false);
-    expect(body.features.sandboxes.mode).toBe("dark");
-    expect(body.can.writeSwarms).toBe(true);
-  });
-
-  it("degrades to ungated rather than 500ing on a lagging projection", async () => {
-    // A hand-mirrored shape can fall behind the backend. This endpoint exists
-    // so callers can plan safely; an opaque 500 from the safety read is the
-    // worst possible failure mode for it.
-    queryMock.mockResolvedValue(row({ features: undefined }));
-    const res = await get();
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Body;
-    expect(body.features.sandboxes.enforced).toBe(false);
+    expect(body.features.sandboxes).toEqual({
+      enabled: true,
+      mode: "off",
+      enforced: false,
+    });
     expect(body.can.writeSwarms).toBe(true);
   });
 

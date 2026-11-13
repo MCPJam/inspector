@@ -129,7 +129,6 @@ interface NavSection {
  */
 export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-learning",
-  "sandboxes-enabled",
   "registry-enabled",
   "mcpjam-conformance",
   "mcpjam-compatibility",
@@ -272,10 +271,9 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      // Both are behind `sandboxes-enabled`, which is the rollout control.
-      // The flag is NOT combined with sign-in (REEV-6): when it is on, a
-      // signed-out visitor sees the items too, and the route decides what they
-      // get — a signed-out visitor gets the preview, a member the real tab.
+      // Neither is combined with sign-in (REEV-6): a signed-out visitor sees
+      // both items, and the route decides what they get — a signed-out
+      // visitor gets the preview, a member the real tab.
       //
       // Swarms before User Testing (Vig): less set-up is required to get value
       // out of it, so it is the better first stop.
@@ -283,7 +281,6 @@ export const navigationSections: NavSection[] = [
         title: "Swarms",
         url: "/swarms",
         icon: Network,
-        featureFlag: "sandboxes-enabled",
         // Same pill XAA Debugger carries. It marks a NEW feature, not an
         // access state: the earlier LOG IN / UPGRADE markers described who the
         // reader was, and there is no longer a plan to report on.
@@ -294,7 +291,6 @@ export const navigationSections: NavSection[] = [
         title: "User Testing",
         url: "/user-testing",
         icon: Users,
-        featureFlag: "sandboxes-enabled",
         badge: "New",
         billingFeature: "scenarios",
       },
@@ -540,7 +536,6 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -648,9 +643,6 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "mcpjam-learning": !!learningEnabled,
-      // Flag only, not `&& isAuthenticated`: a signed-out visitor is meant to
-      // reach the REEV-6 preview once the flag is on.
-      "sandboxes-enabled": sandboxesEnabled === true,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
@@ -673,7 +665,6 @@ export function MCPSidebar({
     }),
     [
       learningEnabled,
-      sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
       compatibilityEnabled,
@@ -950,7 +941,6 @@ export function MCPSidebar({
         <PlatformLaunchAnnouncement
           onNavigate={appNavigate}
           audience={user ? "signed_in" : "guest"}
-          sandboxesEnabled={sandboxesEnabled === true}
         />
       )}
       {canOpenInviteDialog && showInviteDialog && activeOrganizationId ? (

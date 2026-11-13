@@ -205,9 +205,7 @@ v1.route("/", plugins);
 // member-gated, and a share-link visitor has no business enumerating skills.
 v1.route("/", skills);
 // Goals + goal runs — the public API for Swarms, with the pre-rename
-// `/journeys` paths kept alongside as deprecated aliases. Flag-gated beta
-// (`sandboxes-enabled`, enforced server-side on writes), so these are absent
-// from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
+// `/journeys` paths kept alongside as deprecated aliases.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
 // none should — a goal run spends hosted-model credits.
 // GENERATION MOUNTS FIRST, and the order is load-bearing rather than
@@ -245,11 +243,10 @@ v1.route("/", swarms);
 // against the org's shared daily ledger.
 v1.route("/", swarmInsights);
 // Scenarios — publishing a project environment for user testing. WRITES, so
-// they live here rather than in the read-proxy catalog. Publishing is behind
-// the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
-// not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
-// and the existing scenario guest GETs (which share-link flows depend on) stay
-// exactly as they are until a guest security review says otherwise.
+// they live here rather than in the read-proxy catalog. Guest-DENIED by
+// default: no GUEST_ALLOWED_V1_RULES entry matches these, and the existing
+// scenario guest GETs (which share-link flows depend on) stay exactly as they
+// are until a guest security review says otherwise.
 v1.route("/", scenarios);
 // Studies — the list, one study's merged read, and everything you do with a
 // study ONCE IT EXISTS: read what it produced, and control who can reach it.

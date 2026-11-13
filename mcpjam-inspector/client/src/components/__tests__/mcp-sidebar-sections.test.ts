@@ -103,7 +103,7 @@ describe("sidebar section grouping", () => {
     //
     // Swarms and User Testing joined WebMCP in REEV-6. They are not new
     // features, but REEV-6 is the first release in which a signed-out visitor
-    // can SEE them: the `sandboxes-enabled` flag used to hide both items
+    // can SEE them: a rollout flag used to hide both items
     // outright, so to most of the people who now get a nav row, the row is
     // new. The pill replaced a LOG IN / UPGRADE marker that described who the
     // reader was rather than what the tab is, which is the distinction this
