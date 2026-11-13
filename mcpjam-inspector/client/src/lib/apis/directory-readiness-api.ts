@@ -238,6 +238,20 @@ export async function cancelHostedReadinessRun(runId: string): Promise<void> {
 }
 
 /**
+ * Run again a run that stopped on the server before it finished, with this
+ * user's credentials. Only the person who started it can; anyone else is
+ * refused, and the run's status says what happened either way.
+ */
+export async function resumeHostedReadinessRun(
+  runId: string,
+): Promise<ReadinessRunReceipt> {
+  return client().resumeReadinessRun({
+    projectId: getHostedProjectId(),
+    runId,
+  });
+}
+
+/**
  * The full graded report, fetched lazily.
  *
  * Megabytes are possible and the run row already carries everything the

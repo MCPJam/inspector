@@ -3315,6 +3315,25 @@ export class PlatformApiClient extends DirectorySubmissionClient {
   }
 
   /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
+      {},
+      options
+    );
+  }
+
+  /**
    * The full report: every finding, with its class, provenance, citation and
    * remediation.
    *

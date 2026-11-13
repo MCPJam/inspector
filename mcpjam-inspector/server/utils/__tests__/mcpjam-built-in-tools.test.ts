@@ -166,6 +166,7 @@ describe("workspace tool catalog", () => {
       "get_readiness_run",
       "list_readiness_runs",
       "cancel_readiness_run",
+      "resume_readiness_run",
       "get_readiness_report",
       // Directory submissions: everything but the delete, which is in
       // EXCLUDED_FROM_WORKSPACE.
@@ -709,6 +710,7 @@ describe("approval floors (MJ-008)", () => {
       "undismiss_study_finding",
       "backtest_eval_run",
       "cancel_readiness_run",
+      "resume_readiness_run",
       "cancel_project_server_connection",
       "start_conformance_run",
       "run_eval_case",

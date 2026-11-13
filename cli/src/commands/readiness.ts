@@ -74,6 +74,7 @@ import {
   getReadinessReportOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
+  resumeReadinessRunOperation,
   startClaudeReadinessRunOperation,
   startMuseReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -682,6 +683,20 @@ function registerHostedReadinessCommands(readiness: Command): void {
   bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
     cancel,
     cancelReadinessRunOperation,
+    (options) => ({ project: options.project, run: options.run }),
+  );
+
+  const resume = addProjectOption(
+    readiness
+      .command("resume")
+      .description(
+        "Run again a hosted run that stopped on the server. Only the person who started it can.",
+      )
+      .requiredOption("--run <id>", "Readiness run id"),
+  );
+  bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
+    resume,
+    resumeReadinessRunOperation,
     (options) => ({ project: options.project, run: options.run }),
   );
 

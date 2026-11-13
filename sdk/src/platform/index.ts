@@ -563,6 +563,7 @@ export {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,

@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ReadinessLeaseLostError,
   ReadinessSubmissionUnreadableError,
+  claimReadinessRun,
   failReadinessRun,
   finalizeReadinessRun,
   getReadinessRunSubmission,
@@ -84,6 +85,55 @@ describe("heartbeatReadinessRun", () => {
     );
     expect(init.headers["x-inspector-service-token"]).toBe("service-token");
     expect(JSON.parse(init.body)).toEqual(LEASE);
+  });
+});
+
+describe("claimReadinessRun", () => {
+  it("claims with the lease and the service token", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ ok: true, claimed: true }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await claimReadinessRun(LEASE)).toEqual({ status: "claimed" });
+
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/claim",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+    expect(JSON.parse(init.body)).toEqual(LEASE);
+  });
+
+  it.each([
+    [409, "already_claimed"],
+    [409, "lease_lost"],
+    [404, "not_found"],
+  ] as const)("reports a %s %s as a refusal", async (status, error) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error }, status)),
+    );
+    expect(await claimReadinessRun(LEASE)).toEqual({
+      status: "refused",
+      reason: error,
+    });
+  });
+
+  it.each([
+    ["a transport failure", () => Promise.reject(new Error("ECONNRESET"))],
+    ["a 500", async () => new Response("boom", { status: 500 })],
+    // A backend without the route answers its router's own 404.
+    [
+      "a 404 with no refusal",
+      async () => new Response("No matching routes found", { status: 404 }),
+    ],
+    [
+      "a refusal it does not know",
+      async () => jsonResponse({ ok: false, error: "unauthorized" }, 401),
+    ],
+  ])("reports %s as unanswered, which is not a refusal", async (_label, responder) => {
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    expect((await claimReadinessRun(LEASE)).status).toBe("unanswered");
   });
 });
 

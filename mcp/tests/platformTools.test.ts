@@ -179,6 +179,7 @@ const PLAIN_TOOLS = [
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",
+  "resume_readiness_run",
   "get_readiness_report",
   // Directory submissions: a form, answers and results by step are
   // agent-oriented payloads; the Readiness page is their visual form.
@@ -489,6 +490,7 @@ describe("platform tool registration", () => {
       "get_readiness_run",
       "list_readiness_runs",
       "cancel_readiness_run",
+      "resume_readiness_run",
       "get_readiness_report",
       "list_directory_flows",
       "get_directory_flow",

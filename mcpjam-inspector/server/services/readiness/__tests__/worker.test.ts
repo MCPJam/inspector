@@ -18,6 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const claimReadinessRun = vi.fn();
 const heartbeatReadinessRun = vi.fn();
 const finalizeReadinessRun = vi.fn();
 const failReadinessRun = vi.fn();
@@ -33,6 +34,7 @@ const { ReadinessSubmissionUnreadableError } = await vi.importActual<
 >("../backend-client.js");
 
 vi.mock("../backend-client.js", () => ({
+  claimReadinessRun: (...args: unknown[]) => claimReadinessRun(...args),
   heartbeatReadinessRun: (...args: unknown[]) => heartbeatReadinessRun(...args),
   finalizeReadinessRun: (...args: unknown[]) => finalizeReadinessRun(...args),
   failReadinessRun: (...args: unknown[]) => failReadinessRun(...args),
@@ -103,6 +105,7 @@ function wireFetch(): typeof fetch {
 }
 
 beforeEach(() => {
+  claimReadinessRun.mockResolvedValue({ status: "claimed" });
   heartbeatReadinessRun.mockResolvedValue({ alive: true });
   finalizeReadinessRun.mockResolvedValue({ applied: true });
   failReadinessRun.mockResolvedValue({ applied: true });
@@ -161,6 +164,84 @@ describe("the lazy-auth inputs", () => {
       report.badges?.find((b) => b.id === "claude.features.lazy-authentication")
         ?.state,
     ).toBe("claimed");
+  });
+});
+
+describe("the claim", () => {
+  /** A transport that records whether the run was claimed when it first dialled. */
+  function dialAfterClaim(): { fetchFn: typeof fetch; dials: boolean[] } {
+    const dials: boolean[] = [];
+    const base = wireFetch();
+    const fetchFn = (async (url: any, init?: any) => {
+      dials.push(claimReadinessRun.mock.calls.length > 0);
+      return base(url, init);
+    }) as unknown as typeof fetch;
+    return { fetchFn, dials };
+  }
+
+  it("claims the run before anything dials, then executes it", async () => {
+    const { fetchFn, dials } = dialAfterClaim();
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn,
+      includeLlmObservations: false,
+    });
+    expect(claimReadinessRun).toHaveBeenCalledWith(LEASE);
+    expect(dials.length).toBeGreaterThan(0);
+    expect(dials.every(Boolean)).toBe(true);
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["already_claimed", "lease_lost", "not_found"])(
+    "stops without executing or writing when the claim is refused (%s)",
+    async (reason) => {
+      claimReadinessRun.mockResolvedValue({ status: "refused", reason });
+      const { fetchFn, dials } = dialAfterClaim();
+      await executeHostedReadinessRun({
+        lease: LEASE,
+        publisher: "claude",
+        target: TARGET,
+        fetchFn,
+        includeLlmObservations: true,
+        submissionId: "sub_1",
+      });
+      expect(dials).toEqual([]);
+      expect(getReadinessRunSubmission).not.toHaveBeenCalled();
+      expect(requestManagedObservations).not.toHaveBeenCalled();
+      expect(finalizeReadinessRun).not.toHaveBeenCalled();
+      expect(failReadinessRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it("executes unclaimed when the claim gets no answer", async () => {
+    // As before claims existed: every write is still checked against the lease.
+    claimReadinessRun.mockResolvedValue({
+      status: "unanswered",
+      detail: "HTTP 503",
+    });
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not claim a lease a resume already took", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      leaseClaimed: true,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(claimReadinessRun).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
   });
 });
 

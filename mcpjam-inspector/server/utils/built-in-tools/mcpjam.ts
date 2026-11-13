@@ -111,6 +111,7 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   listDirectoryFlowsOperation,
   getDirectoryFlowOperation,
@@ -205,6 +206,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   // Directory submissions, like the readiness runs above; the delete is excluded.
   listDirectoryFlowsOperation,
