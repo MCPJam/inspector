@@ -97,6 +97,13 @@ export type {
  */
 export * from "./directory-readiness/flows/index.js";
 
+/**
+ * Directory test plans, so a page can draft, edit and check a plan
+ * as the API does. A wildcard: the barrel is pure by
+ * contract and its modules export only public names.
+ */
+export * from "./directory-readiness/test-plan/index.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
