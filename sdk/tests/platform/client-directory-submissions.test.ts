@@ -94,6 +94,29 @@ describe("directory submission client methods", () => {
     expect(requests[8]!.query).toEqual({ runId: "run-1" });
   });
 
+  it("sends a plugin, an attempt and a run's plugin version, keeping null", async () => {
+    const { client, requests } = recordingClient();
+    await client.updateDirectorySubmission({
+      ...SCOPE,
+      expectedRevision: 2,
+      plugin: { pluginVersionId: "pv-1" },
+      attempt: 2,
+    });
+    await client.updateDirectorySubmission({
+      ...SCOPE,
+      expectedRevision: 3,
+      plugin: null,
+      attempt: null,
+    });
+    await client.startDirectorySubmissionRun({ ...SCOPE, pluginVersionId: "pv-1" });
+
+    expect(requests.map((request) => request.body)).toEqual([
+      { expectedRevision: 2, plugin: { pluginVersionId: "pv-1" }, attempt: 2 },
+      { expectedRevision: 3, plugin: null, attempt: null },
+      { pluginVersionId: "pv-1" },
+    ]);
+  });
+
   it("declares the launcher on answer writes only, which labels an agent's answers", async () => {
     const { client, requests } = recordingClient();
     await client.getDirectorySubmission(SCOPE);

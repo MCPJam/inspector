@@ -305,6 +305,35 @@ describe("directory submission operations", () => {
     expect(parse({ warnOnly: [FINDING.id] })).toBe(true);
   });
 
+  it("saves a plugin and an attempt, and keys each distinct change apart", async () => {
+    const changes = [
+      { plugin: { pluginVersionId: "pv-1" }, attempt: 2 },
+      { plugin: { pluginVersionId: "pv-2" }, attempt: 2 },
+      // Clearing is a change of its own, not "nothing to save".
+      { plugin: null },
+    ];
+    const bodies: Array<Record<string, unknown>> = [];
+    for (const change of changes) {
+      const { client, requests } = clientWith({
+        [`PATCH ${BASE}/sub-1`]: { body: VIEW },
+      });
+      await updateDirectorySubmissionOperation.execute(
+        { submission: "sub-1", expectedRevision: 4, ...change },
+        { client }
+      );
+      bodies.push(requests[0]!.body as Record<string, unknown>);
+    }
+    expect(bodies[0]).toMatchObject({
+      expectedRevision: 4,
+      plugin: { pluginVersionId: "pv-1" },
+      attempt: 2,
+    });
+    expect(bodies[2]).toMatchObject({ plugin: null });
+    expect(bodies[2]).not.toHaveProperty("attempt");
+    const keys = new Set(bodies.map((body) => body.idempotencyKey));
+    expect(keys.size).toBe(3);
+  });
+
   it("refuses a write with nothing to save before any request", async () => {
     const { client, requests } = clientWith({});
     await expect(
@@ -382,6 +411,17 @@ describe("directory submission operations", () => {
     );
     expect(requests[0]!.body).toEqual({ includeLlmObservations: true });
     expect(result).toEqual({ project: PROJECT_INFO, submissionId: "sub-1", run: receipt });
+  });
+
+  it("starts a ChatGPT plugin submission's run on the version it names", async () => {
+    const { client, requests } = clientWith({
+      [`POST ${BASE}/sub-1/runs`]: { body: { runId: "run-3" }, status: 202 },
+    });
+    await startDirectorySubmissionRunOperation.execute(
+      { submission: "sub-1", pluginVersionId: "pv-1" },
+      { client }
+    );
+    expect(requests[0]!.body).toEqual({ pluginVersionId: "pv-1" });
   });
 
   it("reads one run's results by step, without raw details", async () => {

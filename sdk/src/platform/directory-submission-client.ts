@@ -83,8 +83,18 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     options?: RequestOptions
   ): View {
     const { projectId, submissionId, expectedRevision } = params;
-    const { answers, confirm, title, checkGate, idempotencyKey } = params;
-    const body = { expectedRevision, answers, confirm, title, checkGate, idempotencyKey };
+    const { answers, confirm, title, checkGate, plugin, attempt, idempotencyKey } = params;
+    // `null` is kept, since it clears; `undefined` drops out of the JSON.
+    const body = {
+      expectedRevision,
+      answers,
+      confirm,
+      title,
+      checkGate,
+      plugin,
+      attempt,
+      idempotencyKey,
+    };
     const target = path(projectId, submissionId);
     return this.request("PATCH", target, { body, declareLaunch: true }, options);
   }
@@ -97,14 +107,17 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     return this.request("DELETE", path(projectId, submissionId), {}, options);
   }
 
-  /** Grade the submission's saved server and answers. Poll the run it names. */
+  /**
+   * Grade the submission's saved server and answers, and for a ChatGPT plugin
+   * the stored version `pluginVersionId` names. Poll the run it names.
+   */
   startDirectorySubmissionRun(
     params: Scope & PlatformDirectorySubmissionRunBody,
     options?: RequestOptions
   ): Promise<PlatformReadinessRunReceipt> {
-    const { projectId, submissionId, idempotencyKey, includeLlmObservations } =
-      params;
-    const body = { idempotencyKey, includeLlmObservations };
+    const { projectId, submissionId, idempotencyKey } = params;
+    const { includeLlmObservations, pluginVersionId } = params;
+    const body = { idempotencyKey, includeLlmObservations, pluginVersionId };
     const target = path(projectId, submissionId, "runs");
     return this.request("POST", target, { body }, options);
   }

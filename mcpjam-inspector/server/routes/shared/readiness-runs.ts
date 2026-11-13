@@ -46,7 +46,9 @@ export type ReadinessPublisher = (typeof READINESS_PUBLISHERS)[number];
  * The package shapes need an uploaded archive, and no hosted surface has a way
  * to receive one — the CLI reads it off the local disk. Listing them here and
  * refusing them at the edge means the refusal can name the CLI, rather than
- * surfacing later as a lane that mysteriously never evaluates.
+ * surfacing later as a lane that mysteriously never evaluates. The one
+ * exception is a ChatGPT plugin submission's run, which grades a plugin
+ * version already stored in the project (`pluginVersionId`).
  */
 export const HOSTED_SUBMISSION_MODES = [
   "mcp-only",
@@ -95,6 +97,12 @@ export interface StartHostedReadinessRunInput {
    * run; the worker grades that frozen copy.
    */
   submissionId?: string;
+  /**
+   * A ChatGPT plugin submission's package: a plugin version stored in the
+   * project. The backend checks it and freezes it with the answers, and the
+   * worker downloads that version (`run-package.ts`).
+   */
+  pluginVersionId?: string;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -195,6 +203,9 @@ export async function startHostedReadinessRun(
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        ...(input.pluginVersionId
+          ? { pluginVersionId: input.pluginVersionId }
+          : {}),
       },
     );
   } catch (error) {
@@ -355,6 +366,8 @@ export function toReadinessRunDto(
       hasReport && options.reportUrl ? options.reportUrl(run.id) : null,
     submissionId: run.submissionId ?? null,
     submissionRevision: run.submissionRevision ?? null,
+    // The stored plugin version a ChatGPT plugin submission's run grades.
+    pluginVersionId: run.pluginVersionId ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
