@@ -34,6 +34,10 @@ import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
 } from "./runner.js";
+import type {
+  ReviewerAttemptView,
+  ReviewerAttemptWrite,
+} from "./reviewer-sign-in.js";
 
 // Re-exported so a caller that only holds the client does not have to reach
 // past it for the error the client throws.
@@ -69,7 +73,7 @@ const OBSERVATION_TIMEOUT_MS = 90_000;
  * with no bound at all, quietly turning the heartbeat's ten-second budget into
  * an unbounded wait.
  */
-async function postInternal(
+export async function postInternal(
   path: string,
   body: unknown,
   timeoutMs: number,
@@ -111,7 +115,7 @@ export type ReadinessClaim =
 
 const CLAIM_TIMEOUT_MS = 10_000;
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text);
     return typeof value === "object" && value !== null
@@ -162,6 +166,57 @@ export async function claimReadinessRun(
   }
 }
 
+/** The attempt route refused a write for a reason other than the lease. */
+export class ReviewerAttemptRefusedError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ReviewerAttemptRefusedError";
+  }
+}
+
+/** One write to the attempt the run works on; an empty write only joins it. */
+async function postReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+  write: ReviewerAttemptWrite,
+): Promise<Record<string, unknown>> {
+  const { response, release } = await postInternal(
+    `${READINESS_PATH}/reviewer-attempt`,
+    { ...lease, attemptId, ...write },
+    CLAIM_TIMEOUT_MS,
+  );
+  try {
+    const body = parseJsonObject(await response.text());
+    if (response.ok && body?.ok === true) return body;
+    if (body?.error === "lease_lost") throw new ReadinessLeaseLostError();
+    const code =
+      typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = typeof body?.message === "string" ? body.message : code;
+    throw new ReviewerAttemptRefusedError(code, message);
+  } finally {
+    release();
+  }
+}
+
+/** The fields a sign-in needs, read off the attempt the join answers with. */
+function attemptView(value: unknown): ReviewerAttemptView | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const row = value as Record<string, unknown>;
+  if (typeof row.projectId !== "string") return undefined;
+  if (typeof row.passwordSecretName !== "string") return undefined;
+  const text = (key: string) =>
+    typeof row[key] === "string" ? { [key]: row[key] as string } : {};
+  return {
+    projectId: row.projectId,
+    passwordSecretName: row.passwordSecretName,
+    ...text("usernameSecretName"),
+    ...text("username"),
+  };
+}
+
 /**
  * Join the reviewer sign-in attempt the run was started for, so the attempt
  * names the run working on it and a resume of the run finds it again. A lost
@@ -170,27 +225,32 @@ export async function claimReadinessRun(
 export async function joinReviewerAttempt(
   lease: ReadinessLease,
   attemptId: string,
-): Promise<{ joined: true } | { joined: false; reason: string }> {
+): Promise<
+  | { joined: true; attempt?: ReviewerAttemptView }
+  | { joined: false; reason: string }
+> {
   try {
-    const { response, release } = await postInternal(
-      `${READINESS_PATH}/reviewer-attempt`,
-      { ...lease, attemptId },
-      CLAIM_TIMEOUT_MS,
-    );
-    try {
-      const body = parseJsonObject(await response.text());
-      if (response.ok && body?.ok === true) return { joined: true };
-      if (body?.error === "lease_lost") throw new ReadinessLeaseLostError();
-      const reason = typeof body?.error === "string" ? body.error : undefined;
-      return { joined: false, reason: reason ?? `HTTP ${response.status}` };
-    } finally {
-      release();
-    }
+    const body = await postReviewerAttempt(lease, attemptId, {});
+    return { joined: true, attempt: attemptView(body.attempt) };
   } catch (error) {
     if (error instanceof ReadinessLeaseLostError) throw error;
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason =
+      error instanceof ReviewerAttemptRefusedError
+        ? error.code
+        : error instanceof Error
+          ? error.message
+          : String(error);
     return { joined: false, reason };
   }
+}
+
+/** Record a stage, the reviewer account, a stop for a person or an outcome. */
+export async function recordReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+  write: ReviewerAttemptWrite,
+): Promise<void> {
+  await postReviewerAttempt(lease, attemptId, write);
 }
 
 /**
