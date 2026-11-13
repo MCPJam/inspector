@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useProjectRunHistory } from "../use-project-run-history";
+import {
+  clearProjectRunHistoryCache,
+  useProjectRunHistory,
+} from "../use-project-run-history";
 
 const mocks = vi.hoisted(() => ({ query: vi.fn() }));
 const client = { query: mocks.query };
@@ -8,6 +11,7 @@ vi.mock("convex/react", () => ({ useConvex: () => client }));
 const rows = [{ _id: "one", status: "completed" }];
 
 beforeEach(() => {
+  clearProjectRunHistoryCache();
   mocks.query.mockReset();
   mocks.query.mockImplementation(async (name: string) =>
     name === "testSuites:getTestSuiteRun"
