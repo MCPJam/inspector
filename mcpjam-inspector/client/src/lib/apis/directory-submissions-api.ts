@@ -6,6 +6,7 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionHandoff,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
@@ -14,6 +15,7 @@ import { readinessPlatformClient as client } from "@/lib/apis/directory-readines
 
 export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
+export type SubmissionHandoff = PlatformDirectorySubmissionHandoff;
 export type SubmissionScope = { projectId: string; submissionId: string };
 
 /** The flow as served by the API that stamps its wording on each write. */
@@ -50,3 +52,16 @@ export const startDirectorySubmissionRun = (
   scope: SubmissionScope,
   idempotencyKey: string,
 ) => client().startDirectorySubmissionRun({ ...scope, idempotencyKey });
+
+/** Where to resume, built from the record on every read, as an agent reads it. */
+export const getDirectorySubmissionHandoff = (
+  scope: SubmissionScope,
+  signal?: AbortSignal,
+): Promise<SubmissionHandoff> =>
+  client().getDirectorySubmissionHandoff(scope, { signal });
+
+/** The pack as a file. `content` is its exact bytes: save it as it is. */
+export const exportDirectorySubmission = (
+  scope: SubmissionScope,
+  format: "json" | "markdown",
+) => client().exportDirectorySubmission({ ...scope, format });

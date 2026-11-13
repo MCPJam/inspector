@@ -7,15 +7,14 @@
  */
 import { useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import {
-  directoryFlowField,
-  type DirectoryAnswer,
-  type DirectoryFieldIssue,
-  type DirectoryFlow,
-  type DirectoryFlowField,
-  type DirectoryFlowStep,
-  type DirectoryLayoutBlock,
-  type PlacedFinding,
+import type {
+  DirectoryAnswer,
+  DirectoryFieldIssue,
+  DirectoryFlow,
+  DirectoryFlowField,
+  DirectoryFlowStep,
+  DirectoryLayoutBlock,
+  PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -25,7 +24,9 @@ import type {
 } from "@/hooks/use-directory-submission";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
-import { McpjamChecks, McpjamMark } from "./McpjamChecks";
+import { ConflictNotice } from "./ConflictNotice";
+import { HandoffPanel } from "./HandoffPanel";
+import { McpjamChecks } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
 import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
@@ -156,41 +157,6 @@ function SaveNote({ session }: { session: DirectorySubmissionSession }) {
   return <>Draft saved at {time}</>;
 }
 
-function ConflictNotice({
-  flow,
-  session,
-}: {
-  flow: DirectoryFlow;
-  session: DirectorySubmissionSession;
-}) {
-  const keys = Object.keys(session.conflict ?? {});
-  if (keys.length === 0) return null;
-  const labels = keys.map((key) => directoryFlowField(flow, key)?.label ?? key);
-  return (
-    <div
-      role="alert"
-      className="mx-10 mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm"
-    >
-      <McpjamMark />
-      <span className="min-w-0 flex-1">
-        {labels.join(", ")} changed while you were editing. The form shows the
-        saved {keys.length === 1 ? "value" : "values"}.
-      </span>
-      <Button type="button" size="sm" onClick={session.reapply}>
-        Reapply my change
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        onClick={session.keepSaved}
-      >
-        Keep saved values
-      </Button>
-    </div>
-  );
-}
-
 export function PortalFrame({
   flow,
   view,
@@ -261,7 +227,7 @@ export function PortalFrame({
           </Button>
         </div>
       </div>
-      <ConflictNotice flow={flow} session={session} />
+      <ConflictNotice flow={flow} session={session} people={people} />
       <div className="flex min-h-0 flex-1 gap-10 px-10 pb-6">
         <PortalStepRail
           label={`${directory} submission steps`}
@@ -286,6 +252,12 @@ export function PortalFrame({
             </header>
             {review ? (
               <>
+                <HandoffPanel
+                  flow={flow}
+                  scope={{ projectId: view.projectId, submissionId: view.id }}
+                  version={`${view.revision}:${view.resultsRunId}:${view.lastRunId}`}
+                  people={people}
+                />
                 <PortalReview
                   flow={flow}
                   step={step}
