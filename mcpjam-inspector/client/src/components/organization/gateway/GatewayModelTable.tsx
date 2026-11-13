@@ -36,7 +36,7 @@ const MAPPING_SOURCE_LABELS: Record<
   string
 > = {
   name: "Matched by name",
-  gateway: "Reported by the gateway",
+  gateway: "Reported by the provider",
   admin: "Set by admin",
 };
 
@@ -120,7 +120,7 @@ export function GatewayModelTable({
         </div>
         <Input
           aria-label="Add a model"
-          placeholder="Add a model the gateway serves"
+          placeholder="Add a model the provider serves"
           value={added}
           onChange={(event) => setAdded(event.target.value)}
           onKeyDown={(event) => {
@@ -139,7 +139,7 @@ export function GatewayModelTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Gateway name</TableHead>
+              <TableHead>Model</TableHead>
               <TableHead className="min-w-56">Runs as</TableHead>
               {CAPABILITIES.map(([key, label]) => (
                 <TableHead key={key}>{label}</TableHead>
@@ -157,7 +157,7 @@ export function GatewayModelTable({
                   className="py-4 text-center text-muted-foreground"
                 >
                   {models.length === 0
-                    ? "No models yet. Test the gateway or add one above."
+                    ? "No models yet. Test the provider or add one above."
                     : `No model matches "${query.trim()}".`}
                 </TableCell>
               </TableRow>

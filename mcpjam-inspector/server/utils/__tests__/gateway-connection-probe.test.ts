@@ -48,7 +48,7 @@ describe("probeGatewayConnection", () => {
           result: "failed",
           status: 404,
           message:
-            "The gateway has nothing at https://litellm.acme.example/v1/responses. Check the base URL and the APIs this connection serves.",
+            "The provider has nothing at https://litellm.acme.example/v1/responses. Check the base URL and the APIs this connection serves.",
         },
         anthropicMessages: { result: "ok", status: 200 },
         embeddings: { result: "ok", status: 200 },
@@ -73,7 +73,7 @@ describe("probeGatewayConnection", () => {
       catalogIds: CATALOG,
     });
     expect(result).toMatchObject({ reachable: true, status: 401, models: [] });
-    expect(result.message).toMatch(/^The gateway rejected the API key: "Invalid key x+…"\. Check the key and test again\.$/);
+    expect(result.message).toMatch(/^The provider rejected the API key: "Invalid key x+…"\. Check the key and test again\.$/);
     expect(result.message!.length).toBeLessThan(400);
   });
 
@@ -103,7 +103,7 @@ describe("probeGatewayConnection", () => {
     });
     expect(result).toMatchObject({ reachable: false, origin: "inspector" });
     expect(result.message).toBe(
-      "This Inspector couldn't connect to down.acme.example. Check the base URL and that the gateway is running.",
+      "This Inspector couldn't connect to down.acme.example. Check the base URL and that the provider is running.",
     );
   });
 });

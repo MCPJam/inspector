@@ -96,7 +96,7 @@ describe("POST /api/web/org-gateway-test", () => {
     await expect(res.json()).resolves.toMatchObject({
       code: "FORBIDDEN",
       message:
-        "Only organization admins and owners can test a gateway. Ask an admin to add it.",
+        "Only organization admins and owners can test a custom provider. Ask an admin to add it.",
     });
     expect(gatewayFetch).not.toHaveBeenCalled();
   });

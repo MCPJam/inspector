@@ -368,7 +368,7 @@ describe("evidence table", () => {
 describe("harnessNoRunnableModelReason", () => {
   it("names the harness and the org connections that would run it", () => {
     expect(harnessNoRunnableModelReason("codex")).toBe(
-      "Codex runs MCPJam models, your organization's OpenAI key, or a gateway that serves Responses. Set one up in Organization models.",
+      "Codex runs MCPJam models, your organization's OpenAI key, or a custom provider that serves Responses. Set one up in Organization models.",
     );
     expect(harnessNoRunnableModelReason("cursor")).toBe(
       "Cursor CLI has no model it can run here.",
@@ -379,7 +379,7 @@ describe("harnessNoRunnableModelReason", () => {
     expect(
       harnessNoRunnableModelReason("claude-code", { requireOrgKeys: true }),
     ).toBe(
-      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a custom provider that serves Anthropic Messages.",
     );
     expect(
       harnessNoRunnableModelReason("cursor", { requireOrgKeys: true }),

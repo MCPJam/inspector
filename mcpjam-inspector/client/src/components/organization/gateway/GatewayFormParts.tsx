@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { CheckCircle2, TriangleAlert, XCircle } from "lucide-react";
 import {
   Alert,
@@ -5,10 +6,60 @@ import {
   AlertTitle,
 } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
+import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
+import { ProviderKeyField } from "../ProviderKeyField";
 import type { GatewayTestOutcome } from "./gateway-test-outcome";
 import type { GatewayRuntimeLocation } from "./gateway-works-with";
+import { FIELD_IDS, type GatewayDraft } from "./use-gateway-draft";
+
+/** The base URL and key a Test runs with; `action` sits beside the key. */
+export function GatewayConnectionFields({
+  draft,
+  hasSecret,
+  action,
+}: {
+  draft: GatewayDraft;
+  /** The saved provider has a key, which an empty key field keeps. */
+  hasSecret: boolean;
+  action?: ReactNode;
+}) {
+  const { keyProblem } = draft;
+  return (
+    <>
+      <div className="space-y-2">
+        <Label htmlFor={FIELD_IDS.baseUrl}>Base URL</Label>
+        <Input
+          id={FIELD_IDS.baseUrl}
+          type="url"
+          value={draft.baseUrl}
+          onChange={(event) => draft.setBaseUrl(event.target.value)}
+          placeholder="https://litellm.example.com/v1"
+          aria-invalid={!!keyProblem || draft.outcome?.focus === "baseUrl"}
+          aria-describedby={keyProblem ? "gateway-base-url-problem" : undefined}
+        />
+        {keyProblem ? (
+          <p id="gateway-base-url-problem" className="text-sm text-destructive">
+            {keyProblem}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <ProviderKeyField
+            id={FIELD_IDS.secret}
+            configured={hasSecret && !keyProblem && !draft.keyRequested}
+            value={draft.secret}
+            onChange={draft.setSecret}
+            optional={!keyProblem}
+          />
+        </div>
+        {action}
+      </div>
+    </>
+  );
+}
 
 const OUTCOME_ICONS = {
   success: CheckCircle2,
@@ -53,12 +104,12 @@ const RUNTIME_OPTIONS: Array<[GatewayRuntimeLocation, string, string]> = [
   [
     "cloud",
     "MCPJam's servers",
-    "Every feature can use it. MCPJam's servers must be able to reach the gateway.",
+    "Every feature can use it. MCPJam's servers must be able to reach the provider.",
   ],
   [
     "local",
     "Each user's Inspector",
-    "For a gateway only your network reaches. Judges and harness clients can't use it.",
+    "For a provider only your network reaches. Judges and harness clients can't use it.",
   ],
 ];
 
