@@ -4,6 +4,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
@@ -12,6 +13,8 @@ import codexLogo from "/codex-logo.svg";
 import openCodeLogoLight from "/opencode-logo-light.svg";
 import openCodeLogoDark from "/opencode-logo-dark.svg";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
@@ -33,12 +36,13 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   claude: claudeLogo,
   "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
-  "claude-code-desktop": claudeCodeLogo,
-  "claude-code-web": claudeCodeLogo,
+  // The desktop and web variants carry their app's mark, not the CLI's.
+  "claude-code-desktop": claudeDesktopLogo,
+  "claude-code-web": claudeLogo,
   chatgpt: openaiLogo,
-  "chatgpt-desktop": openaiLogo,
+  "chatgpt-desktop": chatgptDesktopLogo,
   "chatgpt-work": openaiLogo,
-  "chatgpt-work-desktop": openaiLogo,
+  "chatgpt-work-desktop": chatgptDesktopLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
   slack: slackLogo,
@@ -49,7 +53,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   codex: codexLogo,
   "codex-cli": codexLogo,
   opencode: openCodeLogoLight,
-  "copilot-cli": copilotLogo,
+  // GitHub Copilot's mark; `copilot` below is Microsoft 365 Copilot.
+  "copilot-cli": githubCopilotLogoLight,
   copilot: copilotLogo,
   vscode: vscodeLogo,
   agentcore: bedrockLogo,
@@ -78,6 +83,10 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
   cline: {
     light: clineLogoLight,
     dark: clineLogoDark,
+  },
+  "copilot-cli": {
+    light: githubCopilotLogoLight,
+    dark: githubCopilotLogoDark,
   },
 };
 

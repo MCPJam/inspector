@@ -7,6 +7,8 @@ import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
 import cursorLogo from "/cursor_logo.png";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import codexLogo from "/codex-logo.svg";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
@@ -747,7 +749,11 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
       resolveStyleVariables: getChatGPTStyleVariables,
     },
     chatUi: { ...COPILOT_HOST_STYLE.chatUi, label: "GitHub Copilot CLI",
-      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox" },
+      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox",
+      // GitHub Copilot's own mark, not Microsoft 365 Copilot's. It is a flat
+      // silhouette, so it flips with the theme like Goose's.
+      logoSrc: githubCopilotLogoLight,
+      logoSrcByTheme: { light: githubCopilotLogoLight, dark: githubCopilotLogoDark } },
   },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
