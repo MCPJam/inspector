@@ -505,6 +505,35 @@ export function failedLayerForEngineError(
   return event?.phase === "setup" ? "setup" : "model";
 }
 
+/**
+ * Whether a failed turn's log line must capture. `logger.error` with no error
+ * object always captures, untagged, so it is skipped only when the engine's
+ * reporter already recorded this failure:
+ * - it sent it to Sentry (`reportedCaptured`);
+ * - it classified it (`reportedOrigin` set, not `ambiguous`) and declined it
+ *   as not ours (INSPECTOR-HONO-70), or found it already handled;
+ * - an empty step: the emitter decided ownership itself
+ *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+ *   `ambiguous` on purpose.
+ * Anything else — `ambiguous`, no verdict, no engine error — has no other
+ * Sentry record. The harness reports `reportedCaptured` only: it classifies
+ * from the message alone, so a decline there is not a verdict.
+ */
+export function failedTurnNeedsCapture(
+  event:
+    | Pick<
+        MCPJamEngineErrorEvent,
+        "code" | "reportedCaptured" | "reportedOrigin"
+      >
+    | undefined,
+): boolean {
+  if (event?.reportedCaptured) return false;
+  if (event?.code === "provider_empty_response") return false;
+  return (
+    event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
+  );
+}
+
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
   origin: "prompt" | "widget-follow-up" = "prompt",
@@ -1107,14 +1136,10 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures. An empty step was
-    // already reported once by the engine, which decided whether it is ours
-    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines.
-    if (lastEngineError?.code === "provider_empty_response") {
-      logger.warn(logLine);
-    } else {
+    if (failedTurnNeedsCapture(lastEngineError)) {
       logger.error(logLine);
+    } else {
+      logger.warn(logLine);
     }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call

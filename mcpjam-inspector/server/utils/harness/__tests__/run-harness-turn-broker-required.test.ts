@@ -7,6 +7,8 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 // reach for the retired raw-key endpoint (/web/harness/model-credential).
 
 const harnessState = vi.hoisted(() => ({
+  /** Thrown by the runtime's stream, once the model was handed the turn. */
+  streamError: undefined as Error | undefined,
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -17,12 +19,15 @@ const harnessState = vi.hoisted(() => ({
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     createSession = vi.fn(async () => harnessState.session);
-    stream = vi.fn(async () => ({
-      fullStream: (async function* () {
-        yield { type: "finish", finishReason: "stop" };
-      })(),
-      text: Promise.resolve("done"),
-    }));
+    stream = vi.fn(async () => {
+      if (harnessState.streamError) throw harnessState.streamError;
+      return {
+        fullStream: (async function* () {
+          yield { type: "finish", finishReason: "stop" };
+        })(),
+        text: Promise.resolve("done"),
+      };
+    });
   },
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
@@ -111,6 +116,9 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
+import { createSystemStreamFailureReporter } from "../../stream-failure-reporter.js";
+import type { RouteFailureReport } from "../../route-error-report.js";
+import { failedTurnNeedsCapture } from "../../../services/evals/drive-hosted-eval-turn.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -147,6 +155,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.mocked(startHarnessModelBroker).mockClear();
+  harnessState.streamError = undefined;
 });
 
 function modelCredentialCalls() {
@@ -165,9 +174,17 @@ describe("runHarnessTurn broker-required (COMP-23)", () => {
     );
 
     expect(onEngineError).toHaveBeenCalledTimes(1);
-    const err = onEngineError.mock.calls[0]![0] as { message: string };
+    const err = onEngineError.mock.calls[0]![0] as {
+      message: string;
+      reportedCaptured?: boolean;
+    };
     expect(err.message).toMatch(/broker credential delivery/i);
     expect(err.message).toMatch(/MCPJAM_HARNESS_BROKER_DELIVERY/);
+    // Our setup bug, yet the reporter cannot classify it and does not page.
+    // The event says so, so the eval driver still captures it
+    // (INSPECTOR-HONO-70).
+    expect(err.reportedCaptured).toBe(false);
+    expect(failedTurnNeedsCapture(err)).toBe(true);
     // Fail-closed means NO credential of any kind was pursued:
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(modelCredentialCalls()).toHaveLength(0);
@@ -192,6 +209,38 @@ describe("runHarnessTurn broker-required (COMP-23)", () => {
 
     expect(onEngineError).not.toHaveBeenCalled();
     expect(startHarnessModelBroker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runHarnessTurn failure verdict for the eval driver", () => {
+  it("leaves a mid-turn failure the reporter blamed on the user to the driver's capture", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    // From the message alone this reads as the user's. It may be our broker.
+    harnessState.streamError = new Error("connect ECONNREFUSED 10.0.0.5:443");
+    const reports: RouteFailureReport[] = [];
+    const system = createSystemStreamFailureReporter("harness-turn");
+    const failureReporter = (e: Parameters<typeof system>[0]) => {
+      const report = system(e);
+      reports.push(report);
+      return report;
+    };
+    const onEngineError = vi.fn();
+
+    await runHarnessTurn(
+      baseOptions({ onEngineError, failureReporter }) as never,
+      "none"
+    );
+
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      origin: "user_config",
+      captured: false,
+    });
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    const err = onEngineError.mock.calls[0]![0];
+    expect(err).toMatchObject({ phase: "stream", reportedCaptured: false });
+    expect(err).not.toHaveProperty("reportedOrigin");
+    expect(failedTurnNeedsCapture(err)).toBe(true);
   });
 });
 
