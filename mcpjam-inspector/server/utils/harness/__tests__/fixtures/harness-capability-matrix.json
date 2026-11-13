@@ -26,7 +26,7 @@
         "readFolders": [
           ".claude/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": true,
         "writeFolder": ".claude/skills"
       },
@@ -94,7 +94,7 @@
         "readFolders": [
           ".agents/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".agents/skills"
       },

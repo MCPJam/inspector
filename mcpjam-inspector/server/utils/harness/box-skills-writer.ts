@@ -120,6 +120,9 @@ export interface BoxSkillsResult {
   /** On the box but not whole (a supporting file is missing), or taken off
    *  because its SKILL.md couldn't be rewritten and may grant tools. */
   failed: Array<BoxSkillOutcome & { error: string }>;
+  /** Captured MCP-server skills the turn's skill tools served instead of the
+   *  box (`harness-server-skills.ts`). Set by the turn, never by the writer. */
+  servedByTools?: BoxSkillOutcome[];
 }
 
 /** The delivered skills' supporting files. A skill whose whole list `files`
