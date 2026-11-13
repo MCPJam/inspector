@@ -2378,12 +2378,7 @@ export function ChatTabV2({
     await composerSend.run(submitComposer);
   };
 
-  const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
-    if (composerDisabled || sendBlocked) {
-      setInput(prompt);
-      return;
-    }
+  const sendStarterPrompt = async (prompt: string) => {
     const threadReady = await ensureThreadReadyForSend();
     if (!threadReady) {
       return;
@@ -2416,6 +2411,18 @@ export function ChatTabV2({
     setInput("");
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
+  };
+
+  const handleStarterPrompt = (prompt: string) => {
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
+    if (composerDisabled || sendBlocked) {
+      setInput(prompt);
+      return;
+    }
+    // Shares the composer's lock: the chip clears the composer, so one
+    // clicked while a submit is being prepared would wipe that submit's
+    // attachments and the submit would still send its draft.
+    void composerSend.run(() => sendStarterPrompt(prompt));
   };
 
   /**

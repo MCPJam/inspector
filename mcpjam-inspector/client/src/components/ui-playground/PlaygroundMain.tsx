@@ -5788,7 +5788,10 @@ export function PlaygroundMain({
         composer.setInput(prompt);
         return;
       }
-      void (async () => {
+      // Shares the composer's lock: the chip clears the composer, so one
+      // clicked while a submit is being prepared would wipe that submit's
+      // attachments and the submit would still send its draft.
+      void composerSend.run(async () => {
         if (!(await ensureSelectedServerReadyForChat())) {
           composer.setInput(prompt);
           return;
@@ -5827,10 +5830,11 @@ export function PlaygroundMain({
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
-      })();
+      });
     },
     [
       composer,
+      composerSend.run,
       composerDisabled,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,

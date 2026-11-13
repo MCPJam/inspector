@@ -2422,10 +2422,46 @@ describe("PlaygroundMain", () => {
 
         await act(async () => releaseSync());
         await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        // A late second send would land after one more flush.
+        await act(async () => {});
+        expect(sendMessage).toHaveBeenCalledTimes(1);
         expect(overlay().isSubmitting).toBe(false);
       } finally {
         mockUIPlaygroundStore.deviceType = deviceType;
       }
+    });
+
+    it("ignores a starter chip clicked while a composer submit is being prepared", async () => {
+      mockUseChatSession.messages = [];
+      render(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        (
+          composerProps() as unknown as {
+            onChangeFileAttachments: (files: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([
+          {
+            id: "f1",
+            file: new File(["x"], "note.txt", { type: "text/plain" }),
+          },
+        ]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "draft with a file" },
+      });
+
+      // The submit holds the lock from its first await; the chip lands in it.
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+        fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      });
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "draft with a file" }),
+      );
     });
 
     it("sends a starter prompt once when it is clicked twice while the server connects", async () => {
