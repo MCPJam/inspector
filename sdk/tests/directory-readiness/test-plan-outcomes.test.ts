@@ -421,6 +421,21 @@ describe("summarizeDirectoryToolTests", () => {
     );
   });
 
+  it("grades the calls as they were made when no listing is at hand", () => {
+    const plan = completePlan();
+    // Made against a listing these tools do not match, as a stored catalog's would not.
+    const calls = [
+      record(plan, "search_web#valid", { inputDigest: "from-a-live-listing" }),
+      record(plan, "list_projects#valid", { account: "someone-else" }),
+    ];
+    expect(summarize(plan, calls).search_web?.status).toBe("stale");
+    const results = summarizeDirectoryToolTests({ plan, calls, account: ACCOUNT });
+    const byTool = Object.fromEntries(results.map((result) => [result.tool, result]));
+    expect(byTool.search_web?.status).toBe("valid-input-succeeded");
+    // The account is still compared: it is not part of the listing.
+    expect(byTool.list_projects?.status).toBe("stale");
+  });
+
   it("blocks a case whose fixture is missing or whose arguments are not drafted", () => {
     const plan = completePlan();
     const search = plan.cases.find(

@@ -384,6 +384,8 @@ export function toReadinessRunDto(
     submissionRevision: run.submissionRevision ?? null,
     // The stored plugin version a ChatGPT plugin submission's run grades.
     pluginVersionId: run.pluginVersionId ?? null,
+    // The test plan revision whose calls the run makes.
+    testPlanRevision: run.testPlanRevision ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
