@@ -58,6 +58,10 @@ import {
   followLink,
   type MatrixTarget,
 } from "./run-result-pages/result-page-links";
+import {
+  readRunView,
+  rememberRunView,
+} from "./run-result-pages/run-view-memory";
 
 type StatusFilter = "failed" | "passed" | "pending" | "cancelled";
 const STATUS_LABEL: Record<StatusFilter, string> = {
@@ -223,6 +227,7 @@ export function RunResultsMatrix({
   onEditEvaluator,
   caseResultHref,
   onOpenCaseResult,
+  viewMemoryRunId,
 }: {
   /** Target keys to show (`comparisonKey`; the bare model id when default). */
   modelIds?: readonly string[];
@@ -242,6 +247,8 @@ export function RunResultsMatrix({
   /** When set, each cell is a link to its test case page instead of a drawer. */
   caseResultHref?: (caseKey: string, target: MatrixTarget | null) => string;
   onOpenCaseResult?: (caseKey: string, target: MatrixTarget | null) => void;
+  /** Seeds and keeps the filters and view under this run for the back button. */
+  viewMemoryRunId?: string;
 }) {
   const theme = usePreferencesStoreWithDefaults((state) => state.themeMode);
   const data = useMemo(() => {
@@ -259,9 +266,12 @@ export function RunResultsMatrix({
         : matrix.targets,
     };
   }, [run, runs, iterations, hostNamesById, modelIds]);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState(ALL_EVAL_FILTER_VALUES);
-  const [view, setView] = useState<MatrixView>("results");
+  const [remembered] = useState(() => readRunView(viewMemoryRunId));
+  const [search, setSearch] = useState(remembered.search ?? "");
+  const [status, setStatus] = useState(
+    remembered.status ?? ALL_EVAL_FILTER_VALUES,
+  );
+  const [view, setView] = useState<MatrixView>(remembered.view ?? "results");
   const showPending = [run, ...runs].some(
     (item) => !isEvalRunTerminalStatus(item.status),
   );
@@ -302,6 +312,9 @@ export function RunResultsMatrix({
   useEffect(() => {
     onFilterChange?.({ search: query, status: activeStatus });
   }, [query, activeStatus, onFilterChange]);
+  useEffect(() => {
+    rememberRunView(viewMemoryRunId, { search, status: activeStatus, view });
+  }, [viewMemoryRunId, search, activeStatus, view]);
   const rows = data.rows.filter(
     (row) =>
       row.title.toLowerCase().includes(query) &&

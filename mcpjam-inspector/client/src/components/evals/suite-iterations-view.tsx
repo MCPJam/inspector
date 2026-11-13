@@ -117,6 +117,7 @@ import {
   RunResultPage,
   type RunResultCrumbs,
 } from "../evaluate/run-result-pages/run-result-page";
+import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -1577,6 +1578,8 @@ export function SuiteIterationsView({
 
   const selectedRunTestCaseId =
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+  // Old `?case=` and `?iteration=` links open their page once this is on.
+  const resultPagesEnabled = useRunResultPagesEnabled();
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -2383,14 +2386,22 @@ export function SuiteIterationsView({
                 );
               })()
             ) : route.type === "run-detail" &&
-              route.resultPage &&
+              (route.resultPage ||
+                (resultPagesEnabled === true &&
+                  (route.testCaseId || route.iteration))) &&
               suiteDetailOverview &&
               !selectedRunState.isUnavailable ? (
               <RunResultPage
                 key={`${contentKey}-result`}
                 suiteId={suite._id}
                 runId={route.runId}
-                resultPage={route.resultPage}
+                resultPage={
+                  route.resultPage ?? {
+                    caseKey: route.testCaseId ?? "",
+                    iterationId: route.iteration,
+                  }
+                }
+                fromOldLink={!route.resultPage}
                 run={selectedRunDetails ?? null}
                 runs={runs}
                 allIterations={allIterations}

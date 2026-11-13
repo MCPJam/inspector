@@ -2,7 +2,9 @@ import type {
   EvalRunDecisionChain,
   EvalRunDecisionDiagnostic,
 } from "@mcpjam/sdk/contract";
+import type { ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import type { IterationTab } from "@/lib/eval-route-types";
 import { formatRelativeTime, formatRunId } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration } from "../../evals/types";
@@ -20,6 +22,9 @@ export function IterationResultsPage({
   chainDisplay,
   onRetryChain,
   onEditCase,
+  pager,
+  tab,
+  onTabChange,
 }: {
   iteration: EvalIteration;
   iterationNumber: number;
@@ -29,6 +34,9 @@ export function IterationResultsPage({
   chainDisplay?: TrialChainDisplay;
   onRetryChain?: () => void;
   onEditCase?: () => void;
+  pager?: ReactNode;
+  tab?: IterationTab;
+  onTabChange?: (tab: IterationTab) => void;
 }) {
   return (
     // A fixed-height flex column: the Trace tab collapses in a scrolling page.
@@ -52,7 +60,7 @@ export function IterationResultsPage({
         }
         actions={
           <>
-            {/* The column pager sits here, left of Edit test case. */}
+            {pager}
             {onEditCase ? (
               <Button onClick={onEditCase}>Edit test case</Button>
             ) : null}
@@ -68,6 +76,8 @@ export function IterationResultsPage({
           chainDisplay={chainDisplay}
           onRetryChain={onRetryChain}
           traceDetailPlacement="auto"
+          tab={tab}
+          onTabChange={onTabChange}
         />
       </div>
     </div>

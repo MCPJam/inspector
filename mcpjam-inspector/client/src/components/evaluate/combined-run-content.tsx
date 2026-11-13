@@ -46,6 +46,11 @@ import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 import { useCaseResultLinks } from "./run-result-pages/result-page-links";
+import {
+  readRunView,
+  rememberRunView,
+  useRunScrollMemory,
+} from "./run-result-pages/run-view-memory";
 
 type MemberReport = {
   pending: boolean;
@@ -82,8 +87,16 @@ export function CombinedRunContent({
     runs,
     Boolean(projectId),
   );
-  const [client, setClient] = useState(ALL_EVAL_FILTER_VALUES);
-  const [model, setModel] = useState(ALL_EVAL_FILTER_VALUES);
+  const memoryRunId = caseResultLinks.viewMemoryRunId;
+  const [client, setClient] = useState(
+    () => readRunView(memoryRunId).client ?? ALL_EVAL_FILTER_VALUES,
+  );
+  const [model, setModel] = useState(
+    () => readRunView(memoryRunId).model ?? ALL_EVAL_FILTER_VALUES,
+  );
+  useEffect(() => {
+    rememberRunView(memoryRunId, { client, model });
+  }, [memoryRunId, client, model]);
   const [matrixFilters, setMatrixFilters] = useState({
     search: "",
     status: ALL_EVAL_FILTER_VALUES,
@@ -100,6 +113,13 @@ export function CombinedRunContent({
   });
   const iterations = [...history.details.values()].flatMap(
     (detail) => detail.iterations,
+  );
+  // Ready once the loading panel gives way to the grid, so a slow member
+  // run does not close the restore window before its rows exist.
+  const scroll = useRunScrollMemory(
+    memoryRunId,
+    iterations.length > 0 &&
+      !(history.loading && runs.some((run) => !history.details.has(run._id))),
   );
   const matrix = buildRunResultsMatrix({
     run: routeRun,
@@ -252,6 +272,7 @@ export function CombinedRunContent({
   };
   return (
     <div
+      {...scroll}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       data-testid="combined-run-content"
     >
