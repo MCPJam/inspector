@@ -136,7 +136,7 @@ export class ReadinessLeaseLostError extends Error {
 }
 
 /** Whether a thrown value is one of the two stop signals. */
-function isStopSignal(error: unknown): boolean {
+export function isStopSignal(error: unknown): boolean {
   return (
     error instanceof ReadinessRunCancelledError ||
     error instanceof ReadinessLeaseLostError
@@ -157,7 +157,7 @@ function assertNotCancelled(signal: AbortSignal | undefined): void {
  */
 const MAX_OBSERVATION_EVIDENCE_BYTES = 256 * 1024;
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
