@@ -102,6 +102,15 @@ export async function readOwnedTurnContext(input: {
     }
   }
   signal.throwIfAborted();
+  // A model App's control is shared by every replica, so one read before an
+  // earlier token's later awaits proves nothing now: read those again. The
+  // last token's fence was this turn's final await.
+  await Promise.all(
+    tokens
+      .slice(0, -1)
+      .filter((token) => modelApps.holds(token))
+      .map((token) => modelApps.restore(token, input.actor, signal)),
+  );
   // Every source remains live after the final authorization await.
   for (const token of tokens) {
     if (modelApps.holds(token)) modelApps.get(token, input.actor);

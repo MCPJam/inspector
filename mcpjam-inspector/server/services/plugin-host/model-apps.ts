@@ -5,7 +5,10 @@ import {
 } from "./context.js";
 import { pluginContextMemory } from "./context-memory.js";
 import type { PluginContextLimits } from "../../../shared/plugin-model-context.js";
-import type { DurablePluginInstanceControl } from "../../../shared/plugin-invocation-receipts.js";
+import {
+  INVOCATION_RECEIPT_TTL_MS,
+  type DurablePluginInstanceControl,
+} from "../../../shared/plugin-invocation-receipts.js";
 import {
   pluginInstances,
   type PluginFormOwner,
@@ -43,6 +46,9 @@ const matches = (owner: PluginFormOwner, actor: PluginInstanceIdentity) =>
   sameOwner(owner.owner, actor) && owner.subject === actor.subject;
 /** Local closes are an optimization over the store's own closed rows. */
 const CLOSED_TOMBSTONES = 4096;
+/** A minute under the store's ceiling, so a replica whose clock runs a little
+ * ahead of the store's still issues and renews leases. */
+const MODEL_APP_TTL_MS = INVOCATION_RECEIPT_TTL_MS - 60_000;
 
 /** This process's copy of a model App. The durable control is its authority;
  * everything here is rebuilt from it on any replica. */
@@ -61,6 +67,7 @@ export interface ModelApp {
   /** Message bindings, kept here only when there is no receipt store. */
   messages: Map<string, string>;
   formOwner: ReturnType<typeof pluginInstances.retainModelOwner>;
+  eviction?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -76,7 +83,7 @@ export class ModelAppRegistry {
   private readonly entries = new Map<string, ModelApp>();
   private readonly closed = new Map<string, number>();
   constructor(
-    private readonly ttlMs = 30 * 60_000,
+    private readonly ttlMs = MODEL_APP_TTL_MS,
     private readonly memory = pluginContextMemory,
     private readonly now: () => number = () => Date.now(),
     private readonly portFor: (
@@ -178,16 +185,20 @@ export class ModelAppRegistry {
     const { owner, toolName, revision, resourceUri, ...source } =
       parsed.data.instance;
     if (!sameOwner(owner, actor)) throw denied();
-    if (
-      !Number.isSafeInteger(saved.expiresAt) ||
-      saved.expiresAt < parsed.data.expiresAt ||
-      saved.expiresAt <= this.now()
-    ) {
-      this.tombstone(token);
-      throw denied();
-    }
     const snapshotHash = pluginBindingDigest(saved.snapshotJson);
     let app = this.entries.get(token);
+    if (
+      !Number.isSafeInteger(saved.expiresAt) ||
+      saved.expiresAt < parsed.data.expiresAt
+    )
+      throw denied();
+    // A lease that ended in flight refuses this request, but proves no close:
+    // this process may already hold a later renewal of the same App.
+    if (
+      saved.expiresAt <= this.now() &&
+      (!app || app.snapshotHash !== snapshotHash)
+    )
+      throw denied();
     if (app) {
       this.get(token, actor);
       if (app.snapshotHash !== snapshotHash) throw denied();
@@ -225,9 +236,26 @@ export class ModelAppRegistry {
         throw error;
       }
       this.entries.set(token, app);
+      this.evictAtLeaseEnd(token, app);
     }
     this.keepFormOwner(app);
     return app;
+  }
+
+  /** Release this process's copy once the lease it last read ends, even if
+   * no other request arrives. It drops, never closes: another replica may
+   * have renewed the App, and a later read restores it. */
+  private evictAtLeaseEnd(token: string, app: ModelApp) {
+    clearTimeout(app.eviction);
+    app.eviction = setTimeout(
+      () => {
+        if (this.entries.get(token) !== app) return;
+        if (app.expiresAt > this.now()) this.evictAtLeaseEnd(token, app);
+        else this.drop(token);
+      },
+      Math.max(0, app.expiresAt - this.now()),
+    );
+    app.eviction.unref?.();
   }
 
   /** A store refusal for this caller's own control (the store keys it by
@@ -290,11 +318,17 @@ export class ModelAppRegistry {
     context.restore(instanceId, generation, saved.contextJson, version);
     app.context = context;
     app.contextVersion = version;
-    // A removed context holds nothing, though its envelope keeps the removal.
+    this.holdMemory(app);
+  }
+
+  /** What this App's context holds in this process. A removed context holds
+   * nothing, though its envelope keeps the removal. */
+  private holdMemory(app: ModelApp) {
+    const { instanceId, generation } = app.owner.owner;
     this.memory.hold(
       app.owner,
-      context.snapshot(instanceId, generation).state
-        ? Buffer.byteLength(saved.contextJson ?? "")
+      app.context.snapshot(instanceId, generation).state
+        ? Buffer.byteLength(app.context.export(instanceId, generation))
         : 0,
     );
   }
@@ -376,8 +410,12 @@ export class ModelAppRegistry {
       // A retry of a change already stored writes nothing and is not charged.
       if (contextJson !== before) {
         // The person's removal is never refused: it adds only removal state.
-        if (command.kind === "update")
+        // An update reserves its bytes before the write, so concurrent writes
+        // for the same actor see each other against the budget.
+        if (command.kind === "update") {
           this.memory.check(app.owner, Buffer.byteLength(contextJson));
+          this.memory.hold(app.owner, Buffer.byteLength(contextJson));
+        }
         let saved: DurablePluginInstanceControl;
         try {
           saved = await port.writeContext(
@@ -386,6 +424,8 @@ export class ModelAppRegistry {
             AbortSignal.any([signal, app.abort.signal]),
           );
         } catch (error) {
+          // Back to what this process holds; a dropped copy holds nothing.
+          if (this.entries.get(token) === app) this.holdMemory(app);
           if (isCode(error, "INSTANCE_CONTEXT_CONFLICT")) continue;
           throw this.refusal(token, actor, error);
         }
@@ -492,7 +532,15 @@ export class ModelAppRegistry {
       return { expiresAt: current.expiresAt, renewed: false };
     }
     signal.throwIfAborted();
-    const renewed = this.restoreFrom(token, actor, saved, signal);
+    let renewed: ModelApp;
+    try {
+      renewed = this.restoreFrom(token, actor, saved, signal);
+    } catch (error) {
+      if (!isCode(error, "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE")) throw error;
+      // This process dropped its copy while the renewal was in flight, and
+      // the reply left out the context it held: read it in full.
+      renewed = await this.restore(token, actor, signal, port);
+    }
     return { expiresAt: renewed.expiresAt, renewed: true };
   }
 
@@ -517,6 +565,7 @@ export class ModelAppRegistry {
     const app = this.entries.get(token);
     if (!app) return;
     this.entries.delete(token);
+    clearTimeout(app.eviction);
     app.abort.abort();
     app.invoker.close();
     app.context.close(app.owner.owner.instanceId);

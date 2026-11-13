@@ -27,6 +27,9 @@ const shared = vi.hoisted(() => ({
   calls: 0,
   revision: "draw-v1",
   storeDown: false,
+  /** Host binding checks, and whether the binding has changed. */
+  bindingChecks: 0,
+  bindingChanged: false,
   /** Context writes waiting at the store, while `holdContext` is set. */
   contextWrites: [] as (() => void)[],
   holdContext: false,
@@ -91,6 +94,9 @@ vi.mock("../../../services/plugin-host/receipt-store.js", async (original) => {
     }),
   };
 });
+vi.mock("../../../utils/tool-approval-token.js", () => ({
+  toolApprovalSubjectFromAuthHeader: () => "verified-subject",
+}));
 vi.mock("../../../utils/widget-resource-content.js", () => ({
   widgetResourceContent: () => ({
     html: "<p>drawing</p>",
@@ -110,6 +116,7 @@ vi.mock("../../../services/plugin-host/request-runtime.js", () => {
     appToolsEnabled: true,
     resourcesEnabled: true,
     contextEnabled: true,
+    messageEnabled: true,
     tool: { name, _meta: meta },
     manager: {
       readResource: async () => ({
@@ -147,7 +154,10 @@ vi.mock("../../../services/plugin-host/request-runtime.js", () => {
       },
       release: async () => undefined,
     }),
-    assertPluginInstanceBindingCurrent: async () => undefined,
+    assertPluginInstanceBindingCurrent: async () => {
+      shared.bindingChecks++;
+      if (shared.bindingChanged) throw new Error("The host binding changed.");
+    },
   };
 });
 vi.mock("../../../services/plugin-host/request-invocation.js", async () => {
@@ -222,12 +232,31 @@ const source = {
 type Replica = {
   post: (path: string, body: unknown, as?: typeof actor) => Promise<Response>;
   modelApps: typeof import("../../../services/plugin-host/model-apps.js").modelApps;
+  /** The chat's turn context for these App handles, read on this replica. */
+  turn: (references: string[]) => Promise<unknown[]>;
+  /** A current-chat message from the App, prepared on this replica. */
+  message: (
+    token: string,
+    operationId: string,
+    text: string,
+  ) => Promise<unknown>;
 };
 async function replica(): Promise<Replica> {
   vi.resetModules();
   const { pluginModelAppRoutes } = await import("../plugin-model-apps");
   const { modelApps } =
     await import("../../../services/plugin-host/model-apps.js");
+  const { readOwnedTurnContext } =
+    await import("../../../services/plugin-host/turn-context.js");
+  const { preparePluginMessageTurn } =
+    await import("../../../services/plugin-host/message.js");
+  const admission = { ...actor, revalidate: async () => undefined } as never;
+  const request = {
+    req: {
+      raw: { signal: new AbortController().signal },
+      header: () => "Bearer fixture",
+    },
+  } as never;
   let visitor = actor;
   const app = new Hono().route(
     "/model",
@@ -261,6 +290,32 @@ async function replica(): Promise<Replica> {
   );
   return {
     modelApps,
+    turn: (references) =>
+      readOwnedTurnContext({
+        c: request,
+        references,
+        actor,
+        bearer: "fixture-bearer",
+        admission,
+      }),
+    message: (token, operationId, text) =>
+      preparePluginMessageTurn({
+        c: request,
+        intent: {
+          instanceToken: token,
+          operationId,
+          sourceThreadId: "chat",
+          params: { role: "user", content: [{ type: "text", text }] },
+        },
+        messages: [
+          { id: operationId, role: "user", parts: [{ type: "text", text }] },
+        ],
+        hostId: "host",
+        serverIds: ["excalidraw"],
+        threadId: "chat",
+        admission,
+        bearer: "fixture-bearer",
+      } as never),
     post: async (path, body, as = actor) => {
       visitor = as;
       return app.request(`/model/${path}`, {
@@ -316,6 +371,8 @@ beforeEach(() => {
   shared.calls = 0;
   shared.revision = "draw-v1";
   shared.storeDown = false;
+  shared.bindingChecks = 0;
+  shared.bindingChanged = false;
   shared.contextWrites = [];
   shared.holdContext = false;
   shared.catalogHold = undefined;
@@ -417,9 +474,34 @@ describe("model Apps across replicas", () => {
     vi.setSystemTime(Date.now() + 25 * 60_000);
     const renewed = await b.post("renew", handle(token));
     expect(await renewed.json()).toMatchObject({ status: "renewed" });
+    // Even a plain heartbeat checks the App's host binding.
+    expect(shared.bindingChecks).toBe(1);
     vi.setSystemTime(Date.now() + 10 * 60_000);
     expect((await open(a, token)).status).toBe(200);
     expect((await call(c, token)).status).toBe(200);
+  });
+
+  it("does not renew an App whose host binding changed", async () => {
+    const [a, b] = await replicas(2);
+    const token = (await publish(a)).instanceToken!;
+    const before = (
+      await b.modelApps.restore(token, actor, new AbortController().signal)
+    ).expiresAt;
+    shared.bindingChanged = true;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    expect((await b.post("renew", handle(token))).status).toBe(403);
+    shared.bindingChanged = false;
+    const [fresh] = await replicas(1);
+    expect(
+      (
+        await fresh!.modelApps.restore(
+          token,
+          actor,
+          new AbortController().signal,
+        )
+      ).expiresAt,
+    ).toBe(before);
   });
 
   it("ends the App on every replica once it closes on one, and a renewal cannot revive it", async () => {
@@ -519,32 +601,46 @@ describe("model Apps across replicas", () => {
   it("binds a current-chat message operation to one payload across replicas", async () => {
     const [a, b] = await replicas(2);
     const token = (await publish(a)).instanceToken!;
-    const signal = new AbortController().signal;
-    const onA = await a.modelApps.restore(token, actor, signal);
-    await a.modelApps.prepareMessage(
-      onA,
-      actor,
-      "message-1",
-      "a".repeat(64),
-      signal,
-    );
-    const onB = await b.modelApps.restore(token, actor, signal);
-    // The same payload again is a retry; different content is refused.
-    await b.modelApps.prepareMessage(
-      onB,
-      actor,
-      "message-1",
-      "a".repeat(64),
-      signal,
-    );
+    const operationId = crypto.randomUUID();
+    await a.message(token, operationId, "Make it red");
+    // The same payload again on a replica that never held the App is a retry;
+    // different content under the same operation is refused.
+    await b.message(token, operationId, "Make it red");
     await expect(
-      b.modelApps.prepareMessage(
-        onB,
-        actor,
-        "message-1",
-        "b".repeat(64),
-        signal,
-      ),
+      b.message(token, operationId, "Make it green"),
     ).rejects.toMatchObject({ code: "INSTANCE_MESSAGE_CHANGED" });
+  });
+
+  it("gives a chat turn on C the context written on A, from an App C never held", async () => {
+    const [a, b, c] = await replicas(3);
+    const token = (await publish(a)).instanceToken!;
+    expect((await update(b, token, 1, "Blue square")).status).toBe(200);
+    expect(await c.turn([token])).toMatchObject([
+      { content: [{ type: "text", text: "Blue square" }] },
+    ]);
+    expect((await a.post("close", handle(token))).status).toBe(200);
+    await expect(c.turn([token])).rejects.toMatchObject({
+      code: "MODEL_APP_UNAVAILABLE",
+    });
+  });
+
+  it("refuses a turn whose earlier App closed elsewhere while a later one was read", async () => {
+    const [a, b] = await replicas(2);
+    const first = (await publish(a)).instanceToken!;
+    const second = (await publish(a)).instanceToken!;
+    expect((await update(a, first, 1, "First")).status).toBe(200);
+    expect((await update(a, second, 1, "Second")).status).toBe(200);
+    // B reads `first`, then waits on `second`'s catalog while A closes `first`.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reads = 0;
+    shared.catalogHold = async () => {
+      if (++reads === 2) await held;
+    };
+    const turn = b.turn([first, second]);
+    await vi.waitFor(() => expect(reads).toBe(2));
+    expect((await a.post("close", handle(first))).status).toBe(200);
+    release();
+    await expect(turn).rejects.toMatchObject({ code: "MODEL_APP_UNAVAILABLE" });
   });
 });

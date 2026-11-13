@@ -248,11 +248,10 @@ describe("saved-server model App resource route", () => {
 
 describe("model App call catalog admission", () => {
   it.each(["valid", "changed revision", "changed resource"])(
-    "uses one current catalog and forwards the durable read fence: %s",
+    "uses one current catalog under the App's durable read fence: %s",
     async (change) => {
       const { token, router } = await fixture();
       const signal = new AbortController().signal;
-      const read = vi.fn(async (action: () => Promise<unknown>) => action());
       const requested = { tool: { name: "inspect" }, revision: "requested" };
       mocks.resolveTools.mockResolvedValue(
         new Map<string, unknown>([
@@ -274,7 +273,7 @@ describe("model App call catalog admission", () => {
         ]),
       );
       mocks.invoke.mockImplementation(async (c, options) => {
-        const resolved = await options.resolve("inspect", signal, read);
+        const resolved = await options.resolve("inspect", signal);
         expect(resolved).toBe(requested);
         return c.json({ ok: true });
       });
@@ -293,9 +292,13 @@ describe("model App call catalog admission", () => {
       expect(mocks.resolveTools).toHaveBeenCalledOnce();
       const [names, used, fenced] = mocks.resolveTools.mock.calls[0]!;
       expect([names, used]).toEqual([["pickFile", "inspect"], signal]);
-      // The caller's fence still runs, around the App's own durable read.
-      await fenced(async () => "admitted");
-      expect(read).toHaveBeenCalledOnce();
+      // The catalog's admission read runs beside the App's durable control,
+      // so it passes while the App lives and is refused once it closes
+      // (closing also aborts the request's work on the App).
+      const query = vi.fn(async () => "admitted");
+      expect(await fenced(query)).toBe("admitted");
+      await close(token);
+      await expect(fenced(query)).rejects.toThrow();
       expect(mocks.resolve).not.toHaveBeenCalled();
     },
   );

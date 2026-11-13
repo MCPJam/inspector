@@ -349,13 +349,13 @@ export function pluginModelAppRoutes(ports: {
         assertLive: () => {
           modelApps.get(body.instanceToken, actor);
         },
-        resolve: async (name, signal, read) => {
+        resolve: async (name, signal) => {
           // Source and requested tool must come from the same freshly authorized
           // catalog. Resolving them separately doubles every admission fence.
           const tools = await runtime.resolveTools(
             [record.toolName, name],
             signal,
-            read ? (query) => read(() => fence(query)) : fence,
+            fence,
           );
           const source = tools.get(record.toolName)!;
           if (
@@ -390,7 +390,7 @@ export function pluginModelAppRoutes(ports: {
       const { actor, admission, bearer } = await ports.admitted(c, body);
       let operationAuthorization;
       const renewed = await modelApps.renew(body.instanceToken, actor, c.req.raw.signal, async (record) => {
-        if (!body.operation && !body.cancelAuthorization) return;
+        // A lease never outlives the App's host binding, as for retained Apps.
         await assertPluginInstanceBindingCurrent({ admission, bearer, instance: record.owner, signal: c.req.raw.signal });
         if (body.cancelAuthorization) await cancelPluginOperation(c, body.cancelAuthorization, record.owner);
         if (body.operation) {

@@ -6,7 +6,10 @@ import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
 import { pluginInstances, type PluginFormOwner } from "../instances.js";
 import { RequestOwnedToolInvoker } from "../request-invoker.js";
-import type { PluginInstanceControlPort } from "../instance-store.js";
+import {
+  createPluginInstanceControlPort,
+  type PluginInstanceControlPort,
+} from "../instance-store.js";
 
 afterEach(() => vi.useRealTimers());
 const owner = {
@@ -384,4 +387,57 @@ it("removes all of a model App's context, including what the chip doesn't show, 
   });
   expect(context.snapshot(id, 1)).not.toHaveProperty("held");
   await registry.close(token, actor, signal());
+});
+
+describe("this process's copy of a durable model App", () => {
+  it("keeps a renewed App when a reply from before the renewal arrives after its old deadline", async () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry(100_000);
+    const token = await publish(registry);
+    await registry.restore(token, actor, signal());
+    const stale = await createPluginInstanceControlPort(actor)!.read(
+      token,
+      signal(),
+    );
+    vi.advanceTimersByTime(80_000);
+    await registry.renew(token, actor, signal(), async () => undefined);
+    vi.advanceTimersByTime(30_000);
+    // The stale reply refuses nothing and closes nothing.
+    expect(
+      registry.restoreFrom(token, actor, stale, signal()).expiresAt,
+    ).toBeGreaterThan(Date.now());
+    await registry.restore(token, actor, signal());
+  });
+  it("releases an idle App's context memory once its lease ends, without closing it", async () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry(
+      100_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const first = await publish(registry, "first");
+    await update(registry, first, text(1, "x".repeat(40_000)));
+    vi.advanceTimersByTime(100_001);
+    expect(registry.holds(first)).toBe(false);
+    const second = await publish(registry, "second");
+    await update(registry, second, text(1, "y".repeat(40_000)));
+  });
+  it("counts concurrent updates of one actor's Apps against the budget together", async () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const first = await publish(registry, "first");
+    const second = await publish(registry, "second");
+    const results = await Promise.allSettled([
+      update(registry, first, text(1, "x".repeat(40_000))),
+      update(registry, second, text(1, "y".repeat(40_000))),
+    ]);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          code: "PLUGIN_CONTEXT_MEMORY_LIMIT",
+        }),
+      }),
+    ]);
+  });
 });
