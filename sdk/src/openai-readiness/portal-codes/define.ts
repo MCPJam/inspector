@@ -1,6 +1,6 @@
 /**
  * How the portal's code tables are written down: what a table holds, what a
- * code is about, and the rules it sets for a field.
+ * code is about, and the rules the generic validators run for it.
  *
  * Pure data. Safe from the browser entry.
  */
@@ -76,7 +76,7 @@ export interface PortalCodeTarget {
   field?: string;
   /** A file or folder in the package. */
   path?: string;
-  /** The rules `field` must meet, in order. */
+  /** What the generic validators check `field` against, in order. */
   rules?: readonly OpenAIPortalRule[];
 }
 
@@ -166,6 +166,11 @@ export const excludes = (pattern: RegExp): Rule => ({
   pattern,
   forbidden: true,
 });
+export const oneOf = (values: readonly string[]): Rule => ({
+  kind: "enum",
+  values,
+});
+export const maxCount = (max: number): Rule => ({ kind: "count", max });
 
 /** A code about `name` in its table's document, checked by `rules`. */
 export const field = (name: string, ...rules: Rule[]): PortalCodeTarget =>
@@ -188,3 +193,12 @@ export const PROMPT = "interface.defaultPrompt[]";
 /** A version such as `1.0.0`, with optional pre-release and build parts. */
 export const SEMVER =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** `#RRGGBB`. */
+export const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * The page: "HTTPS URLs must include a host and contain no embedded
+ * credentials".
+ */
+export const HTTPS_URL = /^https:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/i;
