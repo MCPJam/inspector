@@ -2891,6 +2891,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
+        // Probed: it followed `nextCursor` and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // Same probe: it opened the `subscriptions/listen` channel. Whether
+        // it re-fetches after `list_changed` was not measured.
+        toolListChanged: { listens: true },
         apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
       },
     }),

@@ -4214,8 +4214,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "GitHub Copilot CLI",
       provenance: "probe",
       rendersMcpApps: false,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1794355200000,
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      verifiedAt: 1794528000000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: false,
@@ -4269,6 +4269,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
+        paginationTraversal: "full",
+        toolListChanged: {
+          listens: true,
+        },
         apps: {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
