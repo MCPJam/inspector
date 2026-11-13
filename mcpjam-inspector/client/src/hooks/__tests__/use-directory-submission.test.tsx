@@ -116,6 +116,41 @@ describe("useDirectorySubmission", () => {
     expect(result.current.savedAt).not.toBeNull();
   });
 
+  it("confirms the answer shown, a portal default included", async () => {
+    api.getDirectorySubmission.mockResolvedValue({
+      ...viewAt(3, "Sample"),
+      answers: [
+        { key: "useCases.access", value: "read-only", origin: "default" },
+      ],
+    });
+    const { result } = await openSubmission();
+    act(() => result.current.confirm("useCases.access"));
+    expect(result.current.answers).toContainEqual({
+      key: "useCases.access",
+      value: "read-only",
+      origin: "confirmed",
+    });
+    await settle(800);
+    expect(api.updateDirectorySubmission).toHaveBeenCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "useCases.access": "read-only" },
+      confirm: ["useCases.access"],
+    });
+  });
+
+  it("saves a change made after a confirmation as a plain answer", async () => {
+    const { result } = await openSubmission();
+    act(() => {
+      result.current.confirm("listing.name");
+      result.current.setAnswer("listing.name", "Edited");
+    });
+    await settle(800);
+    expect(api.updateDirectorySubmission).toHaveBeenCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "listing.name": "Edited" },
+    });
+  });
+
   it("validates the answers as the person types", async () => {
     const { result } = await openSubmission();
     act(() => result.current.setAnswer("listing.oneLiner", "x".repeat(201)));
