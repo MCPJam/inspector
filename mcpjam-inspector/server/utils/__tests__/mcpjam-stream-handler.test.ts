@@ -409,10 +409,12 @@ describe("mcpjam-stream-handler", () => {
     const runTurn = async ({
       loaded = false,
       progressive = true,
+      hideShowSquad = false,
       steps,
     }: {
       loaded?: boolean;
       progressive?: boolean;
+      hideShowSquad?: boolean;
       steps: any[][];
     }) => {
       vi.mocked(serializeToolsForConvex).mockReturnValue([
@@ -437,6 +439,12 @@ describe("mcpjam-stream-handler", () => {
         mcpClientManager: {
           getAllToolsMetadata: vi.fn().mockReturnValue({}),
         } as any,
+        ...(hideShowSquad
+          ? {
+              prepareAdvertisedTools: ({ defaultToolNames }) =>
+                defaultToolNames.filter((name) => name !== "show_squad"),
+            }
+          : {}),
         ...(progressive
           ? {
               progressivePlan: {
@@ -532,6 +540,22 @@ describe("mcpjam-stream-handler", () => {
         type: "error-text",
         value: notLoaded,
       });
+    });
+
+    it("keeps the backend's sentence for a loaded tool hidden this step", async () => {
+      await runTurn({
+        loaded: true,
+        hideShowSquad: true,
+        steps: [refusedShowSquad, textStep],
+      });
+
+      const uiError = writtenChunks.find(
+        (chunk) =>
+          chunk?.type === "tool-input-error" && chunk.toolCallId === "call-1",
+      );
+      expect(uiError?.errorText).toBe(
+        "Model tried to call unavailable tool 'show_squad'. Available tools: search_mcp_tools, load_mcp_tools.",
+      );
     });
 
     it("shows the backend's sentence, not its JSON, for other refused calls", async () => {

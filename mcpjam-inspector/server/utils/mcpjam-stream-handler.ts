@@ -4462,12 +4462,16 @@ async function processOneStep(ctx: StepContext): Promise<{
     abortSignal,
     onToolCall,
     dispatchPath,
-    // A cataloged tool this step did not offer was called before it was
-    // loaded: say so, instead of the backend's "unavailable tool".
-    progressivePlan?.enabled
+    // A cataloged tool that is not loaded was called: say so, instead of the
+    // backend's "unavailable tool". A loaded tool hidden this step (by
+    // `prepareAdvertisedTools`) keeps the backend's message; loading it again
+    // would not help.
+    progressivePlan?.enabled && discoveryState
       ? (toolName, message) =>
           lookupToolIdByModelName(progressivePlan.catalog, toolName) &&
-          !activeToolDefs.some((def) => def.name === toolName)
+          !resolveActiveToolNames(progressivePlan, discoveryState).includes(
+            toolName,
+          )
             ? notLoadedToolMessage(toolName)
             : message
       : undefined,
