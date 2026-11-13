@@ -21,6 +21,7 @@ import { currentLocalPlatform, localPackTarget, LOCAL_HARNESS_POLICY_VERSION, ty
 import { readLocalInstanceIdentity, setRegisteredKeyId } from "./instance-key.js";
 import { registerLocalInstance } from "../harness-model-broker.js";
 import { noteTurnRuntimeStatus } from "./turn-runtime-status.js";
+import { invalidateLocalTurnParks } from "./approval-park.js";
 
 import { evaluateLocalHarnessRollout } from "../../analytics.js";
 import { localHarnessRolloutFlag } from "../../../../shared/harness-descriptors.js";
@@ -159,6 +160,12 @@ export async function ensureLocalHarnessTarget(args: {
       status = started.kind === "ready" ? await readRuntimeInstallStatus({ harnessId }) : started.status;
     } else status = await installRuntimePack({ harnessId, trigger: args.trigger ?? "readiness" });
   }
+  // Runtimes kept between turns on a pack this build no longer selects
+  // (revoked, replaced, or none usable) end now, not at their next turn.
+  const selected = status;
+  void invalidateLocalTurnParks("runtime-update", {
+    which: (kept) => kept.harnessId === harnessId && (selected.state !== "ready" || kept.runtimeDigest !== selected.digest),
+  });
   if (status.state === "revoked") throw new Error(status.message);
   if (status.state !== "ready") throw new Error(`${name} installation is ${status.state}. Retry setup when the runtime is available.`);
   const platform = currentLocalPlatform(process.platform);

@@ -632,7 +632,7 @@ describe("the acknowledgement contract", () => {
       const end = vi.fn(async (_reason: string) => {});
       parkLocalTurn({
         sessionId, generation: "gen-1", userId: "u1", projectId: "p1", harnessId,
-        stateVersion: 1, fingerprint: "config", resources: {}, end,
+        runtimeDigest: "sha256:kept", stateVersion: 1, fingerprint: "config", resources: {}, end,
         isAlive: () => true, holdModelTraffic: () => {},
       });
       return end;

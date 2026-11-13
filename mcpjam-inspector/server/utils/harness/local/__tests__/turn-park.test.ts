@@ -66,6 +66,7 @@ function keep(overrides: Partial<Parameters<typeof parkLocalTurn>[0]> = {}) {
     userId: "u1",
     projectId: "p1",
     harnessId: "codex",
+    runtimeDigest: "sha256:pack-1",
     stateVersion: 2,
     fingerprint: "config-a",
     resources: { live: true },
@@ -237,11 +238,19 @@ describe("ending kept runtimes together", () => {
       sessionId: "approval", generation: "g", userId: "u1", projectId: "p1",
       pendingApprovalIds: ["a1"], resources: {}, end: approvalEnd, isAlive: () => true, holdModelTraffic: vi.fn(),
     });
-    await invalidateLocalTurnParks("runtime-update", { harnessId: "codex" });
+    await invalidateLocalTurnParks("runtime-update", { which: (kept) => kept.harnessId === "codex" });
     expect(idle.end).toHaveBeenCalledWith("runtime-update");
     expect(busy.end).not.toHaveBeenCalled();
     expect(other.end).not.toHaveBeenCalled();
     expect(approvalEnd).not.toHaveBeenCalled();
+  });
+
+  it("ends only the idle ones on the pack it names", async () => {
+    const onOld = keep({ sessionId: "old", runtimeDigest: "sha256:old" });
+    const onNew = keep({ sessionId: "new", runtimeDigest: "sha256:new" });
+    await invalidateLocalTurnParks("runtime-update", { which: (kept) => kept.runtimeDigest === "sha256:old" });
+    expect(onOld.end).toHaveBeenCalledWith("runtime-update");
+    expect(onNew.end).not.toHaveBeenCalled();
   });
 
   it("stops every kept runtime at Inspector shutdown, a turn in progress included", async () => {

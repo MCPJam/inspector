@@ -840,6 +840,7 @@ async function prepareWithReservedRuntime(outer: {
           userId: args.target.actingUserId,
           projectId: args.projectId,
           harnessId,
+          runtimeDigest: runtimeStatus.digest,
           stateVersion,
           fingerprint: kept.fingerprint,
           resources: live,

@@ -1128,7 +1128,7 @@ export async function startRuntimeInstall(
   active.set(keyString, record);
   // A runtime kept idle between turns must not hold a pack this install may
   // replace; a turn in progress is not kept again while it runs.
-  void invalidateLocalTurnParks("runtime-update", { harnessId: options.harnessId });
+  void invalidateLocalTurnParks("runtime-update", { which: (kept) => kept.harnessId === options.harnessId });
   emitLocalRuntimeEvent("local_runtime_install_started", {
     harness_id: options.harnessId,
     pack_version: expected.packVersion,

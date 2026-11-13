@@ -122,6 +122,8 @@ export interface ParkedLocalSession<R = ParkedResources> {
 
 interface KeptTurn {
   harnessId: string;
+  /** The pack it runs, so a revoked or replaced pack can end it. */
+  runtimeDigest: string;
   /** The lane state version the turn's commit produced. */
   stateVersion: number;
   /** The configuration the runtime was started with (`kept-runtime.ts`). */
@@ -452,6 +454,8 @@ export interface ParkLocalTurnArgs<R> {
   userId: string;
   projectId: string;
   harnessId: string;
+  /** The pack it runs. */
+  runtimeDigest: string;
   /** The lane state version the turn's commit produces. */
   stateVersion: number;
   /** The configuration the runtime runs with (`kept-runtime.ts`). */
@@ -513,6 +517,7 @@ export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): boolean {
     timer: null,
     kept: {
       harnessId: args.harnessId,
+      runtimeDigest: args.runtimeDigest,
       stateVersion: args.stateVersion,
       fingerprint: args.fingerprint,
       createdAt,
@@ -610,20 +615,24 @@ export function hasLocalTurnPark(sessionId: string): boolean {
 }
 
 /**
- * End kept runtimes, for one harness or all. A runtime a turn is using is
- * left to that turn unless `includeContinuing`: the turn does not keep it
- * again while what ended the others still holds (`local-turn.ts`).
+ * End kept runtimes: those `which` names (by harness and pack), or all. A
+ * runtime a turn is using is left to that turn unless `includeContinuing`:
+ * the turn does not keep it again while what ended the others still holds
+ * (`local-turn.ts`).
  */
 export async function invalidateLocalTurnParks(
   reason: ParkInvalidationReason,
-  options: { harnessId?: string; includeContinuing?: boolean } = {},
+  options: {
+    which?: (kept: { harnessId: string; runtimeDigest: string }) => boolean;
+    includeContinuing?: boolean;
+  } = {},
 ): Promise<void> {
   const ending = [...parked.values()].filter(
     (entry) =>
       entry.kept !== undefined &&
       (entry.state === "idle" ||
         (options.includeContinuing === true && entry.state === "continuing")) &&
-      (options.harnessId === undefined || entry.kept.harnessId === options.harnessId),
+      (options.which === undefined || options.which(entry.kept)),
   );
   await Promise.all(
     ending.map((entry) => invalidateParkedLocalSession(entry.sessionId, reason)),
