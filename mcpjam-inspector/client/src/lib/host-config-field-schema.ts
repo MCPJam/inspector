@@ -29,6 +29,10 @@ import type {
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import {
+  isCatalogRow,
+  untestedCatalogAppValue,
+} from "@/lib/catalog-row-values";
+import {
   ALL_DISPLAY_MODES,
   MCP_APPS_DIMENSIONS,
   OPENAI_APPS_METHOD_LABELS,
@@ -499,38 +503,6 @@ const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
  */
 function rendersNoMcpApps(cfg: HostConfigDtoV2): boolean {
   return (cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps === false;
-}
-
-/**
- * Whether a config is a catalog row: only catalog rows carry the catalog's
- * `rendersMcpApps` fact. A host a user built has none.
- */
-function isCatalogRow(cfg: HostConfigDtoV2): boolean {
-  return (cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps !== undefined;
-}
-
-/**
- * A catalog row that renders MCP Apps but left this value out of its
- * `mcpAppsOverrides`, because its probe did not measure it. The row reads
- * `undefined` and renders as not yet tested. The effective value would be
- * the client style's default, which is a guess about this host, not a
- * measurement. A host a user built keeps showing its effective value.
- */
-function untestedCatalogAppValue(
-  cfg: HostConfigDtoV2,
-  path: readonly string[]
-): boolean {
-  if ((cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps !== true) {
-    return false;
-  }
-  let value: unknown = cfg.mcpProfile?.apps?.mcpAppsOverrides;
-  for (const key of path) {
-    value =
-      value !== null && typeof value === "object"
-        ? (value as Record<string, unknown>)[key]
-        : undefined;
-  }
-  return value === undefined;
 }
 
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [

@@ -21,8 +21,8 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import geminiLogo from "/google_logo.png";
-import grokLogoLight from "/grok_light.svg";
-import grokLogoDark from "/grok_dark.png";
+import grokbotLogo from "/grokbot_logo.png";
+import museLogo from "/muse_logo.png";
 
 export const DEFAULT_CATALOG_HOST_ID = "mcpjam";
 
@@ -59,7 +59,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   perplexity: perplexityLogo,
   cline: clineLogoLight,
   notion: notionLogo,
-  grokbot: grokLogoLight,
+  grokbot: grokbotLogo,
+  muse: museLogo,
 };
 
 const LOGO_BY_HOST_ID_AND_THEME: Record<
@@ -77,10 +78,6 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
   cline: {
     light: clineLogoLight,
     dark: clineLogoDark,
-  },
-  grokbot: {
-    light: grokLogoLight,
-    dark: grokLogoDark,
   },
 };
 
