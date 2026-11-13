@@ -276,7 +276,7 @@ export function ReadinessPage({
   } else if (session.error) {
     body = (
       <Notice>
-        This rehearsal did not open. {session.error} Try opening it again.{" "}
+        {`This rehearsal did not open. ${session.error} Try opening it again.`}{" "}
         <Button type="button" variant="link" onClick={() => setOpen(null)}>
           Back to Submissions
         </Button>
