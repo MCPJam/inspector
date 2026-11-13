@@ -62,12 +62,10 @@ export type HarnessBrokerStartResult =
       ok: false;
       status: number;
       error: string;
-      /**
-       * The backend's machine code, when it sent one (`spend_budget_reached`,
-       * `free_tier_model_restricted`, …), so a caller can type the failure
-       * instead of reading the prose.
-       */
+      /** The backend's machine code (`spend_budget_reached`, …), to type it by. */
       code?: string;
+      /** While a box preparation holds the box: when its claim lapses. */
+      reservationExpiresAt?: number;
     };
 
 /**
@@ -290,6 +288,7 @@ export async function startHarnessModelBroker(args: {
       ...(!response.ok && typeof payload?.code === "string"
         ? { code: payload.code }
         : {}),
+      ...numberField(payload, "reservationExpiresAt"),
     };
   }
 
@@ -590,24 +589,24 @@ export type HarnessBoxReservationResult =
   | {
       ok: true;
       expiresAt?: number;
-      /**
-       * For an org selection: the hashed credential revision the turn is
-       * being prepared for. Handed back to the start, which refuses if the
-       * organization's key was replaced in between.
-       */
+      /** What is left of the claim, relative: count it from the request's send. */
+      ttlMs?: number;
+      /** An org selection's hashed credential revision; the start refuses a newer key. */
       credentialRevision?: string;
     }
-  | { ok: false; status: number; error: string; code?: string };
+  | { ok: false; status: number; error: string; code?: string; reservationExpiresAt?: number };
+
+/** `{ [key]: n }` when the answer carries the number `n` there; else nothing. */
+function numberField<K extends string>(payload: unknown, key: K): Partial<Record<K, number>> {
+  const value: unknown = typeof payload === "object" && payload ? Reflect.get(payload, key) : undefined;
+  return typeof value === "number" ? ({ [key]: value } as Record<K, number>) : {};
+}
 
 /**
- * Claim a box for the span of a turn's PREPARATION — waking it and installing
- * the harness runtime, all of which happens before the lease exists and
- * therefore outside the protection of the lease's own per-box fence. The lease
- * consumes this claim when it is minted (matched on `runId`).
- *
- * A missing endpoint is a hard failure. Continuing without a claim would
- * silently restore the preparation race this endpoint exists to close, so an
- * inspector must be rolled out only after the reservation-capable backend.
+ * Claim a box for a turn's PREPARATION (waking it, installing the runtime),
+ * which runs before the lease and its per-box fence exist; the lease consumes
+ * the claim (by `runId`). A missing endpoint fails hard: going on without a
+ * claim would reopen the race it closes, so roll out the backend first.
  */
 export async function reserveHarnessBox(args: {
   box: HarnessBrokerBox;
@@ -677,13 +676,13 @@ export async function reserveHarnessBox(args: {
           ? payload.error
           : `Couldn't reserve the computer (${response.status})`,
       ...(typeof payload?.code === "string" ? { code: payload.code } : {}),
+      ...numberField(payload, "reservationExpiresAt"),
     };
   }
   return {
     ok: true,
-    ...(typeof payload.expiresAt === "number"
-      ? { expiresAt: payload.expiresAt }
-      : {}),
+    ...numberField(payload, "expiresAt"),
+    ...numberField(payload, "ttlMs"),
     ...(args.modelSelection?.source === "org" &&
     typeof payload.credentialRevision === "string"
       ? { credentialRevision: payload.credentialRevision }
@@ -699,7 +698,7 @@ export async function renewHarnessBoxReservation(args: {
   runId: string;
   bearer: string;
   signal?: AbortSignal;
-}): Promise<{ ok: boolean; expiresAt?: number }> {
+}): Promise<{ ok: boolean; expiresAt?: number; ttlMs?: number }> {
   let url: string;
   try {
     url = new URL(
@@ -734,9 +733,8 @@ export async function renewHarnessBoxReservation(args: {
     }
     return {
       ok: true,
-      ...(typeof payload.expiresAt === "number"
-        ? { expiresAt: payload.expiresAt }
-        : {}),
+      ...numberField(payload, "expiresAt"),
+      ...numberField(payload, "ttlMs"),
     };
   } catch (err) {
     logger.error(

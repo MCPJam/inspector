@@ -3,31 +3,31 @@
  *
  * The first Send of a hosted Claude Code or Codex chat creates the
  * conversation's box and installs the agent before the model sees a byte.
- * This does those two things earlier, and nothing else: it boots the box
- * (`purpose: "prepare"`), claims it under the per-box reservation that fences
- * every turn's preparation, attaches through the pre-broker attach, and runs
- * the pnpm guard and the framework's bootstrap (a marker check, or the
- * install) for the agent's recipes.
+ * This does those two things earlier, and nothing else: it boots the box on
+ * the preparation's own route, claims it under the per-box reservation that
+ * fences every turn's preparation, attaches, and runs the pnpm guard and the
+ * framework's bootstrap (a marker check, or the install) for the agent's
+ * recipes.
  *
  * It never claims the conversation's lane, mints a model lease, spawns a
  * bridge or a CLI, writes MCP or skill files, delivers a secret or writes a
  * warm marker. The Send does all of that, with fresh authority, as before.
  *
- * The claim is taken before the first sandbox command and released after the
- * last, renewed meanwhile, and a renewal it cannot confirm stops the
- * preparation. A command starts only while the claim is freshly confirmed
- * (`preparation-fence.ts`), so the claim outlives every command it covers. A
- * Send that arrives meanwhile is answered `box_preparing` and waits
- * (`box-preparing-wait.ts`). A command whose call never returned (an abort, a
- * dropped connection) may still be running in the box, so the claim is then
- * left to expire instead of released: no Send ever runs beside that command,
- * which E2B ends within `PREPARATION_DEADLINE_MS`, inside the claim's TTL.
+ * The claim is taken before anything starts in the box and renewed meanwhile;
+ * a renewal it cannot confirm stops the preparation. Each write and command
+ * starts only if it will end before the claim can lapse, every command under
+ * coreutils `timeout -s KILL` in the box (`preparation-fence.ts`); a box
+ * without that `timeout` is skipped. A Send that arrives meanwhile is answered
+ * `box_preparing` and waits (`box-preparing-wait.ts`). The claim is handed
+ * back as soon as nothing it covers can still be running: at once, or, after
+ * a command whose call never returned, once that command's bound has passed.
  */
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { preparePlaygroundTerminalSandbox } from "../computers/control-plane-client.js";
 import { logger } from "../logger.js";
 import { harnessBootstrapObservation } from "./harness-bake-observer.js";
+import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import {
   releaseHarnessBoxReservation,
   renewHarnessBoxReservation,
@@ -35,6 +35,11 @@ import {
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { PreparationFence, StaleClaimError } from "./preparation-fence.js";
+import {
+  CLAIM_CALL_TIMEOUT_MS,
+  CLAIM_RENEWAL_MS,
+  PREPARATION_DEADLINE_MS,
+} from "./preparation-timing.js";
 import { buildBrokerDummyAuth, getHarnessAdapter } from "./registry.js";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
@@ -68,23 +73,18 @@ export type BoxPreparationOutcome =
         | "skipped"
         | "not_eligible"
         | "provision_refused"
-        | "box_busy";
+        | "box_busy"
+        | "no_timeout";
     }
   | { outcome: "failed" };
 
-/**
- * The whole preparation's bound, and each of its sandbox commands' (E2B ends
- * a command at its timeout). Well past a healthy install. The backend derives
- * a preparation claim's TTL (`HARNESS_BOX_PREPARATION_TTL_MS`) from this and
- * the two below: change them together.
- */
-export const PREPARATION_DEADLINE_MS = 3 * 60_000;
-/** The turn path's renewal cadence for a claim it holds without a lease. */
-const CLAIM_RENEWAL_MS = 60_000;
-/** Each renewal or release call's own bound, as the turn path's. */
-const CLAIM_CALL_TIMEOUT_MS = 15_000;
-/** A command starts only this soon after the claim was last confirmed. */
-const CLAIM_FRESH_MS = CLAIM_RENEWAL_MS + CLAIM_CALL_TIMEOUT_MS;
+/** Each command's bound inside the box, well past a healthy install. */
+export const COMMAND_BOUND_MS = 150_000;
+/** The request's way to the box, on top of a command's bound. */
+const FENCE_MARGIN_MS = 30_000;
+/** Only coreutils `timeout` kills a command's whole process group. */
+const TIMEOUT_PROBE = "timeout --version";
+const GNU_TIMEOUT = /^timeout \(GNU coreutils\)/m;
 /** A dummy proxy for runtimes built only for their recipes; none is started. */
 const NO_PROXY_URL = "http://prepare.invalid";
 
@@ -139,7 +139,12 @@ export async function prepareConversationBox(args: {
     harness: args.harnessId,
     signal: AbortSignal.timeout(PREPARATION_DEADLINE_MS),
   });
-  if (!provisioned.ok) return skipped("provision_refused");
+  // A backend without the preparation's route answers 404: switched off.
+  if (!provisioned.ok) {
+    return skipped(
+      provisioned.status === 404 ? "disabled" : "provision_refused",
+    );
+  }
   if (provisioned.value.outcome !== "prepared") {
     const reason = provisioned.value.reason;
     return skipped(
@@ -154,23 +159,46 @@ export async function prepareConversationBox(args: {
     modelId: args.modelId,
     runId: crypto.randomUUID(),
   };
-  const claimBearer = await args.authorization();
-  const claimSentAt = Date.now();
-  const claimed = await reserveHarnessBox({
-    ...claim,
-    purpose: "prepare",
-    bearer: claimBearer,
-  });
-  if (!claimed.ok) return skipped("box_busy");
+  const release = async () => {
+    const released = await args.cleanupAuthorization().then(
+      (bearer) =>
+        releaseHarnessBoxReservation({
+          ...claim,
+          bearer,
+          signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
+        }),
+      () => ({ ok: false }),
+    );
+    // The claim's TTL frees the box if this release is lost.
+    if (!released.ok) {
+      logger.warn("[harness-prepare] box claim release deferred to expiry", {
+        harness: args.harnessId,
+      });
+    }
+  };
 
   // Aborted at the deadline or when the claim is lost.
   const stop = new AbortController();
   const { signal } = stop;
   const fence = new PreparationFence({
-    sentAt: claimSentAt,
-    freshMs: CLAIM_FRESH_MS,
+    commandBoundMs: COMMAND_BOUND_MS,
+    marginMs: FENCE_MARGIN_MS,
     signal,
   });
+  const claimBearer = await args.authorization();
+  const claimSentAt = performance.now();
+  const claimed = await reserveHarnessBox({
+    ...claim,
+    purpose: "prepare",
+    bearer: claimBearer,
+    signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
+  });
+  if (!claimed.ok) {
+    // A call the backend did not answer may still have made the claim.
+    if (claimed.status >= 500) await release();
+    return skipped("box_busy");
+  }
+  fence.confirm(claimSentAt, claimed.ttlMs);
   const deadline = setTimeout(
     () => stop.abort(new Error("The preparation ran out of time.")),
     PREPARATION_DEADLINE_MS,
@@ -179,13 +207,13 @@ export async function prepareConversationBox(args: {
     void args
       .authorization()
       .then(async (bearer) => {
-        const sentAt = Date.now();
+        const sentAt = performance.now();
         const renewed = await renewHarnessBoxReservation({
           ...claim,
           bearer,
           signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
         });
-        if (renewed.ok) fence.confirm(sentAt);
+        if (renewed.ok) fence.confirm(sentAt, renewed.ttlMs);
         return renewed.ok;
       })
       .then(
@@ -207,12 +235,20 @@ export async function prepareConversationBox(args: {
   try {
     const provider = createHarnessSandboxProvider({
       sandboxId,
-      commandTimeoutMs: PREPARATION_DEADLINE_MS,
+      commandTimeoutMs: COMMAND_BOUND_MS + FENCE_MARGIN_MS,
+      skipPnpmGuard: true,
     });
-    // Attaching runs the pnpm guard, a command like the bootstrap's.
-    const session = await fence.command(() =>
-      provider.createSession({ abortSignal: signal }),
-    );
+    // Attaching starts nothing in the box; the guard runs below, fenced.
+    const session = (
+      await provider.createSession({ abortSignal: signal })
+    ).restricted();
+    const probe = await fence.probe(session, TIMEOUT_PROBE);
+    if (!GNU_TIMEOUT.test(probe.stdout)) return skipped("no_timeout");
+    const fenced = fence.session(session);
+    const guard = await fenced.run({ command: harnessPnpmGuardCommand() });
+    if (guard.exitCode !== 0) {
+      throw new Error(`The pnpm guard failed (exit ${guard.exitCode}).`);
+    }
     for (const runtime of hostedBootstrapRuntimes(
       args.harnessId,
       args.modelId,
@@ -220,10 +256,7 @@ export async function prepareConversationBox(args: {
       const template = await createHarnessSandboxTemplate({
         harnesses: [runtime],
       });
-      await template?.prepare({
-        session: fence.session(session.restricted()),
-        abortSignal: signal,
-      });
+      await template?.prepare({ session: fenced, abortSignal: signal });
     }
     const observed = await harnessBootstrapObservation(provider);
     logger.info("[harness-prepare] box prepared", {
@@ -247,31 +280,12 @@ export async function prepareConversationBox(args: {
   } finally {
     clearTimeout(deadline);
     clearInterval(renewal);
-    if (fence.idle) {
-      await args
-        .cleanupAuthorization()
-        .then((bearer) =>
-          releaseHarnessBoxReservation({
-            ...claim,
-            bearer,
-            signal: AbortSignal.timeout(CLAIM_CALL_TIMEOUT_MS),
-          }),
-        )
-        .then(
-          (released) => released.ok,
-          () => false,
-        )
-        .then((released) => {
-          // The claim's TTL frees the box if this release is lost.
-          if (!released) {
-            logger.warn(
-              "[harness-prepare] box claim release deferred to expiry",
-              {
-                harness: args.harnessId,
-              },
-            );
-          }
-        });
+    // Handed back once nothing the claim covers can still be running.
+    const releasableAt = fence.releasableAt();
+    if (releasableAt !== undefined) {
+      const wait = releasableAt - performance.now();
+      if (wait <= 0) await release();
+      else setTimeout(() => void release(), wait).unref?.();
     }
   }
 }

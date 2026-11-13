@@ -823,9 +823,10 @@ export type PreparedPlaygroundTerminal =
   | { outcome: "skipped"; reason: string };
 
 /**
- * Boot a new Playground conversation's box before its first message
- * (`purpose: "prepare"`). One attempt, never retried: a preparation that
- * cannot boot a box now is skipped, and the Send boots one as before.
+ * Boot a new Playground conversation's box before its first message, on the
+ * preparation's own route (a backend without it answers 404). One attempt,
+ * never retried: a preparation that cannot boot a box now is skipped, and the
+ * Send boots one as before.
  */
 export async function preparePlaygroundTerminalSandbox(args: {
   bearer: string;
@@ -836,7 +837,7 @@ export async function preparePlaygroundTerminalSandbox(args: {
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<PreparedPlaygroundTerminal>> {
   return postJson<PreparedPlaygroundTerminal>(
-    "/playground/sandbox/terminal/provision",
+    "/playground/sandbox/terminal/prepare",
     bearerHeader(args.bearer),
     {
       projectId: args.projectId,
@@ -845,7 +846,6 @@ export async function preparePlaygroundTerminalSandbox(args: {
         ? { projectEnvironmentId: args.projectEnvironmentId }
         : {}),
       harness: args.harness,
-      purpose: "prepare",
     },
     args.signal,
   );

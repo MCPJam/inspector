@@ -2,7 +2,9 @@ import type { Experimental_SandboxSession } from "@ai-sdk/provider-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PreparationFence, StaleClaimError } from "../preparation-fence";
 
-const FRESH_MS = 75_000;
+const BOUND_MS = 150_000;
+const MARGIN_MS = 30_000;
+const TTL_MS = 300_000;
 const RESULT = { exitCode: 0, stdout: "", stderr: "" };
 
 function innerSession() {
@@ -19,12 +21,15 @@ function innerSession() {
   } satisfies Experimental_SandboxSession;
 }
 
+/** A fence whose claim the backend answered with `TTL_MS` left, just now. */
 function fence(signal = new AbortController().signal) {
-  return new PreparationFence({
-    sentAt: Date.now(),
-    freshMs: FRESH_MS,
+  const guard = new PreparationFence({
+    commandBoundMs: BOUND_MS,
+    marginMs: MARGIN_MS,
     signal,
   });
+  guard.confirm(performance.now(), TTL_MS);
+  return guard;
 }
 
 beforeEach(() => {
@@ -35,39 +40,66 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("the fence around a preparation's commands", () => {
-  it("starts commands and writes while the claim is fresh, and none after", async () => {
+describe("the fence around a preparation's work in the box", () => {
+  it("runs every command under timeout -s KILL at its bound", async () => {
+    const inner = innerSession();
+    await fence()
+      .session(inner)
+      .run({ command: "echo 'it''s' && pnpm install", workingDirectory: "/w" });
+    expect(inner.run).toHaveBeenCalledWith({
+      command: `timeout -s KILL 150 bash -c 'echo '\\''it'\\'''\\''s'\\'' && pnpm install'`,
+      workingDirectory: "/w",
+    });
+  });
+
+  it("starts nothing that could outlast the claim it can prove", async () => {
     const inner = innerSession();
     const session = fence().session(inner);
+    // A command started now ends by now + bound + margin: inside the TTL
+    // until 120 s in, on the monotonic clock.
+    vi.advanceTimersByTime(TTL_MS - BOUND_MS - MARGIN_MS - 1);
     await expect(session.run({ command: "true" })).resolves.toBe(RESULT);
-    vi.setSystemTime(Date.now() + FRESH_MS + 1);
+    vi.advanceTimersByTime(1);
     await expect(session.run({ command: "true" })).rejects.toBeInstanceOf(
       StaleClaimError,
     );
     await expect(
       session.writeTextFile({ path: "/x", content: "" }),
     ).rejects.toBeInstanceOf(StaleClaimError);
-    await expect(session.spawn({ command: "x" })).rejects.toBeInstanceOf(
-      StaleClaimError,
-    );
     // Reads start nothing, so they pass.
     await expect(session.readTextFile({ path: "/x" })).resolves.toBe("marker");
     expect(inner.run).toHaveBeenCalledTimes(1);
     expect(inner.writeTextFile).not.toHaveBeenCalled();
-    expect(inner.spawn).not.toHaveBeenCalled();
   });
 
-  it("a confirmed renewal keeps it fresh from when that renewal was sent", async () => {
+  it("proves nothing without an answer's TTL", async () => {
+    const guard = new PreparationFence({
+      commandBoundMs: BOUND_MS,
+      marginMs: MARGIN_MS,
+      signal: new AbortController().signal,
+    });
+    guard.confirm(performance.now(), undefined);
+    await expect(
+      guard.session(innerSession()).run({ command: "true" }),
+    ).rejects.toBeInstanceOf(StaleClaimError);
+  });
+
+  it("counts a renewal's TTL from when it was sent, never moving back", async () => {
     const guard = fence();
     const session = guard.session(innerSession());
-    const renewalSentAt = Date.now() + 60_000;
-    vi.setSystemTime(renewalSentAt + 1_000);
-    guard.confirm(renewalSentAt);
-    vi.setSystemTime(renewalSentAt + FRESH_MS);
+    vi.advanceTimersByTime(60_000);
+    const renewalSentAt = performance.now();
+    // Answered ten seconds later; an older answer arriving late changes nothing.
+    vi.advanceTimersByTime(10_000);
+    guard.confirm(renewalSentAt, TTL_MS);
+    guard.confirm(renewalSentAt - 60_000, TTL_MS);
+    const lastStart = renewalSentAt + TTL_MS - BOUND_MS - MARGIN_MS;
+    vi.advanceTimersByTime(lastStart - 1 - performance.now());
     await expect(session.run({ command: "true" })).resolves.toBe(RESULT);
-    // An older confirmation arriving late never moves it back.
-    guard.confirm(renewalSentAt - 60_000);
-    await expect(session.run({ command: "true" })).resolves.toBe(RESULT);
+    vi.advanceTimersByTime(1);
+    await expect(session.run({ command: "true" })).rejects.toBeInstanceOf(
+      StaleClaimError,
+    );
   });
 
   it("starts nothing once aborted", async () => {
@@ -77,24 +109,44 @@ describe("the fence around a preparation's commands", () => {
     await expect(session.run({ command: "true" })).rejects.toThrow("stopped");
   });
 
-  it("is idle only when every command's call returned", async () => {
-    const guard = fence();
+  it("refuses to spawn: a spawned process runs with no timeout", async () => {
     const inner = innerSession();
-    const session = guard.session(inner);
-    await session.run({ command: "true" });
-    expect(guard.idle).toBe(true);
-
-    // A call that threw may have left its command running.
-    inner.run.mockRejectedValueOnce(new Error("connection reset"));
-    await expect(session.run({ command: "true" })).rejects.toThrow();
-    expect(guard.idle).toBe(false);
+    await expect(
+      fence().session(inner).spawn({ command: "x" }),
+    ).rejects.toThrow();
+    expect(inner.spawn).not.toHaveBeenCalled();
   });
 
-  it("never counts a spawned process as ended", async () => {
+  it("hands the claim back at once when every call returned", async () => {
+    const guard = fence();
+    const session = guard.session(innerSession());
+    await session.run({ command: "true" });
+    await session.writeTextFile({ path: "/x", content: "" });
+    expect(guard.releasableAt()).toBeLessThanOrEqual(performance.now());
+  });
+
+  it("after a command whose call threw, only once its bound has passed", async () => {
     const guard = fence();
     const inner = innerSession();
-    inner.spawn.mockResolvedValue({});
-    await guard.session(inner).spawn({ command: "x" });
-    expect(guard.idle).toBe(false);
+    const startedAt = performance.now();
+    inner.run.mockRejectedValueOnce(new Error("connection reset"));
+    await expect(guard.session(inner).run({ command: "x" })).rejects.toThrow();
+    expect(guard.releasableAt()).toBe(startedAt + BOUND_MS + MARGIN_MS);
+  });
+
+  it("never, while a write that threw may still land", async () => {
+    const guard = fence();
+    const inner = innerSession();
+    inner.writeTextFile.mockRejectedValueOnce(new Error("connection reset"));
+    await expect(
+      guard.session(inner).writeTextFile({ path: "/x", content: "" }),
+    ).rejects.toThrow();
+    expect(guard.releasableAt()).toBeUndefined();
+  });
+
+  it("probes without the bound, still fenced", async () => {
+    const inner = innerSession();
+    await fence().probe(inner, "timeout --version");
+    expect(inner.run).toHaveBeenCalledWith({ command: "timeout --version" });
   });
 });

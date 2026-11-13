@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  preparePlaygroundTerminalSandbox,
   provisionPlaygroundTerminalSandbox,
   touchSandbox,
 } from "../control-plane-client.js";
@@ -55,6 +56,27 @@ describe("provisionPlaygroundTerminalSandbox", () => {
       projectId: "p1",
       chatSessionId: "c1",
       projectEnvironmentId: "env_1",
+    });
+  });
+
+  it("prepares on its own route, sending no purpose to the turn's", async () => {
+    respond = () => json(404, { error: "Not found" });
+    const result = await preparePlaygroundTerminalSandbox({
+      bearer: "token",
+      projectId: "p1",
+      chatSessionId: "c1",
+      harness: "claude-code",
+    });
+    // A backend without the route answers 404, which reads as switched off.
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(
+      "https://example.convex.site/playground/sandbox/terminal/prepare",
+    );
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      projectId: "p1",
+      chatSessionId: "c1",
+      harness: "claude-code",
     });
   });
 
