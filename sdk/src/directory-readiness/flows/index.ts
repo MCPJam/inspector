@@ -25,6 +25,7 @@ export {
   directoryFieldWordingRevision,
   directoryFlowDefaults,
   directoryFlowField,
+  unconfirmedDeclarations,
   withDirectoryFlowDefaults,
 } from "./fields.js";
 export {
@@ -53,6 +54,7 @@ export type {
   DirectoryPortalErrorCode,
   DirectoryReviewSection,
   DirectoryStepLayout,
+  DirectoryUnconfirmedDeclaration,
   PlacedFinding,
   PlacedStep,
 } from "./types.js";
