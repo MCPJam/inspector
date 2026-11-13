@@ -256,6 +256,13 @@ const KNOWN_UNDOCUMENTED = new Set([
   "patch /projects/{projectId}/directory-submissions/{submissionId}",
   "delete /projects/{projectId}/directory-submissions/{submissionId}",
   "post /projects/{projectId}/directory-submissions/{submissionId}/runs",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/handoff",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings/{checkId}",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/export",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/snapshots",
 ]);
 
 /**

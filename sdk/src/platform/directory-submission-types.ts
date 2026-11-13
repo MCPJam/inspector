@@ -107,7 +107,7 @@ export interface PlatformDirectorySubmissionConflict {
 export function directorySubmissionsPath(
   projectId: string,
   submissionId?: string,
-  sub?: "runs" | "results"
+  sub?: "runs" | "results" | "handoff" | "findings" | "export" | "events" | "snapshots"
 ): string {
   const base = `/projects/${encodeURIComponent(projectId)}/directory-submissions`;
   if (submissionId === undefined) return base;
