@@ -1205,8 +1205,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Client capabilities supported",
     label: "MCP Apps",
     path: `clientCapabilities.extensions.${MCP_UI_EXTENSION_ID}`,
-    description:
-      "Shows MCP Apps widgets, through the MCP Apps UI extension (io.modelcontextprotocol/ui).",
+    description: "Shows MCP Apps widgets.",
     kind: { kind: "capability" },
     read: (cfg) =>
       (
