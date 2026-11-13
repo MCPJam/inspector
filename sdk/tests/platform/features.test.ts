@@ -233,6 +233,7 @@ describe("disabledOperations", () => {
     ).toEqual(
       [
         "create_directory_submission",
+        "save_directory_submission_test_plan",
         "start_directory_submission_run",
         "update_directory_submission",
         // A reviewer sign-in starts a run too.
@@ -247,6 +248,9 @@ describe("disabledOperations", () => {
       "list_directory_submissions",
       "get_directory_submission",
       "get_directory_submission_results",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
       "delete_directory_submission",
       "list_reviewer_attempts",
       "get_reviewer_attempt",

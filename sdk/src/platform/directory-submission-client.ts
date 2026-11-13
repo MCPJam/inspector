@@ -27,6 +27,13 @@ import type {
   PlatformDirectorySubmissionSnapshotsView,
 } from "./directory-submission-handoff-types.js";
 import type { DirectorySnapshotLabel } from "../directory-readiness/handoff.js";
+import type {
+  PlatformDirectoryTestPlanDraft,
+  PlatformDirectoryTestPlanSaveBody,
+  PlatformDirectoryTestPlanSaved,
+  PlatformDirectoryTestPlanView,
+  PlatformDirectoryToolTests,
+} from "./directory-test-plan-types.js";
 import { isPlatformApiError } from "./errors.js";
 import { ServerAccountClient } from "./server-account-client.js";
 import type { PlatformPage, PlatformReadinessRunReceipt } from "./types.js";
@@ -119,7 +126,9 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
 
   /**
    * Grade the submission's saved server and answers, and for a ChatGPT plugin
-   * the stored version `pluginVersionId` names. Poll the run it names.
+   * the stored version `pluginVersionId` names. With `testPlanRevision`, the
+   * run also makes that plan's calls; a stale revision is refused with `409`.
+   * Poll the run it names.
    */
   startDirectorySubmissionRun(
     params: Scope & PlatformDirectorySubmissionRunBody,
@@ -219,9 +228,54 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     const target = path(params.projectId, params.submissionId, "snapshots");
     return this.request("GET", target, { query: { compare: params.compare?.join(",") } }, options);
   }
+
+  /** The saved test plan, or the revision named, with its issues against the server's stored tool list. */
+  getDirectorySubmissionTestPlan(
+    params: Scope & { revision?: number },
+    options?: RequestOptions
+  ): Promise<PlatformDirectoryTestPlanView> {
+    const target = path(params.projectId, params.submissionId, "test-plan");
+    const query = { revision: params.revision };
+    return this.request("GET", target, { query }, options);
+  }
+
+  /** A first plan for every tool in the server's stored tool list. Nothing is saved. */
+  draftDirectorySubmissionTestPlan(
+    params: Scope,
+    options?: RequestOptions
+  ): Promise<PlatformDirectoryTestPlanDraft> {
+    const { projectId, submissionId } = params;
+    const target = path(projectId, submissionId, "test-plan/draft");
+    return this.request("GET", target, {}, options);
+  }
+
+  /**
+   * Save a plan as the submission's next revision. A `409` names the current
+   * revision (see {@link directorySubmissionConflict}); a plan over a limit is
+   * refused with its issues, and any other issue is returned with the save.
+   */
+  saveDirectorySubmissionTestPlan(
+    params: Scope & PlatformDirectoryTestPlanSaveBody,
+    options?: RequestOptions
+  ): Promise<PlatformDirectoryTestPlanSaved> {
+    const { projectId, submissionId, expectedRevision, plan } = params;
+    const target = path(projectId, submissionId, "test-plan");
+    const body = { expectedRevision, plan };
+    return this.request("PUT", target, { body }, options);
+  }
+
+  /** What a run's test plan calls showed, tool by tool: `runId`'s, or the latest run that named a plan. */
+  getDirectorySubmissionToolTests(
+    params: Scope & { runId?: string },
+    options?: RequestOptions
+  ): Promise<PlatformDirectoryToolTests> {
+    const target = path(params.projectId, params.submissionId, "tool-tests");
+    const query = { runId: params.runId };
+    return this.request("GET", target, { query }, options);
+  }
 }
 
-/** The conflict an update was refused with, or `undefined` for any other error. */
+/** The conflict an update or a test plan save was refused with, or `undefined` for any other error. */
 export function directorySubmissionConflict(
   error: unknown
 ): PlatformDirectorySubmissionConflict | undefined {

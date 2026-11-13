@@ -76,6 +76,10 @@ import {
   getReviewerAttemptOperation,
   resumeReviewerAttemptOperation,
   cancelReviewerAttemptOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -1594,8 +1598,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: startDirectorySubmissionRunOperation,
     tier: "gated",
     proposal: {
+      // Naming a plan revision authorizes its calls, so the approval says so.
       describe: (input) =>
-        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}${
+          typeof input.testPlanRevision === "number"
+            ? `, with the calls of its test plan revision ${input.testPlanRevision}`
+            : ""
+        }`,
       buttonLabel: "Run it",
       kind: "start",
       // Platform-paid, like the readiness starts: no money to warn about.
@@ -1606,6 +1615,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
+  // A plan is saved like answers; its calls run only in a start a person approves.
+  { operation: getDirectorySubmissionTestPlanOperation, tier: "direct" },
+  { operation: draftDirectorySubmissionTestPlanOperation, tier: "direct" },
+  {
+    operation: saveDirectorySubmissionTestPlanOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+    ],
+  },
+  { operation: getDirectorySubmissionToolTestsOperation, tier: "direct" },
   // Reviewer sign-in: each start or resume begins a run that signs in to the
   // submission's server, so a person approves it. Reading and stopping do not.
   {
