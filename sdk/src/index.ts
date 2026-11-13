@@ -1570,6 +1570,18 @@ export {
   CONFORMANCE_CHECK_METADATA,
   MCP_OAUTH_READINESS_IDS,
 } from "./oauth-conformance/index.js";
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {

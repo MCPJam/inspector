@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { MCPCheckResult, MCPTasksCheckResult, OAuthConformanceStepResult } from "@mcpjam/sdk";
 import { CatalogRow, CheckRow, OAuthStepRow } from "../ConformanceCheckRows";
+import { ConformanceSourceVersion } from "../conformance-source-version";
 
 function check(overrides: Partial<MCPCheckResult>): MCPCheckResult {
   return {
@@ -313,5 +314,108 @@ describe("CatalogRow", () => {
     render(<CatalogRow entry={{ id: "c", title: "Some Check" }} selected />);
     const box = screen.getByRole("checkbox", { name: "Run Some Check" });
     expect(box.closest("label")!.parentElement).not.toHaveClass("opacity-50");
+  });
+});
+
+describe("spec source link", () => {
+  const LEGACY_INITIALIZE =
+    "https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#initialization";
+  const LEGACY_TOOLS_LIST =
+    "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#listing-tools";
+  const MODERN_TOOLS_LIST =
+    "https://modelcontextprotocol.io/specification/2026-07-28/server/tools#listing-tools";
+
+  it("links a check to its spec section in a new tab, outside the row button", () => {
+    render(
+      <ConformanceSourceVersion version="2025-06-18">
+        <CheckRow check={check({})} />
+      </ConformanceSourceVersion>,
+    );
+    const link = screen.getByRole("link", {
+      name: /Source for Server Initialize in the specification/,
+    });
+    expect(link).toHaveAttribute("href", LEGACY_INITIALIZE);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link.closest("button")).toBeNull();
+  });
+
+  it("follows the revision the run negotiated", () => {
+    const { rerender } = render(
+      <ConformanceSourceVersion version="2025-11-25">
+        <CheckRow check={check({ id: "tools-list", title: "Tools List" })} />
+      </ConformanceSourceVersion>,
+    );
+    expect(screen.getByRole("link")).toHaveAttribute("href", LEGACY_TOOLS_LIST);
+    rerender(
+      <ConformanceSourceVersion version="2026-07-28">
+        <CheckRow check={check({ id: "tools-list", title: "Tools List" })} />
+      </ConformanceSourceVersion>,
+    );
+    expect(screen.getByRole("link")).toHaveAttribute("href", MODERN_TOOLS_LIST);
+  });
+
+  it("links the current revision when the run saved no version", () => {
+    render(
+      <CheckRow check={check({ id: "tools-list", title: "Tools List" })} />,
+    );
+    expect(screen.getByRole("link")).toHaveAttribute("href", MODERN_TOOLS_LIST);
+  });
+
+  it("does not open or close the row when the link is clicked", () => {
+    render(<CheckRow check={check({})} />);
+    const button = screen.getByRole("button", { name: /^Server Initialize/ });
+    fireEvent.click(screen.getByRole("link"));
+    expect(button).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("still opens the row from its chevron", () => {
+    const { container } = render(<CheckRow check={check({})} />);
+    const button = screen.getByRole("button", { name: /^Server Initialize/ });
+    const chevron = container.querySelector("svg.lucide-chevron-right");
+    fireEvent.click(chevron!.parentElement!);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("shows no link for a check without a source", () => {
+    render(<CheckRow check={check({ id: "not-a-known-check" })} />);
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("links an OAuth check, but not a flow step", () => {
+    const { rerender } = render(
+      <ConformanceSourceVersion version="2025-11-25">
+        <OAuthStepRow
+          step={step({ step: "oauth_invalid_token", title: "Invalid token" })}
+        />
+      </ConformanceSourceVersion>,
+    );
+    expect(screen.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#token-handling",
+    );
+    rerender(
+      <ConformanceSourceVersion version="2025-11-25">
+        <OAuthStepRow step={step({})} />
+      </ConformanceSourceVersion>,
+    );
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("links a catalog entry from its open description", () => {
+    render(
+      <CatalogRow
+        entry={{
+          id: "server-initialize",
+          title: "Server Initialize",
+          description: "Server responds to initialize.",
+          sourceUrl: LEGACY_INITIALIZE,
+        }}
+      />,
+    );
+    const link = screen.getByRole("link", { hidden: true });
+    expect(link.closest("[inert]")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Server Initialize/ }));
+    expect(screen.getByRole("link")).toHaveAttribute("href", LEGACY_INITIALIZE);
   });
 });
