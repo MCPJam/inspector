@@ -21,7 +21,6 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections";
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
-import { useMultiAccountConnectionsEnabled } from "@/hooks/useMultiAccountConnectionsEnabled";
 import { useSignInSharing } from "@/hooks/use-sign-in-sharing";
 import {
   type ConnectionIntent,
@@ -78,7 +77,6 @@ export function ConnectionAccountsSection({
 }) {
   const { connections, shared, loaded, error, refetch } =
     useHostedOAuthConnections(projectId, serverId, enabled);
-  const canAddAccount = useMultiAccountConnectionsEnabled();
   const sharing = useSignInSharing({ projectId, serverId, enabled });
   if (!enabled || !projectId || !serverId) return null;
   return (
@@ -87,7 +85,6 @@ export function ConnectionAccountsSection({
       shared={loaded ? shared : undefined}
       error={error}
       onReload={refetch}
-      canAddAccount={canAddAccount}
       isAdmin={sharing.isAdmin}
       sharingControl={
         loaded && sharing.canShare ? (
@@ -140,7 +137,6 @@ export function ConnectionAccountsList({
   shared,
   error,
   onReload,
-  canAddAccount,
   isAdmin,
   sharingControl,
   onAuthenticate,
@@ -152,7 +148,6 @@ export function ConnectionAccountsList({
   error?: string;
   /** Loads the list again after it failed to load. */
   onReload?: () => void;
-  canAddAccount: boolean;
   isAdmin: boolean;
   sharingControl?: ReactNode;
   onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
@@ -359,7 +354,7 @@ export function ConnectionAccountsList({
       </div>
 
       {/* Hidden until the list answers: adding depends on the server's mode. */}
-      {shared !== undefined && canManage && canAddAccount && (
+      {shared !== undefined && canManage && (
         <button
           type="button"
           disabled={busy || atAccountLimit}
