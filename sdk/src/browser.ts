@@ -982,6 +982,21 @@ export {
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
 
+// The spec section each check tests, per protocol era, so a row can link to
+// the requirement it is graded against.
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
+
 export {
   buildConformanceRunReport,
   CONFORMANCE_RUN_SCHEMA_VERSION,

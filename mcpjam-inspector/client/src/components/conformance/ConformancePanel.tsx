@@ -6,6 +6,7 @@ import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBloc
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
+import { SuiteList, sourceVersionOf } from "./conformance-source-version";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -663,7 +664,7 @@ export function ConformanceContent({
                   groups={suiteAdviceGroups({ protocol, apps, tasks, oauth })}
                 />
 
-                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
+                <SuiteList version={sourceVersionOf(snapshot, versionPin)}>
                   <SuiteSection
                     key={`${runVersion}-protocol`}
                     title={SUITE_COPY.protocol.title}
@@ -777,7 +778,7 @@ export function ConformanceContent({
                       </div>
                     ) : null}
                   </SuiteSection>
-                </div>
+                </SuiteList>
               </div>
             )}
 
