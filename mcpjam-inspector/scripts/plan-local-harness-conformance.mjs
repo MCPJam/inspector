@@ -9,12 +9,16 @@
 //   workflow_call  The versions the caller names (a release asks for its
 //                  desired packs, then its permitted ones), every platform.
 //                  `harnesses` limits the run to the harnesses that have one.
+//                  The workflow passes this itself: `github.event_name` in a
+//                  called run is the caller's.
 //   push / dispatch with no version
 //                  Packs built from source on every platform, as before.
 //                  A push that changed no conformance input (a version PR's
 //                  lockfile bump, say) runs no legs: its parent's run already
 //                  proved the same thing, and the legs would compete for the
-//                  macOS runners the release's own evidence run needs.
+//                  macOS runners the release's own evidence run needs. A run
+//                  that names a pack version always runs: no push run checked
+//                  that pack.
 //
 // `certifiedOnly` drops the legs for targets a harness does not advertise.
 // Those legs exist so their evidence stays visible, and a push to main still
@@ -78,7 +82,8 @@ export function planConformance(input) {
       .filter((leg) => !input.certifiedOnly || leg.certified)
       .filter((leg) => !pullRequest || leg.platform_key === "linux-x64");
   };
-  const proven = input.event === "push" && input.inputsUnchanged === true;
+  const proven =
+    input.event === "push" && input.inputsUnchanged === true && !input.claudeVersion && !input.codexVersion;
   return {
     claude_pack_version: version("claude-code", input.claudeVersion),
     codex_pack_version: version("codex", input.codexVersion),
