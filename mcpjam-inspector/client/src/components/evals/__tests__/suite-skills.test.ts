@@ -322,6 +322,13 @@ describe("skillDeliveryLines", () => {
     ]);
   });
 
+  it("explains when the shared Library exceeds the skill limit", () => {
+    expect(skillDeliveryLines([{
+      client: "Codex",
+      preview: preview(row("triage"), row("Reply", "over-cap")),
+    }], true)).toContain("Codex leaves out Reply after reaching the skill limit.");
+  });
+
   it("counts skills only where the clients load the same ones", () => {
     // Two clients with two skills each, but not the same two.
     expect(
