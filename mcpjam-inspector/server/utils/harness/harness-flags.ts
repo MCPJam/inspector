@@ -33,3 +33,14 @@ export function hostedWarmAgentEnabled(organizationId: string | undefined): bool
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
 }
+
+/**
+ * Hosted Claude Code starts without its non-essential traffic (telemetry,
+ * error reports, auto-update, feature flags, availability checks). A hosted
+ * box's CLI holds only a placeholder credential, so those calls cannot succeed;
+ * they can only delay its first request. Off by default until staging measures
+ * the saving; read per call.
+ */
+export function harnessQuietClaudeStartup(): boolean {
+  return process.env.MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP === "true";
+}
