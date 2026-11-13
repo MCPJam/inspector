@@ -100,4 +100,11 @@ export interface LocalRuntime<
   childAuth(gateway: LocalModelGatewayEndpoint): HarnessAuth;
   /** Runs shell commands through Git for Windows on Windows. */
   gitBashOnWindows: boolean;
+  /**
+   * Its bridge keeps one live process that the conversation's next turn can
+   * attach to, so a completed turn may keep it (`kept-runtime.ts`). Codex's
+   * bridge keeps its `app-server` while the configuration matches; Claude
+   * Code's CLI exits at the end of every turn, leaving nothing to keep.
+   */
+  keepsRuntimeBetweenTurns: boolean;
 }

@@ -46,6 +46,7 @@ import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
 import { invalidateParkedLocalSession } from "./local/approval-park.js";
+import { bridgeGenerationOf, keptLocalRuntimeTurn, type KeptRuntimeTurn } from "./local/kept-runtime.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { harnessToolOutputError, toToolResultOutput } from "./tool-result-output.js";
 import { coerceToolInput } from "./tool-input.js";
@@ -980,9 +981,12 @@ export async function runHarnessTurn(
   // alive across the decision (`liveApprovalRuntime`, `local/approval-park.ts`).
   const pendingApprovalIds: string[] = [];
   let approvalPolicyStamp: string | undefined;
-  // Set once a local runtime has been parked on those approvals: the parked
-  // record now owns its teardown, so this turn must not run it.
+  // Set once a local runtime has been parked on those approvals, or kept for
+  // the next turn: the parked record now owns its teardown, so this turn must
+  // not run it.
   let localParked = false;
+  // A runtime kept for the next turn, ended below if this turn did not commit.
+  let keptSessionId: string | undefined;
   // Set while a turn that parked is still finalizing its response; see
   // `honourStopAfterPark`.
   let releaseStopAfterPark: (() => void) | null = null;
@@ -2308,6 +2312,7 @@ export async function runHarnessTurn(
           : harnessExecutionTarget.localSessionId ?? `local-${crypto.randomUUID()}`
         : undefined;
       let localPrepared: PreparedLocalHarnessTurn | null = null;
+      let keptRuntime: KeptRuntimeTurn | undefined;
       if (harnessExecutionTarget) {
         // Its own run id rather than the cloud path's `turnRunId`, which is
         // minted further down for the broker's revoke key. The local lease is
@@ -2333,6 +2338,11 @@ export async function runHarnessTurn(
             ),
           };
         }
+        // Adopt the runtime the lane's last turn kept, and keep this one.
+        keptRuntime = keptLocalRuntimeTurn({
+          harnessId: harnessAdapter.id, ownerType: continuity?.owner.ownerType, isApprovalResume, continuity,
+          configuration: { runtime: approvalConfiguration, reasoningEffort: turnReasoningEffort, skillsHash, systemPrompt, env: sessionSecretEnv },
+        });
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
           scope: sourceType === "eval" || sourceType === "swarm" || sourceType === "event" ? "unattended" : "attended",
@@ -2355,6 +2365,7 @@ export async function runHarnessTurn(
           getCleanupAuthorization: cleanupAuthorization,
           requireToolApproval,
           ...(approvalContinuation ? { approvalContinuation } : {}),
+          ...(keptRuntime ? { keptRuntime } : {}),
           scopedEnv: sessionSecretEnv,
           onSecretEnvDelivered,
           ...(turnReasoningEffort !== undefined
@@ -3213,6 +3224,8 @@ export async function runHarnessTurn(
               typeof resumable.resumeState === "object" && "type" in resumable.resumeState &&
               resumable.resumeState.type === "resume-session"
               ? resumable.resumeState
+              // A kept local runtime is attached to where it runs.
+              : localPrepared?.keptRuntime ? sessionResumeStateFrom(resumable.resumeState)
               : diskResumeState(sessionResumeStateFrom(resumable.resumeState)),
           } as unknown as Parameters<typeof agent.createSession>[0]);
           resumedSession = true;
@@ -4579,6 +4592,13 @@ export async function runHarnessTurn(
               // Phase 3: the ingest commit re-resolves the guest's own lane.
               ...(executionScope ? { executionScope } : {}),
             };
+            // Keep the local runtime for the next turn instead of stopping it.
+            if (keptRuntime && localPrepared && await localPrepared.parkTurn({ kept: keptRuntime, resumeState, stateVersion: continuity.stateVersion + 1 })) {
+              localParked = true;
+              localTeardown = null;
+              keptSessionId = session.sessionId;
+              honourStopAfterPark(session.sessionId);
+            }
           } else {
             if (localPrepared && retainLocalState) await session.stop();
             else await session.destroy();
@@ -4842,6 +4862,8 @@ export async function runHarnessTurn(
           await releaseHarnessLease?.();
       }
     }
+    // A kept runtime whose turn did not commit is not the one the lane names.
+    if (keptSessionId && !localStateCommitted) await invalidateParkedLocalSession(keptSessionId, "continuation-failed");
     if (discardLocalState && !retainLocalState) {
       // Keep the lane claimed until its private state has been discarded, so
       // a successor cannot resume while this finalizer removes its directory.
@@ -4927,20 +4949,4 @@ function isAbortError(err: unknown): boolean {
     err instanceof Error &&
     (err.name === "AbortError" || err.name === "TimeoutError")
   );
-}
-
-/**
- * The live process generation a suspended turn belongs to: the bridge token
- * recorded in its `continue-turn` lifecycle state. A restarted bridge mints a
- * new token, so a decision bound to the old one can never reach the new
- * process.
- */
-function bridgeGenerationOf(state: unknown): string | undefined {
-  if (!state || typeof state !== "object") return undefined;
-  const data = (state as { data?: unknown }).data;
-  if (!data || typeof data !== "object") return undefined;
-  const bridge = (data as { bridge?: unknown }).bridge;
-  if (!bridge || typeof bridge !== "object") return undefined;
-  const token = (bridge as { token?: unknown }).token;
-  return typeof token === "string" && token.length > 0 ? token : undefined;
 }

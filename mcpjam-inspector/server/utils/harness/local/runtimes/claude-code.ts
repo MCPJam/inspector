@@ -156,4 +156,6 @@ export const claudeCodeLocalRuntime: LocalRuntime<"claude-code"> = {
     }) as HarnessAuth,
   // Git Bash is how Claude Code runs shell commands on Windows.
   gitBashOnWindows: true,
+  // The CLI exits at the end of every local turn.
+  keepsRuntimeBetweenTurns: false,
 };

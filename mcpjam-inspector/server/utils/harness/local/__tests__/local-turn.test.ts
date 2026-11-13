@@ -73,6 +73,8 @@ const readRuntimeInstallStatus = vi.hoisted(() => vi.fn(async () => ({
 })));
 vi.mock("../runtime-install.js", () => ({
   readRuntimeInstallStatus: () => readRuntimeInstallStatus(),
+  isTerminalInstallStatus: (status: { state: string }) =>
+    status.state !== "downloading" && status.state !== "verifying",
   // The INSTALL root must be writable, though — the reservation is a real file
   // in a real directory. Pointing it at `/nonexistent` made every test in this
   // file fail with EACCES on any machine that is not root, which is what CI
@@ -124,6 +126,7 @@ const supervisorFixture = vi.hoisted(() => ({
   stopOutcome: { stopped: true } as { stopped: boolean; escaped?: number },
   stopCalls: 0,
   live: 1,
+  wallClockRestarts: [] as string[],
 }));
 vi.mock("../supervisor.js", () => ({
   LocalHarnessSupervisor: class {
@@ -136,6 +139,9 @@ vi.mock("../supervisor.js", () => ({
     }
     liveProcessCount() {
       return supervisorFixture.live;
+    }
+    restartWallClock(sessionId: string) {
+      supervisorFixture.wallClockRestarts.push(sessionId);
     }
   },
 }));
@@ -189,6 +195,7 @@ beforeEach(async () => {
   supervisorFixture.stopOutcome = { stopped: true };
   supervisorFixture.stopCalls = 0;
   supervisorFixture.live = 1;
+  supervisorFixture.wallClockRestarts = [];
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
@@ -846,4 +853,239 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
   if (!result.ok) throw new Error(result.message);
   expect(result.prepared.permissionMode).toBe("allow-reads");
   await result.prepared.teardown();
+});
+
+describe("a local Codex runtime kept between turns", () => {
+  const CONFIG = { fingerprint: "config-a" };
+  const READY = {
+    state: "ready" as const,
+    packVersion: "test-pack-1",
+    digest: `sha256:${"a".repeat(64)}`,
+    runtimeRoot: "/nonexistent/runtime-root",
+  };
+  const bridge = (token = "gen-1") => ({
+    type: "resume-session",
+    data: { bridge: { port: 4100, token } },
+  });
+  const nextTurn = (overrides: Record<string, unknown> = {}) =>
+    codexArgs({
+      keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 2 } },
+      reasoningEffort: "high",
+      ...overrides,
+    });
+  const lease = (runId: string, extra: Record<string, unknown> = {}) => ({
+    ok: true as const,
+    runId,
+    expiresAt: Date.now() + 60_000,
+    protocol: "openai" as never,
+    proxyBaseUrl: "https://api.example.test/proxy",
+    delivery: "inspector-loopback-gateway" as const,
+    lease: `lease.${runId}.value`,
+    ...extra,
+  });
+
+  /** A first turn that completed, committed state version 2, and kept its runtime. */
+  async function keptSession(overrides: Record<string, unknown> = {}) {
+    const first = await prepareLocalHarnessTurn(codexArgs({ keptRuntime: CONFIG, ...overrides }));
+    if (!first.ok) throw new Error(first.message);
+    const kept = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2 });
+    return { prepared: first.prepared, kept };
+  }
+
+  it("holds model traffic and revokes the lease while it waits, so it makes no model call", async () => {
+    const { kept } = await keptSession();
+    expect(kept).toBe(true);
+    expect(gatewayHold).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId: "run_1" })),
+    );
+    // Still registered (stop-all reaches it) and running, with no lease of its own.
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it("is adopted by the next turn: the same process and gateway, a fresh lease and wall-clock budget", async () => {
+    const { prepared: parked } = await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBe(true);
+    expect(next.prepared.sandbox).toBe(parked.sandbox);
+    expect(next.prepared.auth).toEqual(parked.auth);
+    expect(next.prepared.sessionStateExists).toBe(true);
+    // A dead bridge is never respawned under the adopted provider.
+    expect(parked.sandbox.forbidNewProcesses).toHaveBeenCalledWith(expect.stringMatching(/Send your message again/));
+    expect(startLocalModelGateway).toHaveBeenCalledOnce();
+    expect(gatewayRebind).toHaveBeenCalledWith("lease.run_2.value");
+    expect(startLoopbackModelBroker).toHaveBeenLastCalledWith(expect.objectContaining({ reasoningEffort: "high" }));
+    expect(next.prepared.brokerRunId).toBe("run_2");
+    expect(supervisorFixture.wallClockRestarts).toEqual(["s_local_1"]);
+    // Re-authorized with this turn's grant, without re-verifying the running pack.
+    expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(
+      expect.objectContaining({ grantToken: "grant-token", runtimeVerifiedAtSpawn: true }),
+    );
+    // Kept again at its end, for the state version the next commit produces.
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3 })).toBe(true);
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it.each([
+    ["another configuration", { keptRuntime: { fingerprint: "config-b", committed: { generation: "gen-1", stateVersion: 2 } } }, "configuration-changed"],
+    ["a state version another Inspector's turn moved on", { keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 3 } } }, "superseded"],
+    ["another bridge generation", { keptRuntime: { ...CONFIG, committed: { generation: "gen-2", stateVersion: 2 } } }, "superseded"],
+    ["a lane that names no runtime", { keptRuntime: CONFIG }, "superseded"],
+    ["a turn that asks for nothing", { keptRuntime: undefined }, "superseded"],
+  ])("is ended, and the turn starts fresh, for %s", async (_label, overrides, reason) => {
+    await keptSession();
+    const next = await prepareLocalHarnessTurn(nextTurn(overrides));
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ state: "terminal", invalidatedBy: reason });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(supervisorFixture.stopCalls).toBe(1);
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await next.prepared.teardown();
+  });
+
+  it("is ended, and the turn starts fresh, when its process died", async () => {
+    await keptSession();
+    supervisorFixture.live = 0;
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "process-died" });
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    await next.prepared.teardown();
+  });
+
+  it.each([
+    ["an install is in flight", { ...READY, role: "permitted", update: { state: "downloading", packVersion: "test-pack-2", percent: 10 } }],
+    ["a fresh turn would select another pack", { ...READY, packVersion: "test-pack-2", digest: `sha256:${"b".repeat(64)}` }],
+  ])("is ended, and the turn starts fresh, when %s", async (_label, status) => {
+    await keptSession();
+    readRuntimeInstallStatus.mockResolvedValueOnce(status as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "runtime-update" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is ended when the availability gate refuses (the kill switch, a revoked grant), and so is the turn", async () => {
+    await keptSession();
+    const refused = { available: false, status: "server-disabled", message: "Local execution is off." };
+    resolveLocalHarnessAvailability.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(refused as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    expect(next).toMatchObject({ ok: false, status: "server-disabled" });
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "authorization-revoked" });
+    // Neither the kept runtime nor a fresh one got a lease.
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the installation is no longer registered", () => { identityFixture.keyId = null; }, "authorization-revoked"],
+    ["the grant now names another runtime", () => {
+      resolveLocalHarnessAvailability.mockImplementationOnce(async () => {
+        const result = await resolveLocalHarnessAvailability.getMockImplementation()!({});
+        return { ...result, plan: { ...result.plan, runtime: { ...result.plan.runtime, runtimeId: "rt_2" } } };
+      });
+    }, "authorization-revoked"],
+    ["the renewed lease cannot be bound", () => {
+      gatewayRebind.mockImplementationOnce(() => { throw new Error("unusable lease"); });
+    }, "renewal-failed"],
+  ] as const)("is ended when %s", async (_label, arrange, reason) => {
+    await keptSession();
+    arrange();
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: reason });
+    if (next.ok) {
+      expect(next.prepared.keptRuntime).toBeUndefined();
+      await next.prepared.teardown();
+    }
+  });
+
+  it("is ended when its renewed lease is refused, and the turn starts fresh", async () => {
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce({ ok: false, error: "lease refused" } as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "renewal-failed" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is ended when the organization's key was replaced while it waited", async () => {
+    const orgUpstream = (credentialRevision: string) => ({
+      credentialSource: "org" as const,
+      profile: "openai-native" as const,
+      nativeModelId: "gpt-5.5",
+      credentialRevision,
+    });
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_1", { orgUpstream: orgUpstream("rev-1") }));
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2", { orgUpstream: orgUpstream("rev-2") }));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "renewal-failed" });
+    // The lease minted on the replaced key is revoked, never bound.
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId: "run_2" }));
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is not adopted by a turn that may not run, which ends it", async () => {
+    await keptSession();
+    // Tool Approval off without the "Run without asking" acknowledgement.
+    vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
+    const next = await prepareLocalHarnessTurn(nextTurn({ requireToolApproval: false }));
+    expect(next).toMatchObject({ ok: false, status: "auto-approve-consent-required" });
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "superseded" });
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+  });
+
+  it("stops being adoptable the moment Stop ends it", async () => {
+    await keptSession();
+    await endLocalHarnessSession("s_local_1");
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    await next.prepared.teardown();
+  });
+
+  it("goes with the teardown of a turn that does not keep it again", async () => {
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    // A key replaced mid-turn (`org-key-preparation.ts`) tears the adopted runtime down.
+    await next.prepared.teardown();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+    expect(supervisorFixture.stopCalls).toBe(1);
+  });
+
+  it("is never kept with materialized secrets in its environment", async () => {
+    const { kept } = await keptSession({ scopedEnv: { STRIPE_API_KEY: "sk_test_secret" } });
+    expect(kept).toBe(false);
+    expect(gatewayHold).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is not kept while an install may replace its pack", async () => {
+    readRuntimeInstallStatus
+      .mockResolvedValueOnce(READY)
+      .mockResolvedValueOnce({ ...READY, role: "permitted", update: { state: "verifying", packVersion: "test-pack-2" } } as never);
+    const { kept } = await keptSession();
+    expect(kept).toBe(false);
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is not kept when the runtime selection cannot be read", async () => {
+    readRuntimeInstallStatus.mockResolvedValueOnce(READY).mockRejectedValueOnce(new Error("EACCES"));
+    const { kept } = await keptSession();
+    expect(kept).toBe(false);
+  });
 });

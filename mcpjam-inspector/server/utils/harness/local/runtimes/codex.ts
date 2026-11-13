@@ -150,4 +150,6 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
     }) as HarnessAuth,
   // Codex runs its own shell, so Git Bash is neither looked up nor handed to it.
   gitBashOnWindows: false,
+  // The bridge keeps its `app-server` and thread between turns.
+  keepsRuntimeBetweenTurns: true,
 };

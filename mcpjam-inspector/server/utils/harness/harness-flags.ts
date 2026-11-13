@@ -33,3 +33,9 @@ export function hostedWarmAgentEnabled(organizationId: string | undefined): bool
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
 }
+
+/** Keep a local Codex runtime between chat turns (`local/kept-runtime.ts`).
+ *  Off by default; read per call. */
+export function localKeepAgentEnabled(): boolean {
+  return process.env.MCPJAM_LOCAL_KEEP_AGENT === "true";
+}

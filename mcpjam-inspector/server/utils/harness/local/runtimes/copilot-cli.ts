@@ -128,4 +128,6 @@ export const copilotCliLocalRuntime: LocalRuntime<"copilot-cli"> = {
     }) as HarnessAuth,
   // No built-in tools, so no shell to look up.
   gitBashOnWindows: false,
+  // Not kept between turns yet: Codex goes first.
+  keepsRuntimeBetweenTurns: false,
 };
