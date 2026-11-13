@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { ArrowDownUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type HistorySortKey = "server" | "score" | "date";
@@ -172,29 +173,19 @@ export function ConformanceHistoryFilters({
   );
 }
 
-/** Two small filled triangles; the one for the active direction is solid. */
-function SortTriangles({
-  direction,
-}: {
-  direction: HistorySortDirection | null;
-}) {
-  const tone = (on: boolean) =>
-    on ? "text-foreground" : "text-muted-foreground/40";
+/**
+ * The same up-and-down arrow on every sortable column: full strength on the
+ * sorted one, faint on the rest, and MCPJam orange while hovered.
+ */
+function SortIcon({ active }: { active: boolean }) {
   return (
-    <span aria-hidden className="flex shrink-0 flex-col gap-[2px]">
-      <svg
-        viewBox="0 0 8 5"
-        className={cn("h-[5px] w-2", tone(direction === "asc"))}
-      >
-        <path d="M4 0 8 5H0Z" fill="currentColor" />
-      </svg>
-      <svg
-        viewBox="0 0 8 5"
-        className={cn("h-[5px] w-2", tone(direction === "desc"))}
-      >
-        <path d="M0 0h8L4 5Z" fill="currentColor" />
-      </svg>
-    </span>
+    <ArrowDownUp
+      aria-hidden
+      className={cn(
+        "size-4 shrink-0 transition-colors group-hover:text-primary",
+        active ? "text-foreground" : "text-muted-foreground/50",
+      )}
+    />
   );
 }
 
@@ -226,14 +217,14 @@ export function HistorySortHeader({
             : `Sort by ${name.toLowerCase()}`
       }
       className={cn(
-        "flex w-fit min-w-0 max-w-full items-center gap-1.5 text-left hover:opacity-80",
+        "group flex w-fit min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:text-primary",
         className,
       )}
       data-testid={`conformance-history-sort-${sortKey}`}
       data-sort-direction={direction ?? undefined}
     >
       <span className="truncate">{label}</span>
-      <SortTriangles direction={direction} />
+      <SortIcon active={direction !== null} />
     </button>
   );
 }
