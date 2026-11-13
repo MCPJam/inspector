@@ -22,7 +22,8 @@
  *   4. workspace grant — an opaque id resolved to a canonical path, re-checked
  *      against symlink replacement;
  *   5. runtime identity — the managed bundle re-digested, or the system
- *      executable re-hashed;
+ *      executable re-hashed (by the spawn gate instead, for a caller whose
+ *      every process starts through it);
  *   6. consent — a capability bound to every one of the identities above.
  *
  * Consent is verified LAST and against the identities the earlier steps
@@ -137,6 +138,14 @@ export interface LocalHarnessAvailabilityQuery {
    * desired pack.
    */
   runtimeDigest?: string;
+  /**
+   * Set by a caller whose every process starts through the supervised
+   * provider, which re-verifies the runtime immediately before each spawn
+   * (`supervised-provider.ts`), and by one adopting a live process that was
+   * verified when it spawned and can start no other. The gate then leaves
+   * the re-verification to the spawn rather than running it twice a turn.
+   */
+  runtimeVerifiedAtSpawn?: boolean;
   /** Test seams. */
   localMachineId?: string;
   manifests?: Readonly<Record<string, LocalHarnessCompatibility>>;
@@ -311,10 +320,13 @@ export async function resolveLocalHarnessAvailability(
     return unavailable("runtime-unavailable", runtimeResolution.message);
   }
 
-  // Consent named a runtime; prove the thing on disk is still that runtime.
-  const revalidated = await revalidateRuntime(runtimeResolution.runtime);
-  if (!revalidated.ok) {
-    return unavailable("runtime-changed", revalidated.message);
+  // Consent named a runtime; prove the thing on disk is still that runtime,
+  // here or at the spawn that would execute it.
+  if (!query.runtimeVerifiedAtSpawn) {
+    const revalidated = await revalidateRuntime(runtimeResolution.runtime);
+    if (!revalidated.ok) {
+      return unavailable("runtime-changed", revalidated.message);
+    }
   }
   if (runtimeResolution.runtime.runtimeId !== target.runtimeId) {
     return unavailable(

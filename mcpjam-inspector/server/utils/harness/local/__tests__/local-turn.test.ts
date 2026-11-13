@@ -90,8 +90,7 @@ vi.mock("../instance-key.js", () => ({
   }),
   getRegisteredKeyId: () => identityFixture.keyId,
 }));
-vi.mock("../availability.js", () => ({
-  resolveLocalHarnessAvailability: async () => ({
+const resolveLocalHarnessAvailability = vi.hoisted(() => vi.fn(async (_query: Record<string, unknown>) => ({
     available: true,
     plan: {
       target: {
@@ -109,7 +108,10 @@ vi.mock("../availability.js", () => ({
       permissionMode: "allow-edits",
       grantId: "grant_1",
     },
-  }),
+  })));
+vi.mock("../availability.js", () => ({
+  resolveLocalHarnessAvailability: (query: Record<string, unknown>) =>
+    resolveLocalHarnessAvailability(query),
 }));
 vi.mock("../grants.js", () => ({
   localHarnessStateRoot: () => stateRoot,
@@ -794,6 +796,24 @@ describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on a
   });
 });
 
+it("verifies the runtime once a turn: at the spawn, or at an adopted runtime's own spawn", async () => {
+  // The provider re-verifies right before it spawns (`assertCanStart`), and
+  // an adopted runtime can spawn nothing (`forbidNewProcesses`), so neither
+  // turn asks the availability gate to verify it again.
+  const fresh = await prepareLocalHarnessTurn(codexArgs());
+  if (!fresh.ok) throw new Error(fresh.message);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  const adopted = await prepareLocalHarnessTurn(codexArgs({
+    approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+  }));
+  if (!adopted.ok) throw new Error(adopted.message);
+  expect(resolveLocalHarnessAvailability).toHaveBeenCalledTimes(2);
+  for (const [query] of resolveLocalHarnessAvailability.mock.calls) {
+    expect(query).toMatchObject({ runtimeVerifiedAtSpawn: true });
+  }
+  adopted.prepared.unpark();
+  await adopted.prepared.teardown();
+});
 it("refuses Off without acknowledgement before spawning or minting a lease", async () => {
   vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
   expect(await prepareLocalHarnessTurn({ ...turnArgs(), requireToolApproval: false })).toMatchObject({ ok: false, status: "auto-approve-consent-required" });

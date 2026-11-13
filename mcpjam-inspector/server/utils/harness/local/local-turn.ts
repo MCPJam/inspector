@@ -455,6 +455,9 @@ async function prepareWithReservedRuntime(outer: {
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
+    // The provider re-verifies the runtime right before it spawns the bridge
+    // (`assertCanStart`), so this turn verifies it once, at exec.
+    runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
     return {
@@ -858,6 +861,8 @@ async function adoptParkedLocalTurn(
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
+    // Verified when it spawned; an adopted provider can start no other.
+    runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
     return fail("authorization-revoked", availability.status, availability.message);
