@@ -3177,6 +3177,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           "io.modelcontextprotocol/ui": {
             mimeTypes: ["text/html;profile=mcp-app"],
           },
+          // Probed: the client advertised Skills over MCP on its skills/list
+          // and skills/get requests, and both succeeded. It never read the
+          // skill's SKILL.md, so the prober rates the round trip partial, and
+          // the handshake in the same capture did not carry the extension.
+          "io.modelcontextprotocol/skills": {},
         },
       };
       // Exact non-sandbox portion of ui/initialize.hostCapabilities. The
@@ -3265,6 +3270,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               sessionStorage: true,
               indexedDB: true,
             },
+            // The prober saw the View run in a real `vscode-webview://` origin
+            // of its own: `self.origin` matched `location.origin`.
+            sameOriginAppIframe: true,
           },
           mcpAppsOverrides: {
             // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
