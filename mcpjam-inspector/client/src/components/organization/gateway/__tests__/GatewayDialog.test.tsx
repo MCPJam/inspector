@@ -166,18 +166,26 @@ describe("GatewayDialog", () => {
   });
 
   it("lets a provider that answers without a model list be added by hand", async () => {
+    // A failed /models stops the probe: every API comes back untested.
     testConnection.mockResolvedValue({
       reachable: true,
       origin: "backend",
       status: 404,
       message: "The provider has nothing at https://chat-only.acme.example/v1/models. Check the base URL and the APIs this connection serves.",
-      apis: { chatCompletions: { result: "ok", status: 200 } },
+      apis: {
+        chatCompletions: { result: "untested" },
+        responses: { result: "untested" },
+        anthropicMessages: { result: "untested" },
+        embeddings: { result: "untested" },
+      },
       models: [],
     });
     renderDialog();
     type("gateway-base-url", "https://chat-only.acme.example/v1");
     submitTest();
     expect(await screen.findByText("Works with")).toBeInTheDocument();
+    expect(screen.getByText("The provider test failed. Check the base URL and key, then test again.")).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(field("gateway-base-url")));
     expect(field("gateway-name").value).toBe("chat-only");
 
     fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
@@ -185,6 +193,8 @@ describe("GatewayDialog", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     const add = screen.getByRole("button", { name: "Add provider" });
+    expect(add).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Chat Completions/ }));
     expect(add).toBeEnabled();
     fireEvent.click(add);
     expect(onSave).toHaveBeenCalledWith(
@@ -194,6 +204,37 @@ describe("GatewayDialog", () => {
         models: [{ nativeModelId: "house-model" }],
       }),
     );
+  });
+
+  it("keeps hand-added models when another address gets no answer, or only its trailing slash changes", async () => {
+    testConnection.mockResolvedValue(PASSED);
+    renderDialog();
+    type("gateway-base-url", "https://litellm.acme.example/v1");
+    submitTest();
+    await screen.findByText("Works with");
+    fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), {
+      target: { value: "team-extra" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    testConnection.mockResolvedValueOnce({
+      reachable: false,
+      origin: "backend",
+      message: "MCPJam's servers couldn't connect to down.acme.example. Check the base URL and that the provider is running.",
+      apis: {},
+      models: [],
+    });
+    type("gateway-base-url", "https://down.acme.example/v1");
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+    await screen.findByText(/couldn't connect to down.acme.example/);
+    expect(screen.getAllByText("team-extra")).not.toHaveLength(0);
+
+    type("gateway-base-url", "https://litellm.acme.example/v1/");
+    submitTest();
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(3));
+    await screen.findByText("Responses didn't answer");
+    expect(screen.getAllByText("team-extra")).not.toHaveLength(0);
   });
 
   it("drops the Test answer when the runtime changes, and keeps hand-added models on the re-test", async () => {
