@@ -39,6 +39,9 @@ import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { RunResultRing } from "./RunResultRing";
 import {
   ConformanceHistoryFilters,
+  DEFAULT_HISTORY_SORT,
+  HistorySortHeader,
+  isBackendHistoryOrder,
   searchAndSortHistory,
   type HistorySort,
 } from "./ConformanceHistoryFilters";
@@ -111,15 +114,15 @@ export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
 const HISTORY_PAGE_SIZE = 20;
 /**
  * Runs per page while History reads every run. The backend matches runs by
- * server only and orders them by date only, so search and the name sort work
- * on the whole history, not on the pages loaded so far.
+ * server only and orders them newest first only, so search and every other
+ * sort work on the whole history, not on the pages loaded so far.
  */
 const HISTORY_READ_ALL_PAGE_SIZE = 100;
 
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page. Above it, a search box, a server filter and a
- * sort, laid out like the Swarms sessions filters.
+ * opens the run's detail page. Above it, a full-width search box with the
+ * server filter at its right end; the Server, Score and Date headers sort.
  */
 export function ConformanceHistory({
   projectId,
@@ -134,14 +137,16 @@ export function ConformanceHistory({
   /** A saved server's id, or null for every server. */
   const [serverFilter, setServerFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<HistorySort>("newest");
+  const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const openRun = useOpenRunFromHistory(projectId);
 
   const query = search.trim().toLowerCase();
-  // One server's runs all share a name, so the name sort needs no more of
-  // them than are loaded. A search does.
+  // Any order but the backend's needs every run. One server's runs all share
+  // a name, though, so the name sort needs no more of them than are loaded.
   const readsEveryRun =
-    query.length > 0 || (sort === "server" && serverFilter === null);
+    query.length > 0 ||
+    (!isBackendHistoryOrder(sort) &&
+      !(sort.key === "server" && serverFilter !== null));
   /** History is paging forward on its own, on the large page. */
   const [readAll, setReadAll] = useState(false);
   /** Once there are runs, the toolbar stays up through every reload. */
@@ -188,7 +193,8 @@ export function ConformanceHistory({
     });
   }, [cursor, page]);
 
-  // Search and the name sort keep loading pages until the history is complete.
+  // Search and the column sorts keep loading pages until the history is
+  // complete.
   useEffect(() => {
     if (readAll && page && !page.isDone) setCursor(page.continueCursor);
   }, [readAll, page]);
@@ -238,6 +244,8 @@ export function ConformanceHistory({
       HISTORY_SOURCE_LABEL[run.source] ?? run.source,
     ],
     serverName: serverLabel,
+    score: (run) => run.score,
+    createdAt: (run) => run.createdAt,
   });
   const readingEveryRun = readAll && (!page || !page.isDone);
   const filteredServerName = serverFilter
@@ -266,8 +274,6 @@ export function ConformanceHistory({
         serverFilter={serverFilter}
         onServerFilterChange={changeServerFilter}
         serverNames={serverNames}
-        sort={sort}
-        onSortChange={setSort}
       />
 
       {readingEveryRun && rows.length > 0
@@ -296,12 +302,30 @@ export function ConformanceHistory({
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
-            <span className={`${cell} ${header}`}>SERVER</span>
+            <HistorySortHeader
+              label="SERVER"
+              sortKey="server"
+              sort={sort}
+              onSort={setSort}
+              className={header}
+            />
             <span className={`${cell} ${header}`}>PROTOCOL</span>
-            <span className={`${cell} ${header}`}>SCORE</span>
+            <HistorySortHeader
+              label="SCORE"
+              sortKey="score"
+              sort={sort}
+              onSort={setSort}
+              className={header}
+            />
             <span className={`${cell} ${header}`}>CHECKS</span>
             <span className={`${cell} ${header}`}>RESULT</span>
-            <span className={`${cell} ${header}`}>DATE</span>
+            <HistorySortHeader
+              label="DATE"
+              sortKey="date"
+              sort={sort}
+              onSort={setSort}
+              className={header}
+            />
             <span className={`${cell} ${header}`}>SOURCE</span>
           </div>
           <ul>
