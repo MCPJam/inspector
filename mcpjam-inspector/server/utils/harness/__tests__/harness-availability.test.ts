@@ -14,6 +14,7 @@ import {
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
 import { registeredHarnessIds } from "../registry";
+import { HARNESS_SURFACES, harnessSurfaceRefusal } from "@/shared/harness-descriptors";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
 // The capability-driven preflight that lets the chat-v2 routes fail closed with a
@@ -55,6 +56,7 @@ function args(
 ) {
   return {
     harnessId: "claude-code" as HarnessId,
+    surface: "playground" as const,
     requireToolApproval: false,
     hasSelectedMcpServers: false,
     // The RESOLVED model. Eligibility and the canonical id are derived from it
@@ -64,6 +66,83 @@ function args(
     ...overrides,
   };
 }
+
+describe("checkHarnessRuntimeAvailable surface support", () => {
+  const surfaces = HARNESS_SURFACES.filter(
+    (surface): surface is Exclude<typeof surface, "guests" | "local"> =>
+      surface !== "guests" && surface !== "local",
+  );
+  // Every registered runtime on every surface, local and hosted: a runtime
+  // added later is covered here without a new test.
+  for (const harnessId of registeredHarnessIds()) {
+    for (const surface of surfaces) {
+      for (const localExecution of [false, true]) {
+        it(`${harnessId} on ${surface}${localExecution ? " (local)" : ""}`, () => {
+          const declared =
+            harnessSurfaceRefusal(harnessId, surface) ??
+            (localExecution ? harnessSurfaceRefusal(harnessId, "local") : undefined);
+          const result = checkHarnessRuntimeAvailable(
+            args({ harnessId, surface, localExecution }),
+          );
+          if (declared) {
+            expect(result).toEqual({
+              ok: false,
+              kind: "surface-unsupported",
+              reason: declared,
+            });
+          } else {
+            expect(result.ok ? undefined : result.kind).not.toBe(
+              "surface-unsupported",
+            );
+          }
+        });
+      }
+    }
+  }
+
+  describe("a dedicated client that reaches servers only by forwarding", () => {
+    const refusedOn = ["api", "evals", "events", "swarms", "user-testing"] as const;
+    it.each(refusedOn)("is refused with servers on %s, in the planner's words", (surface) => {
+      const result = checkHarnessRuntimeAvailable(
+        args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true }),
+      );
+      expect(result).toMatchObject({ ok: false, kind: "surface-unsupported" });
+      expect(result.ok ? "" : result.reason).toBe(
+        "GitHub Copilot CLI calls MCP servers only through its own client, and this turn cannot forward them. " +
+          (surface === "api"
+            ? "Open this client in the signed-in hosted Playground."
+            : "Use this client with MCP servers in the signed-in hosted Playground."),
+      );
+    });
+    it("runs with servers in the Playground and without servers anywhere", () => {
+      const runs = [
+        args({ harnessId: "copilot-cli", surface: "playground", hasSelectedMcpServers: true }),
+        ...refusedOn.map((surface) => args({ harnessId: "copilot-cli", surface })),
+      ];
+      for (const input of runs) {
+        const result = checkHarnessRuntimeAvailable(input);
+        expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+      }
+    });
+    it("runs with servers everywhere as another client's agent loop", () => {
+      for (const surface of refusedOn) {
+        const result = checkHarnessRuntimeAvailable(
+          args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true, agentLoop: true }),
+        );
+        expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+      }
+    });
+  });
+
+  it("runs GitHub Copilot CLI in evals, swarms and User Testing", () => {
+    for (const surface of ["evals", "swarms", "user-testing"] as const) {
+      const result = checkHarnessRuntimeAvailable(
+        args({ harnessId: "copilot-cli", surface }),
+      );
+      expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+    }
+  });
+});
 
 describe("checkHarnessRuntimeAvailable", () => {
   it.each([
@@ -336,22 +415,19 @@ describe("checkHarnessRuntimeAvailable", () => {
         expect(noDataPlane.kind).toBe("computers-unconfigured");
 
       setFullyAvailable();
-      // Approval: `supportsMcpToolApproval` is false pending a live check, so
-      // an approval host WITH servers is refused rather than run with some MCP
-      // calls unapproved.
-      const approvalWithServers = checkHarnessRuntimeAvailable(
-        args({
-          harnessId: "cursor" as HarnessId,
-          model: { id: "cursor/auto", provider: "cursor" },
-          requireToolApproval: true,
-          hasSelectedMcpServers: true,
-        }),
-      );
-      expect(approvalWithServers.ok).toBe(false);
-      if (!approvalWithServers.ok)
-        expect(approvalWithServers.kind).toBe("tool-approval");
+      // Approval: Cursor asks before every MCP call (measured), so an approval
+      // host WITH servers runs, as one without them does.
+      expect(
+        checkHarnessRuntimeAvailable(
+          args({
+            harnessId: "cursor" as HarnessId,
+            model: { id: "cursor/auto", provider: "cursor" },
+            requireToolApproval: true,
+            hasSelectedMcpServers: true,
+          }),
+        ),
+      ).toEqual({ ok: true });
 
-      // …but approval WITHOUT servers is fine: the native surface does pause.
       expect(
         checkHarnessRuntimeAvailable(
           args({
@@ -1023,7 +1099,7 @@ describe("organization-key selections", () => {
       "claude-haiku-4-5",
       "anthropic",
       "anthropic/claude-haiku-4.5",
-      "model-provider-unsupported",
+      "ok",
     ],
     [
       "claude-code",
@@ -1070,7 +1146,7 @@ describe("organization-key selections", () => {
     },
   );
 
-  it("refuses OpenCode on an organization Anthropic key until that path is qualified", () => {
+  it("runs OpenCode on an organization Anthropic key", () => {
     setFullyAvailable();
     expect(
       checkHarnessRuntimeAvailable(
@@ -1078,20 +1154,32 @@ describe("organization-key selections", () => {
           harnessId: "opencode",
           model: { id: "claude-haiku-4-5", provider: "anthropic" },
           selection: orgSel("anthropic/claude-haiku-4.5"),
-          purpose: "chat",
+          purpose: "eval",
         }),
       ),
-    ).toMatchObject({ ok: false, kind: "model-provider-unsupported" });
-    expect(
-      harnessModelRefusal({
-        adapter: getHarnessAdapter("opencode"),
-        model: { id: "claude-haiku-4-5", provider: "anthropic" },
-        purpose: "chat",
-        selection: orgSel("anthropic/claude-haiku-4.5"),
-      }).refusal?.reason,
-    ).toBe(
-      "The OpenCode client does not support organization provider keys. Choose another client.",
-    );
+    ).toEqual({ ok: true });
+  });
+
+  it("leaves a gateway selection's API and model to lease start, whatever its name's prefix", () => {
+    setFullyAvailable();
+    const row = { id: "custom:litellm:gpt-5.5", provider: "custom" };
+    // The gateway's own names say nothing about the API it serves or the
+    // catalog model they map to: `/reserve` refuses with the backend's reason.
+    for (const harnessId of ["claude-code", "codex", "copilot-cli", "opencode"] as const) {
+      for (const modelId of [
+        "custom:litellm/gpt-5.5",
+        "custom:litellm/anthropic/claude-haiku-4-5",
+      ]) {
+        expect(
+          checkHarnessRuntimeAvailable(
+            args({ harnessId, model: row, selection: orgSel(modelId), purpose: "eval" }),
+          ),
+        ).toEqual({ ok: true });
+        expect(
+          runsHarness({ harness: harnessId, model: row, selection: orgSel(modelId) }),
+        ).toBe(true);
+      }
+    }
   });
 
   it("an org row still answers to the evidence table: unverified is refused for evals", () => {

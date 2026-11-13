@@ -12,8 +12,6 @@ import {
   harnessModelVerdictAdmits,
   harnessNoRunnableModelReason,
   harnessOrgProviderUnsupportedReason,
-  harnessOrgUpstream,
-  harnessRunsOnOrgProvider,
   harnessVersionInRange,
   isValidHarnessVersionRange,
   normalizeHarnessModelId,
@@ -326,14 +324,14 @@ describe("evidence table", () => {
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("supported");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).reason,
     ).toMatch(/scripted Anthropic-compatible upstream/);
     expect(
@@ -347,70 +345,41 @@ describe("evidence table", () => {
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-haiku-3.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unknown");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "anthropic/claude-sonnet-4.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unknown");
     expect(
       harnessModelSupport({
         harnessId: "opencode",
         modelId: "openai/gpt-5.5",
-        runtimeVersion: "1.18.23",
+        runtimeVersion: "1.18.34",
       }).status,
     ).toBe("unsupported");
   });
 });
 
-describe("harnessOrgUpstream", () => {
-  it("maps each brokered harness to its vendor and native profile", () => {
-    expect(harnessOrgUpstream("claude-code")).toEqual({
-      provider: "anthropic",
-      profile: "anthropic-native",
-    });
-    expect(harnessOrgUpstream("codex")).toEqual({
-      provider: "openai",
-      profile: "openai-native",
-    });
-  });
-
-  it("is null for a harness on the customer's own account, or an unknown id", () => {
-    expect(harnessOrgUpstream("cursor")).toBeNull();
-    expect(harnessOrgUpstream("opencode")).toBeNull();
-    expect(harnessOrgUpstream("toString")).toBeNull();
-    expect(harnessOrgUpstream("not-a-harness")).toBeNull();
-  });
-
-  it("admits only the harness's own vendor", () => {
-    expect(harnessRunsOnOrgProvider("claude-code", "anthropic")).toBe(true);
-    expect(harnessRunsOnOrgProvider("claude-code", "openai")).toBe(false);
-    expect(harnessRunsOnOrgProvider("codex", "openai")).toBe(true);
-    expect(harnessRunsOnOrgProvider("cursor", "anthropic")).toBe(false);
-    expect(harnessRunsOnOrgProvider("opencode", "anthropic")).toBe(false);
-    expect(harnessRunsOnOrgProvider("codex", undefined)).toBe(false);
-  });
-});
-
 describe("harnessNoRunnableModelReason", () => {
-  it("names the harness and the org key that would run it", () => {
+  it("names the harness and the org connections that would run it", () => {
     expect(harnessNoRunnableModelReason("codex")).toBe(
-      "Codex runs MCPJam models or your organization's OpenAI key. Add one in Organization models.",
+      "Codex runs MCPJam models, your organization's OpenAI key, or a gateway that serves Responses. Set one up in Organization models.",
     );
     expect(harnessNoRunnableModelReason("cursor")).toBe(
       "Cursor CLI has no model it can run here.",
     );
   });
 
-  it("under the organization's key policy, names only the org vendor", () => {
+  it("under the organization's key policy, names only the org connections", () => {
     expect(
       harnessNoRunnableModelReason("claude-code", { requireOrgKeys: true }),
     ).toBe(
-      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     );
     expect(
       harnessNoRunnableModelReason("cursor", { requireOrgKeys: true }),

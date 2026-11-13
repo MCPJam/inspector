@@ -8,6 +8,10 @@ const stub = `const q = claudeSdk.query({abortSignal: abortCtl.signal
     }
   });
 const [input, extra] = handlerArgs;
+      });
+      emit({
+        type: "tool-result",
+        toolCallId,
 await q.return?.(void 0);
 mcpjamDrainController.clear();`;
 const injected = patchWarmClaudeQuery(stub);

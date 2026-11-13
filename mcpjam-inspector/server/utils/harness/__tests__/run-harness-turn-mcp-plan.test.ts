@@ -106,7 +106,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
   createE2BHarnessSandboxProvider: vi.fn(() => ({ sandboxId: "sandbox-1" })),
 }));
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -458,6 +457,29 @@ describe("account routing", () => {
     expect(projectSpy.mock.calls[0]![0]).toMatchObject({
       connectionsByServerId: groups,
     });
+  });
+
+  it("refuses an eval that would move a harness off its own MCP client", async () => {
+    const options = enrolled({ evalIterationId: "iteration-1" });
+    setManagerConnections(options.mcpClientManager as never, {
+      "srv-a": [{ key: "srv-a" }, { key: "srv-a#personal" }],
+    } as never);
+    const turn = await runHarnessTurn(options as never, "ui");
+    expect(await turn.response!.text()).toContain(
+      "This client runs evals on one account per server.",
+    );
+    expect(harnessState.createRuntime).not.toHaveBeenCalled();
+    expect(projectSpy).not.toHaveBeenCalled();
+  });
+
+  it("runs an eval on one chosen account through the harness's own client", async () => {
+    const options = enrolled({ evalIterationId: "iteration-1" });
+    setManagerConnections(options.mcpClientManager as never, {
+      "srv-a": [{ key: "srv-a" }],
+    } as never);
+    admit("forwarded-native");
+    await runHarnessTurn(options as never, "none");
+    expect(projectSpy).not.toHaveBeenCalled();
   });
 });
 

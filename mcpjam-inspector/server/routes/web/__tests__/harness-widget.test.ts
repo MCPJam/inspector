@@ -267,7 +267,7 @@ it("uses the original account and trusted host for resource reads", async () => 
   state.read.mockResolvedValue({ contents: [{ uri: "test://record", text: "original account" }] });
   const response = await boundResource({ method: "resources/read", uri: "test://record", _meta: { progressToken: "progress" } });
   expect(response.status).toBe(200);
-  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+  expect(state.manager.mock.calls[0][7].connectionIdSets).toEqual({ server: ["original-account"] });
   expect(state.manager.mock.calls[0][4]).toBe(4321);
   expect(state.read).toHaveBeenCalledWith("server", { uri: "test://record", _meta: { progressToken: "progress" } }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(state.scope).toHaveBeenCalledTimes(3);
@@ -344,7 +344,7 @@ it("loads initial widget HTML using the same bound resource route", async () => 
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ html: expect.stringContaining("Original App"), mimeTypeValid: true, injectedOpenAiCompat: true, permissive: true, sourceReceipt: "signed-source" });
   expect(state.sourceReceipt).toHaveBeenCalledWith(expect.anything(), { serverId: "server", resourceUri: "ui://app", toolCallId: "call" }, expect.stringContaining("Original App"), expect.anything(), "project");
-  expect(state.manager.mock.calls[0][7].connectionIds).toEqual({ server: "original-account" });
+  expect(state.manager.mock.calls[0][7].connectionIdSets).toEqual({ server: ["original-account"] });
 });
 
 function retainedProof(connectionCapabilities?: Record<string, unknown>) {
@@ -359,7 +359,7 @@ const retainedResource = (context: object) => harnessWidgets.request("/widget-re
 it("verifies the bridge presentation proof and uses only the original connection", async () => {
   const response = await retainedResource(retainedProof());
   expect(response.status).toBe(200);
-  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds: {server: "original-account"}, onlySelectedConnections: true});
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIdSets: {server: ["original-account"]}});
   expect(state.retained).toHaveBeenCalledTimes(3);
   expect(state.retained.mock.calls.every(([, digest]) => digest === "original-digest")).toBe(true);
 });
@@ -414,7 +414,7 @@ it("routes a retained App button through the existing widget gate with its exact
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('"type":"result"');
   expect(state.control).toHaveBeenCalledWith(expect.objectContaining({retainedParent:{toolCallId:"call",turnId:"real-turn",scopeDigest:"original-digest"}}));
-  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIds:{server:"original-account"},onlySelectedConnections:true});
+  expect(state.manager.mock.calls[0][7]).toMatchObject({connectionIdSets:{server:["original-account"]}});
   expect(state.gate).toHaveBeenCalledOnce();
   expect(state.dispatch).toHaveBeenCalledOnce();
 });

@@ -321,6 +321,7 @@ export async function prepareManagedTools(args: {
                 ...(provisioned.value.workdir
                   ? { workdir: provisioned.value.workdir }
                   : {}),
+                idleMs: provisioned.value.idleMs,
               },
             }
           : { ok: false as const, refusal: provisioned };

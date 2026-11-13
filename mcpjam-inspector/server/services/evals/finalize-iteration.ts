@@ -644,6 +644,8 @@ export function buildIterationFinishParams(args: {
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   /** Each harness turn's MCP route, by promptIndex. */
   harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  /** The skills every turn of the iteration ran with (see the finalize param). */
+  skillsAtTurn?: Array<Record<string, unknown>>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
@@ -798,6 +800,7 @@ export function buildIterationFinishParams(args: {
     spans,
     requestPayloads,
     harnessMcpByPromptIndex,
+    skillsAtTurn,
     prompts,
     widgetSnapshots,
     widgetRenderObservations,
@@ -973,6 +976,7 @@ export function buildIterationFinishParams(args: {
     ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(requestPayloads?.length ? { requestPayloads } : {}),
     ...(harnessMcpByPromptIndex?.size ? { harnessMcpByPromptIndex } : {}),
+    ...(skillsAtTurn ? { skillsAtTurn } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -1064,6 +1068,12 @@ export type FinalizeEvalIterationParams = {
    * sends it; the W1 fallback has no field for it.
    */
   harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  /**
+   * The `skillsAtTurn` rows every turn of the iteration ran with, from the
+   * turn's skill plan. Absent when the run froze no skills. Only the per-turn
+   * fanout sends it; the W1 fallback has no field for it.
+   */
+  skillsAtTurn?: Array<Record<string, unknown>>;
   prompts?: PromptTraceSummary[];
   widgetSnapshots?: EvalTraceWidgetSnapshot[];
   /**
@@ -1200,6 +1210,7 @@ export async function finalizeEvalIteration(
     spans,
     requestPayloads,
     harnessMcpByPromptIndex,
+    skillsAtTurn,
     prompts,
     widgetSnapshots,
     systemPrompt,
@@ -1336,6 +1347,7 @@ export async function finalizeEvalIteration(
     spans,
     requestPayloads,
     harnessMcpByPromptIndex,
+    ...(skillsAtTurn ? { skillsAtTurn } : {}),
     prompts,
     widgetSnapshots,
     systemPrompt,

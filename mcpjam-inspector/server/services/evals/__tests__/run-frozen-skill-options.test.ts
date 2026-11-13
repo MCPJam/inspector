@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { runFrozenSkillOptions } from "../../evals-runner";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
+import { buildLiveEffectiveCapabilities } from "../../environments/effective-capabilities";
+import type { PinnedSkillSource } from "../../environments/turn-skills";
 
 /**
  * The forwarding seam for a run's frozen skills.
@@ -23,15 +25,23 @@ const artifact: PinnedSkillArtifact = {
   contentHash: "sha-1",
 };
 
+/** A run that froze no skills. */
+const noPins: PinnedSkillSource = {
+  kind: "pins",
+  pins: [],
+  set: buildLiveEffectiveCapabilities({}),
+  harnessSkills: [],
+};
+
 describe("runFrozenSkillOptions", () => {
   it("forwards BOTH channels together", () => {
     expect(
       runFrozenSkillOptions({
-        pinnedSkillSource: { kind: "pinned", skills: [] },
+        pinnedSkillSource: noPins,
         pinnedHarnessSkills: [artifact],
       })
     ).toEqual({
-      pinnedSkillSource: { kind: "pinned", skills: [] },
+      pinnedSkillSource: noPins,
       pinnedHarnessSkills: [artifact],
     });
   });
@@ -58,7 +68,7 @@ describe("runFrozenSkillOptions", () => {
     // a run with no pins at all (a quick run, which has no run row to carry
     // them). Presence, not length, is what selects the pinned source.
     const out = runFrozenSkillOptions({
-      pinnedSkillSource: { kind: "pinned", skills: [] },
+      pinnedSkillSource: noPins,
     });
     expect("pinnedHarnessSkills" in out).toBe(false);
   });

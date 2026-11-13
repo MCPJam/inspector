@@ -4,13 +4,15 @@ import type {
   HarnessV1PromptControl,
   HarnessV1PromptTurnOptions,
 } from "@ai-sdk/harness";
+import { coerceToolInput } from "./tool-input.js";
 
 /** Pre-approve native requests only. Framework host-tool gates remain intact. */
 export function withAutoApprovedNativeRequests<T extends HarnessV1>(
   harness: T,
   onApproval?: (approvalId: string) => void,
   pendingApprovalIds: ReadonlySet<string> = new Set(),
-  shouldApprove?: (toolName: string | undefined) => boolean,
+  /** Sees the call's input too: some runtimes name the server only there. */
+  shouldApprove?: (toolName: string | undefined, input: unknown) => boolean,
 ): T {
   return new Proxy(harness, {
     get(target, key) {
@@ -33,7 +35,7 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
                 HarnessV1PromptTurnOptions | HarnessV1ContinueTurnOptions,
             ) => {
               const seen = new Set<string>();
-              const toolNames = new Map<string, string>();
+              const toolCalls = new Map<string, { name: string; input: unknown }>();
               const queued: string[] = [];
               let control: HarnessV1PromptControl | undefined;
               let pending = Promise.resolve();
@@ -59,15 +61,19 @@ export function withAutoApprovedNativeRequests<T extends HarnessV1>(
               };
               const emit: typeof options.emit = (part) => {
                 if (part.type === "tool-call") {
-                  if (toolNames.size >= 1024) toolNames.delete(toolNames.keys().next().value!);
-                  toolNames.set(part.toolCallId, part.toolName);
+                  if (toolCalls.size >= 1024) toolCalls.delete(toolCalls.keys().next().value!);
+                  toolCalls.set(part.toolCallId, {
+                    name: part.toolName,
+                    input: coerceToolInput(part.input),
+                  });
                 }
                 if (part.type !== "tool-approval-request") {
                   options.emit(part);
                   return;
                 }
+                const call = toolCalls.get(part.toolCallId);
                 if (pendingApprovalIds.has(part.approvalId) ||
-                    (shouldApprove && !shouldApprove(toolNames.get(part.toolCallId)))) {
+                    (shouldApprove && !shouldApprove(call?.name, call?.input))) {
                   options.emit(part);
                   return;
                 }

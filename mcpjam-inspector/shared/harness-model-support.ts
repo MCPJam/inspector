@@ -1,10 +1,10 @@
 import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
 import {
-  harnessRunsOnConnection,
   harnessTakesOrgKeys,
   harnessWireApi,
   type HarnessWireApi,
 } from "./harness-connection-api";
+import { GATEWAY_API_LABELS } from "./gateway-connection";
 /**
  * Which models a harness runtime can run, keyed by the runtime's VERSION.
  *
@@ -149,60 +149,24 @@ export function harnessPinnedVersion(harnessId: string): string | undefined {
 }
 
 /**
- * The runtime profile a harness uses on an organization key, and the provider
- * whose native API that profile talks to. Whether a harness may run on a
- * connection is not read from here: admission asks whether the harness takes
- * organization keys and the connection serves its API
- * (`harnessRunsOnConnection`). Cursor authenticates with the customer's own
- * Cursor account; OpenCode is platform-funded only until its org-key path is
- * qualified.
+ * The upstream an org-key lease runs on, as the backend echoes it at lease
+ * start: the vendor's own API (`anthropic-native`, `openai-native`) or the
+ * organization's gateway (`org-gateway`, the gateway's own model names and no
+ * vendor rewrites). Whether a harness may run on a connection is not read
+ * from here: admission asks whether the harness takes organization keys and
+ * the connection serves its API (`harnessRunsOnConnection`).
  */
-export type HarnessOrgUpstream = {
-  provider: "anthropic" | "openai";
-  profile: "anthropic-native" | "openai-native";
-};
-
-export const HARNESS_ORG_UPSTREAM = {
-  "claude-code": HARNESS_DESCRIPTORS["claude-code"].orgUpstream,
-  "codex": HARNESS_DESCRIPTORS["codex"].orgUpstream,
-  "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].orgUpstream,
-  "cursor": HARNESS_DESCRIPTORS["cursor"].orgUpstream,
-  "opencode": HARNESS_DESCRIPTORS["opencode"].orgUpstream,
-} as const satisfies Record<Harness, HarnessOrgUpstream | null>;
-
-/** The native org upstream `harnessId` runs on, or null when it has none. */
-export function harnessOrgUpstream(
-  harnessId: string,
-): HarnessOrgUpstream | null {
-  return Object.prototype.hasOwnProperty.call(HARNESS_ORG_UPSTREAM, harnessId)
-    ? HARNESS_ORG_UPSTREAM[harnessId as Harness]
-    : null;
-}
-
-/**
- * Whether `harnessId` can run on an org connection to `providerKey`, for a
- * caller that holds only the key. This is the preflight's answer from
- * non-secret metadata; the backend still resolves the connection id
- * authoritatively at lease start and refuses a mismatch (`provider_mismatch`).
- */
-export function harnessRunsOnOrgProvider(
-  harnessId: string,
-  providerKey: string | undefined,
-): boolean {
-  return (
-    providerKey !== undefined &&
-    harnessRunsOnConnection(harnessId, { providerKey })
-  );
-}
+export type HarnessOrgUpstreamProfile =
+  "anthropic-native" | "openai-native" | "org-gateway";
 
 /**
  * Which upstream a harness runtime is configured for, as the backend resolved
- * it at lease start. Non-secret. The Gateway profile keeps the Gateway's
- * Claude model spellings and effort workarounds; a native profile talks to the
- * vendor's own API with native model ids.
+ * it at lease start. Non-secret. The Gateway profile (MCPJam's own) keeps the
+ * Gateway's Claude model spellings and effort workarounds; an org profile
+ * talks to the vendor's own API, or the organization's gateway, with the
+ * leased model id.
  */
-export type HarnessUpstreamProfile =
-  "gateway" | "anthropic-native" | "openai-native";
+export type HarnessUpstreamProfile = "gateway" | HarnessOrgUpstreamProfile;
 
 /** The provider copy names for the API a harness speaks. */
 const ORG_API_PROVIDER_LABELS: Record<HarnessWireApi, string> = {
@@ -246,9 +210,11 @@ export function harnessOrgProviderUnsupportedReason(
 }
 
 /**
- * Why a harness host's picker has no row it can run, and what fixes it. Under
- * the key policy the picker adds the fix itself ("Add a provider", or ask an
- * admin), so the sentence names only the vendor.
+ * Why a harness host's picker has no row it can run, and what fixes it: a
+ * vendor key, or a gateway that serves the harness's API (often an existing
+ * gateway with that API turned on). Under the key policy the picker adds the
+ * fix itself ("Add a provider", or ask an admin), so the sentence names only
+ * the connections that would run it.
  */
 export function harnessNoRunnableModelReason(
   harnessId: string,
@@ -256,10 +222,12 @@ export function harnessNoRunnableModelReason(
 ): string {
   const name = harnessDisplayName(harnessId);
   const vendor = orgKeyProviderLabel(harnessId);
-  if (!vendor) return `${name} has no model it can run here.`;
+  const api = harnessWireApi(harnessId);
+  if (!vendor || !api) return `${name} has no model it can run here.`;
+  const gateway = `a gateway that serves ${GATEWAY_API_LABELS[api]}`;
   return policy.requireOrgKeys
-    ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider.`
-    : `${name} runs MCPJam models or your organization's ${vendor} key. Add one in Organization models.`;
+    ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider or ${gateway}.`
+    : `${name} runs MCPJam models, your organization's ${vendor} key, or ${gateway}. Set one up in Organization models.`;
 }
 
 /** Human-facing runtime names (same values as the registry's `displayName`). */

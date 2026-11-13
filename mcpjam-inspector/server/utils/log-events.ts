@@ -595,7 +595,7 @@ export type SystemEventMap = {
     surface: string;
     serverId: string;
     transport: "http" | "stdio";
-    configuredMode: "auto" | "modern-pin" | "legacy";
+    configuredMode: "auto" | "modern-pin" | "legacy" | "legacy-first";
     outcome: "connected" | "failed";
     negotiatedEra?: "legacy" | "modern";
     negotiatedProtocolVersion?: string;

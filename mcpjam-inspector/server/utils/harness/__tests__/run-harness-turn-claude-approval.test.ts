@@ -89,12 +89,12 @@ vi.mock("../local/pack-bootstrap.js", () => ({
 }));
 vi.mock("../runtime-skills.js", async (original) => ({
   ...(await original<typeof import("../runtime-skills.js")>()),
-  frontmatterSafeSkills: (skills: unknown) => skills,
   skillsFingerprint: () => "empty",
   fetchRuntimeSkills: async () => ({ ok: true, skills: [] }),
   fetchRuntimeSkillFiles: async () => ({ ok: true, files: [] }),
 }));
 vi.mock("../preseed-adapter-skills.js", () => ({
+  clearAdapterSkills: async () => {},
   handOffLegacySkillDirs: async () => {},
   preseedAdapterSkills: async () => {},
 }));
@@ -173,7 +173,7 @@ vi.mock("../local/local-turn.js", () => ({
         sandbox: {},
         auth: {},
         sandboxWorkDir: "project",
-        skillsBaseDir: "/local/home/.claude/skills",
+        homeDir: "/local/home",
         permissionMode: "allow-reads",
         sessionStateExists: true,
         teardown: () => endLocalHarnessSession(args.sessionId),

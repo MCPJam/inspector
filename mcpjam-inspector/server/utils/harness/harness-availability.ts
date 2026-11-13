@@ -37,7 +37,31 @@ import {
   type HarnessModelPurpose,
   type HarnessKeyPolicy,
 } from "@/shared/harness-model-support";
-import { harnessRunsOnConnection } from "@/shared/harness-connection-api";
+import {
+  harnessRunsOnConnection,
+  harnessTakesOrgKeys,
+  harnessWireApi,
+} from "@/shared/harness-connection-api";
+import { isGatewayModelId } from "@/shared/harness-gateway-model";
+import {
+  harnessSurfaceRefusal,
+  type HarnessSurface,
+} from "@/shared/harness-descriptors";
+import {
+  requiredForwardingRefusal,
+  type HarnessMcpPlanReason,
+} from "./harness-mcp-plan.js";
+
+/** Why the planner refuses a forward-only turn on each surface that never
+ *  forwards; the Playground forwards. */
+const FORWARDING_CLOSED: Partial<Record<HarnessSurface, HarnessMcpPlanReason>> = {
+  // A v1 API turn runs on the web plane but hands the turn no host id.
+  api: "no host id",
+  evals: "eval iteration",
+  events: "eval iteration",
+  swarms: "journey run",
+  "user-testing": "scenario turn",
+};
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -136,15 +160,19 @@ export function harnessModelPurposeForSourceType(
  *    ({@link externalAccountHostModelRefusalReason}); nothing else applies.
  *  - brokered harness: the model must be MCPJam-provided (`model-not-hosted`)
  *    OR the turn's saved selection names an org connection that serves the
- *    API this harness speaks (Claude Code: Anthropic Messages, Codex: OpenAI
- *    Responses), which runs on the organization's own key. Any other org
- *    connection is `model-provider-unsupported`; a local provider stays
- *    `model-not-hosted`. Then the harness-model evidence table at the
- *    adapter's pinned runtime version must admit the CANONICAL id for
- *    `purpose`: `unsupported` is refused (`model-unsupported`); `unknown` is
- *    refused for evals and swarms (`model-unverified`, "not verified for
- *    <harness> <version>") and allowed in Playground chat, where the same
- *    sentence comes back as `warning`.
+ *    API this harness speaks (Claude Code and OpenCode: Anthropic Messages,
+ *    Codex and Copilot CLI: OpenAI Responses), which runs on the
+ *    organization's own key. Any other org connection is
+ *    `model-provider-unsupported`; a local provider stays `model-not-hosted`.
+ *    Then the harness-model evidence table at the adapter's pinned runtime
+ *    version must admit the CANONICAL id for `purpose`: `unsupported` is
+ *    refused (`model-unsupported`); `unknown` is refused for evals and swarms
+ *    (`model-unverified`, "not verified for <harness> <version>") and allowed
+ *    in Playground chat, where the same sentence comes back as `warning`.
+ *  - a gateway selection (`custom:*`) skips the table here: the catalog model
+ *    its entry maps to, and the APIs the gateway serves, are on the
+ *    connection, which lease start reads and refuses with the backend's code
+ *    and reason (on a box, `/reserve` does before anything is installed).
  */
 export function harnessModelRefusal(args: {
   keyPolicy?: HarnessKeyPolicy;
@@ -187,6 +215,7 @@ export function harnessModelRefusal(args: {
       },
     };
   }
+  if (orgSelection && isGatewayModelId(orgSelection.modelId)) return {};
   // Evidence is read on the CANONICAL id: an org row's own id is the native
   // one (`claude-sonnet-4-5`), which the table does not know.
   const verdict = adapter.modelSupport(
@@ -228,12 +257,20 @@ export function orgHarnessSelection(
  * provider the id names must serve that API too: otherwise the saved
  * selection is inconsistent with its row, and the turn is refused here rather
  * than at lease start.
+ *
+ * A gateway selection's id names the gateway, never the vendor of the model
+ * behind it, so no creator prefix decides it: the gateway's APIs do. This
+ * server does not hold them, so it admits any harness that takes organization
+ * keys and speaks an API, and lease start judges the gateway.
  */
 function orgSelectionServesHarness(
   harnessId: string,
   model: { provider?: string },
   selection: OrgHarnessSelection,
 ): boolean {
+  if (isGatewayModelId(selection.modelId)) {
+    return harnessTakesOrgKeys(harnessId) && harnessWireApi(harnessId) !== null;
+  }
   const named = selection.modelId.includes("/")
     ? hostedProviderFromCanonicalId(selection.modelId)
     : undefined;
@@ -444,6 +481,8 @@ export function harnessReasoningEffortRefusalReason(args: {
  * the message text made a copy edit silently change admission behaviour.
  */
 export type HarnessUnavailableKind =
+  /** The runtime's descriptor declares it does not run on this surface. */
+  | "surface-unsupported"
   | "broker-disabled"
   | "enterprise-policy"
   | "computers-unconfigured"
@@ -488,6 +527,12 @@ export function checkHarnessRuntimeAvailable(args: {
   mcpClient?: "mcpjam" | "harness";
   /** The harness this host runs — selects the capability set. */
   harnessId: HarnessId;
+  /** Where the turn runs. Guests are decided by the backend's capability map,
+   *  and `local` comes from `localExecution`. */
+  surface: Exclude<HarnessSurface, "guests" | "local">;
+  /** The host runs this runtime as another client's agent loop (VS Code or
+   *  Microsoft 365 Copilot on Copilot CLI), keeping MCPJam's MCP client. */
+  agentLoop?: boolean;
   /** The host's resolved approval gate. The runtimes can't pause for native/MCP
    *  tool approval, so an approval host is rejected (capability-driven). */
   requireToolApproval: boolean;
@@ -594,6 +639,38 @@ export function checkHarnessRuntimeAvailable(args: {
   // local Codex turn the turn itself can serve.
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  // Whether the runtime runs here at all comes first: every other rule is
+  // about a turn this surface could run.
+  const surfaceRefusal =
+    harnessSurfaceRefusal(args.harnessId, args.surface) ??
+    (args.localExecution === true
+      ? harnessSurfaceRefusal(args.harnessId, "local")
+      : undefined);
+  if (surfaceRefusal) {
+    return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
+  }
+  // A dedicated client reaches its servers only through the runtime's own MCP
+  // client, which only signed-in Playground chats forward. Refused here in the
+  // planner's words, so an eval or a study is not admitted only to fail every
+  // turn.
+  if (
+    adapter.requiredForwarding === "pass-through" &&
+    args.agentLoop !== true &&
+    args.hasSelectedMcpServers
+  ) {
+    const closed =
+      args.localExecution === true
+        ? "local execution target"
+        : FORWARDING_CLOSED[args.surface];
+    if (closed) {
+      return {
+        ok: false,
+        kind: "surface-unsupported",
+        reason: requiredForwardingRefusal({ reasons: [closed], gaps: [] }, name),
+      };
+    }
+  }
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
   // authenticate on the CUSTOMER's own provider account? Three checks below

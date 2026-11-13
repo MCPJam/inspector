@@ -1236,6 +1236,43 @@ describe("SwarmsTab — New swarm create flow", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the planned matrix before preparation and shows accepted runs while other launches wait", async () => {
+    let finishPreparation!: (value: { _id: string }) => void;
+    let finishFirst!: (value: { runId: string }) => void;
+    let failSecond!: (reason: Error) => void;
+    createSwarmMock.mockReturnValue(new Promise((resolve) => { finishPreparation = resolve; }));
+    launchJourneyRunMock
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { failSecond = reject; }));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByRole("button", { name: "Start swarm" }));
+
+    expect(screen.queryByTestId("new-swarm-confirm-step")).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent("Starting swarm");
+    expect(screen.getByText("Queued: Refund a charge")).toBeVisible();
+    expect(launchJourneyRunMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("new-swarm-running-open-findings")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Leave" })).toBeDisabled();
+
+    finishPreparation({ _id: "swarm-1" });
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Starting: Refund a charge")).toBeVisible();
+    finishFirst({ runId: "run-first" });
+    await screen.findByText("Pending: Refund a charge");
+    expect(screen.getByText("Starting: Wire up the subscription webhook")).toBeVisible();
+    expect(screen.getByText("1 of 2 goals started")).toBeVisible();
+    expect(screen.queryByTestId("new-swarm-running-progress")).not.toBeInTheDocument();
+
+    failSecond(new Error("Client connection failed"));
+    await screen.findByText("Failed: Wire up the subscription webhook");
+    expect(screen.getByText("Client connection failed")).toBeVisible();
+    await waitFor(() => expect(screen.getByTestId("new-swarm-running-open-findings")).not.toBeDisabled());
+    expect(screen.getByText("Pending: Refund a charge")).toBeVisible();
+  });
+
   it("writes nothing until Launch, then creates personas, journeys, and one run each", async () => {
     openDescribe();
     fillDescribe();
@@ -2293,6 +2330,21 @@ describe("SwarmsTab create flow — survives a remount", () => {
     render(createFlowTab());
   }
 
+  it("restores Confirm with a retry message if startup was interrupted before a run started", async () => {
+    createSwarmMock.mockImplementation(() => new Promise(() => {}));
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent("Starting swarm");
+
+    remount();
+    await screen.findByTestId("new-swarm-confirm-step");
+    expect(screen.getByRole("alert")).toHaveTextContent("Swarm startup was interrupted. Press Start swarm to retry.");
+    expect(screen.getByTestId("new-swarm-launch")).not.toBeDisabled();
+  });
+
   it("keeps a description-only edit, and keeps its draft, across repeated remounts", async () => {
     openDescribe();
     fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
@@ -2541,10 +2593,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
   });
 
-  it("disables the ← Swarms exit while a launch is in flight, and clicking it fires no toast", async () => {
-    // Hold the launch open so `launching` stays true and the header link sits
-    // in its disabled window — the exact state the guard exists for. This is
-    // the behaviour the PR description promises.
+  it("disables Leave on the run screen while a launch is in flight", async () => {
     launchJourneyRunMock.mockImplementation(() => new Promise(() => {}));
     openDescribe();
     fillDescribe();
@@ -2552,7 +2601,7 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
     fireEvent.click(screen.getByTestId("new-swarm-launch"));
 
-    const back = await screen.findByTestId("new-swarm-back-to-swarms");
+    const back = screen.getByRole("button", { name: "Leave" });
     await waitFor(() => expect(back).toBeDisabled());
     // A disabled control ignores the click: no discard toast over a live launch.
     fireEvent.click(back);
@@ -2981,11 +3030,11 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("names the primary Continue, with Back beside it", async () => {
+  it("names the primary Start swarm, with Back beside it", async () => {
     await reachConfirm();
 
     expect(screen.getByTestId("new-swarm-launch")).toHaveTextContent(
-      "Continue",
+      "Start swarm",
     );
     expect(screen.getByRole("button", { name: /^back$/i })).toBeVisible();
   });

@@ -1,6 +1,6 @@
 import type { HarnessStartupPhase } from "@/shared/harness-startup";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
 
@@ -160,26 +160,19 @@ describe("FullscreenChatOverlay", () => {
     expect(screen.queryByTestId("context-group-chip")).not.toBeInTheDocument();
   });
 
-  it("shows delayed startup phases in fullscreen and restores the brand indicator", () => {
-    vi.useFakeTimers();
-    try {
-      const view = renderWithProviders(
-        <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase="computer" />,
-      );
-      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(500));
-      expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
-      view.rerender(
-        <PreferencesStoreProvider themeMode="light" themePreset="default">
-          <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase={null} />
-        </PreferencesStoreProvider>,
-      );
-      expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
-      expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
-      view.unmount();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("shows a startup phase immediately and restores the brand indicator when it ends", () => {
+    const view = renderWithProviders(
+      <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase="computer" />,
+    );
+    expect(screen.getByText("Starting your computer…")).toBeInTheDocument();
+    expect(screen.queryByTestId("loading-indicator-chatgpt-dot")).not.toBeInTheDocument();
+    view.rerender(
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        <FullscreenChatOverlay {...defaultProps} isThinking modelProvider="openai" startupPhase={null} />
+      </PreferencesStoreProvider>,
+    );
+    expect(screen.queryByText("Starting your computer…")).not.toBeInTheDocument();
+    expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
   });
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveVersionNegotiation } from "../src/mcp-client-manager/version-negotiation.js";
+import {
+  legacyFirstFallback,
+  resolveVersionNegotiation,
+} from "../src/mcp-client-manager/version-negotiation.js";
 import { MCP_PROTOCOL_VERSIONS } from "../src/mcp-client-manager/mcp-protocol-version.js";
 
 describe("resolveVersionNegotiation", () => {
@@ -45,5 +48,70 @@ describe("resolveVersionNegotiation", () => {
         expect(out).toEqual({ mode: { pin: v } });
       }
     }
+  });
+});
+
+describe("legacy-first", () => {
+  const refusal = (code: number, supported?: string[]) =>
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: 0,
+      error: {
+        code,
+        message: "refused",
+        ...(supported ? { data: { supported } } : {}),
+      },
+    });
+  const httpError = (text: string) =>
+    Object.assign(new Error(`Error POSTing to endpoint: ${text}`), {
+      name: "SdkHttpError",
+      code: "CLIENT_HTTP_NOT_IMPLEMENTED",
+      data: { status: 400, text },
+    });
+  const legacyFirst = { versionNegotiation: "legacy-first" as const };
+
+  it("opens with the exact legacy handshake while unpinned", () => {
+    expect(
+      resolveVersionNegotiation(undefined, "legacy-first")
+    ).toBeUndefined();
+    expect(resolveVersionNegotiation("2026-07-28", "legacy-first")).toEqual({
+      mode: { pin: "2026-07-28" },
+    });
+  });
+
+  it("falls back only on -32022 naming 2026-07-28", () => {
+    const named = httpError(refusal(-32022, ["2026-07-28"]));
+    expect(legacyFirstFallback(legacyFirst, named)).toBe("2026-07-28");
+    expect(
+      legacyFirstFallback(legacyFirst, new Error("wrapped", { cause: named }))
+    ).toBe("2026-07-28");
+    expect(
+      legacyFirstFallback(
+        legacyFirst,
+        Object.assign(new Error("refused"), {
+          code: -32022,
+          data: { supported: ["2026-07-28"], requested: "2025-11-25" },
+        })
+      )
+    ).toBe("2026-07-28");
+    for (const other of [
+      httpError(refusal(-32600)),
+      httpError(refusal(-32022, ["2027-01-01"])),
+      httpError("<html>Bad Request</html>"),
+      new Error("fetch failed"),
+    ]) {
+      expect(legacyFirstFallback(legacyFirst, other)).toBeUndefined();
+    }
+  });
+
+  it("never applies to a pinned or Auto connection", () => {
+    const named = httpError(refusal(-32022, ["2026-07-28"]));
+    expect(
+      legacyFirstFallback(
+        { ...legacyFirst, mcpProtocolVersion: "2025-11-25" },
+        named
+      )
+    ).toBeUndefined();
+    expect(legacyFirstFallback({}, named)).toBeUndefined();
   });
 });

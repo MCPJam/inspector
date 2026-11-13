@@ -33,6 +33,17 @@ describe("reapHarnessBridgesCommand", () => {
     ).toBe(true);
   });
 
+  it("also names the sessions root inspectors used before the state directory", () => {
+    expect(
+      reapHarnessBridgesCommand(
+        "/home/user/.ai-sdk-harness/.agent-runs/s-1/bridge",
+      ).endsWith(
+        "' '/home/user/.ai-sdk-harness/.agent-runs/s-1/bridge' " +
+          "'/home/user/.ai-sdk-harness/.agent-runs/' 3000 '/home/user/.agent-runs/'",
+      ),
+    ).toBe(true);
+  });
+
   it("quotes a state dir that would otherwise break out of its argument", () => {
     expect(reapHarnessBridgesCommand("/tmp/it's; rm -rf ~")).toContain(
       `'/tmp/it'\\''s; rm -rf ~'`,
@@ -147,8 +158,9 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
         )
       : Promise.resolve(child.signalCode);
 
-  it("exact teardown stops the session and its child but preserves idle siblings", async () => {
-    const dir = root();
+  it.each([".agent-runs", ".ai-sdk-harness/.agent-runs"])("exact teardown in %s stops the session and child but preserves idle siblings", async (runs) => {
+    const home = root();
+    const dir = join(home, runs);
     const own = join(dir, "chat-a", "bridge");
     const childFile = join(dir, "child-pid");
     const target = await bridge(own, "running", {
@@ -160,6 +172,7 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
     `,
     });
     const sibling = await bridge(join(dir, "chat-b", "bridge"), "waiting");
+    const olderSibling = await bridge(join(home, ".agent-runs", "older-chat", "bridge"), "waiting");
     const childPid = Number(readFileSync(childFile, "utf8"));
     try {
       const output = execFileSync(
@@ -171,6 +184,7 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
       expect(output.split(/\s+/)).toContain(String(childPid));
       await exited(target);
       expect(running(sibling)).toBe(true);
+      expect(running(olderSibling)).toBe(true);
       let alive = false;
       try {
         const stat = readFileSync(`/proc/${childPid}/stat`, "utf8");
@@ -240,6 +254,28 @@ describe.runIf(process.platform === "linux")("against real bridges", () => {
 
     expect(reap(join(root(), "chat-b", "bridge"))).toBe("");
     expect(running(elsewhere)).toBe(true);
+  });
+
+  it("reaps bridges an earlier inspector started under the legacy run state, by the same rules", async () => {
+    // A deploy that moved run state into the framework's state directory:
+    // bridges from before it still run under $HOME/.agent-runs.
+    const home = root();
+    const legacyIdle = await bridge(join(home, ".agent-runs", "chat-a", "bridge"), "waiting");
+    const legacyPaused = await bridge(join(home, ".agent-runs", "chat-c", "bridge"), "running");
+    const currentIdle = await bridge(
+      join(home, ".ai-sdk-harness", ".agent-runs", "chat-d", "bridge"),
+      "waiting",
+    );
+    const otherHome = await bridge(join(root(), ".agent-runs", "chat-e", "bridge"), "waiting");
+
+    const reaped = reap(join(home, ".ai-sdk-harness", ".agent-runs", "chat-b", "bridge"));
+    expect(reaped.split(" ").sort()).toEqual(
+      [String(legacyIdle.pid), String(currentIdle.pid)].sort(),
+    );
+    expect(await exited(legacyIdle)).toBe("SIGTERM");
+    expect(await exited(currentIdle)).toBe("SIGTERM");
+    expect(running(legacyPaused)).toBe(true);
+    expect(running(otherHome)).toBe(true);
   });
 
   it("leaves a process that is not a bridge alone", async () => {

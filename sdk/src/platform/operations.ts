@@ -115,6 +115,18 @@ import {
   listConformanceRunsOperation,
   startConformanceRunOperation,
 } from "./conformance-operations.js";
+import {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+} from "./server-revision-operations.js";
+import {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+} from "./server-account-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2371,6 +2383,43 @@ export type {
   StartConformanceRunResult,
 } from "./conformance-operations.js";
 export type { ResolvedServerInfo, ServerScopedInput };
+
+// ── Server revision operations ───────────────────────────────────────
+// Defined in `server-revision-operations.ts`; re-exported like the above.
+
+export {
+  diffServerRevisionsOperation,
+  getServerRevisionOperation,
+  listServerRevisionsOperation,
+};
+export type {
+  DiffServerRevisionsInput,
+  DiffServerRevisionsResult,
+  GetServerRevisionInput,
+  GetServerRevisionResult,
+  ListServerRevisionsInput,
+  ListServerRevisionsResult,
+} from "./server-revision-operations.js";
+
+// ── Server account operations ────────────────────────────────────────
+// Defined in `server-account-operations.ts`; re-exported like the above.
+
+export {
+  deleteServerAccountOperation,
+  getServerAccountOperation,
+  listServerAccountsOperation,
+  updateServerAccountOperation,
+  uploadServerAccountTokensOperation,
+};
+export type {
+  DeleteServerAccountResult,
+  ListServerAccountsResult,
+  ServerAccountInput,
+  ServerAccountResult,
+  UpdateServerAccountInput,
+  UploadServerAccountTokensInput,
+  UploadServerAccountTokensResult,
+} from "./server-account-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -9064,7 +9113,7 @@ const sendChatMessageInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex, Cursor CLI) runs the real runtime; without one the turn runs MCPJam's emulated engine. The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
+      "The saved host (client) this turn executes AS — it decides which ENGINE runs. A host that declares an agent harness (Claude Code, Codex) runs the real runtime; without one the turn runs MCPJam's emulated engine. A runtime this API cannot run, such as Cursor CLI or a client running a vendor's agent loop, is refused before the turn (details.reason: 'HARNESS_UNAVAILABLE', with details.kind naming why). The server reads the host's own config for this: harness and computer are never accepted from the request. PER-TURN, not pinned to the session — re-send it on every turn, and read the response's `engine` field to confirm what ran. A continuation of a session that named ONLY a host must re-send it: omitting it is refused (details.reason: 'HOST_TARGET_REQUIRED') rather than answered by the emulated engine. An environment already pins its own host, so pass this alongside environmentId only to assert which host you expect (a mismatch is rejected). A harness turn requires toolMode:'auto' with no allowedTools/maxToolCalls, because a harness builds its own tool set and this surface cannot narrow it. It also cannot be sent together with serverIds: hostId cannot be pinned beside them, so a later turn that omitted it would run the emulated engine on a session established on the harness (refused with details.kind: 'surface-unpinnable-host'). Use environmentId, or hostId alone plus per-turn allowedServerIds."
     ),
   environmentId: z
     .string()
@@ -19230,6 +19279,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  // Server accounts. Tokens are write-only, and the upload and the update are
+  // excluded from the MCP catalog and the agent registry: the upload carries a
+  // token in its INPUT, and the default decides which account runs with no
+  // saved account choice sign in as.
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
   listServerToolsOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,

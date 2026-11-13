@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 /**
- * The Playground's HIDDEN environment on a harness (`live_plus`): a client
- * turn that runs the project's plugins through an ad-hoc environment keeps the
- * project's skill pool. The pool AND the environment's own skills reach the
- * box, each with its supporting files, in one pass — and a failed project-wide
- * fetch delivers nothing new rather than deleting the pool's skill folders.
+ * The Playground's HIDDEN environment on a harness: a client's turn runs in
+ * its ad-hoc environment, which the backend resolves in the client's skill
+ * selection, the caller's own skills included. The box gets exactly the
+ * environment's skills, each with its supporting files from the environment,
+ * and the harness reads nothing from the project on its own.
  */
 
 const harnessState = vi.hoisted(() => ({
@@ -60,13 +60,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: true,
-    skillsBaseDir: "/home/user/.claude/skills",
-    skillsWriteOptions: { trailingNewline: true },
-    prepareSkills: (skills: Array<{ name: string }>) => ({
-      payload: skills,
-      delivered: skills,
-      skipped: [],
-    }),
+    skills: HARNESS_SKILLS["claude-code"],
     mcpDelivery: "mcpjam",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
@@ -85,25 +79,12 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
   createE2BHarnessSandboxProvider: vi.fn(() => ({ sandboxId: "sandbox-1" })),
 }));
 
-const skillsState = vi.hoisted(() => ({
-  fetchRuntimeSkills: vi.fn(),
-  fetchRuntimeSkillFiles: vi.fn(),
-}));
-
-vi.mock("../runtime-skills.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../runtime-skills.js")>();
-  return {
-    ...actual,
-    fetchRuntimeSkills: skillsState.fetchRuntimeSkills,
-    fetchRuntimeSkillFiles: skillsState.fetchRuntimeSkillFiles,
-  };
-});
-
 const passes = vi.hoisted(() => ({
   reconcileSkillDirs: vi.fn(async (_args: unknown) => {}),
   materializeSkillFiles: vi.fn(async (_args: unknown) => ({
     written: 0,
     skipped: 0,
+    failed: new Map<string, string>(),
   })),
 }));
 
@@ -117,12 +98,14 @@ vi.mock("../materialize-skill-files.js", () => ({
 }));
 
 vi.mock("../preseed-adapter-skills.js", () => ({
+  clearAdapterSkills: vi.fn(async () => {}),
   handOffLegacySkillDirs: vi.fn(async () => {}),
   preseedAdapterSkills: vi.fn(async () => {}),
 }));
 
-vi.mock("../materialize-skill-frontmatter.js", () => ({
-  materializeSkillFrontmatter: vi.fn(async () => {}),
+vi.mock("../materialize-skill-frontmatter.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../materialize-skill-frontmatter.js")>()),
+  materializeSkillFrontmatter: vi.fn(async () => ({ rewritten: 0, skipped: 0, removed: new Map() })),
 }));
 
 vi.mock("../adopt-sandbox-skills.js", () => ({
@@ -169,44 +152,18 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { skillsFingerprint } from "../runtime-skills";
-import { logger } from "../../logger";
+import { HARNESS_SKILLS } from "../skills-descriptor";
 import { resolveEffectiveCapabilities } from "../../../services/environments/effective-capabilities";
 import {
   runtimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../../services/environments/runtime";
 
-// The project's pool: a member's skill, plus the skill the client selected
-// (which the environment therefore also carries, on the host channel).
-const NOTES = {
-  skillId: "sk_notes",
-  name: "notes",
-  description: "Take notes",
-  content: "notes body",
-  aggregateHash: "agg_notes",
-};
-const RELEASE_NOTES_LIVE = {
-  skillId: "sk_host",
-  name: "release-notes",
-  description: "Write release notes",
-  content: "release notes body",
-  aggregateHash: "agg_host",
-};
-const NOTES_FILE = {
-  skillId: "sk_notes",
-  path: "references/style.md",
-  size: 4,
-  url: "https://signed/style",
-};
-const RELEASE_NOTES_PROJECT_FILE = {
-  skillId: "sk_host",
-  path: "references/template.md",
-  size: 8,
-  url: "https://signed/project-template",
-};
-
-/** The hidden environment: the client's selection plus one plugin. */
-function hiddenEnvironment(versionId: string, pluginSkillName = "keycaps") {
+/**
+ * The hidden environment: the client's selected skill, one plugin's, and a
+ * skill the backend's visible scope added (the member's own `notes`).
+ */
+function hiddenEnvironment(versionId: string) {
   const version = {
     pluginId: "pl_bits",
     pluginVersionId: versionId,
@@ -240,7 +197,7 @@ function hiddenEnvironment(versionId: string, pluginSkillName = "keycaps") {
       },
       {
         skillId: "sk_plugin",
-        name: pluginSkillName,
+        name: "keycaps",
         description: "Pick a keycap",
         content: "plugin body",
         aggregateHash: "agg_plugin",
@@ -253,13 +210,28 @@ function hiddenEnvironment(versionId: string, pluginSkillName = "keycaps") {
           },
         ],
       },
+      {
+        skillId: "sk_notes",
+        name: "notes",
+        description: "Take notes",
+        content: "notes body",
+        aggregateHash: "agg_notes",
+        channels: ["host"],
+        files: [
+          {
+            path: "references/style.md",
+            size: 4,
+            url: "https://signed/style",
+          },
+        ],
+      },
     ],
     pluginVersions: [version],
   };
   const capabilities = resolveEffectiveCapabilities(spec, {
     serverOrigins: new Map(),
     skillOrigins: new Map([
-      ["sk_plugin", { modelRef: `bits/${pluginSkillName}`, plugin: version }],
+      ["sk_plugin", { modelRef: "bits/keycaps", plugin: version }],
     ]),
     unattributedVersionIds: [],
   });
@@ -293,13 +265,6 @@ function baseOptions(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function hiddenTurn(versionId = "pv_1", pluginSkillName?: string) {
-  return baseOptions({
-    ...hiddenEnvironment(versionId, pluginSkillName),
-    includeProjectSkills: true,
-  });
-}
-
 function deliveredSkillNames(): string[] {
   const skills = harnessState.lastOpts?.skills as
     Array<{ name: string }> | undefined;
@@ -330,16 +295,6 @@ beforeEach(() => {
     state: null,
     fingerprintChanged: false,
   });
-  skillsState.fetchRuntimeSkills.mockReset();
-  skillsState.fetchRuntimeSkills.mockResolvedValue({
-    ok: true,
-    skills: [NOTES, RELEASE_NOTES_LIVE],
-  });
-  skillsState.fetchRuntimeSkillFiles.mockReset();
-  skillsState.fetchRuntimeSkillFiles.mockResolvedValue({
-    ok: true,
-    files: [NOTES_FILE, RELEASE_NOTES_PROJECT_FILE],
-  });
 });
 
 afterEach(() => {
@@ -347,155 +302,55 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("runHarnessTurn — the Playground's hidden environment (live_plus)", () => {
-  it("delivers the project's pool and the environment's skills, with files from both sources in one pass", async () => {
-    await runHarnessTurn(hiddenTurn() as never, "none");
-    expect(skillsState.fetchRuntimeSkills).toHaveBeenCalledTimes(1);
-    // The client's selection is delivered once, as the environment's.
+describe("runHarnessTurn — the Playground's hidden environment", () => {
+  it("delivers the environment's skills, the client's own included, with files from the environment", async () => {
+    const environment = hiddenEnvironment("pv_1");
+    await runHarnessTurn(baseOptions(environment) as never, "none");
     expect(deliveredSkillNames()).toEqual([
       "release-notes",
       "keycaps",
       "notes",
     ]);
     expect(passes.reconcileSkillDirs).toHaveBeenCalledTimes(1);
-    expect(passes.materializeSkillFiles).toHaveBeenCalledTimes(1);
     const args = materializeArgs();
-    // The pool's files from the project-wide query; the environment's from
-    // its capability set (the only source of a plugin skill's), so a skill
-    // both carry is written from one source, never twice.
+    // Every file comes from the environment's capability set, the only
+    // source of a plugin skill's.
     expect(args.files.map((file) => [file.skillId, file.url])).toEqual([
-      ["sk_notes", "https://signed/style"],
       ["sk_plugin", "https://signed/sizes"],
       ["sk_host", "https://signed/env-template"],
+      ["sk_notes", "https://signed/style"],
     ]);
     expect([...args.skillNamesById]).toEqual([
       ["sk_host", "release-notes"],
       ["sk_plugin", "keycaps"],
       ["sk_notes", "notes"],
     ]);
-  });
-
-  it("delivers nothing new and reconciles nothing when the project-wide fetch fails", async () => {
-    skillsState.fetchRuntimeSkills.mockResolvedValue({ ok: false });
-    await runHarnessTurn(hiddenTurn() as never, "none");
-    expect(deliveredSkillNames()).toEqual([]);
-    // A reconcile against the environment's skills alone would delete every
-    // folder the pool put on the box.
-    expect(passes.reconcileSkillDirs).not.toHaveBeenCalled();
-    expect(passes.materializeSkillFiles).not.toHaveBeenCalled();
-    // Unknown, so the stored hash stands (no resume churn).
-    expect(claimArgs().skillsHash).toBeUndefined();
-  });
-
-  it("leaves the pool's files alone when only their file list could not be read", async () => {
-    skillsState.fetchRuntimeSkillFiles.mockResolvedValue({ ok: false });
-    await runHarnessTurn(hiddenTurn() as never, "none");
-    const args = materializeArgs();
-    // Only the environment's folders are in play: the pool's folder is
-    // neither written nor pruned.
-    expect([...args.skillNamesById]).toEqual([
-      ["sk_host", "release-notes"],
-      ["sk_plugin", "keycaps"],
-    ]);
-    expect(args.files.map((file) => file.skillId)).toEqual([
-      "sk_plugin",
-      "sk_host",
-    ]);
-  });
-
-  it("does not read the project's file list when the pool adds nothing", async () => {
-    // The pool holds only the skill the client selected, which the
-    // environment already delivers with its own files.
-    skillsState.fetchRuntimeSkills.mockResolvedValue({
-      ok: true,
-      skills: [RELEASE_NOTES_LIVE],
-    });
-    await runHarnessTurn(hiddenTurn() as never, "none");
-    expect(skillsState.fetchRuntimeSkillFiles).not.toHaveBeenCalled();
-    expect(deliveredSkillNames()).toEqual(["release-notes", "keycaps"]);
-    expect(materializeArgs().files.map((file) => file.skillId)).toEqual([
-      "sk_plugin",
-      "sk_host",
-    ]);
-  });
-
-  it("keeps the environment's skill when a project skill wants the same box folder, and logs the drop", async () => {
-    const warn = vi.spyOn(logger, "warn");
-    skillsState.fetchRuntimeSkills.mockResolvedValue({
-      ok: true,
-      skills: [NOTES, RELEASE_NOTES_LIVE],
-    });
-    // The plugin's skill is named like the member's own `notes`.
-    await runHarnessTurn(hiddenTurn("pv_1", "notes") as never, "none");
-    expect(deliveredSkillNames()).toEqual(["release-notes", "notes"]);
-    const args = materializeArgs();
-    expect([...args.skillNamesById]).toEqual([
-      ["sk_host", "release-notes"],
-      ["sk_plugin", "notes"],
-    ]);
-    // The member's `notes` files are not written into the plugin's folder.
-    expect(args.files.map((file) => file.skillId)).toEqual([
-      "sk_plugin",
-      "sk_host",
-    ]);
-    expect(warn).toHaveBeenCalledWith(
-      "[harness] skills left out: box folder taken",
-      {
-        problems: [{ code: "skill_folder_collision", skillId: "sk_notes" }],
-      },
-    );
-  });
-
-  it("folds the plugin set into the skills fingerprint", async () => {
-    await runHarnessTurn(hiddenTurn("pv_1") as never, "none");
-    const first = claimArgs();
-    await runHarnessTurn(hiddenTurn("pv_2") as never, "none");
-    const second = claimArgs();
-    // Same skills, different plugin version: a different hash, so the box's
-    // skills are re-written.
-    expect(second.skillsHash).not.toBe(first.skillsHash);
-    expect(second.runtimeFingerprint).not.toBe(first.runtimeFingerprint);
-    // And the pool is part of it: the same environment without the pool
-    // hashes differently.
-    await runHarnessTurn(
-      baseOptions(hiddenEnvironment("pv_1")) as never,
-      "none",
-    );
-    expect(claimArgs().skillsHash).not.toBe(first.skillsHash);
-  });
-
-  it("keeps a named environment's turn exactly as it was: its own set, its own files, no live fetch", async () => {
-    const environment = hiddenEnvironment("pv_1");
-    await runHarnessTurn(baseOptions(environment) as never, "none");
-    expect(skillsState.fetchRuntimeSkills).not.toHaveBeenCalled();
-    expect(skillsState.fetchRuntimeSkillFiles).not.toHaveBeenCalled();
-    expect(deliveredSkillNames()).toEqual(["release-notes", "keycaps"]);
-    const args = materializeArgs();
-    expect(args.files.map((file) => [file.skillId, file.url])).toEqual([
-      ["sk_plugin", "https://signed/sizes"],
-      ["sk_host", "https://signed/env-template"],
-    ]);
-    expect([...args.skillNamesById]).toEqual([
-      ["sk_host", "release-notes"],
-      ["sk_plugin", "keycaps"],
-    ]);
-    // The plain skills fingerprint, with no plugin suffix.
     expect(claimArgs().skillsHash).toBe(
       skillsFingerprint(environment.runtimeSkillsOverride),
     );
   });
 
-  it("keeps a plain client turn exactly as it was", async () => {
-    await runHarnessTurn(baseOptions() as never, "none");
-    expect(deliveredSkillNames()).toEqual(["notes", "release-notes"]);
-    const args = materializeArgs();
-    expect(args.files).toEqual([NOTES_FILE, RELEASE_NOTES_PROJECT_FILE]);
-    expect([...args.skillNamesById]).toEqual([
-      ["sk_notes", "notes"],
-      ["sk_host", "release-notes"],
-    ]);
-    expect(claimArgs().skillsHash).toBe(
-      skillsFingerprint([NOTES, RELEASE_NOTES_LIVE]),
+  it("forks the session when the plugin version changes, even with the same skills", async () => {
+    await runHarnessTurn(
+      baseOptions(hiddenEnvironment("pv_1")) as never,
+      "none",
     );
+    const first = claimArgs();
+    await runHarnessTurn(
+      baseOptions(hiddenEnvironment("pv_2")) as never,
+      "none",
+    );
+    const second = claimArgs();
+    expect(second.skillsHash).toBe(first.skillsHash);
+    expect(second.runtimeFingerprint).not.toBe(first.runtimeFingerprint);
+  });
+
+  it("leaves the box as it is when the turn names no skills", async () => {
+    await runHarnessTurn(baseOptions() as never, "none");
+    expect(deliveredSkillNames()).toEqual([]);
+    expect(passes.reconcileSkillDirs).not.toHaveBeenCalled();
+    expect(passes.materializeSkillFiles).not.toHaveBeenCalled();
+    // Unknown, so the stored hash stands (no resume churn).
+    expect(claimArgs().skillsHash).toBeUndefined();
   });
 });

@@ -908,6 +908,42 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("gives a reopened App the raw result from a toolOutput-only override", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const modelCopy = {
+        type: "json",
+        value: { content: [{ type: "text", text: "Showing card Visa" }] },
+      };
+      const rawResult = {
+        content: [{ type: "text", text: "Showing card Visa" }],
+        structuredContent: { card: "Visa" },
+        _meta: { ui: { resourceUri: "ui://repro/card.html" } },
+      };
+      const part = {
+        type: "dynamic-tool",
+        toolName: "show_card",
+        toolCallId: "call-card",
+        state: "output-available",
+        input: { name: "Visa" },
+        output: modelCopy,
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            show_card: { ui: { resourceUri: "ui://repro/card.html" } },
+          }}
+          toolRenderOverrides={{ "call-card": { toolOutput: rawResult } }}
+        />,
+      );
+
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered.toolOutput).toEqual(rawResult);
+      expect(rendered.rawOutput).toEqual(modelCopy);
+    });
+
     it("uses recorded diagnostics and hides live controls for frozen widgets", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const part = {
@@ -1007,6 +1043,116 @@ describe("PartSwitch", () => {
       );
     });
 
+    it("shows an eval run's recorded errors next to the live App", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-saved",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+          toolRenderOverrides={{
+            "call-saved": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              recordedWidgetErrors: {
+                consoleErrors: ["TypeError: broken"],
+                blockedRequests: [],
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordedWidgetDiagnostics: expect.objectContaining({
+            consoleErrors: ["TypeError: broken"],
+          }),
+        }),
+      );
+    });
+
+    it.each([
+      ["the live App can render", "mcp-apps", "widget-replay"],
+      ["the live App can't render here", null, "frozen-widget-replay"],
+    ])(
+      "uses an eval run's backup picture only when needed: %s",
+      (_label, uiType, shownTestId) => {
+        mockDetectUIType.mockReturnValue(uiType);
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={
+              {
+                type: "tool-invocation",
+                toolName: "create_view",
+                toolCallId: "call-backup",
+                state: "output-available",
+                input: {},
+                output: { content: "saved" },
+              } as any
+            }
+            toolRenderOverrides={{
+              "call-backup": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.getByTestId(shownTestId)).toBeInTheDocument();
+        const hiddenTestId =
+          shownTestId === "widget-replay" ? "frozen-widget-replay" : "widget-replay";
+        expect(screen.queryByTestId(hiddenTestId)).not.toBeInTheDocument();
+      },
+    );
+
+    it("gives a read-only eval replay no tool or message handlers", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={
+            {
+              type: "tool-invocation",
+              toolName: "create_view",
+              toolCallId: "call-replay",
+              state: "output-available",
+              input: {},
+              output: { content: "saved" },
+            } as any
+          }
+          toolRenderOverrides={{
+            "call-replay": {
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              readOnly: true,
+            },
+          }}
+        />,
+      );
+      const rendered = mockWidgetReplay.mock.calls.at(-1)?.[0];
+      expect(rendered).toBeDefined();
+      expect(rendered.onCallTool).toBeUndefined();
+      expect(rendered.onSendFollowUp).toBeUndefined();
+      expect(mockToolPart).toHaveBeenCalledWith(
+        expect.objectContaining({ keepLiveWidgetDiagnostics: true }),
+      );
+    });
+
     // SEP-1865 `ui/notifications/request-teardown`: once the host has
     // honored the widget's teardown request, its toolCallId lands in
     // `tornDownWidgetIds` on the Thread. PartSwitch must
@@ -1039,6 +1185,26 @@ describe("PartSwitch", () => {
           />,
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      });
+
+      it("shows no backup picture for a dismissed eval App", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            tornDownWidgetIds={new Set(["call-1"])}
+            toolRenderOverrides={{
+              "call-1": {
+                cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+                fallbackScreenshotUrl: "https://storage.example.com/widget.png",
+              },
+            }}
+          />,
+        );
+        expect(screen.queryByTestId("frozen-widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
       });
 

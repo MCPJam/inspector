@@ -1,4 +1,5 @@
 import { runTaskConformanceGroups } from "./run-task-conformance-groups";
+import { useShownSelectionRef } from "./use-shown-selection-ref";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
 import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
 import { useConformanceDeadline } from "./use-conformance-deadline";
@@ -132,8 +133,6 @@ export interface UseConformanceRunResult {
    * started: they ran, and read as unscored.
    */
   oauthUnscored: readonly string[];
-  /** True when OAuth produced a score object with nothing applicable in it. */
-  oauthNotScored: boolean;
   isRunning: boolean;
 }
 
@@ -170,8 +169,7 @@ export function useConformanceRun({
   const [resolvedProtocolVersion, setResolvedProtocolVersion] =
     useState<McpProtocolVersion>();
   // Read when a run starts; the caller passes it once, before Run.
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  const selectionRef = useShownSelectionRef(selection);
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;
@@ -793,7 +791,6 @@ export function useConformanceRun({
     oauthScore,
     pooledScore,
     oauthUnscored,
-    oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };
 }

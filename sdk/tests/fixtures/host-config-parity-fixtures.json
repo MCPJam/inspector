@@ -1,5 +1,5 @@
 {
-  "__inputHash": "d8972b040bd59728fba51eece077dcc4458e1d769343da2c2544e2639034e0a0",
+  "__inputHash": "c3b80e97c82dd1d5bcf7865e68c36a5023f1d8e228de8768af131e0b9f654a77",
   "rows": [
     {
       "label": "base-minimal",
@@ -653,6 +653,157 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"chatgpt\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"mcpAppsOverrides\":{\"logging\":true},\"modelContextPolicy\":{\"maxBlocks\":64},\"pluginExtensions\":{\"capabilities\":{\"mentions\":false},\"enabled\":true},\"sandbox\":{\"permissions\":{\"allow\":{\"camera\":true},\"mode\":\"custom\"}}}}}",
       "sha256": "33fccd540a902679e660cc465a7fc2b6130bfb5542cb561adbe8c86c9dff54b4"
+    },
+    {
+      "label": "plugin-extensions-claude-no-behavior",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "pluginExtensions": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"pluginExtensions\":{\"enabled\":true}}}}",
+      "sha256": "7f3950a64230599640ee6c886e2bdfd2d686dfbe4e0b2e41ac7d03f1ca10f591"
+    },
+    {
+      "label": "plugin-extensions-behavior-empty-omitted",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "pluginExtensions": {
+              "behavior": {},
+              "enabled": true
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"pluginExtensions\":{\"enabled\":true}}}}",
+      "sha256": "7f3950a64230599640ee6c886e2bdfd2d686dfbe4e0b2e41ac7d03f1ca10f591"
+    },
+    {
+      "label": "plugin-extensions-claude-behavior-display-start",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "pluginExtensions": {
+              "enabled": true,
+              "behavior": {
+                "displayStart": "hint-first"
+              }
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"pluginExtensions\":{\"behavior\":{\"displayStart\":\"hint-first\"},\"enabled\":true}}}}",
+      "sha256": "b86eac79c1df084c7d6fa720ae2e276566cc1b13147e97c48dea92068f60922e"
+    },
+    {
+      "label": "plugin-extensions-claude-desktop-behavior-and-capabilities",
+      "input": {
+        "hostStyle": "claude-desktop",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "pluginExtensions": {
+              "enabled": true,
+              "capabilities": {
+                "sidebarApps": true,
+                "forms": false
+              },
+              "behavior": {
+                "entrypointNames": "any",
+                "displayHints": "openai/ui",
+                "displayStart": "hint-first"
+              }
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude-desktop\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"pluginExtensions\":{\"behavior\":{\"displayHints\":\"openai/ui\",\"displayStart\":\"hint-first\",\"entrypointNames\":\"any\"},\"capabilities\":{\"forms\":false,\"sidebarApps\":true},\"enabled\":true}}}}",
+      "sha256": "f458790cf2ee04b0c02e59c8699a5b158a8d3202c2fcea37931031f2df7ccb4e"
+    },
+    {
+      "label": "plugin-extensions-chatgpt-every-behavior-field",
+      "input": {
+        "hostStyle": "chatgpt",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "mcpProfile": {
+          "profileVersion": 1,
+          "apps": {
+            "pluginExtensions": {
+              "behavior": {
+                "entrypointQuickActions": "hide",
+                "entrypointWithoutFullscreen": "inline",
+                "entrypointVisibility": "require-model",
+                "entrypointNames": "no-double-separators",
+                "displayStart": "inline-then-move",
+                "displayHints": "ui"
+              },
+              "enabled": false
+            }
+          }
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"chatgpt\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{},\"mcpProfile\":{\"profileVersion\":1,\"apps\":{\"pluginExtensions\":{\"behavior\":{\"displayHints\":\"ui\",\"displayStart\":\"inline-then-move\",\"entrypointNames\":\"no-double-separators\",\"entrypointQuickActions\":\"hide\",\"entrypointVisibility\":\"require-model\",\"entrypointWithoutFullscreen\":\"inline\"},\"enabled\":false}}}}",
+      "sha256": "b4d79adac1e1856f1f1ebdaf3cc7573807172d4bdd4c11d85b2aeabe09732b74"
     },
     {
       "label": "host-capabilities-override-explicit-empty",

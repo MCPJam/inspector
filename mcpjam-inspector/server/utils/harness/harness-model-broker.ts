@@ -153,7 +153,7 @@ export type HarnessBrokerBox =
  * the project and the scope are fields of the `computer` arm, so the sandbox
  * path has no branch that could emit them and no way to regress into one.
  */
-function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
+export function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
   return box.kind === "computer"
     ? {
         projectId: box.projectId,

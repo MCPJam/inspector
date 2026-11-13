@@ -111,7 +111,13 @@ it("allows both modes for preference-only metadata while Display modes is enable
   f.app.widgetContent.resourceDisplayHints = {
     preferredDisplayMode: "fullscreen",
   };
-  f.host = { ...host, surface: { ...host.surface, openAIDisplayModes: true } };
+  f.host = {
+    ...host,
+    surface: {
+      ...host.surface,
+      displayBehavior: { hints: "openai/ui", start: "hint-first" },
+    },
+  };
   const { guest } = await open();
   expect(guest.getHostContext()).toMatchObject({
     displayMode: "fullscreen",
@@ -127,7 +133,10 @@ it("keeps preference-only metadata fullscreen-only when Display modes is disable
   f.app.widgetContent.resourceDisplayHints = {
     preferredDisplayMode: "fullscreen",
   };
-  f.host = { ...host, surface: { ...host.surface, openAIDisplayModes: false } };
+  f.host = {
+    ...host,
+    surface: { ...host.surface, displayBehavior: undefined },
+  };
   const { guest } = await open();
   expect(guest.getHostContext()).toMatchObject({
     displayMode: "fullscreen",
@@ -137,7 +146,10 @@ it("keeps preference-only metadata fullscreen-only when Display modes is disable
 });
 it("starts disabled-policy Apps inline when both modes are available without a preference", async () => {
   f.app = appFor(["inline", "fullscreen"]);
-  f.host = { ...host, surface: { ...host.surface, openAIDisplayModes: false } };
+  f.host = {
+    ...host,
+    surface: { ...host.surface, displayBehavior: undefined },
+  };
   const { guest } = await open();
   expect(guest.getHostContext()).toMatchObject({
     displayMode: "inline",

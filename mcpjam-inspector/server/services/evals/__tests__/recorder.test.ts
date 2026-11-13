@@ -49,6 +49,29 @@ describe("startSuiteRunWithRecorder", () => {
     );
   });
 
+  it("forwards the run's accounts, and starts without them on a backend that predates them", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const accountsAtRun = [{ serverId: "asana", connectionIds: ["dummy"] }];
+    const mutation = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `accountsAtRun` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation, action } as any,
+      suiteId: "suite-1",
+      accountsAtRun,
+    });
+
+    expect(mutation).toHaveBeenCalledTimes(2);
+    expect(mutation.mock.calls[0][1]).toMatchObject({ accountsAtRun });
+    expect(mutation.mock.calls[1][1]).not.toHaveProperty("accountsAtRun");
+  });
+
   it("forwards per-run import approvals, and omits the key when there are none", async () => {
     // The mutation args are RECONSTRUCTED field by field in this function, so
     // a field nobody names here never reaches Convex — and an approval that

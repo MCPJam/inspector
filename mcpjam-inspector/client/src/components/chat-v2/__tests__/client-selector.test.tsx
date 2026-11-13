@@ -206,9 +206,9 @@ describe("ClientSelector", () => {
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
   });
 
-  // BB-135: switching clients used to mean "tick the one you want, then untick
-  // the one you had" — the row body only ever multi-selected.
-  it("switches the lead client on a row click and leaves compare", async () => {
+  // Switching out of a comparison is the row's "Only" button; the row body
+  // toggles there, like the checkbox.
+  it("switches the lead client from Only and leaves compare", async () => {
     const user = userEvent.setup();
     const onHostChange = vi.fn();
     const onSelectedHostIdsChange = vi.fn();
@@ -228,7 +228,7 @@ describe("ClientSelector", () => {
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
-    await user.click(screen.getByTestId("client-row-host-1"));
+    await user.click(screen.getByTestId("client-row-only-host-1"));
 
     expect(onHostChange).toHaveBeenCalledWith("host-1");
     // Clearing the lineup is not cosmetic: `usePersistedHost` preserves the
@@ -238,6 +238,67 @@ describe("ClientSelector", () => {
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
     // Switching is a terminal gesture — the list goes away with the choice.
     expect(screen.queryByTestId("client-row-host-1")).not.toBeInTheDocument();
+  });
+
+  it("switches the lead client on a row click when not comparing", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.queryByTestId("client-row-only-host-1")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("client-row-host-1"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+    expect(onSelectedHostIdsChange).not.toHaveBeenCalled();
+  });
+
+  it("toggles a client on a row click while comparing, keeping the lineup", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-host-2"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenLastCalledWith([
+      "host-0",
+      "host-1",
+      "host-2",
+    ]);
+    expect(onHostChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("client-row-host-2")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-host-1"));
+    expect(onSelectedHostIdsChange).toHaveBeenLastCalledWith(["host-0"]);
+    expect(onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);
   });
 
   // cmdk's root keydown claims Enter for the highlighted row, so without the
@@ -317,7 +378,10 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
     expect(screen.getByTestId("client-row-compare-host-3")).toBeDisabled();
 
+    // The row body cannot add a fourth pane; Only still switches.
     await user.click(screen.getByTestId("client-row-host-3"));
+    expect(onHostChange).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("client-row-only-host-3"));
 
     expect(onHostChange).toHaveBeenCalledWith("host-3");
   });
@@ -533,11 +597,11 @@ describe("ClientSelector with environment panes", () => {
     expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(true);
   });
 
-  it("leaves Compare for one client when its row is picked", async () => {
+  it("leaves Compare for one client when its Only is picked", async () => {
     const user = userEvent.setup();
     const calls = renderLineup();
     await user.click(screen.getByTestId("client-selector-trigger"));
-    await user.click(screen.getByTestId("client-row-host-2"));
+    await user.click(screen.getByTestId("client-row-only-host-2"));
     expect(calls.onPickSingleClient).toHaveBeenCalledWith("host-2");
     expect(calls.onSelectedHostIdsChange).not.toHaveBeenCalled();
     expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);

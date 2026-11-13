@@ -1,5 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
+import { ServerAccountClient } from "./server-account-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -186,6 +187,9 @@ import type {
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceSuiteKind,
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSummary,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
   PlatformDirectorySearchPage,
@@ -602,6 +606,11 @@ type ServerScope = {
   serverId: string;
 };
 
+function serverRevisionsPath(scope: ServerScope): string {
+  const { projectId, serverId } = scope;
+  return `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/revisions`;
+}
+
 /**
  * Minimal fetch-based client for the MCPJam Platform API. Runtime-agnostic
  * by construction (Workers/browser/Node): native fetch only, no Node
@@ -705,7 +714,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient {
+export class PlatformApiClient extends ServerAccountClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -732,6 +741,7 @@ export class PlatformApiClient {
   private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    super();
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
     this.apiVocabulary = options.apiVocabulary ?? 1;
@@ -3842,6 +3852,36 @@ export class PlatformApiClient {
     return this.serverOp(params, "export", options);
   }
 
+  /** A saved server's stored revisions, newest first. */
+  listServerRevisions(
+    params: ServerScope & { limit?: number; cursor?: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformServerRevisionSummary>> {
+    const query = pageQuery(params);
+    return this.request("GET", serverRevisionsPath(params), { query }, options);
+  }
+
+  getServerRevision(
+    params: ServerScope & { revisionNumber: number },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevision> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Compares `fromRevisionNumber` (default: the one before) with `revisionNumber`. */
+  diffServerRevisions(
+    params: ServerScope & {
+      revisionNumber: number;
+      fromRevisionNumber?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevisionDiff> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}/diff`;
+    const query = { from: params.fromRevisionNumber };
+    return this.request("GET", path, { query }, options);
+  }
+
   listServerTools(
     params: ServerScope & { body?: Record<string, unknown> },
     options?: RequestOptions
@@ -6515,7 +6555,7 @@ export class PlatformApiClient {
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
 
-  private async request<T>(
+  protected async request<T>(
     // PUT is here for idempotent creates — `publishScenario` is the first:
     // publishing an environment that is already published returns the existing
     // scenario rather than minting a second, which is PUT's semantics and not
@@ -6536,6 +6576,8 @@ export class PlatformApiClient {
        * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
+      /** Told a successful answer's status, for a route where it is the answer. */
+      onStatus?: (status: number) => void;
     },
     options?: RequestOptions
   ): Promise<T> {
@@ -6703,6 +6745,7 @@ export class PlatformApiClient {
       );
     }
 
+    init.onStatus?.(response.status);
     // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }

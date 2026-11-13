@@ -93,6 +93,7 @@ import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
 import { useConformanceRun } from "@/hooks/use-conformance-run";
 import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
+import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
 import {
@@ -100,7 +101,7 @@ import {
   ProtocolVersionSelect,
   RUN_LABEL,
 } from "../ConformancePageChrome";
-import { SUITE_COPY } from "../conformance-ui";
+import { notApplicableSubtitle, SUITE_COPY } from "../conformance-ui";
 
 /** A tool option: its name, then its safety badge. */
 const toolOption = (name: string, tag: string) =>
@@ -275,9 +276,11 @@ function inputBadge(text: string) {
 
 /** A suite's header row, found by its description (unique, unlike titles). */
 function suiteHeader(suite: keyof typeof SUITE_COPY) {
-  const button = screen
-    .getByText(SUITE_COPY[suite].description)
-    .closest("button");
+  // A suite that applied to nothing says so in place of its description.
+  const button = (
+    screen.queryByText(SUITE_COPY[suite].description) ??
+    screen.getByText(notApplicableSubtitle(SUITE_COPY[suite].title))
+  ).closest("button");
   expect(button).not.toBeNull();
   return button!;
 }
@@ -363,6 +366,8 @@ function createStdioServer(
 beforeEach(() => {
   vi.clearAllMocks();
   enabledFlags.clear();
+  // These tests cover the update check and its answers; one below turns it off.
+  enabledFlags.add("conformance-tasks-update-check");
   window.localStorage.clear();
   window.sessionStorage.clear();
 });
@@ -528,7 +533,9 @@ describe("ConformanceTab", () => {
     expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
     const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
     expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
-    expect(within(appsHeader).getByText(SUITE_COPY.apps.description)).toBeInTheDocument();
+    expect(
+      within(appsHeader).getByText("Apps doesn't apply to this server."),
+    ).toBeInTheDocument();
     expect(appsHeader).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(appsHeader);
     expect(appsHeader).toHaveAttribute("aria-expanded", "true");
@@ -1713,6 +1720,63 @@ describe("ConformanceTab", () => {
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
 
+  it("keeps the card starting while its run connects the server", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    const beta = createHttpServer({ name: "beta" });
+    const connected = createDeferred<"ready">();
+    const onConnectServer = vi.fn(() => connected.promise);
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection: {},
+          inputs: {},
+        }))}
+        serverDefaults={{ alpha: {}, beta: {} }}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Run alpha" },
+      ),
+    );
+
+    // The defaults are in and the run is connecting alpha: the card still
+    // says which one is starting. The run view mounted anew, so the list is
+    // looked up again.
+    await waitFor(() => expect(onConnectServer).toHaveBeenCalled());
+    const starting = await waitFor(() =>
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Starting alpha" },
+      ),
+    );
+    const list = screen.getByRole("list", { name: "Servers" });
+    expect(starting).toBeDisabled();
+    expect(starting).toHaveTextContent("Starting...");
+    // alpha still reports "disconnected" here; the other Run stays off anyway,
+    // since it would replace the run that is connecting.
+    const other = within(list).getByRole("button", { name: "Run beta" });
+    expect(other).toBeDisabled();
+    expect(other).toHaveTextContent(/^Run$/);
+
+    await act(async () => connected.resolve("ready"));
+  });
+
   it("shows progress, not a score, until the run finishes", async () => {
     setupSuccessfulRunMocks();
     // Protocol never answers: the run stays going.
@@ -2851,6 +2915,31 @@ describe("ConformanceTab", () => {
       );
     });
 
+    it("hides the flagged update check and its answers box", async () => {
+      enabledFlags.delete("conformance-tasks-update-check");
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
+
+      expect(
+        screen.queryByText(TASKS_CHECK_CATALOG["tasks-update-ack-shape"].title),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
+    });
+
     it("lists the tools once for every field, across pages", async () => {
       mockListTools.mockReset();
       mockListTools
@@ -3732,6 +3821,22 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
   });
 
+  it("leaves the flagged update check out of a whole-suite Tasks run", async () => {
+    enabledFlags.delete("conformance-tasks-update-check");
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(mockRunTasks).toHaveBeenCalledWith(
+      "http-server",
+      expect.objectContaining({
+        checkIds: MCP_TASKS_CHECK_IDS.filter(
+          (id) => id !== "tasks-update-ack-shape",
+        ),
+      }),
+    );
+  });
+
   it("marks Protocol and OAuth as not applicable for stdio servers", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createStdioServer()} />);
@@ -4025,9 +4130,10 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await clickRun();
 
-    await screen.findByText(
-      "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page.",
-    );
+    // The blocked-window dialog asks; the note at the top of the run would
+    // repeat the same message and buttons, so it waits until the window opens.
+    await screen.findByRole("alertdialog");
+    expect(screen.queryByTestId("conformance-oauth-prompt")).toBeNull();
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
@@ -4517,8 +4623,10 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     // The reason replaces the suite's description, under a neutral chip
-    // rather than a red failure.
-    const header = screen.getByText(/No login required/).closest("button")!;
+    // rather than a red failure, in the words a saved run uses too.
+    const header = screen
+      .getByText("OAuth doesn't apply: this server needs no login.")
+      .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
 

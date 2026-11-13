@@ -3,12 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const prepareEvalRun = vi.fn();
 const loadSuiteHostConfig = vi.fn();
 const resolveEnvironmentForLaunch = vi.fn();
+const loadSuiteConnectionIdSets = vi.fn();
 
 vi.mock("../evals/compat-runtime.js", () => ({
   loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfig(...args),
 }));
 vi.mock("../evals/route-helpers.js", () => ({
   createConvexClient: (bearer: string) => ({ bearer }),
+}));
+vi.mock("../evals/suite-account-choices.js", () => ({
+  loadSuiteConnectionIdSets: (...args: unknown[]) =>
+    loadSuiteConnectionIdSets(...args),
 }));
 vi.mock("../environments/resolve.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../environments/resolve.js")>()),
@@ -191,6 +196,19 @@ describe("executeClaimedRun connection", () => {
   it("keeps plugin placement disabled before an iteration sandbox exists", async () => {
     await executeClaimedRun(CLAIM);
     expect(connectOptions()).toMatchObject({ pluginComputerRuntime: false });
+  });
+
+  it("runs on the schedule owner's saved accounts, read with the owner's bearer", async () => {
+    loadSuiteConnectionIdSets.mockResolvedValueOnce({ asana: ["dummy"] });
+    await executeClaimedRun(CLAIM);
+
+    expect(loadSuiteConnectionIdSets).toHaveBeenCalledWith(
+      { bearer: "bearer" },
+      { suiteId: CLAIM.suiteId },
+    );
+    expect(connectOptions()).toMatchObject({
+      connectionIdSets: { asana: ["dummy"] },
+    });
   });
 
   it("passes the deployment's XAA issuer, having no request to read one from", async () => {

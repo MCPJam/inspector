@@ -25,15 +25,7 @@ import { pathToFileURL } from "node:url";
  * @param {boolean} [input.deployWebapp]
  */
 export function planRelease({ unpublished, inspectorVersion, inspectorReleaseExists, deployWebapp = false }) {
-  const releases = new Map(unpublished.map((release) => [release.name, release]));
-  const selected = {
-    evaluators: releases.has("@mcpjam/evaluators"),
-    sdk: releases.has("@mcpjam/sdk"),
-    cli: releases.has("@mcpjam/cli"),
-    inspector: releases.has("@mcpjam/inspector"),
-  };
-  const publishAny = selected.evaluators || selected.sdk || selected.cli || selected.inspector;
-  const desktopOnly = !publishAny && Boolean(inspectorVersion) && !inspectorReleaseExists;
+  const { releases, selected, publishAny, desktopOnly } = selectRelease({ unpublished, inspectorVersion, inspectorReleaseExists });
 
   if (!publishAny && !desktopOnly) {
     throw new Error(
@@ -75,6 +67,30 @@ export function planRelease({ unpublished, inspectorVersion, inspectorReleaseExi
 }
 
 /** Fails closed: only an explicit "release not found" means it does not exist. */
+function selectRelease({ unpublished, inspectorVersion, inspectorReleaseExists }) {
+  const releases = new Map(unpublished.map((release) => [release.name, release]));
+  const selected = {
+    evaluators: releases.has("@mcpjam/evaluators"),
+    sdk: releases.has("@mcpjam/sdk"),
+    cli: releases.has("@mcpjam/cli"),
+    inspector: releases.has("@mcpjam/inspector"),
+  };
+  const publishAny = selected.evaluators || selected.sdk || selected.cli || selected.inspector;
+  const desktopOnly = !publishAny && Boolean(inspectorVersion) && !inspectorReleaseExists;
+  return { releases, selected, publishAny, desktopOnly };
+}
+
+/**
+ * Whether a release from this commit would build the Inspector's npm package
+ * or desktop apps, and so needs local harness conformance evidence. The
+ * evidence run asks on every push to main, so "nothing to release" is a no
+ * here, where `planRelease` refuses it.
+ */
+export function needsInspectorArtifacts({ unpublished, inspectorVersion, inspectorReleaseExists }) {
+  const { selected, desktopOnly } = selectRelease({ unpublished, inspectorVersion, inspectorReleaseExists });
+  return selected.inspector || desktopOnly;
+}
+
 export function githubReleaseExists(tag, run = (args) => spawnSync("gh", args, { encoding: "utf8" })) {
   const result = run(["release", "view", tag, "--json", "tagName", "--jq", ".tagName"]);
   if (result.status === 0) return result.stdout.trim() === tag;
@@ -83,17 +99,22 @@ export function githubReleaseExists(tag, run = (args) => spawnSync("gh", args, {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const [unpublishedPath] = process.argv.slice(2);
+  const [unpublishedPath, mode] = process.argv.slice(2);
   const { releases: unpublished } = JSON.parse(readFileSync(unpublishedPath, "utf8"));
   const inspectorVersion = JSON.parse(readFileSync("mcpjam-inspector/package.json", "utf8")).version;
-  const plan = planRelease({
+  const input = {
     unpublished,
     inspectorVersion,
     // Asked only when nothing is unpublished — the one case it decides — so a
     // GitHub hiccup can never block an ordinary release.
     inspectorReleaseExists: unpublished.length > 0 ? true : githubReleaseExists(`v${inspectorVersion}`),
     deployWebapp: process.env.DEPLOY_WEBAPP === "true",
-  });
+  };
+  // The evidence run's question: one answer, and no refusal of an empty plan.
+  const plan =
+    mode === "--needs-inspector-artifacts"
+      ? { build_inspector_artifacts: String(needsInspectorArtifacts(input)) }
+      : planRelease(input);
   if (plan.desktop_only === "true") {
     console.log(
       `Desktop-only: ${plan.release_tag} is on npm but has no GitHub release; building the desktop apps and creating it.`,
