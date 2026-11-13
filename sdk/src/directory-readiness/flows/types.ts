@@ -192,6 +192,17 @@ export interface DirectoryFlow {
   laneSteps: Record<string, string>;
 }
 
+/** A declaration nobody has stood behind yet (see `unconfirmedDeclarations`). */
+export interface DirectoryUnconfirmedDeclaration {
+  key: string;
+  step: string;
+  /** The label the review page shows. */
+  label: string;
+  /** Where its value came from; absent when the field has no answer. */
+  origin?: DirectoryAnswerOrigin;
+  value?: DirectoryAnswerValue;
+}
+
 export interface DirectoryFieldIssue {
   key: string;
   step: string;

@@ -12,9 +12,11 @@
 
 import type {
   DirectoryAnswer,
+  DirectoryAnswerOrigin,
   DirectoryAnswerValue,
   DirectoryFlow,
   DirectoryFlowField,
+  DirectoryUnconfirmedDeclaration,
 } from "./types.js";
 
 export function directoryFlowField(
@@ -53,6 +55,42 @@ export function withDirectoryFlowDefaults(
       .filter((entry) => !stored.has(entry.key))
       .map((entry) => ({ ...entry, origin: "default" as const })),
   ];
+}
+
+/** The only origins that mean a person or agent stood behind the value. */
+const STOOD_BEHIND = new Set<DirectoryAnswerOrigin>(["set", "confirmed"]);
+
+/**
+ * Declarations nobody has stood behind yet, in form order: the portal's
+ * default, a value an import or a reconnect left there, or no answer. A
+ * default is what the portal submits when nobody looks, not a statement.
+ */
+export function unconfirmedDeclarations(
+  flow: DirectoryFlow,
+  answers: readonly DirectoryAnswer[]
+): DirectoryUnconfirmedDeclaration[] {
+  const byKey = new Map(
+    withDirectoryFlowDefaults(flow, answers).map((answer) => [
+      answer.key,
+      answer,
+    ])
+  );
+  return flow.steps.flatMap((step) =>
+    step.fields.flatMap((field) => {
+      const answer = byKey.get(field.key);
+      if (!field.declaration || (answer && STOOD_BEHIND.has(answer.origin))) {
+        return [];
+      }
+      return [
+        {
+          key: field.key,
+          step: step.id,
+          label: field.reviewLabel ?? field.label,
+          ...(answer ? { origin: answer.origin, value: answer.value } : {}),
+        },
+      ];
+    })
+  );
 }
 
 /**

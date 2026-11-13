@@ -11,6 +11,11 @@
  * did, every unevaluated check that declares it is `blocked` rather than
  * merely not tested. The reason stays the finding's own `notEvaluatedReason`.
  *
+ * A run that knows a dependency failed says so in the reason instead
+ * ({@link directoryBlockedReason}), which holds even when another check with
+ * the same need reached a verdict: a server that answers discovery and
+ * refuses the MCP session blocks the tool checks and nothing else.
+ *
  * Pure. Safe from the browser entry.
  */
 
@@ -38,6 +43,16 @@ export interface PlaceDirectoryResultsInput {
   gradedAnswers?: readonly DirectoryAnswer[];
   /** Which page's field issues to report: the step form's or the review page's. */
   on?: "form" | "review";
+}
+
+const BLOCKED = "blocked: ";
+
+/**
+ * The `notEvaluatedReason` of a check a failed dependency left without a
+ * verdict, e.g. "blocked: the server could not be reached: fetch failed".
+ */
+export function directoryBlockedReason(failure: string): string {
+  return `${BLOCKED}${failure}`;
 }
 
 export function placeDirectoryResults(
@@ -127,7 +142,8 @@ function statusOf(
   lacking: ReadonlySet<string>
 ): DirectoryEvidenceStatus {
   if (finding.status === "not-evaluated") {
-    return dependenciesOf(finding, placement).some((name) => lacking.has(name))
+    return finding.notEvaluatedReason?.startsWith(BLOCKED) ||
+      dependenciesOf(finding, placement).some((name) => lacking.has(name))
       ? "blocked"
       : "not-tested";
   }
