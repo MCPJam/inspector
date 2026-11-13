@@ -54,7 +54,11 @@ export function IterationResultBadge({ result }: { result: string }) {
   );
 }
 
-/** `readFailed`: a launch run's results did not load, so "no result" is unknown. */
+/**
+ * `readFailed`: a launch run's results did not load, so "no result" is
+ * unknown. Its live query stays failed until recreated, so the retry is a
+ * page reload rather than a link back to the run.
+ */
 export function ResultNotFound({
   runLabel,
   onOpenRun,
@@ -72,17 +76,23 @@ export function ResultNotFound({
     >
       <h1 className="text-lg font-semibold text-foreground">
         {readFailed
-          ? `Couldn't load the results of ${midSentence}. Try again.`
+          ? `Couldn't load the results of ${midSentence}. Reload the page to try again.`
           : `${runLabel} has no result at this link`}
       </h1>
-      <p className="text-sm text-muted-foreground">
-        {readFailed
-          ? `Open ${midSentence} to load them again.`
-          : `Open ${midSentence} to pick another result.`}
-      </p>
-      <Button variant="outline" onClick={onOpenRun}>
-        Open {midSentence}
-      </Button>
+      {readFailed ? (
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          Reload page
+        </Button>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Open {midSentence} to pick another result.
+          </p>
+          <Button variant="outline" onClick={onOpenRun}>
+            Open {midSentence}
+          </Button>
+        </>
+      )}
     </div>
   );
 }
