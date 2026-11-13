@@ -52,7 +52,6 @@ import { buildMcpjamTool } from "../built-in-tools/mcpjam";
 import { buildBrowserTools } from "../built-in-tools/browser";
 import { buildExaWebSearchTool } from "../built-in-tools/exa-web-search";
 import { createProgressiveMetaTools } from "@mcpjam/sdk";
-import { createPinnedSkillTools } from "../computers/cloud-skill-tools";
 import {
   createEffectiveSkillTools,
   getEffectiveSkillToolsAndPrompt,
@@ -726,16 +725,13 @@ const MATRIX: MatrixRow[] = [
     // where a prompt is a hang rather than a question.
     family: "pinned skill tool",
     name: "loadSkill",
-    input: { name: "pdf-processing" },
+    input: { name: SERVER_SKILL_REF },
     tools: (flag) =>
       applySkillToolApproval(
-        createPinnedSkillTools([
-          {
-            name: "pdf-processing",
-            description: "PDFs",
-            content: "BODY",
-          } as never,
-        ]) as unknown as Record<string, unknown>,
+        effectiveSkillTools({ serverOrigin: false }) as unknown as Record<
+          string,
+          unknown
+        >,
         { pinned: true, requireToolApproval: flag },
       ) as unknown as ToolSet,
     expected: {

@@ -8,13 +8,15 @@
 // Written only by a workflow step that runs AFTER the leg's scenarios passed,
 // and uploaded as an artifact. `check-local-harness-release.mjs --evidence`
 // then requires a record for every (harness × pack it may select × advertised
-// target) at this commit's layer digest, and folds them into the attested
-// `runtime-contract.json` a release carries. This replaces the
-// `lifecycleConformanceVersion` stamp that used to be typed in by hand.
+// target) at this commit's layer digest — recorded at this commit, or at an
+// earlier one whose conformance inputs digest is the same — and folds them
+// into the attested `runtime-contract.json` a release carries. This replaces
+// the `lifecycleConformanceVersion` stamp that used to be typed in by hand.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { computeConformanceInputsDigest } from "./conformance-inputs-digest.mjs";
 import { computeInspectorLayerDigests } from "./inspector-layer-digests.mjs";
 
 export const EVIDENCE_SCHEMA = "mcpjam.local-harness-conformance/1";
@@ -78,6 +80,9 @@ async function main() {
     // then pinned by the pack digest alone.
     layerDigest: layers[harnessId] ?? null,
     commit: process.env.GITHUB_SHA ?? null,
+    // Everything else the leg could have loaded. A later commit with the same
+    // digest may present this record as its own (see the release gate).
+    conformanceInputs: computeConformanceInputsDigest(),
     run:
       process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
         ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`

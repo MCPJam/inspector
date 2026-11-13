@@ -80,6 +80,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
@@ -1061,34 +1062,22 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (Project Environments — env-based swarm targets
-   * only). When set — even EMPTY — the harness turn delivers exactly these
-   * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
-   * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
-   * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skills` plan instead (which it refuses
-   * on a harness turn — the two paths are deliberately disjoint).
+   * Pinned harness skills (eval runs and swarm targets). When set — even
+   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
+   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
+   * the emulated engine receives pinned skills via prepareChatV2's `skills`
+   * plan instead (which it refuses on a harness turn — the two paths are
+   * deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
-   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
-   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
-   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution) and
-   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
-   * place that precedence is written down. An empty override is semantic: the
-   * environment delivers no skills, which is not the same as "ask the project".
+   * The skills THIS turn's environment resolved to. When set — even EMPTY —
+   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution);
+   * see `harness/skill-delivery.ts` for the single place that precedence is
+   * written down. With neither, the turn leaves the box's skills as they are.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The Playground's HIDDEN environment, harness side: deliver the project's
-   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
-   * Selects the `live_plus` skill source explicitly — a turn that merely
-   * carries an environment's override and capability set never gets it. Only
-   * the web chat route sets it, and only for an environment target that asked
-   * for the project's skills.
-   */
-  includeProjectSkills?: boolean;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
@@ -1102,6 +1091,12 @@ export interface MCPJamHandlerOptions {
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * A client's or a study's turn: its servers are connected now, so their own
+   * MCP-server skills may be offered beside its skills. Unset for a named
+   * environment, whose server skills were captured with it.
+   */
+  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.
@@ -1236,6 +1231,11 @@ export interface MCPJamHandlerOptions {
    * `finalize-iteration` as the same policy blocks the in-process gate yields.
    */
   onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
+  /**
+   * What the box writer did with a harness turn's skills, once per turn: after
+   * its session is up, or when the turn stops before that.
+   */
+  onBoxSkillsWritten?: (result: BoxSkillsResult) => void;
   /**
    * The host's approval switch for this turn.
    *

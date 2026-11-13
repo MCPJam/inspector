@@ -113,18 +113,38 @@ async function codexRecipeMeta() {
   return { harnessId: recipe.harnessId, bootstrapDir: recipe.bootstrapDir, commands: recipe.commands };
 }
 
+/**
+ * How each local runtime's layer is built: its files (besides the launcher and
+ * `layer.json`, which every layer has) and the recipe directory and commands
+ * its adapter declares. One entry per runtime in
+ * `server/utils/harness/local/runtimes/`; `local-runtimes.test.ts` checks the
+ * two lists agree and that each runtime's `layerFiles` are what is built here.
+ */
+const LAYER_BUILDERS = {
+  "claude-code": async () => {
+    const claude = await bundleClaudeCodeLayerBridge();
+    return { files: { "bridge.mjs": claude.bridgeSource }, recipe: claude.recipe };
+  },
+  codex: async () => {
+    const codex = await bundleCodexAppServerLayerSources();
+    return {
+      files: { "bridge.mjs": codex.bridgeSource, "host-tools-mcp.mjs": codex.hostToolsSource },
+      recipe: await codexRecipeMeta(),
+    };
+  },
+};
+
 /** Every layer source, without writing anything. */
 export async function bundleLocalHarnessLayerSources() {
   const launcherSource = readFileSync(join(layerDir, "launcher.mjs"), "utf8");
-  const codex = await bundleCodexAppServerLayerSources();
-  const claude = await bundleClaudeCodeLayerBridge();
-  return {
-    launcherSource,
-    codexBridgeSource: codex.bridgeSource,
-    codexHostToolsSource: codex.hostToolsSource,
-    claudeCodeBridgeSource: claude.bridgeSource,
-    recipes: { "claude-code": claude.recipe, codex: await codexRecipeMeta() },
-  };
+  const files = {};
+  const recipes = {};
+  for (const [harnessId, build] of Object.entries(LAYER_BUILDERS)) {
+    const layer = await build();
+    files[harnessId] = layer.files;
+    recipes[harnessId] = layer.recipe;
+  }
+  return { launcherSource, files, recipes };
 }
 
 export async function bundleLocalHarnessLayer() {
@@ -139,22 +159,19 @@ export async function bundleLocalHarnessLayer() {
 /** \`layer/launcher.mjs\`, verbatim. */
 export const LOCAL_HARNESS_LAUNCHER_SOURCE = ${JSON.stringify(sources.launcherSource)};
 
-/** The Codex app-server bridge, with every dependency inlined. */
-export const CODEX_LAYER_BRIDGE_SOURCE = ${JSON.stringify(sources.codexBridgeSource)};
-
-/** The host-tools MCP entrypoint Codex spawns, layer variant. */
-export const CODEX_LAYER_HOST_TOOLS_MCP_SOURCE = ${JSON.stringify(sources.codexHostToolsSource)};
-
-/** The patched Claude Code bridge, with everything but the agent SDK inlined. */
-export const CLAUDE_CODE_LAYER_BRIDGE_SOURCE = ${JSON.stringify(sources.claudeCodeBridgeSource)};
+/**
+ * Each local runtime's layer files besides the launcher and \`layer.json\`,
+ * every dependency of their own inlined: file name to contents.
+ */
+export const LOCAL_HARNESS_LAYER_FILES: Readonly<Record<string, Readonly<Record<string, string>>>> = ${JSON.stringify(sources.files)};
 
 /**
- * Each harness's recipe directory and commands, as the adapter declares them.
+ * Each runtime's recipe directory and commands, as the adapter declares them.
  * A local session's recipe is these plus the layer's files — built from
  * constants, so Electron never has to read an adapter package from disk.
  */
 export const LOCAL_HARNESS_LAYER_RECIPES: Readonly<
-  Record<"claude-code" | "codex", { harnessId: string; bootstrapDir: string; commands: Array<{ command: string }> }>
+  Record<string, { harnessId: string; bootstrapDir: string; commands: Array<{ command: string }> }>
 > = ${JSON.stringify(sources.recipes)};
 `,
   );
@@ -164,10 +181,12 @@ export const LOCAL_HARNESS_LAYER_RECIPES: Readonly<
 if (process.argv[1] && process.argv[1].endsWith("bundle-local-harness-layer.mjs")) {
   try {
     const sources = await bundleLocalHarnessLayer();
+    const sizes = Object.entries(sources.files).map(
+      ([harnessId, files]) =>
+        `${harnessId} ${(Object.values(files).reduce((total, text) => total + text.length, 0) / 1024).toFixed(1)} KiB`,
+    );
     process.stdout.write(
-      `Bundled local harness layer: launcher ${(sources.launcherSource.length / 1024).toFixed(1)} KiB, ` +
-        `codex bridge ${(sources.codexBridgeSource.length / 1024).toFixed(1)} KiB, ` +
-        `claude-code bridge ${(sources.claudeCodeBridgeSource.length / 1024).toFixed(1)} KiB\n`,
+      `Bundled local harness layer: launcher ${(sources.launcherSource.length / 1024).toFixed(1)} KiB, ${sizes.join(", ")}\n`,
     );
   } catch (error) {
     process.stderr.write(

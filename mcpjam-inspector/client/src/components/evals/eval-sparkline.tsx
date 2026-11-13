@@ -33,6 +33,9 @@ function buildSparklineGeometry(
   }));
 }
 
+const SPARKLINE_WIDTH = 120;
+const SPARKLINE_PAD = 3;
+
 function resolveHoverIndex(
   clientX: number,
   rect: DOMRect,
@@ -40,7 +43,10 @@ function resolveHoverIndex(
   bars = false,
 ): number {
   if (pointCount < 2) return 0;
-  const ratio = (clientX - rect.left) / rect.width;
+  // Points and bars sit inside the padded plot area, so measure the pointer
+  // against that area; the full width puts each bar's right edge in the next slot.
+  const padPx = (SPARKLINE_PAD / SPARKLINE_WIDTH) * rect.width;
+  const ratio = (clientX - rect.left - padPx) / (rect.width - padPx * 2);
   const index = bars
     ? Math.floor(ratio * pointCount)
     : Math.round(ratio * (pointCount - 1));
@@ -146,9 +152,9 @@ export function EvalSparkline({
   tooltipPlacement?: "above" | "below";
   bars?: boolean;
 }) {
-  const w = 120;
+  const w = SPARKLINE_WIDTH;
   const h = height;
-  const pad = 3;
+  const pad = SPARKLINE_PAD;
   const geometry = useMemo(() => {
     if (points.length < 2) return [];
     return buildSparklineGeometry(points, w, h, pad, bars);
@@ -166,12 +172,7 @@ export function EvalSparkline({
     hoverIndex != null && tooltipValues
       ? tooltipValues[hoverIndex]
       : tooltipValues?.at(-1);
-  const tooltipLeft =
-    hoverIndex != null && points.length > 1
-      ? (bars
-          ? (hoverIndex + 0.5) / points.length
-          : hoverIndex / (points.length - 1)) * 100
-      : 100;
+  const tooltipLeft = active ? (active.x / w) * 100 : 100;
 
   return (
     <div
@@ -239,7 +240,9 @@ export function EvalSparkline({
             />
           </>
         )}
-        {hoverIndex != null && active ? (
+        {/* Bars mark the hover by opacity alone: the stretched viewBox turns
+            circles into ellipses that sit on top of the bars. */}
+        {bars ? null : hoverIndex != null && active ? (
           <>
             <line
               x1={active.x}
@@ -258,7 +261,7 @@ export function EvalSparkline({
               strokeWidth={1.5}
             />
           </>
-        ) : active && !bars ? (
+        ) : active ? (
           <circle cx={active.x} cy={active.y} r={2} fill="currentColor" />
         ) : null}
       </svg>
@@ -287,9 +290,9 @@ export function EvalDualSparkline({
   tooltipPlacement?: "above" | "below";
   bars?: boolean;
 }) {
-  const w = 120;
+  const w = SPARKLINE_WIDTH;
   const h = height;
-  const pad = 3;
+  const pad = SPARKLINE_PAD;
   const { primaryGeometry, secondaryGeometry } = useMemo(() => {
     if (primary.length < 2 || secondary.length < 2) {
       return { primaryGeometry: [], secondaryGeometry: [] };
@@ -325,12 +328,7 @@ export function EvalDualSparkline({
       : secondaryGeometry.at(-1);
   const activeLabel =
     hoverIndex != null ? pointLabels[hoverIndex] : pointLabels.at(-1);
-  const tooltipLeft =
-    hoverIndex != null && primary.length > 1
-      ? (bars
-          ? (hoverIndex + 0.5) / primary.length
-          : hoverIndex / (primary.length - 1)) * 100
-      : 100;
+  const tooltipLeft = activePrimary ? (activePrimary.x / w) * 100 : 100;
 
   return (
     <div
@@ -371,7 +369,9 @@ export function EvalDualSparkline({
             const width = slotWidth * 0.24;
             const pairGap = slotWidth * 0.06;
             return (
-              <g key={index}>
+              // Same rest/hover opacity as single bars. P50's fill is set so
+              // a resting pair keeps it near 0.36 alpha rather than fading out.
+              <g key={index} opacity={hoverIndex === index ? 1 : 0.6}>
                 <rect
                   data-chart-bar="p50"
                   x={point.x - pairGap / 2 - width}
@@ -379,7 +379,7 @@ export function EvalDualSparkline({
                   width={width}
                   height={h - pad - point.y}
                   rx={0.6}
-                  className="fill-primary/40"
+                  className="fill-primary/60"
                 />
                 {secondaryPoint && (
                   <rect
@@ -419,7 +419,7 @@ export function EvalDualSparkline({
             strokeLinejoin="round"
           />
         )}
-        {hoverIndex != null && activePrimary ? (
+        {bars ? null : hoverIndex != null && activePrimary ? (
           <>
             <line
               x1={activePrimary.x}
@@ -447,7 +447,7 @@ export function EvalDualSparkline({
               />
             ) : null}
           </>
-        ) : !bars ? (
+        ) : (
           <>
             {activePrimary ? (
               <circle
@@ -466,7 +466,7 @@ export function EvalDualSparkline({
               />
             ) : null}
           </>
-        ) : null}
+        )}
       </svg>
     </div>
   );

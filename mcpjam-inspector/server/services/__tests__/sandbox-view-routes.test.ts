@@ -102,6 +102,15 @@ describe("App document admission route authority", () => {
     expect(calls.prepare.mock.calls[0][0].html).toBe(html);
   });
 
+  it("puts local App documents on the port the browser used for the Inspector", async () => {
+    const response = await app(true).request("http://127.0.0.1:8080/api/web/apps/mcp-apps/view-admissions", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ ...body(), projectId: "project", serverId: "server" }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.prepare.mock.calls[0][2]).toBe("8080");
+  });
+
   it("accepts exactly the route's 16MiB envelope and refuses one more byte", async () => {
     const json = JSON.stringify({ ...body(), projectId: "project", serverId: "server" });
     const envelope = json + " ".repeat(SANDBOX_VIEW_REQUEST_MAX_BYTES - Buffer.byteLength(json));
@@ -163,6 +172,34 @@ describe("App document admission route authority", () => {
       body: JSON.stringify(body()),
     });
     expect(response.status).toBe(403);
+    expect(calls.prepare).not.toHaveBeenCalled();
+  });
+
+  it("admits a saved App copy whose server is no longer connected", async () => {
+    // A saved copy carries no receipt: its bytes come from the saved run.
+    const response = await app().request("/api/apps/mcp-apps/view-admissions", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        ...body(),
+        source: { ...body().source, serverId: "gone" },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(calls.prepare).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a live App read whose server is no longer connected", async () => {
+    const response = await app().request("/api/apps/mcp-apps/view-admissions", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        ...body(),
+        source: { ...body().source, serverId: "gone" },
+        sourceReceipt: "v1.live-read-receipt",
+      }),
+    });
+    expect(response.status).toBe(404);
     expect(calls.prepare).not.toHaveBeenCalled();
   });
 

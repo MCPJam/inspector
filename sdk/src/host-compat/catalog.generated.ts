@@ -701,7 +701,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
+            cspFrameDomains: true,
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -1016,7 +1016,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
+            cspFrameDomains: true,
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,

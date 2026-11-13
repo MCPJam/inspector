@@ -46,10 +46,7 @@ const {
   getToolsMock,
   acquirePlaygroundHarnessBoxMock,
   releaseBoxMock,
-  playgroundCredentialRefusalMock,
-  listCloudRuntimeSkillsMock,
   backend,
-  environmentSets,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -64,23 +61,17 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
-  playgroundCredentialRefusalMock: vi.fn(),
-  listCloudRuntimeSkillsMock: vi.fn(),
   backend: { chatEnvironments: true },
-  environmentSets: { resolve: false },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
-// it and never resolves a persistent computer. Only the acquisition, and the
-// org key check a Cursor turn makes before it, are faked.
+// it and never resolves a persistent computer. Only the acquisition is faked.
 vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
   acquirePlaygroundHarnessBox: (...args: unknown[]) =>
     acquirePlaygroundHarnessBoxMock(...args),
-  playgroundCredentialRefusal: (...args: unknown[]) =>
-    playgroundCredentialRefusalMock(...args),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -153,40 +144,17 @@ vi.mock("../../../utils/chat-ingestion.js", () => ({
     persistChatSessionToConvexMock(...args),
 }));
 
-vi.mock("../../../utils/computers/cloud-skill-tools.js", () => ({
-  listCloudRuntimeSkills: (...args: unknown[]) =>
-    listCloudRuntimeSkillsMock(...args),
-}));
-
 vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
 }));
-
-// The real set builders: every turn plans its skills from one. An
-// environment's own set is stubbed out unless a test resolves it.
-vi.mock(
-  "../../../services/environments/effective-capabilities.js",
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import("../../../services/environments/effective-capabilities.js")
-      >();
-    return {
-      ...actual,
-      resolveEffectiveCapabilities: (
-        ...args: Parameters<typeof actual.resolveEffectiveCapabilities>
-      ) =>
-        environmentSets.resolve
-          ? actual.resolveEffectiveCapabilities(...args)
-          : undefined,
-    };
-  },
-);
 
 vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},
 }));
 
+import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { harnessSurfaceRefusal } from "@/shared/harness-descriptors";
+import { harnessUsesExternalAccount } from "../../../utils/harness/registry.js";
 import chatSessions from "../chat-sessions.js";
 import type { TurnSkills } from "../../../services/environments/turn-skills.js";
 import { v1OnError } from "../envelope.js";
@@ -251,8 +219,6 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   vi.clearAllMocks();
   backend.chatEnvironments = true;
-  environmentSets.resolve = false;
-  listCloudRuntimeSkillsMock.mockResolvedValue([]);
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex.test";
   // Everything `isComputersDataPlaneConfigured()` reads. Set here rather than
@@ -341,7 +307,6 @@ beforeEach(() => {
       release: releaseBoxMock,
     },
   });
-  playgroundCredentialRefusalMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -452,6 +417,18 @@ describe("host targeting dispatches the real harness", () => {
       }),
     );
     expect(releaseBoxMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
+    backend.chatEnvironments = supported;
+    resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true, config: { hostId: HOST, harness: "claude-code", modelId: MODEL, selectedServerIds: ["srv_1"] },
+    });
+    const response = await turn(firstTurn({ hostId: HOST }));
+    expect(response.status).toBe(200);
+    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
+    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId).toBeUndefined();
   });
 
   it("refuses the turn, before any model call, when no box can be had", async () => {
@@ -651,28 +628,19 @@ describe("a refused box provision", () => {
   });
 });
 
-describe("a harness on the organization's vendor key", () => {
-  // Cursor's key reaches only a box the project provisioned, so the turn's own
-  // org key check runs BEFORE one is booted: a refused turn pays for no box
-  // and never reaches the model call that would hold the lease to its TTL.
-  // `resolveTurnRuntime` (faked here) refuses Cursor on this API for now; this
-  // branch is what admits it once the API may run it.
-  // Cursor picks its own model on the customer's account, so the engine gate
-  // holds the turn's model to the runtime's sentinel. No request body can send
-  // it (the route refuses `cursor/auto` before the lease), so the resolver
-  // hands it back here: the box pre-check must not lean on that gate.
+describe("a runtime this API does not run", () => {
+  // The declaration refuses it before any box, runtime or model call, with
+  // the reason the caller reads, and the lease is released for a retry.
   const CURSOR_MODEL = "cursor/auto";
-  const cursorHost = {
-    ok: true,
-    config: {
-      hostId: HOST,
-      harness: "cursor",
-      modelId: CURSOR_MODEL,
-      selectedServerIds: ["srv_1"],
-    },
+  const refusedBeforeAnyWork = () => {
+    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
+    expect(resolveTurnRuntimeMock).not.toHaveBeenCalled();
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
+    expect(mutationMock).toHaveBeenCalledWith(
+      "chatSessions:releaseTurnLease",
+      expect.objectContaining({ turnId: "turn_1" }),
+    );
   };
-  const NO_KEY =
-    "Ask an org admin to add a Cursor key in Organization → AI providers.";
 
   beforeEach(() => {
     resolveHostModelDefinitionMock.mockResolvedValue({
@@ -681,90 +649,107 @@ describe("a harness on the organization's vendor key", () => {
     });
   });
 
-  it("refuses a host-only turn when the org has no key, before any box", async () => {
-    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
-    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
+  it.each([
+    ["a host", { hostId: HOST }],
+    ["an environment", { environmentId: ENVIRONMENT }],
+  ])("refuses Cursor CLI on %s target", async (_target, pointer) => {
+    const cursor = { harness: "cursor", modelId: CURSOR_MODEL };
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...cursor, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(cursor));
 
-    const response = await turn(firstTurn({ hostId: HOST }));
+    const response = await turn(firstTurn(pointer));
     const body = await response.json();
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(422);
     expect(body).toMatchObject({
-      code: "CONFLICT",
-      message: NO_KEY,
-      details: { reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE" },
+      code: "FEATURE_NOT_SUPPORTED",
+      message: harnessSurfaceRefusal("cursor", "api"),
+      details: {
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "cursor",
+        kind: "surface-unsupported",
+      },
     });
-    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
-    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
-    // Refused before the model call, so the caller's retry may run.
-    expect(mutationMock).toHaveBeenCalledWith(
-      "chatSessions:releaseTurnLease",
-      expect.objectContaining({ turnId: "turn_1" }),
-    );
+    refusedBeforeAnyWork();
   });
 
-  it("refuses a turn on a pinned environment the same way", async () => {
-    resolveEnvironmentForRuntimeMock.mockResolvedValue(
-      environmentSpec({ harness: "cursor", modelId: CURSOR_MODEL }),
-    );
-    playgroundCredentialRefusalMock.mockResolvedValue(NO_KEY);
-
-    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
-    const body = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(body.code).toBe("CONFLICT");
-    expect(body.details.reason).toBe("EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE");
-    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
-    );
-    expect(acquirePlaygroundHarnessBoxMock).not.toHaveBeenCalled();
-    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
-  });
-
-  it("boots a host-only box that carries no environment for the key", async () => {
-    fetchHostRuntimeConfigMock.mockResolvedValue(cursorHost);
-
-    const response = await turn(firstTurn({ hostId: HOST }));
-
-    expect(response.status).toBe(200);
-    expect(playgroundCredentialRefusalMock).toHaveBeenCalledWith(
-      expect.objectContaining({ harnessId: "cursor", projectId: PROJECT }),
-    );
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
-    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0]).toMatchObject({
-      harness: "cursor",
-    });
-    expect(
-      acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId,
-    ).toBeUndefined();
-  });
-
-  it("a harness on MCPJam's own key makes no credential read", async () => {
+  it.each([
+    ["a host", { hostId: HOST }],
+    ["an environment", { environmentId: ENVIRONMENT }],
+  ])("refuses a client running a vendor's agent loop on %s target", async (_target, pointer) => {
+    // Such a host names no `harness`; reading only that field ran it emulated.
     resolveHostModelDefinitionMock.mockResolvedValue({
       id: MODEL,
       provider: "anthropic",
     });
-    resolveEnvironmentForRuntimeMock.mockResolvedValue(
-      environmentSpec({ harness: "claude-code", modelId: MODEL }),
-    );
+    const vsCode = { agentLoop: "copilot-cli", modelId: MODEL };
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { hostId: HOST, ...vsCode, selectedServerIds: ["srv_1"] },
+    });
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(environmentSpec(vsCode));
 
-    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+    const response = await turn(firstTurn(pointer));
+    const body = await response.json();
 
-    expect(playgroundCredentialRefusalMock).not.toHaveBeenCalled();
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(422);
+    expect(body).toMatchObject({
+      code: "FEATURE_NOT_SUPPORTED",
+      message:
+        "The API can't run this client's GitHub Copilot CLI agent yet. " +
+        "Use the client in the Playground, or choose a different client.",
+      details: {
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "copilot-cli",
+        kind: "surface-agent-loop",
+      },
+    });
+    refusedBeforeAnyWork();
   });
 
-  it.each([true])("preserves a plain host sandbox grant with environment runtime %s", async (supported) => {
-    backend.chatEnvironments = supported;
-    resolveHostModelDefinitionMock.mockResolvedValue({ id: MODEL, provider: "anthropic" });
-    fetchHostRuntimeConfigMock.mockResolvedValue({
-      ok: true, config: { hostId: HOST, harness: "claude-code", modelId: MODEL, selectedServerIds: ["srv_1"] },
+  it("refuses the dedicated GitHub Copilot CLI client with servers", async () => {
+    // An API turn never forwards, and this client reaches servers no other way.
+    resolveHostModelDefinitionMock.mockResolvedValue({
+      id: MODEL,
+      provider: "anthropic",
     });
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        hostId: HOST,
+        harness: "copilot-cli",
+        modelId: MODEL,
+        selectedServerIds: ["srv_1"],
+      },
+    });
+
     const response = await turn(firstTurn({ hostId: HOST }));
-    expect(response.status).toBe(200);
-    expect(acquirePlaygroundHarnessBoxMock).toHaveBeenCalledOnce();
-    expect(acquirePlaygroundHarnessBoxMock.mock.calls[0]?.[0].projectEnvironmentId).toBeUndefined();
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.message).toBe(
+      "GitHub Copilot CLI calls MCP servers only through its own client, and " +
+        "this turn cannot forward them. Open this client in the signed-in hosted Playground.",
+    );
+    expect(body.details).toMatchObject({
+      harness: "copilot-cli",
+      kind: "surface-unsupported",
+    });
+    refusedBeforeAnyWork();
+  });
+
+  it("runs no runtime that signs in with the customer's own account", () => {
+    // This route checks no account key before it boots a box, so a runtime
+    // admitted here on the customer's account would pay for a box its turn
+    // then refuses.
+    const ownAccount = HARNESS_IDS.filter(harnessUsesExternalAccount);
+    expect(ownAccount.length).toBeGreaterThan(0);
+    for (const id of ownAccount) {
+      expect(harnessSurfaceRefusal(id, "api")).toBeDefined();
+    }
   });
 });
 
@@ -1097,7 +1082,7 @@ describe("an environment's skills reach the engine that runs", () => {
     aggregateHash: "hash_1",
   };
 
-  it("hands the HARNESS the environment's resolved set, not the project catalog", async () => {
+  it("hands the HARNESS the environment's resolved set, with the set that carries its files", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({ harness: "claude-code" }),
       skills: [ENV_SKILL],
@@ -1106,28 +1091,27 @@ describe("an environment's skills reach the engine that runs", () => {
     const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
     expect(response.status).toBe(200);
-    // Presence is what makes it authoritative: with this absent,
-    // `selectHarnessSkillSource` takes its `live` arm and the sandbox is
-    // written the whole PROJECT-WIDE catalog — the environment's decision
-    // honoured by the emulated engine and discarded by the harness.
-    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
-      expect.objectContaining({ runtimeSkillsOverride: [ENV_SKILL] }),
-    );
+    const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
+      Record<string, unknown> & {
+        effectiveCapabilities?: { standaloneSkills: { skillId: string }[] };
+      },
+    ];
+    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(
+      args.effectiveCapabilities?.standaloneSkills.map((s) => s.skillId),
+    ).toEqual(["sk_env"]);
+    expect(args.onBoxSkillsWritten).toBeTypeOf("function");
+    // The environment captured its server skills; the turn is not live.
+    expect(args).not.toHaveProperty("liveTurn");
+    // A harness gets its skills on its box: MCPJam's agent is handed no plan,
+    // so its prompt describes no skill tools the harness lacks.
+    const [prepared] = prepareChatV2Mock.mock.calls.at(-1) as [
+      { skills?: TurnSkills },
+    ];
+    expect(prepared.skills).toBeUndefined();
   });
 
-  it("plans an EMULATED turn's skills from the environment's set, not the project catalog", async () => {
-    environmentSets.resolve = true;
-    listCloudRuntimeSkillsMock.mockResolvedValue([
-      {
-        skillId: "sk_project",
-        ref: "triage",
-        name: "triage",
-        description: "the project's own",
-        content: "# triage",
-        aggregateHash: "hash_2",
-        channels: [],
-      },
-    ]);
+  it("plans an EMULATED turn's skills from the environment's set", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({}),
       skills: [ENV_SKILL],
@@ -1141,13 +1125,38 @@ describe("an environment's skills reach the engine that runs", () => {
       { skills: TurnSkills },
     ];
     // An environment's server skills were captured with it, so its plan adds
-    // no live ones, and the project's pool is never read.
+    // no live ones.
     expect(skills.agent).toEqual({ kind: "environment" });
     expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_env"]);
-    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+    // A named environment keeps exactly its own skills.
+    expect(
+      resolveEnvironmentForRuntimeMock.mock.lastCall?.[1],
+    ).not.toHaveProperty("skillScope");
   });
 
-  it("delivers an environment's EMPTY set as empty rather than falling back", async () => {
+  it("records the skills the turn handed its engine, with the environment", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({}),
+      skills: [
+        { ...ENV_SKILL, provenance: { skillId: "sk_env", name: "deploy" } },
+      ],
+    });
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)?.[0] as
+      { turnTrace?: Record<string, unknown> } | undefined;
+    expect(persisted?.turnTrace).toMatchObject({
+      environmentAtTurn: {
+        environmentId: ENVIRONMENT,
+        name: "prod",
+        revision: 1,
+      },
+      skillsAtTurn: [{ skillId: "sk_env", name: "deploy" }],
+    });
+  });
+
+  it("delivers an environment's EMPTY set as empty rather than leaving the box alone", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({ harness: "claude-code" }),
       skills: [],
@@ -1156,18 +1165,17 @@ describe("an environment's skills reach the engine that runs", () => {
     await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
     // "This environment delivers no skills" is a real answer, and a different
-    // one from "ask the project". An omitted field would mean the latter.
+    // one from "unknown". An omitted field would mean the latter.
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
     expect(args.runtimeSkillsOverride).toEqual([]);
   });
 
-  it("keeps ABSENT distinct from empty when the resolver did not answer", async () => {
-    // `skills` is an additive field — an older backend omits it entirely. An
-    // override built from that says "this environment has none" on the
-    // environment's behalf and strips the harness of every skill it should
-    // have had. Not-told must stay not-told, which is the live fetch.
+  it("reads an environment that names no skills as one with none, on both engines", async () => {
+    // `skills` is an additive field — an older backend omits it entirely. Its
+    // turn plans no skills for MCPJam's agent, so a harness gets none either,
+    // never some other source's.
     const spec = environmentSpec({ harness: "claude-code" });
     expect(spec).not.toHaveProperty("skills");
     resolveEnvironmentForRuntimeMock.mockResolvedValue(spec);
@@ -1177,13 +1185,10 @@ describe("an environment's skills reach the engine that runs", () => {
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
-    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+    expect(args.runtimeSkillsOverride).toEqual([]);
   });
 
-  it("leaves a host-only harness turn on the live catalog", async () => {
-    // No environment resolved anything, so there is no decision to honour and
-    // the legacy project-wide fetch is the correct source. An EMPTY override
-    // here would silently starve the turn of every skill it should have had.
+  it("gives a host's turn its client's skill selection, live on its servers", async () => {
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {
@@ -1192,13 +1197,33 @@ describe("an environment's skills reach the engine that runs", () => {
         selectedServerIds: ["srv_1"],
       },
     });
+    resolveEnvironmentForRuntimeMock.mockImplementation(
+      async (_client, args) => ({
+        ...environmentSpec({
+          hostId: HOST,
+          harness: "claude-code",
+          selectedServerIds: ["srv_1"],
+        }),
+        environmentRef: {
+          environmentId: args.environmentId,
+          name: "",
+          revision: 1,
+        },
+        skills: [ENV_SKILL],
+      }),
+    );
 
     await turn(firstTurn({ hostId: HOST }));
 
+    // The client's selection, all visible by default, is the backend's scope.
+    expect(resolveEnvironmentForRuntimeMock.mock.lastCall?.[1]).toMatchObject({
+      skillScope: "visible",
+    });
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
-    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(args.liveTurn).toBe(true);
   });
 });
 

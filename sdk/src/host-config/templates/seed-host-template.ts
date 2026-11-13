@@ -738,10 +738,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -991,10 +994,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -2138,19 +2144,25 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5.5",
         temperature: 1,
         requireToolApproval: true,
+        // The CLI lists and calls `_meta.ui.visibility: ["app"]` tools
+        // (measured on 1.0.92), so filtering them would hide tools it exposes.
+        respectToolVisibility: false,
         harness: "copilot-cli",
         computer: { kind: "personal" },
+        // MCPJam's outer limit, the only explicit timeout native forwarding
+        // admits.
+        connectionDefaults: { headers: {}, requestTimeout: 300_000 },
       }),
       // Native Copilot CLI enables search automatically above ~30 tools.
       progressiveToolDiscovery: undefined,
+      // No capability, identity or protocol pins: this client is forward-only,
+      // so the CLI's own handshake reaches the server and any pin would keep
+      // MCPJam's connection from matching it. Kept in lockstep with the
+      // backend template, which records the measured handshake.
       clientCapabilities: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: { name: "MCPJam", version: "1.0" },
-        },
         apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
       },
     }),

@@ -775,7 +775,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": false,
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -1126,7 +1126,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": false,
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -1477,7 +1477,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": false,
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -1829,7 +1829,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": false,
+          "cspFrameDomains": true,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -2404,7 +2404,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "copilot-cli",
     "hostCapabilitiesOverride": {},
@@ -2437,22 +2437,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "widgetDisplayModeRequests": "accept",
         },
       },
-      "initialize": {
-        "clientInfo": {
-          "name": "MCPJam",
-          "version": "1.0",
-        },
-        "supportedProtocolVersions": [
-          "2025-11-25",
-        ],
-      },
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": undefined,
     "requireToolApproval": true,
-    "respectToolVisibility": true,
+    "respectToolVisibility": false,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
     "systemPrompt": "",
@@ -2468,7 +2459,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "connectionDefaults": {
       "headers": {},
-      "requestTimeout": 10000,
+      "requestTimeout": 300000,
     },
     "harness": "copilot-cli",
     "hostCapabilitiesOverride": {},
@@ -2501,22 +2492,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "widgetDisplayModeRequests": "accept",
         },
       },
-      "initialize": {
-        "clientInfo": {
-          "name": "MCPJam",
-          "version": "1.0",
-        },
-        "supportedProtocolVersions": [
-          "2025-11-25",
-        ],
-      },
       "profileVersion": 1,
     },
     "modelId": "openai/gpt-5.5",
     "optionalServerIds": [],
     "progressiveToolDiscovery": undefined,
     "requireToolApproval": true,
-    "respectToolVisibility": true,
+    "respectToolVisibility": false,
     "serverConnectionOverrides": undefined,
     "serverIds": [],
     "systemPrompt": "",

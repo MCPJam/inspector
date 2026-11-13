@@ -1,22 +1,38 @@
 /**
  * Fixtures and engine probes for the skill-delivery matrix
- * (`services/environments/__tests__/skill-delivery-matrix.test.ts`) and the
- * turn-skills tests.
+ * (`services/environments/__tests__/skill-delivery-matrix.test.ts`), the
+ * turn-skills tests and the swarm session tests.
  *
  * The fixtures go through the real preparation code; the probes read what an
  * engine is handed through the code each engine runs, never through
  * `resolveTurnSkills` itself.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
+import type { PluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  runtimeSkills,
+  type ResolvedEnvironmentRuntime,
+} from "../../services/environments/runtime.js";
 import { buildPinnedSkillSource } from "../../services/evals/pinned-skill-source.js";
-import type {
-  RunPinnedPluginVersion,
-  RunPinnedSkill,
+import {
+  pinnedSkillMeta,
+  type RunPinnedPluginVersion,
+  type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
 import type { TurnSkills } from "../../services/environments/turn-skills.js";
+import {
+  buildTargetSkillSource,
+  type FetchedTargetSkill,
+} from "../../services/sessionSimulation/session-skills.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import {
+  planBoxSkills,
+  writeBoxSkills,
+} from "../../utils/harness/box-skills-writer.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { selectHarnessSkillSource } from "../../utils/harness/skill-delivery.js";
+import { harnessTurnSkills } from "../../utils/harness/skill-delivery.js";
+import { BOX_HOME, fakeSkillBox, type FakeSkillBox } from "./fake-skill-box.js";
 
 /** A supporting file as a run snapshot serves it, readable without a network. */
 function dataUrl(text: string, mimeType: string): string {
@@ -135,6 +151,36 @@ export function preparedRunSkills(pins: RunPinnedSkill[] = evalRunPins()) {
   });
 }
 
+/**
+ * A swarm target's pins of the same skills: each row as the swarm's snapshot
+ * holds it, and the body the swarm runner fetches for it, which carries no
+ * files (the fetch serves them as links neither engine reads).
+ */
+export function swarmTargetSkills(
+  pins: RunPinnedSkill[] = evalRunPins(),
+): FetchedTargetSkill[] {
+  return pins.map(
+    ({ content, files: _files, extraFrontmatter: _extra, ...row }) => ({
+      row,
+      copy: {
+        name: row.name,
+        description: row.description,
+        content,
+        contentHash: row.contentHash,
+      },
+    }),
+  );
+}
+
+/** A swarm target's frozen skills, prepared by the code a swarm target uses. */
+export function preparedTargetSkills(pins?: RunPinnedSkill[]) {
+  return buildTargetSkillSource({
+    skills: swarmTargetSkills(pins),
+    pluginVersions: EVAL_PLUGIN_VERSIONS,
+    serverIds: ["srv_docs"],
+  });
+}
+
 const SKILL_TOOLS = ["loadSkill", "listSkillFiles", "readSkillFile"];
 
 interface AgentProbeOptions {
@@ -217,19 +263,189 @@ export async function agentLoads(
 }
 
 /**
- * The skill folders a harness writes to its box from a run's frozen copies:
- * the names in its adapter's `skills` param, from the list the harness turn
- * builds in its pinned mode.
+ * One harness turn's box write, as `runHarnessTurn` makes it: the turn's
+ * skills read from their source, planned by the runtime's rules (none on a
+ * runtime that takes none), and written to `box` by the box writer.
  */
-export function boxReceives(
+export async function writeTurnToBox(
   harnessId: string,
-  pinnedHarnessSkills: PinnedSkillArtifact[],
-): string[] {
+  source: Parameters<typeof harnessTurnSkills>[0],
+  box: FakeSkillBox,
+) {
   const adapter = getHarnessAdapter(harnessId);
-  if (!adapter.supportsSkills) return [];
-  const source = selectHarnessSkillSource({ pinnedHarnessSkills });
-  if (source.mode !== "pinned") throw new Error(`Got the ${source.mode} mode.`);
-  return adapter
-    .prepareSkills(source.skills)
-    .payload.map((skill) => skill.name);
+  const turn = await harnessTurnSkills(source);
+  const plan = planBoxSkills(
+    adapter.skills,
+    adapter.supportsSkills ? (turn.skills ?? []) : [],
+  );
+  return await writeBoxSkills({
+    session: box.session,
+    descriptor: adapter.skills,
+    home: BOX_HOME,
+    plan,
+    readFiles: turn.readFiles,
+  });
+}
+
+/**
+ * A harness turn's box: what the writer reports and every skill folder the
+ * runtime then finds in the folders it reads. The box first ran Claude Code
+ * and Codex turns with a skill of their own, so a folder another runtime left
+ * behind shows up here unless the writer cleared it.
+ */
+export async function boxReceives(
+  harnessId: string,
+  source: Parameters<typeof harnessTurnSkills>[0],
+) {
+  const box = fakeSkillBox();
+  const leftBehind: PinnedSkillArtifact = {
+    skillId: "sk_left_behind",
+    name: "left-behind",
+    description: "A skill an earlier turn delivered.",
+    content: "# Left behind",
+    contentHash: "hash-left-behind",
+  };
+  for (const runtime of ["claude-code", "codex"]) {
+    await writeTurnToBox(runtime, { pinnedHarnessSkills: [leftBehind] }, box);
+  }
+  const written = await writeTurnToBox(harnessId, source, box);
+  const { readFolders } = getHarnessAdapter(harnessId).skills;
+  return {
+    written,
+    folders: readFolders.flatMap((folder) =>
+      box.skillFolders(`${BOX_HOME}/${folder}`),
+    ),
+  };
+}
+
+/**
+ * The eval fixture's environment as `resolveEnvironmentForRuntime` returns it,
+ * before a run freezes it into {@link evalRunPins}, with the plugin origins
+ * `fetchPluginRuntimeAttribution` reads for it.
+ */
+export function evalEnvironment(): {
+  spec: ResolvedEnvironmentRuntime;
+  attribution: PluginRuntimeAttribution;
+} {
+  const server = serverPin();
+  const skills = [authoredPin(), pluginPin()].map((pin) => ({
+    skillId: pin.skillId ?? pin.name,
+    name: pin.name,
+    description: pin.description,
+    content: pin.content,
+    aggregateHash: pin.aggregateHash ?? pin.contentHash,
+    channels: pin.channels ?? [],
+    provenance: pinnedSkillMeta(pin),
+    files: (pin.files ?? []).map(({ path, size, url }) => ({
+      path,
+      size,
+      url,
+    })),
+  }));
+  const acme = EVAL_PLUGIN_VERSIONS[0]!;
+  return {
+    spec: {
+      environmentRef: { environmentId: "env_eval", name: "Eval", revision: 1 },
+      host: { hostId: "host_eval", runtimeConfig: {} },
+      servers: {
+        effectiveServerIds: ["srv_docs"],
+        connectable: [
+          { serverId: "srv_docs", name: "Docs", source: "host_or_group" },
+        ],
+      },
+      skills,
+      serverSkills: [
+        {
+          serverSkillId: "ss_docs_search",
+          versionId: "ssv_docs_search_2",
+          serverId: "srv_docs",
+          serverSlug: "docs",
+          serverLabel: "Docs",
+          ref: "docs/search",
+          skillUri: "skill://docs/search",
+          name: server.name,
+          description: server.description,
+          content: server.content,
+          contentSha256: server.contentHash,
+          versionHash: server.contentHash,
+          versionNumber: 2,
+          capturedAt: 1_700_000_000_000,
+          provenance: pinnedSkillMeta(server),
+          files: [],
+        },
+      ],
+      pluginVersions: EVAL_PLUGIN_VERSIONS,
+    },
+    attribution: {
+      serverOrigins: new Map(),
+      skillOrigins: new Map([
+        [
+          "sk_acme_summarize",
+          {
+            modelRef: "acme/summarize",
+            plugin: { ...acme, bundleHash: acme.bundleHash ?? null },
+          },
+        ],
+      ]),
+      unattributedVersionIds: [],
+    },
+  };
+}
+
+/** A skill only its author sees, in the caller's own pool. */
+export function personalSkill(): RuntimeStandaloneSkill {
+  return {
+    skillId: "sk_my_notes",
+    ref: "my-notes",
+    name: "my-notes",
+    description: "My own notes.",
+    content: "# My notes",
+    aggregateHash: "agg-my-notes",
+    files: [],
+    channels: [],
+  };
+}
+
+/**
+ * The eval fixture's environment as the hidden environment of a Playground
+ * client whose selection is all visible: the backend's scope adds the
+ * caller's visible skills after the row's own (`skillScope: 'visible'`), a
+ * personal one included.
+ */
+export function visibleScopeEnvironment(): ReturnType<typeof evalEnvironment> {
+  const { spec, attribution } = evalEnvironment();
+  const mine = personalSkill();
+  return {
+    spec: {
+      ...spec,
+      environmentOrigin: "adhoc",
+      skills: [
+        ...(spec.skills ?? []),
+        {
+          skillId: mine.skillId,
+          name: mine.name,
+          description: mine.description,
+          content: "# My notes",
+          aggregateHash: mine.aggregateHash,
+          channels: ["host"],
+          provenance: {
+            skillId: mine.skillId,
+            name: mine.name,
+            sharing: "user",
+            channels: ["host"],
+            projectSkillVersionNumber: 4,
+          },
+          files: [],
+        },
+      ],
+    },
+    attribution,
+  };
+}
+
+/** A live environment turn's skill source, as a harness turn reads it. */
+export function liveTurnSource(
+  spec: Pick<ResolvedEnvironmentRuntime, "skills">,
+): Parameters<typeof harnessTurnSkills>[0] {
+  return { runtimeSkillsOverride: runtimeSkills(spec) };
 }
