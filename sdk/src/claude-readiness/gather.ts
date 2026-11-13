@@ -34,6 +34,7 @@ import {
   DIRECTORY_DIAL_PROTOCOL_VERSION,
   dialMcpServer,
   type DirectoryDialOptions,
+  type DirectoryInitializeEvidence,
   type DirectoryResourceEvidence,
   type DirectoryToolEvidence,
 } from "../directory-readiness/mcp-dial.js";
@@ -54,6 +55,8 @@ import {
   type ClaudeAppToolEvidence,
 } from "./checks/apps.js";
 import type { ClaudeAuthEvidence } from "./checks/auth.js";
+import type { ClaudeEndpointEvidence } from "./checks/endpoint.js";
+import type { ClaudeServerFailure } from "./dependencies.js";
 import {
   discoverClaudeAuthEvidence,
   discoverClaudeAuthMetadata,
@@ -184,6 +187,41 @@ function appResourceFrom(
     _meta: resource._meta,
   });
   return adapted ?? { uri: resource.uri, mimeType: resource.mimeType };
+}
+
+/** Server-chosen text kept as evidence: enough to act on, never a page. */
+const MAX_FAILURE_DETAIL_CHARS = 200;
+
+/**
+ * Whether the run could use the server. Nothing at the connector URL
+ * answering is an unreachable server; one that answered and then refused
+ * `initialize` failed the connection, which leaves discovery standing.
+ */
+function serverFailureFrom(
+  endpoint: ClaudeEndpointEvidence,
+  auth: ClaudeAuthEvidence,
+  initialize: DirectoryInitializeEvidence | undefined,
+): ClaudeServerFailure | undefined {
+  const answered =
+    (endpoint.redirectChain?.length ?? 0) > 0 ||
+    auth.unauthenticated !== undefined ||
+    (initialize !== undefined && !initialize.unreachable);
+  const bounded = (detail: string) => detail.slice(0, MAX_FAILURE_DETAIL_CHARS);
+  if (!answered) {
+    const why = initialize?.error ?? auth.prm?.fetchError;
+    return { kind: "unreachable", detail: bounded(why ?? "no answer") };
+  }
+  return initialize && !initialize.ok
+    ? { kind: "connection", detail: bounded(initializeRefusal(initialize)) }
+    : undefined;
+}
+
+function initializeRefusal(initialize: DirectoryInitializeEvidence): string {
+  const said = initialize.error ?? "no reason given";
+  if (!initialize.status || said.startsWith("initialize ")) return said;
+  return initialize.status < 300
+    ? `initialize returned an error: ${said}`
+    : `initialize answered ${initialize.status}: ${said}`;
 }
 
 /**
@@ -362,6 +400,9 @@ export async function gatherClaudeReadinessEvidence(
     intrusiveObservations = { ...intrusiveObservations, stepUp };
   }
 
+  const serverFailure = discovery
+    ? serverFailureFrom(endpoint, auth, dialled?.initialize)
+    : undefined;
   const finishedAt = now();
 
   return {
@@ -392,6 +433,7 @@ export async function gatherClaudeReadinessEvidence(
     intrusive: options.intrusive,
     intrusiveObservations,
     ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
+    ...(serverFailure ? { serverFailure } : {}),
     llmObservations: options.llmObservations,
     evidenceSources: options.evidenceSources,
   };

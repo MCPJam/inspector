@@ -616,6 +616,7 @@
     {
       "step": "connection",
       "field": "connection.serverUrl",
+      "needs": [],
       "reads": ["connection.serverUrl"],
       "checks": ["claude.endpoint.https"]
     },
@@ -679,6 +680,7 @@
     },
     {
       "step": "listing",
+      "needs": [],
       "reads": [
         "listing.name",
         "listing.slug",
@@ -693,6 +695,7 @@
     },
     {
       "step": "listing",
+      "needs": [],
       "reads": [
         "listing.documentationUrl",
         "listing.privacyPolicyUrl",
@@ -705,10 +708,44 @@
     },
     {
       "step": "listing",
+      "needs": [],
+      "reads": [],
       "checks": [
         "claude.submission.screenshots",
         "claude.submission.screenshot-prompts"
       ]
+    },
+    {
+      "step": "useCases",
+      "field": "useCases.access",
+      "needs": ["server"],
+      "reads": ["useCases.access", "connection.serverUrl"],
+      "checks": ["claude.submission.access-matches-annotations"]
+    },
+    {
+      "step": "useCases",
+      "field": "useCases.pairs",
+      "needs": [],
+      "reads": ["useCases.pairs", "useCases.prerequisites"],
+      "checks": ["claude.submission.use-cases"]
+    },
+    {
+      "step": "company",
+      "needs": [],
+      "reads": [
+        "company.name",
+        "company.website",
+        "company.contactName",
+        "company.contactEmail"
+      ],
+      "checks": ["claude.submission.company"]
+    },
+    {
+      "step": "authentication",
+      "field": "authentication.requirement",
+      "needs": [],
+      "reads": ["authentication.requirement", "authentication.oauthClient"],
+      "checks": ["claude.submission.authentication"]
     },
     {
       "step": "authentication",
@@ -769,19 +806,58 @@
       "checks": ["claude.experience.consent-scope-unclear"]
     },
     {
+      "step": "dataHandling",
+      "needs": [],
+      "reads": [
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored"
+      ],
+      "checks": ["claude.submission.data-handling"]
+    },
+    {
+      "step": "testLaunch",
+      "field": "testLaunch.instructions",
+      "needs": [],
+      "reads": ["testLaunch.instructions", "authentication.requirement"],
+      "checks": ["claude.submission.test-instructions"]
+    },
+    {
       "step": "compliance",
       "field": "compliance.acknowledgments",
+      "needs": [],
       "reads": ["compliance.acknowledgments"],
       "checks": ["claude.submission.attestations"]
     },
     {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.scan.cross-tool-direction-candidates"]
+    },
+    {
       "step": "review",
+      "needs": [],
       "reads": [
         "dataHandling.apiOwnership",
         "dataHandling.healthData",
         "dataHandling.sponsored"
       ],
       "checks": ["claude.submission.artifact-quality"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "useCases.access",
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored",
+        "testLaunch.selfTested",
+        "compliance.acknowledgments"
+      ],
+      "checks": ["claude.submission.declarations-confirmed"]
     }
   ],
   "laneSteps": {

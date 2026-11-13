@@ -58,6 +58,7 @@ export {
   gradeClaudeReadiness,
 } from "./runner.js";
 export type { ClaudeReadinessInput } from "./runner.js";
+export type { ClaudeServerFailure } from "./dependencies.js";
 
 // The intrusive GATE and its GRADING are pure — a resolver over a config
 // object and a function over observations — so they belong here. The PROBES
@@ -112,6 +113,10 @@ export {
   CLAUDE_TOOL_LISTING_INPUT,
   runClaudeToolChecks,
 } from "./checks/tools.js";
+export { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+export { runClaudeDeclarationChecks } from "./checks/declarations.js";
+export type { ClaudeDeclarationEvidence } from "./checks/declarations.js";
+export { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
 export { runClaudeEndpointChecks } from "./checks/endpoint.js";
 export type {
   ClaudeEndpointEvidence,

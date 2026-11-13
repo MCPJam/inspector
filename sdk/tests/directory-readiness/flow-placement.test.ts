@@ -231,9 +231,6 @@ describe("evidence status", () => {
     expect(
       placed(steps, "claude.features.lazy-authentication").evidenceStatus
     ).toBe("not-tested");
-    expect(
-      placed(steps, "claude.submission.declared-auth-mode").evidenceStatus
-    ).toBe("not-tested");
   });
 
   it("is inconclusive for a model's flag it was unsure of", () => {
@@ -319,6 +316,76 @@ describe("staleness", () => {
     const now = completeAnswers([answer("listing.oneLiner", "Different")]);
     const all = place(findings, now).flatMap((step) => step.findings);
     expect(all.some((entry) => entry.evidenceStatus === "stale")).toBe(false);
+  });
+});
+
+describe("the declaration and scan checks", () => {
+  it("land under the answer they read, the acknowledgments and the review page", () => {
+    const steps = place(run().findings);
+    expect(
+      placed(steps, "claude.submission.access-matches-annotations")
+    ).toMatchObject({ step: "useCases", field: "useCases.access" });
+    expect(
+      placed(steps, "claude.scan.cross-tool-direction-candidates")
+    ).toMatchObject({
+      step: "compliance",
+      field: "compliance.acknowledgments",
+    });
+    expect(placed(steps, "claude.submission.declarations-confirmed").step).toBe(
+      "review"
+    );
+  });
+
+  it("go stale when the answer they read changes or is confirmed", () => {
+    const graded = completeAnswers();
+    const findings = run({ submissionAnswers: graded }).findings;
+    const now = completeAnswers([
+      {
+        key: "useCases.access",
+        value: "read-only",
+        origin: "confirmed",
+        wordingRevision: FLOW.version,
+      },
+    ]);
+    const steps = place(findings, now, graded);
+    for (const id of [
+      "claude.submission.access-matches-annotations",
+      "claude.submission.declarations-confirmed",
+    ]) {
+      expect(placed(steps, id), id).toMatchObject({
+        evidenceStatus: "stale",
+        staleBecause: ["useCases.access"],
+      });
+    }
+  });
+});
+
+describe("a failure the run names", () => {
+  it("is blocked even when another check with the same need reached a verdict", () => {
+    const answered = finding("claude.auth.prm-discoverable", {
+      lane: "runtime-compatibility",
+      class: "runtime-blocker",
+      provenance: "wire",
+      status: "satisfied",
+    });
+    const refused = finding("claude.tools.title-present", {
+      lane: "directory-policy",
+      class: "required",
+      provenance: "static",
+      status: "not-evaluated",
+      notEvaluatedReason:
+        "blocked: the connection to the server failed: initialize answered 401",
+    });
+    const skipped = finding("claude.tools.name-length", {
+      lane: "directory-policy",
+      class: "required",
+      provenance: "static",
+      status: "not-evaluated",
+      notEvaluatedReason: "no tool listing was captured for this run",
+    });
+    const steps = place([answered, refused, skipped]);
+    expect(placed(steps, refused.id).evidenceStatus).toBe("blocked");
+    expect(placed(steps, skipped.id).evidenceStatus).toBe("not-tested");
   });
 });
 

@@ -14,42 +14,22 @@
 
 import { CLAUDE_SUBMISSION_LIMITS as LIMITS } from "../../claude-readiness/profile.js";
 import data from "./claude-connector.json" with { type: "json" };
-import type {
-  DirectoryCheckNeed,
-  DirectoryCheckPlacement,
-  DirectoryFlow,
-  DirectoryFlowField,
-  DirectoryFlowOption,
-  DirectoryPortalErrorCode,
-  DirectoryStepLayout,
-} from "./types.js";
+import {
+  placementsFrom,
+  stepFields,
+  type DirectoryFieldRules as FieldRules,
+  type DirectoryFieldWords,
+} from "./data.js";
+import type { DirectoryFlow, DirectoryStepLayout } from "./types.js";
 
 type FieldKey = keyof typeof data.fields;
-type FieldRules = Omit<
-  DirectoryFlowField,
-  | "key"
-  | "label"
-  | "reviewLabel"
-  | "placeholder"
-  | "helper"
-  | "options"
-  | "errors"
->;
-interface FieldWords {
-  label: string;
-  reviewLabel?: string;
-  placeholder?: string;
-  helper?: string;
-  options?: DirectoryFlowOption[];
-  errors?: Partial<Record<DirectoryPortalErrorCode, string>>;
-}
 interface StepWords {
   title: string;
   intro: string;
   layout?: DirectoryStepLayout;
 }
 
-const WORDS: Record<FieldKey, FieldWords> = data.fields;
+const WORDS: Record<FieldKey, DirectoryFieldWords> = data.fields;
 const STEPS: Record<string, StepWords> = data.steps;
 
 const declared = { declaration: true } as const;
@@ -73,7 +53,9 @@ const RULES: Record<FieldKey, FieldRules> = {
   "listing.description": req("textarea", {
     maxLength: LIMITS.descriptionMaxLength,
   }),
+  // The portal's category list was never captured.
   "listing.categories": req("multi-select", {
+    freeEntry: true,
     minItems: LIMITS.categoriesMin,
     maxItems: LIMITS.categoriesMax,
   }),
@@ -135,32 +117,6 @@ const RULES: Record<FieldKey, FieldRules> = {
   "compliance.additionalNotes": opt("textarea"),
 };
 
-const NEEDS: readonly DirectoryCheckNeed[] = [
-  "server",
-  "reviewer",
-  "model",
-  "package",
-];
-
-function need(name: string): DirectoryCheckNeed {
-  const known = NEEDS.find((entry) => entry === name);
-  if (!known) {
-    throw new Error(`claude-connector.json names an unknown need: ${name}`);
-  }
-  return known;
-}
-
-function fieldsOf(step: string): DirectoryFlowField[] {
-  return (Object.keys(RULES) as FieldKey[])
-    .filter((key) => key.startsWith(`${step}.`))
-    .map((key) => ({
-      key,
-      ...WORDS[key],
-      ...RULES[key],
-      errors: WORDS[key].errors ?? {},
-    }));
-}
-
 export const CLAUDE_CONNECTOR_FLOW: DirectoryFlow = {
   id: "claude-connector",
   directory: "claude",
@@ -175,15 +131,8 @@ export const CLAUDE_CONNECTOR_FLOW: DirectoryFlow = {
   steps: Object.keys(STEPS).map((id) => ({
     id,
     ...STEPS[id],
-    fields: fieldsOf(id),
+    fields: stepFields(id, RULES, WORDS),
   })),
-  placements: data.placements.flatMap(
-    ({ checks, needs, ...where }): DirectoryCheckPlacement[] =>
-      checks.map((checkId) => ({
-        checkId,
-        ...where,
-        ...(needs && { needs: needs.map(need) }),
-      }))
-  ),
+  placements: placementsFrom("claude-connector.json", data.placements),
   laneSteps: data.laneSteps,
 };

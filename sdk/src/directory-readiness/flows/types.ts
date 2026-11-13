@@ -12,7 +12,10 @@
 import type { DirectoryReadinessFinding } from "../types.js";
 
 /** Flows that exist. The backend validates its own list; this one names data. */
-export const DIRECTORY_FLOW_IDS = ["claude-connector"] as const;
+export const DIRECTORY_FLOW_IDS = [
+  "claude-connector",
+  "chatgpt-plugin",
+] as const;
 
 export type DirectoryFlowId = (typeof DIRECTORY_FLOW_IDS)[number];
 
@@ -62,7 +65,10 @@ export type DirectoryFieldControl =
   | "checkbox"
   | "checkbox-group"
   | "pairs"
+  /** Records a package supplies, such as test cases; any string columns. */
+  | "rows"
   | "server"
+  /** The NAME of a project secret. The answer never holds the value. */
   | "secret";
 
 export type DirectoryFieldFormat =
@@ -77,7 +83,11 @@ export type DirectoryFieldIssueCode =
   | "unknownOption"
   | "unknownField"
   /** A confirmed declaration whose wording changed since it was confirmed. */
-  | "wordingChanged";
+  | "wordingChanged"
+  /** A write to a field only an imported package may set. */
+  | "managedByPackage"
+  /** A secret field names a project secret that holds no value. */
+  | "secretUnset";
 
 export interface DirectoryFlowField {
   /** `<step>.<name>`. Stable forever once shipped: stored answers use it. */
@@ -90,6 +100,18 @@ export interface DirectoryFlowField {
   required?: boolean;
   /** `review`: only the review page asks for it (Claude's author). */
   requiredOn?: "form" | "review";
+  /** Required once any of these fields has an answer (sign-in steps for a named tenant). */
+  requiredWith?: string[];
+  /**
+   * `package`: the portal shows the value read only and takes it from the
+   * uploaded package, so only an import sets it.
+   */
+  managedBy?: "package";
+  /**
+   * Where the package holds the value: a file, then a JSON pointer, in the
+   * layout the portal recommends (`*` stands for the connected server).
+   */
+  packagePath?: string;
   /**
    * Answers that stand in for a missing value, each valid in its own right
    * and all of them present: Claude's author falls back to the company name
@@ -99,6 +121,8 @@ export interface DirectoryFlowField {
   placeholder?: string;
   helper?: string;
   options?: DirectoryFlowOption[];
+  /** A choice field whose options were never captured takes any value. */
+  freeEntry?: boolean;
   pairs?: {
     columns: [string, string];
     keys: [string, string];
@@ -167,7 +191,11 @@ export interface DirectoryFlowStep {
 export type DirectoryCheckNeed = "server" | "reviewer" | "model" | "package";
 
 export interface DirectoryCheckPlacement {
-  /** The engine finding id. */
+  /**
+   * The engine finding id. One ending in `.*` places every id under that
+   * prefix, for findings an engine names at run time, such as one per file
+   * it could not read.
+   */
   checkId: string;
   step: string;
   /** The field the result is shown under. */
@@ -190,6 +218,17 @@ export interface DirectoryFlow {
   placements: DirectoryCheckPlacement[];
   /** Step that receives a finding with no placement, by engine lane. */
   laneSteps: Record<string, string>;
+}
+
+/** A declaration nobody has stood behind yet (see `unconfirmedDeclarations`). */
+export interface DirectoryUnconfirmedDeclaration {
+  key: string;
+  step: string;
+  /** The label the review page shows. */
+  label: string;
+  /** Where its value came from; absent when the field has no answer. */
+  origin?: DirectoryAnswerOrigin;
+  value?: DirectoryAnswerValue;
 }
 
 export interface DirectoryFieldIssue {

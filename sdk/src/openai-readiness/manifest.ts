@@ -83,7 +83,7 @@ export const OPENAI_PLUGINS_CHANGELOG_URL = `${OPENAI_PLUGINS_DOCS_BASE_URL}/cha
  */
 export const OPENAI_PLUGINS_POLICY_PAGES = [
   "quickstart",
-  "app-guidelines",
+  "plugin-guidelines",
   "reference",
   "changelog",
   "plan/use-case",

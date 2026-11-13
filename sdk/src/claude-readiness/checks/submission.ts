@@ -12,7 +12,9 @@
  * A connector submission's ANSWERS replace the profile when present: the
  * listing, link and acknowledgment checks report exactly what the portal's
  * review page would refuse, in its words, and the screenshot checks are
- * not-applicable because the connector form has no screenshots.
+ * not-applicable because the connector form has no screenshots. The
+ * acknowledgments must also be confirmed, and the Authentication answers are
+ * held against the server's sign-in; `answer-steps.ts` grades the other steps.
  *
  * With a profile, the split is sharp:
  *
@@ -37,6 +39,12 @@ import {
   type ClaudeSubmissionProfile,
 } from "../submission-profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
+import {
+  compareAuthAnswersWithServer,
+  gradeOwnedAnswers,
+  unconfirmedProblems,
+} from "./answer-steps.js";
+import type { ClaudeAuthEvidence } from "./auth.js";
 import {
   informational,
   notApplicable,
@@ -146,6 +154,8 @@ export interface ClaudeSubmissionEvidence {
    * are indistinguishable from outside.
    */
   observedAuthMode?: string;
+  /** What the run saw of the server's sign-in, held against the answers. */
+  auth?: ClaudeAuthEvidence;
 }
 
 export function runClaudeSubmissionChecks(
@@ -153,9 +163,7 @@ export function runClaudeSubmissionChecks(
   stamp: ClaudeCheckStamp,
 ): ClaudeReadinessFinding[] {
   const { profile } = evidence;
-  if (evidence.answers) {
-    return gradeAnswers(evidence.answers, evidence.observedAuthMode, stamp);
-  }
+  if (evidence.answers) return gradeAnswers(evidence, evidence.answers, stamp);
 
   if (!profile) {
     // A malformed profile is NOT the same as no profile: the caller did the
@@ -181,7 +189,11 @@ export function runClaudeSubmissionChecks(
   // asserting something it never verified.
   const overLongFields = [
     ["name", profile.name.length, CLAUDE_SUBMISSION_LIMITS.nameMaxLength],
-    ["tagline", profile.tagline.length, CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength],
+    [
+      "tagline",
+      profile.tagline.length,
+      CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength,
+    ],
     [
       "description",
       profile.description.length,
@@ -366,8 +378,8 @@ const LINK_KEYS = [
 const ACKNOWLEDGMENTS_KEY = "compliance.acknowledgments";
 
 function gradeAnswers(
+  evidence: ClaudeSubmissionEvidence,
   answers: ClaudeAnswerEvidence,
-  observedAuthMode: string | undefined,
   stamp: ClaudeCheckStamp,
 ): ClaudeReadinessFinding[] {
   const { values } = answers;
@@ -375,23 +387,12 @@ function gradeAnswers(
     definition: ClaudeCheckDefinition,
     keys: readonly string[],
     details: Record<string, unknown>,
-  ) => {
-    const issues = answers.issues.filter((issue) => keys.includes(issue.key));
-    if (issues.length === 0) return satisfied(definition, stamp, details);
-    // One sentence per answer, in the portal's words where it has them.
-    const lines = issues.map(({ key, message }) => {
-      const field = directoryFlowField(CLAUDE_CONNECTOR_FLOW, key);
-      const label = field?.reviewLabel ?? field?.label ?? key;
-      return `${label}: ${message}${/[.!?]$/.test(message) ? "" : "."}`;
-    });
-    const lead = issues.length === 1 ? "this answer" : "these answers";
-    return violated(
-      definition,
-      stamp,
-      `Fix ${lead} before you submit. ${lines.join(" ")}`,
-      { ...details, issues },
-    );
-  };
+  ) => gradeOwnedAnswers(definition, answers, keys, stamp, details);
+  const ticked = values[ACKNOWLEDGMENTS_KEY];
+  const acknowledged = new Set<unknown>(Array.isArray(ticked) ? ticked : []);
+  const acknowledgments =
+    directoryFlowField(CLAUDE_CONNECTOR_FLOW, ACKNOWLEDGMENTS_KEY)?.options ??
+    [];
   const lengthOf = (key: string) => {
     const value = values[key];
     return typeof value === "string" || Array.isArray(value)
@@ -416,14 +417,33 @@ function gradeAnswers(
     }),
     notApplicable(SCREENSHOTS, stamp, noScreenshots),
     notApplicable(SCREENSHOT_PROMPTS, stamp, noScreenshots),
-    fields(ATTESTATIONS, [ACKNOWLEDGMENTS_KEY], {
-      acknowledged: new Set<unknown>(
-        Array.isArray(values[ACKNOWLEDGMENTS_KEY])
-          ? values[ACKNOWLEDGMENTS_KEY]
-          : [],
-      ).size,
-    }),
-    declaredAuthFinding(answers.declaredAuthMode, observedAuthMode, stamp),
+    gradeOwnedAnswers(
+      ATTESTATIONS,
+      answers,
+      [ACKNOWLEDGMENTS_KEY],
+      stamp,
+      {
+        acknowledged: acknowledged.size,
+        notAcknowledged: acknowledgments
+          .filter((option) => !acknowledged.has(option.value))
+          .map((option) => option.label),
+      },
+      unconfirmedProblems(answers, [ACKNOWLEDGMENTS_KEY])
+    ),
+    // A caller's own observation keeps its old meaning; otherwise the
+    // answers are held against what the run saw of the server's sign-in.
+    evidence.observedAuthMode === undefined
+      ? compareAuthAnswersWithServer(
+          DECLARED_AUTH_MATCHES,
+          answers,
+          evidence.auth,
+          stamp
+        )
+      : declaredAuthFinding(
+          answers.declaredAuthMode,
+          evidence.observedAuthMode,
+          stamp
+        ),
     informational(
       ARTIFACT_QUALITY,
       stamp,

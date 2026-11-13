@@ -11,6 +11,11 @@
  * did, every unevaluated check that declares it is `blocked` rather than
  * merely not tested. The reason stays the finding's own `notEvaluatedReason`.
  *
+ * A run that knows a dependency failed says so in the reason instead
+ * ({@link directoryBlockedReason}), which holds even when another check with
+ * the same need reached a verdict: a server that answers discovery and
+ * refuses the MCP session blocks the tool checks and nothing else.
+ *
  * Pure. Safe from the browser entry.
  */
 
@@ -38,6 +43,36 @@ export interface PlaceDirectoryResultsInput {
   gradedAnswers?: readonly DirectoryAnswer[];
   /** Which page's field issues to report: the step form's or the review page's. */
   on?: "form" | "review";
+  /** Names of the project's secrets that hold a value (see `validateDirectoryAnswers`). */
+  savedSecrets?: readonly string[];
+}
+
+const BLOCKED = "blocked: ";
+
+/**
+ * The `notEvaluatedReason` of a check a failed dependency left without a
+ * verdict, e.g. "blocked: the server could not be reached: fetch failed".
+ */
+export function directoryBlockedReason(failure: string): string {
+  return `${BLOCKED}${failure}`;
+}
+
+/**
+ * The placement of a finding id: its own, else the family (`prefix.*`) whose
+ * prefix it starts with, for an id the engine builds at run time.
+ */
+export function directoryPlacementOf(
+  flow: DirectoryFlow,
+  checkId: string
+): DirectoryCheckPlacement | undefined {
+  return (
+    flow.placements.find((placement) => placement.checkId === checkId) ??
+    flow.placements.find(
+      (placement) =>
+        placement.checkId.endsWith(".*") &&
+        checkId.startsWith(placement.checkId.slice(0, -1))
+    )
+  );
 }
 
 export function placeDirectoryResults(
@@ -45,7 +80,10 @@ export function placeDirectoryResults(
 ): PlacedStep[] {
   const { flow, findings = [] } = input;
   const placements = new Map(
-    flow.placements.map((placement) => [placement.checkId, placement])
+    findings.flatMap((finding) => {
+      const placement = directoryPlacementOf(flow, finding.id);
+      return placement ? [[finding.id, placement] as const] : [];
+    })
   );
   const lacking = lackingDependencies(findings, placements);
   const changed = input.gradedAnswers
@@ -77,6 +115,7 @@ export function placeDirectoryResults(
 
   const issues = validateDirectoryAnswers(flow, input.answers, {
     on: input.on,
+    savedSecrets: input.savedSecrets,
   });
   return flow.steps.map((step) => {
     const keys = new Set(step.fields.map((field) => field.key));
@@ -127,7 +166,8 @@ function statusOf(
   lacking: ReadonlySet<string>
 ): DirectoryEvidenceStatus {
   if (finding.status === "not-evaluated") {
-    return dependenciesOf(finding, placement).some((name) => lacking.has(name))
+    return finding.notEvaluatedReason?.startsWith(BLOCKED) ||
+      dependenciesOf(finding, placement).some((name) => lacking.has(name))
       ? "blocked"
       : "not-tested";
   }

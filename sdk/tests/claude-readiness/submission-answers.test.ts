@@ -171,7 +171,9 @@ describe("the listing checks graded from answers", () => {
       "claude.submission.declared-auth-mode"
     );
     expect(unobserved.status).toBe("not-evaluated");
-    expect(unobserved.details).toEqual({ declared: "oauth-dcr" });
+    expect(unobserved.details).toMatchObject({
+      declared: { requirement: "always", oauthClient: "dcr" },
+    });
 
     const contradicted = byId(
       grade(

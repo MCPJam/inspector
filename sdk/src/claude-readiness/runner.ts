@@ -34,11 +34,18 @@ import {
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
 import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
 import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
+import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
+import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+import { runClaudeDeclarationChecks } from "./checks/declarations.js";
 import {
   runClaudeEndpointChecks,
   type ClaudeEndpointEvidence,
 } from "./checks/endpoint.js";
 import { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+import {
+  blockOnServerFailure,
+  type ClaudeServerFailure,
+} from "./dependencies.js";
 import {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
@@ -115,6 +122,11 @@ export interface ClaudeReadinessInput {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial, in plain words. */
   toolListingError?: string;
+  /**
+   * Set when the run could not use the server. The checks that needed it
+   * say so with the failure as their reason; the others keep their verdicts.
+   */
+  serverFailure?: ClaudeServerFailure;
 
   /**
    * Raw submission profile, validated here so its issues become findings.
@@ -284,14 +296,16 @@ export function gradeClaudeReadiness(
     hasBorrowedAccessToken: input.authMode === "provided-token",
   });
 
-  const findings: ClaudeReadinessFinding[] = enforceCapabilityGate(
+  const listing = {
+    complete: input.toolListingComplete,
+    error: input.toolListingError,
+  };
+  const graded: ClaudeReadinessFinding[] = enforceCapabilityGate(
     [
     ...runClaudeEndpointChecks(input.endpoint, stamp),
     ...auth.findings,
-    ...runClaudeToolChecks(input.tools, stamp, {
-      complete: input.toolListingComplete,
-      error: input.toolListingError,
-    }),
+    ...runClaudeToolChecks(input.tools, stamp, listing),
+    runClaudeCrossToolScan(input.tools, stamp, listing),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
@@ -299,9 +313,15 @@ export function gradeClaudeReadiness(
         profile: parsedProfile.profile,
         profileIssues: parsedProfile.issues,
         observedAuthMode: input.observedAuthMode,
+        auth: authEvidence,
       },
       stamp,
     ),
+    ...runClaudeDeclarationChecks(
+      { answers, tools: input.tools, listing },
+      stamp,
+    ),
+    ...runClaudeAnswerStepChecks(answers, stamp),
     ...optional.findings,
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
@@ -313,11 +333,17 @@ export function gradeClaudeReadiness(
     // `experience-insights`, which is not a required lane — so their position
     // in this list cannot change a verdict. They are appended rather than
     // interleaved purely so a reader scanning the findings sees the
-    // deterministic inventory first.
-    ...mapClaudeObservationsToFindings(input.llmObservations?.envelope, stamp),
+    // deterministic inventory first. A model that read a server this run
+    // could not use read nothing, so its observations are not published.
+    ...mapClaudeObservationsToFindings(
+      input.serverFailure ? undefined : input.llmObservations?.envelope,
+      stamp,
+    ),
     ],
     input.capabilities,
   );
+  // After the capability gate: when both apply, the server is the one to fix.
+  const findings = blockOnServerFailure(graded, input.serverFailure);
 
   const badges: ClaudeCapabilityBadge[] = [...auth.badges, ...optional.badges];
 
@@ -340,7 +366,7 @@ export function gradeClaudeReadiness(
 
   return {
     status,
-    summary: buildRunSummary(status, lanes),
+    summary: buildRunSummary(status, lanes, input.serverFailure),
     context: {
       target: input.enteredUrl,
       authMode: input.authMode,
@@ -361,7 +387,14 @@ export function gradeClaudeReadiness(
 function buildRunSummary(
   status: ClaudeReadinessResult["status"],
   lanes: ClaudeReadinessLaneResult[],
+  serverFailure?: ClaudeServerFailure,
 ): string {
+  // An outage is the gap to close first: every input the lanes name is one
+  // the server would have supplied. A refused session is not summarized
+  // here, because a headless run against an OAuth server is refused by design.
+  if (serverFailure?.kind === "unreachable" && status === "incomplete") {
+    return `Readiness is undetermined: the server could not be reached (${serverFailure.detail}). Results that need no server stand. Check that the server is up and reachable, then run again.`;
+  }
   // From the shared constant, not a restated literal: `rollUpLaneStatus`
   // decides the verdict from `CLAUDE_REQUIRED_LANES`, and a second copy here
   // would let the summary name the wrong lanes after a change to that set.

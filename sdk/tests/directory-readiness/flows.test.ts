@@ -4,6 +4,8 @@
  * produce. A data edit that breaks any of these fails here, not on a page.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+
 import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
@@ -15,6 +17,7 @@ import {
 } from "../../src/claude-readiness/runner.js";
 import { CLAUDE_READINESS_LANES } from "../../src/claude-readiness/types.js";
 import {
+  CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW as FLOW,
   DIRECTORY_FLOW_IDS,
   DIRECTORY_FLOWS,
@@ -35,13 +38,14 @@ const BACKEND_KEY = /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9-]+)*$/;
 
 describe("the flow registry", () => {
   it("lists the flows that exist and nothing else", () => {
-    expect(DIRECTORY_FLOW_IDS).toEqual(["claude-connector"]);
+    expect(DIRECTORY_FLOW_IDS).toEqual(["claude-connector", "chatgpt-plugin"]);
     expect(Object.keys(DIRECTORY_FLOWS)).toEqual([...DIRECTORY_FLOW_IDS]);
     expect(getDirectoryFlow("claude-connector")).toBe(FLOW);
+    expect(getDirectoryFlow("chatgpt-plugin")).toBe(CHATGPT_PLUGIN_FLOW);
   });
 
   it("answers undefined for an id from a request it does not know", () => {
-    for (const id of ["chatgpt-plugin", "", "constructor", "__proto__"]) {
+    for (const id of ["claude-plugin", "", "constructor", "__proto__"]) {
       expect(getDirectoryFlow(id)).toBeUndefined();
     }
   });
@@ -189,6 +193,22 @@ describe("field rules", () => {
     expect(field("compliance.acknowledgments")?.options).toHaveLength(7);
   });
 
+  it("give free entry to each choice field without options, and only those", () => {
+    const choices = new Set([
+      "select",
+      "multi-select",
+      "radio",
+      "radio-cards",
+      "checkbox-group",
+    ]);
+    for (const field of FIELDS.filter((entry) => choices.has(entry.control))) {
+      expect(Boolean(field.freeEntry), field.key).toBe(!field.options?.length);
+    }
+    expect(
+      FIELDS.filter((field) => field.freeEntry).map((field) => field.key)
+    ).toEqual(["listing.categories"]);
+  });
+
   it("only lets an author stand in with fields that exist", () => {
     for (const field of FIELDS) {
       for (const { key } of field.satisfiedBy ?? []) {
@@ -259,6 +279,26 @@ describe("check placements", () => {
     }
   });
 
+  it("Every check maps to exactly one step and declares its inputs", () => {
+    // The ids are read from the check definitions themselves, so a check
+    // that no run happens to reach still has to be placed.
+    const ids = engineCheckIds();
+    expect(ids.length).toBeGreaterThanOrEqual(65);
+    for (const id of ids) {
+      const placements = FLOW.placements.filter((p) => p.checkId === id);
+      expect(placements, id).toHaveLength(1);
+      const [{ reads, needs }] = placements;
+      expect(Array.isArray(reads), `${id} reads`).toBe(true);
+      expect(Array.isArray(needs), `${id} needs`).toBe(true);
+      // A result read off the server goes stale when the server changes.
+      if (needs?.includes("server")) {
+        expect(reads, id).toContain("connection.serverUrl");
+      }
+    }
+    // And no placement names a check the engine does not have.
+    expect(FLOW.placements.map((p) => p.checkId).sort()).toEqual(ids);
+  });
+
   it("place exactly the checks the Claude engine can produce", () => {
     // Both directions: a check nobody placed lands on a fallback step, and a
     // placement naming no real check is a typo that places nothing.
@@ -266,10 +306,30 @@ describe("check placements", () => {
       ...gradeClaudeReadiness(everyCheckInput()).findings.map((f) => f.id),
       ...CLAUDE_OBSERVATION_IDS,
     ]);
-    const placed = new Set(FLOW.placements.map((p) => p.checkId));
-    expect([...placed].sort()).toEqual([...produced].sort());
+    expect([...produced].sort()).toEqual(engineCheckIds());
   });
 });
+
+/**
+ * Every finding id the Claude engine defines, read from its source: each
+ * typed check definition, each design lint's slug, and the model
+ * observations' catalog.
+ */
+function engineCheckIds(): string[] {
+  const root = new URL("../../src/claude-readiness/", import.meta.url);
+  const files = readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => readFileSync(new URL(name, root), "utf8"));
+  const ids = files.flatMap((source) => [
+    ...[
+      ...source.matchAll(/: ClaudeCheckDefinition = \{\s*id: "([^"]+)"/g),
+    ].map((match) => match[1]),
+    ...[...source.matchAll(/designLint\(\s*"([^"]+)"/g)].map(
+      (match) => `claude.apps.design.${match[1]}`
+    ),
+  ]);
+  return [...new Set([...ids, ...CLAUDE_OBSERVATION_IDS])].sort();
+}
 
 describe("defaults and wording revisions", () => {
   it("are derived, and a stored answer always wins", () => {

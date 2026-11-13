@@ -58,3 +58,39 @@ export function completeAnswers(
     .filter((entry) => !changed.has(entry.key))
     .concat(changes);
 }
+
+/** A declaration someone confirmed under the current wording. */
+export function confirmed(
+  key: string,
+  value: DirectoryAnswerValue
+): DirectoryAnswer {
+  return {
+    key,
+    value,
+    origin: "confirmed",
+    wordingRevision: CLAUDE_CONNECTOR_FLOW.version,
+  };
+}
+
+/**
+ * A complete submission that also meets MCPJam's own rules: every
+ * declaration confirmed, and test instructions for a server that signs in.
+ */
+export function confirmedAnswers(
+  changes: DirectoryAnswer[] = []
+): DirectoryAnswer[] {
+  const changed = new Set(changes.map((entry) => entry.key));
+  return completeAnswers([
+    ...[
+      confirmed("useCases.access", "read-only"),
+      confirmed("dataHandling.apiOwnership", "own"),
+      confirmed("dataHandling.healthData", "no"),
+      answer(
+        "testLaunch.instructions",
+        "Sign in at https://acme.example/review as review@example.com with the password in the review notes."
+      ),
+      answer("testLaunch.selfTested", true),
+    ].filter((entry) => !changed.has(entry.key)),
+    ...changes,
+  ]);
+}

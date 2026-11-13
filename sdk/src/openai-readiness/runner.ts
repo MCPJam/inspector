@@ -54,6 +54,7 @@ import {
   type OpenAIObservationState,
 } from "./observations.js";
 import { OPENAI_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { withPortalCode } from "./portal-codes/issue-codes.js";
 import { OPENAI_APP_HTML_MIME } from "./profile.js";
 import {
   readOpenAIPluginPackage,
@@ -581,7 +582,7 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
-  );
+  ).map(withPortalCode);
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
 
