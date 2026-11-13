@@ -62,7 +62,7 @@ const SIGNAL = {
   },
 };
 const REFUSAL =
-  "The server asked for sign-in, so the call failed. The server said: Sign in to see orders. To change how this client responds, edit Mid-session sign-in in its Connect settings.";
+  "The call failed because the server requires sign-in. The server said: Sign in to see orders. Change Mid-session sign-in in Connect settings.";
 
 /**
  * A call the server refuses with a sign-in challenge: the API reports the

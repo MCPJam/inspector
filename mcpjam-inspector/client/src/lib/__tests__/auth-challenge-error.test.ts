@@ -34,15 +34,15 @@ describe("passthroughChallengeErrorText", () => {
   it.each([
     [
       undefined,
-      "The server asked for sign-in, so the call failed. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
+      "The call failed because the server requires sign-in. Change Mid-session sign-in in Connect settings.",
     ],
     [
       "Sign in",
-      "The server asked for sign-in, so the call failed. The server said: Sign in. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
+      "The call failed because the server requires sign-in. The server said: Sign in. Change Mid-session sign-in in Connect settings.",
     ],
     [
       "Sign in.",
-      "The server asked for sign-in, so the call failed. The server said: Sign in. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
+      "The call failed because the server requires sign-in. The server said: Sign in. Change Mid-session sign-in in Connect settings.",
     ],
   ])(
     "says the call failed for description %j",

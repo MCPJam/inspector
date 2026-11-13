@@ -36,7 +36,7 @@ export function passthroughChallengeErrorText(
   // selected client is why there was no sign-in, so its settings are the
   // step the user can take here.
   if (!description)
-    return "The server asked for sign-in, so the call failed. To change how this client responds, edit Mid-session sign-in in its Connect settings.";
+    return "The call failed because the server requires sign-in. Change Mid-session sign-in in Connect settings.";
   const said = /[.!?]$/.test(description) ? description : `${description}.`;
-  return `The server asked for sign-in, so the call failed. The server said: ${said} To change how this client responds, edit Mid-session sign-in in its Connect settings.`;
+  return `The call failed because the server requires sign-in. The server said: ${said} Change Mid-session sign-in in Connect settings.`;
 }
