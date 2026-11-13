@@ -103,7 +103,7 @@ export function RunResultPage({
   );
   const row = matrix?.rows.find((item) => item.key === caseKey);
   const { target, iteration } =
-    matrix && row ? resolveResult(matrix.targets, resultPage) : {};
+    matrix && row ? resolveResult(matrix.targets, resultPage, runId) : {};
 
   // The scorecard's decision chain, read for the iteration's own run.
   const iterationRun = iteration ? target?.run : undefined;
@@ -271,10 +271,14 @@ export function RunResultPage({
   );
 }
 
-/** An iteration finds its column; a case uses `?target`, else the first with results. */
+/**
+ * An iteration finds its column; a case uses `?target`, else the route run's
+ * own column with results, so a link without one opens the run it names.
+ */
 function resolveResult(
   targets: readonly MatrixTarget[],
   { caseKey, iterationId, target }: RunResultPageRoute,
+  runId: string,
 ): { target?: MatrixTarget; iteration?: EvalIteration } {
   if (iterationId) {
     for (const column of targets) {
@@ -286,8 +290,14 @@ function resolveResult(
     return {};
   }
   if (target) return { target: findTarget(targets, target) };
+  const hasResults = (column: MatrixTarget) =>
+    Boolean(column.cells.get(caseKey)?.length);
+  const own = targets.filter((column) => column.run._id === runId);
   return {
     target:
-      targets.find((column) => column.cells.get(caseKey)?.length) ?? targets[0],
+      own.find(hasResults) ??
+      targets.find(hasResults) ??
+      own[0] ??
+      targets[0],
   };
 }

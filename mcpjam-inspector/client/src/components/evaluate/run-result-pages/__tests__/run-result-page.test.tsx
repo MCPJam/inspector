@@ -286,6 +286,14 @@ describe("RunResultPage", () => {
     expect(screen.queryByText("No recorded iterations")).toBeNull();
   });
 
+  it("opens the route run's own column when a case link names no target", () => {
+    renderPage({ caseKey: "refund" }, { runId: "two", run: sibling });
+    expect(screen.getByRole("link", { name: "Cursor · gpt" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   it("renders a test case page with column links and iteration links", async () => {
     const { onEditCase, onCrumbsChange } = renderPage({ caseKey: "refund" });
     expect(screen.getByRole("heading", { name: "Refund order" })).toBeVisible();
