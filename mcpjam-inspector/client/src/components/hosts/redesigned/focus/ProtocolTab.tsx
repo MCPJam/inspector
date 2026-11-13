@@ -1024,16 +1024,6 @@ export function ProtocolTab({
   const policyState = readXaaEnterprisePolicy(draft.mcpProfile);
   const policyOn = policyState.kind === "on";
   const policyInvalid = policyState.kind === "invalid";
-  // Gated on the same `xaa` flag as the per-server XAA auth option
-  // (AuthenticationSection's `showXaaOption`) — without it a flag-off user
-  // could turn the policy on, make every Auto server fail closed, and have
-  // no UI left to add the XAA registration that fixes them. Same escape
-  // hatch as that gate: an already-on (or malformed) stored policy always
-  // renders, so a host is never stranded with an invisible active policy
-  // it can't turn off.
-  const xaaFlagEnabled = useFeatureFlagEnabled("xaa");
-  const showPolicyToggle =
-    xaaFlagEnabled === true || policyState.kind !== "off";
   const setPolicyOn = (next: boolean) => {
     onDraftChange((prev) => {
       const profile = prev.mcpProfile as Record<string, unknown> | undefined;
@@ -1395,34 +1385,32 @@ export function ProtocolTab({
           onChange={setConformanceKnob}
           readOnly={readOnly}
         />
-        {showPolicyToggle && (
-          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
-            <div className="min-w-0">
-              <span className="text-[12px] font-medium">
-                Default all project servers to enterprise managed auth
-              </span>
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Route every HTTP server connection through your IdP (XAA) by
-                default. A server&apos;s explicit auth method overrides. Servers
-                without an XAA client registration fail to connect. Applies on
-                the next connect.
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Default all project servers to enterprise managed auth
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Route every HTTP server connection through your IdP (XAA) by
+              default. A server&apos;s explicit auth method overrides. Servers
+              without an XAA client registration fail to connect. Applies on the
+              next connect.
+            </p>
+            {policyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                This host&apos;s stored policy value is unsupported —
+                connections will fail until it is fixed. Toggling on repairs it;
+                toggling off removes it.
               </p>
-              {policyInvalid ? (
-                <p className="text-[11px] leading-snug text-destructive">
-                  This host&apos;s stored policy value is unsupported —
-                  connections will fail until it is fixed. Toggling on repairs
-                  it; toggling off removes it.
-                </p>
-              ) : null}
-            </div>
-            <Switch
-              checked={policyOn}
-              onCheckedChange={setPolicyOn}
-              disabled={readOnly}
-              aria-label="Default all project servers to enterprise managed auth"
-            />
+            ) : null}
           </div>
-        )}
+          <Switch
+            checked={policyOn}
+            onCheckedChange={setPolicyOn}
+            disabled={readOnly}
+            aria-label="Default all project servers to enterprise managed auth"
+          />
+        </div>
         {showTasksPolicy && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">

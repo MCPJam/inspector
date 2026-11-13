@@ -59,7 +59,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
-  "xaa",
 ] as const;
 
 export type ClientFeatureFlagKey = (typeof CLIENT_FEATURE_FLAG_KEYS)[number];
