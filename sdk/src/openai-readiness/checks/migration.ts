@@ -228,19 +228,31 @@ export function runOpenAIMigrationChecks(
   const mcpb: string[] = [];
   const hostLanguage: string[] = [];
 
-  walkStrings(document, (text, path) => {
-    if (containsUserConfigPlaceholder(text)) placeholders.push(path);
-    if (/\.mcpb\b/i.test(text)) mcpb.push(path);
-    if (OTHER_HOST_NAMES.test(text)) hostLanguage.push(path);
-  });
+  // The MCP configuration file is read with the manifest: the Agent Plugins
+  // layout declares its servers there, never in `plugin.json`.
+  const config = evidence.manifest?.mcpConfig;
+  const declared: [unknown, string][] = [[document, ""]];
+  if (config) declared.push([config.document, config.path]);
+  for (const [value, base] of declared) {
+    walkStrings(
+      value,
+      (text, path) => {
+        if (containsUserConfigPlaceholder(text)) placeholders.push(path);
+        if (/\.mcpb\b/i.test(text)) mcpb.push(path);
+        if (OTHER_HOST_NAMES.test(text)) hostLanguage.push(path);
+      },
+      base,
+    );
+  }
 
   // A stdio server is declared by a `command`, not by a URL. The distinction is
   // structural rather than textual: a public submission's server has to be
   // reachable over the network, and a command is a process on somebody's laptop.
-  const servers = document.mcpServers;
-  walkStrings(servers, (text, path) => {
+  const stdioServer = (text: string, path: string) => {
     if (/(^|\.)command$/.test(path) || /^stdio$/i.test(text)) stdio.push(path);
-  });
+  };
+  walkStrings(document.mcpServers, stdioServer);
+  if (config) walkStrings(config.document, stdioServer, config.path);
 
   findings.push(
     placeholders.length === 0
