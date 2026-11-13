@@ -52,34 +52,25 @@ function ClaudeSvg({
   );
 }
 
-interface ClaudeLoadingIndicatorProps {
-  className?: string;
-  mode?: "animated" | "static";
-}
-
-export function ClaudeLoadingIndicator({
-  className,
-  mode = "animated",
-}: ClaudeLoadingIndicatorProps) {
+/**
+ * Claude's thinking mark: animated strips, or the still mark when the viewer
+ * prefers reduced motion.
+ */
+export function ClaudeMarkIndicator({ className }: { className?: string }) {
   const shouldReduceMotion = useReducedMotion() ?? false;
-  const isStatic = mode === "static";
-  const showStaticMark = shouldReduceMotion || isStatic;
-  const showAnimatedStrips = !shouldReduceMotion && !isStatic;
 
   return (
     <span
       className={cn(
         "claude-loading-indicator inline-flex min-h-8 items-center",
         shouldReduceMotion && "claude-loading-indicator--reduced",
-        isStatic && "claude-loading-indicator--static",
         className,
       )}
     >
-      {!isStatic ? <span className="sr-only">Thinking</span> : null}
+      <span className="sr-only">Thinking</span>
       <span
         aria-hidden="true"
         data-testid="loading-indicator-claude"
-        data-claude-mode={mode}
         className="inline-flex h-8 w-8 items-center justify-center"
       >
         <span className="p-1 -translate-x-px">
@@ -98,7 +89,7 @@ export function ClaudeLoadingIndicator({
                   pathData={CLAUDE_STATIC_PATH}
                   className="claude-loading-indicator__static absolute inset-0"
                   testId="loading-indicator-claude-static"
-                  hidden={!showStaticMark}
+                  hidden={!shouldReduceMotion}
                 />
                 <ClaudeSvg
                   viewBox="0 0 100 900"
@@ -107,7 +98,7 @@ export function ClaudeLoadingIndicator({
                   preserveAspectRatio="xMidYMin meet"
                   style={{ aspectRatio: "1 / 9" }}
                   testId="loading-indicator-claude-strip-900"
-                  hidden={!showAnimatedStrips}
+                  hidden={shouldReduceMotion}
                 />
                 <ClaudeSvg
                   viewBox="0 0 100 800"
@@ -116,7 +107,7 @@ export function ClaudeLoadingIndicator({
                   preserveAspectRatio="xMidYMin meet"
                   style={{ aspectRatio: "1 / 8" }}
                   testId="loading-indicator-claude-strip-800"
-                  hidden={!showAnimatedStrips}
+                  hidden={shouldReduceMotion}
                 />
               </span>
             </span>
@@ -125,15 +116,4 @@ export function ClaudeLoadingIndicator({
       </span>
     </span>
   );
-}
-
-/**
- * Registry-shaped wrapper for the host-styles registry. Adapts
- * `ClaudeLoadingIndicator` to the `ComponentType<{ className?: string }>`
- * contract by defaulting `mode` to "animated". Call sites that need
- * static-mode (Claude footer in fullscreen overlay etc.) continue to
- * import `ClaudeLoadingIndicator` directly and pass `mode` themselves.
- */
-export function ClaudeMarkIndicator({ className }: { className?: string }) {
-  return <ClaudeLoadingIndicator className={className} />;
 }

@@ -25,7 +25,7 @@ import {
   usesClaudeInlineStreamingFooter,
   usesMcpjamInlineStreamingFooter,
 } from "@/components/chat-v2/shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { ClaudeMarkIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import {
   type AnyPart,
@@ -270,15 +270,15 @@ function getFullscreenSurfaceStyle(
 function MessageBubble({
   text,
   isUser,
-  claudeFooterMode = "none",
+  claudeFooterActive = false,
   mcpjamFooterActive = false,
 }: {
   text: string;
   isUser: boolean;
-  claudeFooterMode?: "none" | "animated" | "static";
+  claudeFooterActive?: boolean;
   mcpjamFooterActive?: boolean;
 }) {
-  const showClaudeFooter = !isUser && claudeFooterMode !== "none";
+  const showClaudeFooter = !isUser && claudeFooterActive;
   const showMcpjamFooter = !isUser && mcpjamFooterActive;
 
   return (
@@ -307,11 +307,8 @@ function MessageBubble({
           </div>
         ) : null}
         {showClaudeFooter ? (
-          <div
-            data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
-            className="pl-1"
-          >
-            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          <div data-testid="fullscreen-claude-footer" className="pl-1">
+            <ClaudeMarkIndicator />
           </div>
         ) : null}
       </div>
@@ -322,15 +319,15 @@ function MessageBubble({
 function ToolMessageEntry({
   part,
   chatSessionId,
-  claudeFooterMode = "none",
+  claudeFooterActive = false,
   mcpjamFooterActive = false,
 }: {
   part: FullscreenToolPart;
   chatSessionId?: string;
-  claudeFooterMode?: "none" | "animated" | "static";
+  claudeFooterActive?: boolean;
   mcpjamFooterActive?: boolean;
 }) {
-  const showClaudeFooter = claudeFooterMode !== "none";
+  const showClaudeFooter = claudeFooterActive;
   const showMcpjamFooter = mcpjamFooterActive;
 
   return (
@@ -348,11 +345,8 @@ function ToolMessageEntry({
           </div>
         ) : null}
         {showClaudeFooter ? (
-          <div
-            data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
-            className="pl-1"
-          >
-            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          <div data-testid="fullscreen-claude-footer" className="pl-1">
+            <ClaudeMarkIndicator />
           </div>
         ) : null}
       </div>
@@ -472,12 +466,8 @@ function MessageList({
           const isLatestAssistantEntry =
             message.role === "assistant" &&
             entry.key === lastVisibleEntry?.key;
-          const claudeFooterMode =
-            isClaudeFamily && isLatestAssistantEntry
-              ? isThinking
-                ? "animated"
-                : "static"
-              : "none";
+          const claudeFooterActive =
+            isClaudeFamily && isLatestAssistantEntry && isThinking;
           const mcpjamFooterActive =
             isMcpjamHost && isLatestAssistantEntry && isThinking;
           return entry.kind === "tool" ? (
@@ -485,7 +475,7 @@ function MessageList({
               key={entry.key}
               part={entry.part}
               chatSessionId={chatSessionId}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
             />
           ) : (
@@ -493,7 +483,7 @@ function MessageList({
               key={entry.key}
               text={entry.text}
               isUser={message.role === "user"}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
             />
           );
