@@ -37,7 +37,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcp-events-enabled",
   "mcp-tasks",
   "mcpjam-compatibility",
-  "mcpjam-conformance",
   "mcpjam-directory-readiness",
   "mcpjam-learning",
   "org-model-gateways",

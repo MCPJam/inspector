@@ -131,7 +131,6 @@ interface NavSection {
 export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "mcpjam-learning",
   "registry-enabled",
-  "mcpjam-conformance",
   "mcpjam-compatibility",
   "mcpjam-directory-readiness",
   "hosts-enabled",
@@ -339,17 +338,13 @@ export const navigationSections: NavSection[] = [
         title: "Conformance",
         url: "/conformance",
         icon: MCPIcon,
-        // MCPJam-internal flag: rollout is restricted to the MCPJam team in
-        // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
-        // this is an internal-only flag (same convention as `mcpjam-learning`).
-        featureFlag: "mcpjam-conformance",
         badge: "New",
       },
       {
         title: "Compatibility",
         url: "/compatibility",
         icon: Boxes,
-        // MCPJam-internal flag (same convention as `mcpjam-conformance`).
+        // MCPJam-internal flag (same convention as `mcpjam-learning`).
         featureFlag: "mcpjam-compatibility",
       },
       {
@@ -546,7 +541,6 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
-  const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const readinessEnabled = useFeatureFlagEnabled("mcpjam-directory-readiness");
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
@@ -653,7 +647,6 @@ export function MCPSidebar({
     () => ({
       "mcpjam-learning": !!learningEnabled,
       "registry-enabled": registryEnabled === true,
-      "mcpjam-conformance": conformanceEnabled === true,
       "mcpjam-compatibility": compatibilityEnabled === true,
       // Submissions belong to a project, like the rows below.
       "mcpjam-directory-readiness": readinessEnabled === true && isAuthenticated,
@@ -677,7 +670,6 @@ export function MCPSidebar({
     [
       learningEnabled,
       registryEnabled,
-      conformanceEnabled,
       compatibilityEnabled,
       readinessEnabled,
       projectEnvironmentsEnabled,
