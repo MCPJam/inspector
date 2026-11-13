@@ -96,6 +96,9 @@ export type {
  * lists its exports by name and is pure data and functions by contract.
  */
 export * from "./directory-readiness/flows/index.js";
+/** The handoff summary and export pack builders: pure, over the same flows. */
+export * from "./directory-readiness/handoff.js";
+export * from "./directory-readiness/handoff-markdown.js";
 
 export {
   CLAUDE_OBSERVATION_IDS,
