@@ -3752,46 +3752,6 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("hides the readiness sections unless mcpjam-directory-readiness-cards is on", () => {
-    // The Readiness page replaces these cards, so they have their own flag,
-    // off: turning on the page's flag must not bring them back.
-    enabledFlags.add("mcpjam-directory-readiness");
-    render(<ConformanceTab server={createHttpServer()} />);
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
-    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
-    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
-  });
-
-  it("shows the readiness sections when mcpjam-directory-readiness-cards is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness-cards");
-    render(<ConformanceTab server={createHttpServer()} />);
-
-    // Before any run, too: readiness has its own run control and recovers an
-    // in-flight run on mount, so hiding it until the suites run would strand
-    // both behind the full run, OAuth browser flow included.
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
-    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
-  });
-
-  it("keeps the readiness sections mounted when the first run starts", async () => {
-    enabledFlags.add("mcpjam-directory-readiness-cards");
-    setupSuccessfulRunMocks();
-    render(<ConformanceTab server={createHttpServer()} />);
-    const before = screen.getByText("OpenAI Directory Readiness");
-
-    await runToCompletion();
-
-    // A remount would reset choices made before the run, such as the OpenAI
-    // submission mode; the same node means the same component instance.
-    expect(screen.getByText("OpenAI Directory Readiness")).toBe(before);
-  });
-
   it("falls back to Overview when ?view=history has no History tab", () => {
     window.history.replaceState(null, "", "/?view=history");
     try {

@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
-import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
@@ -467,28 +465,7 @@ export function ConformanceContent({
   // The Overview of a started run shows the run's own header, not the tabs.
   const liveRun = hasStarted && view === "overview";
 
-  // DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted readiness
-  // run takes minutes, so joining the shared `isRunning` would hold the Run
-  // button and the protocol-version select hostage for its duration — and
-  // readiness produces lanes and coverage rather than passed/failed checks,
-  // so there is no number to pool. Each section owns its own run control and
-  // recovers a run still in flight when it mounts, so it shows before the
-  // suites have run, too.
-  //
-  // Behind their own flag, off: the Readiness page's flag must not reveal
-  // them, and the page replaces them. `=== true`, so a missing flag (or one
-  // PostHog has not hydrated yet) keeps them hidden rather than flashing them
-  // for users the flag excludes.
-  const directoryReadinessEnabled =
-    useFeatureFlagEnabled("mcpjam-directory-readiness-cards") === true;
   const tasksUpdateCheck = useTasksUpdateCheckEnabled();
-  const readiness = directoryReadinessEnabled ? (
-    <div className="space-y-4">
-      <DirectoryReadinessSection publisher="claude" server={server} />
-      <DirectoryReadinessSection publisher="openai" server={server} />
-      <DirectoryReadinessSection publisher="muse" server={server} />
-    </div>
-  ) : null;
 
   const runButton = (
     <Button
@@ -781,10 +758,6 @@ export function ConformanceContent({
                 </SuiteList>
               </div>
             )}
-
-            {/* The same slot before and after the first run, so starting it
-                keeps the sections mounted and their selections intact. */}
-            {readiness ? <div className="mt-6">{readiness}</div> : null}
           </div>
         )}
       </ConformanceTabPanel>
