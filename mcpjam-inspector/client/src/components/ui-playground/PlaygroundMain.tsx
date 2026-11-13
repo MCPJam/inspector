@@ -5515,7 +5515,8 @@ export function PlaygroundMain({
   // An App draft is refused for the whole submit, which captures the composer
   // first and clears it last. One submit at a time: the gates above await the
   // network with the draft still in the box, where a second Enter would send
-  // it again. The lock is released after the draft is cleared.
+  // it again. The lock is released after the draft is cleared; until that
+  // render lands, the committed `isSubmitting` keeps Enter and Send refused.
   const composerSend = useSingleFlight();
   const performComposerSubmit = useCallback(
     async (): Promise<boolean> =>
