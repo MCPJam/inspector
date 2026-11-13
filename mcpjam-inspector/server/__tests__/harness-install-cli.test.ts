@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { LOCAL_HARNESS_IDS } from "../../shared/harness-descriptors.js";
 
 vi.mock("../utils/harness/local/runtime-install.js", () => ({
   readRuntimeInstallStatus: vi.fn(async (args: { harnessId: string }) => ({ state: "absent", harnessId: args.harnessId })),
@@ -29,7 +30,7 @@ describe("the harness install entry point", () => {
     await harnessInstall(progress, "codex");
     expect(readRuntimeInstallStatus).toHaveBeenLastCalledWith({ harnessId: "codex" });
     expect(installRuntimePack).toHaveBeenLastCalledWith({ harnessId: "codex", trigger: "cli", onProgress: progress });
-    expect(supportedHarnessIds).toEqual(["claude-code", "codex"]);
+    expect(supportedHarnessIds).toEqual([...LOCAL_HARNESS_IDS]);
   });
 
   it("refuses a harness it has no pack for, rather than installing a default", async () => {

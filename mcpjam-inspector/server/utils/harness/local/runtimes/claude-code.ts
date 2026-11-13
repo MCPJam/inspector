@@ -113,6 +113,7 @@ export const claudeCodeLocalRuntime: LocalRuntime<"claude-code"> = {
       "mkdir -p '<workDir>' '<bridgeStateDir>'",
       "node '<bootstrapDir>/bridge.mjs' --workdir '<workDir>' --bridge-state-dir '<bridgeStateDir>'",
     ],
+    install: "pnpm install --frozen-lockfile --store-dir .pnpm-store",
     versionProbe: "./node_modules/.bin/claude --version",
     bridgeFlags: ["--workdir", "--bridge-state-dir"],
     sessionStateFlags: [],
@@ -140,6 +141,13 @@ export const claudeCodeLocalRuntime: LocalRuntime<"claude-code"> = {
     version: { from: "stdout" },
   }),
   reservedSecretEnv: /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i,
+  bridgeEnv: [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "AI_GATEWAY_API_KEY",
+    "AI_GATEWAY_BASE_URL",
+  ],
   childAuth: (gateway) =>
     ({
       ANTHROPIC_AUTH_TOKEN: gateway.sessionCapability,

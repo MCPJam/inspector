@@ -45,11 +45,19 @@ on:
         required: false
         type: string
         default: ""
-      harnesses:
-        description: Comma-separated harnesses whose legs run (default both).
+      runtime_pack_versions:
+        description: >-
+          Published packs of the other local runtimes, as comma-separated
+          `<harnessId>=<version>` pairs. A call runs such a runtime only when
+          it names its pack here.
         required: false
         type: string
-        default: "claude-code,codex"
+        default: ""
+      harnesses:
+        description: Comma-separated harnesses whose legs run (default every local runtime).
+        required: false
+        type: string
+        default: ""
       candidate:
         description: >-
           The named version is a pack the publication pipeline has just
@@ -85,11 +93,17 @@ on:
         required: false
         type: string
         default: ""
+      runtime_pack_versions:
+        description: Other runtimes' pinned published packs, `<harnessId>=<version>` pairs (empty builds source).
+        required: false
+        type: string
+        default: ""
   pull_request:
     paths:
       - "mcpjam-inspector/server/utils/harness/local/**"
       - "mcpjam-inspector/server/utils/harness/claude-code-bootstrap.ts"
       - "mcpjam-inspector/server/utils/harness/codex-appserver/**"
+      - "mcpjam-inspector/server/utils/harness/copilot-cli/**"
       - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
       - "mcpjam-inspector/scripts/bundle-codex-appserver-bridge.mjs"
       - "mcpjam-inspector/server/utils/harness/auto-approve-harness.ts"
@@ -110,7 +124,7 @@ concurrency:
   # desired packs, then its permitted ones), and the two must not cancel each
   # other. The calling workflow too: a release and the evidence run on the
   # same commit ask for the same packs, and neither may cancel the other.
-  group: local-harness-conformance-${{ github.workflow }}-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.harnesses }}-${{ inputs.candidate }}
+  group: local-harness-conformance-${{ github.workflow }}-${{ github.ref }}-${{ inputs.published_pack_version }}-${{ inputs.codex_published_pack_version }}-${{ inputs.runtime_pack_versions }}-${{ inputs.harnesses }}-${{ inputs.candidate }}
   cancel-in-progress: true
 
 permissions:
@@ -144,6 +158,7 @@ jobs:
       run_windows: ${{ steps.plan.outputs.run_windows }}
       posix_matrix: ${{ steps.plan.outputs.posix_matrix }}
       codex_matrix: ${{ steps.plan.outputs.codex_matrix }}
+      runtime_matrix: ${{ steps.plan.outputs.runtime_matrix }}
     steps:
       - uses: actions/checkout@v7
       # A push runs no legs when it changed no conformance input, which the
@@ -158,6 +173,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           CLAUDE_INPUT: ${{ inputs.published_pack_version }}
           CODEX_INPUT: ${{ inputs.codex_published_pack_version }}
+          RUNTIME_INPUT: ${{ inputs.runtime_pack_versions }}
           HARNESSES: ${{ inputs.harnesses }}
           CERTIFIED_ONLY: ${{ inputs.certified_only }}
         run: node mcpjam-inspector/scripts/plan-local-harness-conformance.mjs >> "$GITHUB_OUTPUT"
@@ -1015,6 +1031,229 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-evidence-codex-${{ matrix.platform_key }}-${{ needs.plan.outputs.codex_pack_version || 'source' }}
+          path: ${{ runner.temp }}/conformance/evidence/*.json
+          if-no-files-found: error
+
+  # Every other local runtime, with the same steps for each: its pack, this
+  # checkout's layer, and `run-gateway-turn.ts`, which asserts what any local
+  # runtime owes the member (a turn through the gateway with no key in any
+  # supervised process, a host tool, detach and resume, loopback only, nothing
+  # left after Stop). The legs are the targets its definition advertises, so a
+  # target that cannot pass comes out of the definition, not this matrix.
+  runtime-scenarios:
+    name: ${{ matrix.harness }} ${{ matrix.platform_key }}
+    needs: [unit, plan]
+    if: needs.plan.outputs.runtime_matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.runtime_matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      HARNESS: ${{ matrix.harness }}
+      TARGET: ${{ matrix.platform_key }}
+      PACK_VERSION: ${{ matrix.pack_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pack toolchain pins
+        id: toolchain
+        run: node mcpjam-inspector/scripts/read-local-harness-toolchain.mjs
+
+      # As in `scenarios`: darwin-x64 is x64 Node under Rosetta 2.
+      - name: Make sure Rosetta 2 is installed
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+          arch -x86_64 /usr/bin/true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+          architecture: ${{ matrix.node_arch }}
+      - name: Check the leg runs the target's architecture
+        if: matrix.node_arch != ''
+        run: test "$(node -p process.arch)" = "${{ matrix.node_arch }}"
+      - name: Warm the x64 developer tools
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: |
+          arch -x86_64 /usr/bin/xcrun --show-sdk-path
+          arch -x86_64 /usr/bin/git --version
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+
+      - name: Key the x64 dependency cache
+        id: deps_key
+        if: matrix.node_arch == 'x64'
+        run: node mcpjam-inspector/scripts/conformance-inputs-digest.mjs --dependency-key >> "$GITHUB_OUTPUT"
+      - name: Restore x64 dependencies
+        id: deps
+        if: matrix.node_arch == 'x64'
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: conformance-x64-modules-${{ runner.os }}-node${{ steps.toolchain.outputs.node }}-${{ steps.deps_key.outputs.key }}
+
+      - name: Install workspace dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+      - name: Run the install-time generators
+        if: steps.deps.outputs.cache-hit == 'true'
+        run: npm run prepare
+
+      - name: Set up the pinned Go toolchain
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.toolchain.outputs.go }}
+          cache-dependency-path: mcpjam-inspector/tools/mcpjam-job-launcher/go.sum
+
+      - name: Build the Job Object launcher
+        if: runner.os == 'Windows'
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      - name: Download the bundled Node runtime
+        id: node_runtime
+        run: |
+          set -euo pipefail
+          ext="tar.gz"
+          if [ "$RUNNER_OS" = "Windows" ]; then ext="zip"; fi
+          archive="node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" -o "$RUNNER_TEMP/node-runtime.${ext}"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" -o "$RUNNER_TEMP/node-shasums.txt"
+          expected=$(awk -v name="$archive" '$2 == name {print $1}' "$RUNNER_TEMP/node-shasums.txt")
+          test -n "$expected"
+          if command -v sha256sum >/dev/null; then
+            actual=$(sha256sum < "$RUNNER_TEMP/node-runtime.${ext}" | awk '{print $1}')
+          else
+            actual=$(shasum -a 256 "$RUNNER_TEMP/node-runtime.${ext}" | awk '{print $1}')
+          fi
+          test "$actual" = "$expected"
+          echo "path=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the pinned published pack
+        if: matrix.pack_version != ''
+        working-directory: mcpjam-inspector
+        env:
+          CANDIDATE: ${{ inputs.candidate && '--candidate' || '' }}
+        run: node scripts/prepare-published-harness-conformance.mjs "$PACK_VERSION" "$TARGET" "$RUNNER_TEMP/conformance" "$HARNESS" $CANDIDATE
+
+      # Vendor bytes only, checked against the recipe's recorded checksums. The
+      # bridge is this checkout's Inspector layer, written next to the pack
+      # when the session resolves.
+      - name: Build the pack
+        if: matrix.pack_version == ''
+        working-directory: mcpjam-inspector
+        env:
+          SOURCE_PACK_VERSION: ${{ inputs.pack_version || 'conformance' }}
+          NODE_RUNTIME: ${{ steps.node_runtime.outputs.path }}
+        run: |
+          launcher=()
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            launcher=(--job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe")
+          fi
+          node scripts/build-local-harness-pack.mjs \
+            --harness "$HARNESS" \
+            --platform "$TARGET" \
+            --pack-version "$SOURCE_PACK_VERSION" \
+            --node-tarball "$NODE_RUNTIME" \
+            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --skip-archive "${launcher[@]}"
+          mkdir -p "$RUNNER_TEMP/conformance/runtime"
+          cp -R "$RUNNER_TEMP/conformance/runtime-src/$HARNESS" \
+            "$RUNNER_TEMP/conformance/runtime/$HARNESS"
+
+      # As in `scenarios`: the bridge's first start must not pay for Rosetta
+      # translating the pack's `bin/node` inside its 30 s window.
+      - name: Translate the pack's x64 Node
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: arch -x86_64 "$RUNNER_TEMP/conformance/runtime/$HARNESS/bin/node" --version
+
+      - name: Download the adapter build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: conformance-adapter-build-${{ inputs.published_pack_version || 'source' }}-${{ inputs.codex_published_pack_version || 'source' }}-${{ inputs.harnesses || 'all' }}${{ inputs.candidate && '-candidate' || '' }}
+          path: ${{ runner.temp }}/adapter-build
+      - name: Unpack the adapter build
+        run: tar -xzf - < "$RUNNER_TEMP/adapter-build/adapter-build.tgz"
+
+      - name: Gateway turn
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          mkdir -p "$HOME"
+          npx tsx server/utils/harness/local/conformance/run-gateway-turn.ts "$HARNESS"
+
+      - name: No supervised process survived the run
+        if: always() && runner.os != 'Windows'
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          survivors=""
+          for pid in $(pgrep -f "$CONFORMANCE_ROOT/runtime/$HARNESS/" || true); do
+            case "$pid" in "$$" | "$PPID") continue ;; esac
+            cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+            case "$cmd" in "" | *pgrep*) continue ;; esac
+            survivors="$survivors $pid"
+          done
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the $HARNESS conformance run:$survivors" >&2
+            ps -o pid=,command= -p $survivors || true
+            exit 1
+          fi
+
+      - name: No supervised process survived the run (Windows)
+        if: always() && runner.os == 'Windows'
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          root="$(cygpath -w "$CONFORMANCE_ROOT/runtime/$HARNESS" 2>/dev/null || echo "$CONFORMANCE_ROOT/runtime/$HARNESS")"
+          if ! process_table="$(powershell -NoProfile -NonInteractive -Command 'Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }' 2>/dev/null)"; then
+            echo "could not read the Windows process table, so this check proved nothing" >&2
+            exit 1
+          fi
+          survivors="$(printf '%s\n' "$process_table" | grep -F "$root" || true)"
+          echo "${survivors:-(no supervised process)}"
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the $HARNESS conformance run" >&2
+            exit 1
+          fi
+
+      - name: Record conformance evidence
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          set --
+          if [ -n "$PACK_VERSION" ]; then
+            set -- --published "$CONFORMANCE_ROOT/published-conformance-input.json"
+          fi
+          node scripts/write-conformance-evidence.mjs \
+            --harness "$HARNESS" --target "$TARGET" \
+            --runtime "$CONFORMANCE_ROOT/runtime/$HARNESS" \
+            --out "$CONFORMANCE_ROOT/evidence" "$@" \
+            --scenarios gateway-turn
+
+      - name: Upload conformance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-evidence-${{ matrix.harness }}-${{ matrix.platform_key }}-${{ matrix.pack_version || 'source' }}
           path: ${{ runner.temp }}/conformance/evidence/*.json
           if-no-files-found: error
 

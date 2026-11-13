@@ -330,24 +330,17 @@ export function validateLocalHarnessSecretEnv(
  * probe with it, so an adapter-supplied value can only agree or be wrong.
  */
 export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
-  // Bridge control channel.
+  // Bridge control channel. The vendor model endpoints and credentials the
+  // adapter computes from the explicit auth Inspector hands it are the
+  // runtime's own (`bridgeEnv` in its definition).
   "BRIDGE_CHANNEL_TOKEN",
   "BRIDGE_WS_PORT",
   "BRIDGE_REPLAY_FROM_DISK",
-  // Vendor model endpoints and credentials, as computed by the adapter from
-  // the explicit auth Inspector hands it.
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "CODEX_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "AI_GATEWAY_API_KEY",
-  "AI_GATEWAY_BASE_URL",
 ];
 
 /**
- * Filter an adapter-supplied environment down to the allowlist.
+ * Filter an adapter-supplied environment down to the allowlist: the bridge's
+ * channel and this runtime's own vendor names.
  *
  * Values are not inspected — they are the adapter's to compute — but names
  * outside the list never reach the child, so an adapter change cannot quietly
@@ -355,10 +348,12 @@ export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
  */
 export function filterBridgeSuppliedEnv(
   env: Readonly<Record<string, string>> | undefined,
+  harnessId: string = DEFAULT_LOCAL_HARNESS_ID,
 ): Record<string, string> {
   const filtered: Record<string, string> = {};
   if (!env) return filtered;
-  for (const name of BRIDGE_SUPPLIED_ENV_ALLOWLIST) {
+  const vendor = localRuntimeOf(harnessId)?.bridgeEnv ?? [];
+  for (const name of [...BRIDGE_SUPPLIED_ENV_ALLOWLIST, ...vendor]) {
     const value = env[name];
     if (typeof value === "string" && !/[\0\n\r]/.test(value)) {
       filtered[name] = value;

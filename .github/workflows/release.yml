@@ -104,6 +104,8 @@ jobs:
       codex_desired_pack: ${{ steps.local_harness_packs.outputs.codex_desired }}
       claude_permitted_pack: ${{ steps.local_harness_packs.outputs.claude_permitted }}
       codex_permitted_pack: ${{ steps.local_harness_packs.outputs.codex_permitted }}
+      runtime_desired_packs: ${{ steps.local_harness_packs.outputs.runtime_desired }}
+      runtime_permitted_packs: ${{ steps.local_harness_packs.outputs.runtime_permitted }}
       permitted_harnesses: ${{ steps.local_harness_packs.outputs.permitted_harnesses }}
       local_harness_packs_key: ${{ steps.local_harness_packs.outputs.key }}
     steps:
@@ -374,6 +376,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_desired_packs }}
       certified_only: true
 
   local-harness-evidence-permitted:
@@ -388,6 +391,7 @@ jobs:
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_permitted_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_permitted_packs }}
       harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
       certified_only: true
 

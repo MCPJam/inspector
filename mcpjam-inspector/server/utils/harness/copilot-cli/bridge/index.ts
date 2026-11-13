@@ -25,13 +25,17 @@ const { values } = parseArgs({
     "bridge-state-dir": { type: "string" },
     "session-data-dir": { type: "string" },
     "bootstrap-dir": { type: "string" },
+    // On the member's computer the bootstrap is split along its two trusted
+    // sources: the verified vendor pack and the Inspector layer.
+    "vendor-dir": { type: "string" },
+    "layer-dir": { type: "string" },
   },
 });
 const workdir = values.workdir;
 const sessionDataDir = values["session-data-dir"];
 const bridgeStateDir = values["bridge-state-dir"];
-const bootstrap = values["bootstrap-dir"];
-if (!workdir || !sessionDataDir || !bridgeStateDir || !bootstrap)
+const vendorDir = values["vendor-dir"] ?? values["bootstrap-dir"];
+if (!workdir || !sessionDataDir || !bridgeStateDir || !vendorDir)
   throw new Error("Missing Copilot bridge directories.");
 const baseUrl = process.env.OPENAI_BASE_URL;
 const apiKey = process.env.COPILOT_MODEL_PROXY_PLACEHOLDER;
@@ -39,19 +43,45 @@ if (!baseUrl || !apiKey)
   throw new Error("Missing Copilot model proxy configuration.");
 const home = join(sessionDataDir, "copilot-home");
 await mkdir(home, { recursive: true });
+
+/** The platform build `npm-loader.js` itself would run on this machine. */
+async function copilotCliPath(vendor: string): Promise<string> {
+  const loader = createRequire(
+    await realpath(join(vendor, "node_modules/@github/copilot/npm-loader.js")),
+  );
+  const builds = process.platform === "linux" ? ["linux", "linuxmusl"] : [process.platform];
+  for (const build of builds) {
+    try {
+      return loader.resolve(`@github/copilot-${build}-${process.arch}`);
+    } catch {
+      // Not installed for this build; the next candidate may be.
+    }
+  }
+  throw new Error(`No GitHub Copilot CLI build for ${process.platform}-${process.arch}.`);
+}
+
 const client = new CopilotClient({
   workingDirectory: workdir,
   baseDirectory: home,
   useLoggedInUser: false,
   mode: "empty",
   connection: RuntimeConnection.forStdio({
-    path: createRequire(
-      await realpath(
-        join(bootstrap, "node_modules/@github/copilot/npm-loader.js"),
-      ),
-    ).resolve(`@github/copilot-linux-${process.arch}`),
+    path: await copilotCliPath(vendorDir),
     args: ["--disable-builtin-mcps"],
-    env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    env: {
+      HOME: home,
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      // Windows reads the profile from these, not HOME.
+      ...(process.platform === "win32"
+        ? {
+            USERPROFILE: home,
+            APPDATA: join(home, "AppData", "Roaming"),
+            LOCALAPPDATA: join(home, "AppData", "Local"),
+            ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+            ...(process.env.TEMP ? { TEMP: process.env.TEMP, TMP: process.env.TEMP } : {}),
+          }
+        : {}),
+    },
   }),
 });
 

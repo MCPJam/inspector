@@ -13,9 +13,15 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
-import { parseRuntimeCompat } from "../../../../../scripts/local-harness-pack-tables.mjs";
+import {
+  parseRuntimeCompat,
+  readAdvertisedTargets,
+  type RuntimeCompatRecordJson,
+} from "../../../../../scripts/local-harness-pack-tables.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script
 import { planConformance } from "../../../../../scripts/plan-local-harness-conformance.mjs";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { releasePacks } from "../../../../../scripts/local-harness-release-packs.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import { computeConformanceInputsDigest } from "../../../../../scripts/conformance-inputs-digest.mjs";
 import { inspectorLayerDigest } from "../inspector-layer.js";
@@ -162,6 +168,72 @@ describe("which conformance legs run", () => {
       const leg = JSON.parse(matrix).find((entry: { platform_key: string }) => entry.platform_key === "darwin-x64");
       expect(leg).toMatchObject({ runner: "macos-latest", node_arch: "x64", node_dist: "darwin-x64" });
     }
+  });
+
+  describe("every other local runtime", () => {
+    const legs = (plan: { runtime_matrix: string }) =>
+      (JSON.parse(plan.runtime_matrix) as Array<{ harness: string; platform_key: string; pack_version: string }>)
+        .filter((leg) => leg.harness === "copilot-cli");
+
+    it("runs the gateway turn on each target its definition advertises, from source on a main push", () => {
+      const plan = legs(planConformance({ event: "push", record }));
+      expect(plan.map((leg) => leg.platform_key).sort()).toEqual([...readAdvertisedTargets("copilot-cli")].sort());
+      expect(plan.every((leg) => leg.pack_version === "")).toBe(true);
+    });
+
+    it("runs a pull request on Linux x64, against its pinned pack or one built from source", () => {
+      const pinned = Object.values(record.harnesses["copilot-cli"]?.targets ?? {})[0]?.desired.packVersion ?? "";
+      expect(legs(planConformance({ event: "pull_request", record }))).toMatchObject([
+        { platform_key: "linux-x64", pack_version: pinned },
+      ]);
+    });
+
+    it("runs a call only against the pack it names", () => {
+      expect(legs(planConformance({ event: "workflow_call", record }))).toEqual([]);
+      const named = legs(planConformance({ event: "workflow_call", harnesses: "copilot-cli", runtimeVersions: "copilot-cli=1.2.3", record }));
+      expect(named.length).toBeGreaterThan(0);
+      expect(named.every((leg) => leg.pack_version === "1.2.3")).toBe(true);
+      expect(legs(planConformance({ event: "workflow_call", harnesses: "codex", runtimeVersions: "copilot-cli=1.2.3", record }))).toEqual([]);
+    });
+
+    it.each([["codex=1.0.0"], ["copilot-cli=1.0"], ["copilot-cli=1.0.0=2"], ["copilot-cli"]])(
+      "refuses %s as another runtime's pack",
+      (runtimeVersions) => {
+        expect(() => planConformance({ event: "workflow_call", runtimeVersions, record })).toThrow(/not a/);
+      },
+    );
+  });
+});
+
+describe("the packs a release selects", () => {
+  // Built here rather than read from the committed record, which gains a pin
+  // for each runtime as its first pack is released.
+  const slot = (desired: string, permitted?: string) => ({
+    desired: { packVersion: desired, treeDigest: A },
+    ...(permitted ? { permitted: { packVersion: permitted, treeDigest: B } } : {}),
+  });
+  const baseline: RuntimeCompatRecordJson = {
+    schema: 1,
+    harnesses: {
+      "claude-code": { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.7", "1.0.6") } },
+      codex: { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.3") } },
+      "copilot-cli": { conformance: { version: "" }, targets: {} },
+    },
+  };
+
+  it("names every other local runtime's packs as pairs, and keeps the key unchanged until one has a pack", () => {
+    const today = releasePacks(baseline);
+    expect(today).toMatchObject({ runtime_desired: "", runtime_permitted: "", key: "1.0.7/1.0.3/1.0.6/" });
+
+    const pinned = structuredClone(baseline);
+    pinned.harnesses["copilot-cli"] = {
+      conformance: { version: "" },
+      targets: { "linux-x64": { desired: { packVersion: "1.0.1", treeDigest: A }, permitted: { packVersion: "1.0.0", treeDigest: B } } },
+    };
+    const packs = releasePacks(pinned);
+    expect(packs).toMatchObject({ runtime_desired: "copilot-cli=1.0.1", runtime_permitted: "copilot-cli=1.0.0" });
+    expect(packs.permitted_harnesses.split(",")).toContain("copilot-cli");
+    expect(packs.key).toBe(`${today.key}/copilot-cli=1.0.1/copilot-cli=1.0.0`);
   });
 });
 
