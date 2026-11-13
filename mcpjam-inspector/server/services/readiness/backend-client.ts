@@ -5,9 +5,9 @@ import {
 /**
  * The inspector's half of the readiness lease protocol.
  *
- * Five service-token calls against the backend's `/internal/v1/claude-readiness/*`
- * routes: heartbeat, request observations, read the frozen submission answers,
- * finalize, fail. The backend already
+ * Six service-token calls against the backend's `/internal/v1/claude-readiness/*`
+ * routes: claim, heartbeat, request observations, read the frozen submission
+ * answers, finalize, fail. The backend already
  * owns the durable side — claim, lease, recovery, retention — and nothing here
  * duplicates it; this is the client a worker holds while it executes.
  *
@@ -98,6 +98,68 @@ async function postInternal(
 export interface ReadinessLease {
   runId: string;
   jobId: string;
+}
+
+/** The backend's reasons to refuse a claim. Each one means: do not execute. */
+const CLAIM_REFUSALS = ["already_claimed", "lease_lost", "not_found"] as const;
+export type ReadinessClaimRefusal = (typeof CLAIM_REFUSALS)[number];
+
+export type ReadinessClaim =
+  | { status: "claimed" }
+  | { status: "refused"; reason: ReadinessClaimRefusal }
+  | { status: "unanswered"; detail: string };
+
+const CLAIM_TIMEOUT_MS = 10_000;
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    // Not JSON: a backend without the route answers with its router's text.
+    return null;
+  }
+}
+
+/**
+ * Take the run this node just created, `pending` to `running`, on the lease it
+ * already holds and before anything dials.
+ *
+ * A REFUSAL STOPS THE RUN: it is already running (`already_claimed`), it was
+ * cancelled or re-queued (`lease_lost`), or it does not exist (`not_found`).
+ *
+ * NO ANSWER DOES NOT. An unreachable backend, a 5xx, or a backend that
+ * predates the claim route answers `unanswered`, and the worker executes as it
+ * did before claims existed: the row stays `pending`, and every heartbeat and
+ * write is still checked against the lease. Stopping there would leave a
+ * fresh run waiting for recovery and then for its requester to resume it.
+ */
+export async function claimReadinessRun(
+  lease: ReadinessLease,
+): Promise<ReadinessClaim> {
+  try {
+    const { response, release } = await postInternal(
+      `${READINESS_PATH}/claim`,
+      lease,
+      CLAIM_TIMEOUT_MS,
+    );
+    try {
+      const body = parseJsonObject(await response.text());
+      if (response.ok && body?.claimed === true) return { status: "claimed" };
+      const reason = CLAIM_REFUSALS.find((refusal) => refusal === body?.error);
+      if (!response.ok && reason) return { status: "refused", reason };
+      return { status: "unanswered", detail: `HTTP ${response.status}` };
+    } finally {
+      release();
+    }
+  } catch (error) {
+    return {
+      status: "unanswered",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 /**

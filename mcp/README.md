@@ -66,6 +66,7 @@ beta; they are listed [after the table](#held-tools).
 | `get_readiness_run` | Read one readiness run: whether it finished, its grade, the optional model pass, and per-lane coverage. | — |
 | `list_readiness_runs` | List a project's readiness runs, newest first, optionally for one publisher or one server. | — |
 | `cancel_readiness_run` | Stop a readiness run that is still going. The run's final state arrives on a later read. | — |
+| `resume_readiness_run` | Run again a readiness run that stopped on the server, when a read reports it `resumable`. Only the person who started it can. In beta. | — |
 | `get_readiness_report` | Read a finished readiness run's findings, capped and ordered most consequential first, without raw evidence. | — |
 | `list_directory_flows` | List the directory submission forms MCPJam can rehearse, such as Anthropic's connector directory, with their steps. | — |
 | `get_directory_flow` | Read one directory's submission form field by field (labels, limits, defaults, the portal's error lines), or one step of it. | — |

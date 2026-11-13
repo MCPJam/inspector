@@ -123,6 +123,10 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_directory_submission: "directory-readiness",
   update_directory_submission: "directory-readiness",
   start_directory_submission_run: "directory-readiness",
+  // Resuming runs a run again under the gate it started under: `conformance`
+  // for a server's run, `directory-readiness` for a submission's. The backend
+  // checks which one the run needs.
+  resume_readiness_run: ["conformance", "directory-readiness"],
   // The unified sessions feed. `list_chat_sessions` reads chat sessions,
   // which are released.
   search_sessions: "unified-sessions",

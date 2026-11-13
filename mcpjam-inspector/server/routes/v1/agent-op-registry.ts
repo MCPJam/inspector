@@ -61,6 +61,7 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   listDirectoryFlowsOperation,
   getDirectoryFlowOperation,
@@ -1649,6 +1650,15 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "direct",
     promptNotes: [
       "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
+    ],
+  },
+  {
+    // The requester finishing the run a person already approved: it creates
+    // nothing, so it needs no second approval.
+    operation: resumeReadinessRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- When `get_readiness_run` reports `resumable: true`, the run stopped on the server before it finished. Call `resume_readiness_run` once, then keep polling `get_readiness_run`. Only the person who started the run can resume it; if it is refused, say so and do not retry.",
     ],
   },
   { operation: listServerToolsOperation, tier: "direct" },

@@ -39,6 +39,7 @@
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",
+  "resume_readiness_run",
   "get_readiness_report",
   "list_directory_flows",
   "get_directory_flow",

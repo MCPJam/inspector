@@ -19,6 +19,9 @@
  * the same reason: a readiness run dials a third party's server and takes
  * longer than any request should be held open.
  *
+ * The worker's first call claims the run, `pending` to `running`, so a run's
+ * status says whether a node is executing it. A resumed run arrives claimed.
+ *
  * The heartbeat is what makes an in-process detachment safe. A node that dies
  * mid-run stops heartbeating, and the backend's recovery cron re-queues the
  * run with a FRESH job id — so this node coming back from the dead cannot
@@ -37,12 +40,14 @@ import { logger } from "../../utils/logger.js";
 import { captureServerEventForActor } from "../../utils/analytics.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
+  claimReadinessRun,
   failReadinessRun,
   finalizeReadinessRun,
   getReadinessRunSubmission,
   heartbeatReadinessRun,
   ReadinessSubmissionUnreadableError,
   requestManagedObservations,
+  type ReadinessClaimRefusal,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
   type ReadinessRunSubmission,
@@ -80,6 +85,12 @@ const RUN_DEADLINE_MS = 15 * 60 * 1000;
 
 export interface ExecuteHostedReadinessOptions {
   lease: ReadinessLease;
+  /**
+   * The lease is already `running`: a resume took it on a new job id, and a
+   * second claim would be refused. A start leaves this unset, and the worker
+   * claims the run before anything else.
+   */
+  leaseClaimed?: boolean;
   publisher: ReadinessPublisher;
   /** From the SAVED project server, never from a worker-supplied URL. */
   target: string;
@@ -193,6 +204,30 @@ async function readSubmissionAnswers(
 }
 
 /**
+ * Claim the run this node started. Returns why it must not execute, or
+ * nothing when it may.
+ */
+async function claimRun(
+  lease: ReadinessLease,
+): Promise<ReadinessClaimRefusal | undefined> {
+  const claim = await claimReadinessRun(lease);
+  if (claim.status === "refused") {
+    logger.info("[readiness] claim refused; the run was not executed", {
+      runId: lease.runId,
+      reason: claim.reason,
+    });
+    return claim.reason;
+  }
+  if (claim.status === "unanswered") {
+    logger.warn("[readiness] claim unanswered; executing the run unclaimed", {
+      runId: lease.runId,
+      detail: claim.detail,
+    });
+  }
+  return undefined;
+}
+
+/**
  * Execute one leased run to a terminal state.
  *
  * NEVER THROWS. Every exit lands the run somewhere terminal — completed,
@@ -246,6 +281,12 @@ export async function executeHostedReadinessRun(
   }, HEARTBEAT_INTERVAL_MS);
 
   try {
+    const refusal = options.leaseClaimed ? undefined : await claimRun(lease);
+    if (refusal) {
+      // Decided elsewhere, as for a lost lease: nothing is written.
+      terminal = { outcome: "abandoned", terminalReason: refusal };
+      return;
+    }
     const submissionAnswers = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;

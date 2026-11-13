@@ -34,6 +34,7 @@ import {
   getHostedReadinessReport,
   getHostedReadinessRun,
   isTerminalRunStatus,
+  resumeHostedReadinessRun,
   runLocalReadiness,
   startHostedReadiness,
   type DirectoryReadinessPublisher,
@@ -193,6 +194,28 @@ export function useDirectoryReadinessRun({
     return token === runTokenRef.current;
   }, []);
 
+  /** `runId:attemptCount` of the last re-queue this hook resumed. */
+  const resumedRef = useRef<string | null>(null);
+
+  /**
+   * A run whose node stopped is re-queued, and only the person who started
+   * it can run it again, with their credentials. Resume once per re-queue,
+   * then keep polling: a refusal (another person's run, or one resumed
+   * elsewhere first) leaves nothing to do that the poll will not show.
+   */
+  const resumeOnce = useCallback(async (run: ReadinessRun) => {
+    const requeue = `${run.id}:${run.attemptCount}`;
+    if (!run.resumable || resumedRef.current === requeue) return;
+    resumedRef.current = requeue;
+    try {
+      await resumeHostedReadinessRun(run.id);
+    } catch (error) {
+      if (import.meta.env?.DEV) {
+        console.warn("[readiness] resume refused", error);
+      }
+    }
+  }, []);
+
   /** One poll, then schedule the next unless the run is done. */
   const pollRun = useCallback(
     async (runId: string, token: number, tick: number) => {
@@ -220,6 +243,8 @@ export function useDirectoryReadinessRun({
           clearPoll();
           return;
         }
+        await resumeOnce(run);
+        if (!isCurrent(token)) return;
       } catch (error) {
         if (!isCurrent(token)) return;
         // A failed poll is not a failed run: the run continues on the server
@@ -236,7 +261,7 @@ export function useDirectoryReadinessRun({
         pollIntervalFor(tick),
       );
     },
-    [clearPoll, isCurrent],
+    [clearPoll, isCurrent, resumeOnce],
   );
 
   // Resume immediately when the tab comes back, rather than waiting out the

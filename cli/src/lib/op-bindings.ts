@@ -403,6 +403,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
+  resume_readiness_run: { command: "readiness resume" },
   get_readiness_report: { command: "readiness report" },
   // `readiness flows` lists the flows, or shows the one it is given.
   list_directory_flows: { command: "readiness flows" },
