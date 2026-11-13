@@ -15,16 +15,15 @@ export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
   // Slackbot pinned rightmost in that order.
   //
-  // `claude-code` and `codex` appear here but carry no "Verify against your
-  // server" link: that is driven separately by FLAG_GATED_HOST_IDS, because
-  // the link auto-creates a host and the app refuses while the rollout flag is
-  // off. Listing them here changes their position, not their verify state.
+  // FLAG_GATED_HOST_IDS controls which presets can offer a verify link.
   "preset:claude",
   "preset:claude-desktop",
   "preset:claude-code",
   "preset:chatgpt",
   "preset:codex",
+  "preset:codex-cli",
   "preset:copilot",
+  "preset:copilot-cli",
   "preset:cursor",
   "preset:vscode",
   "preset:slack",
