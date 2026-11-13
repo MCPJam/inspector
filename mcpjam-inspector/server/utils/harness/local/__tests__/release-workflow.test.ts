@@ -333,14 +333,6 @@ describe("pack release boundaries", () => {
     expect(finalizeFiles).toContain("runtime-contract");
   });
 
-  it("plans a call as a call: a called workflow's own event name is its caller's", () => {
-    const { on, jobs } = workflow("local-harness-conformance");
-    expect(on.workflow_call.inputs.reusable_call).toMatchObject({ type: "boolean", default: true });
-    expect(on.workflow_dispatch.inputs.reusable_call).toBeUndefined();
-    const plan = jobs.plan.steps.find((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""));
-    expect(plan.env.EVENT).toBe("${{ inputs.reusable_call && 'workflow_call' || github.event_name }}");
-  });
-
   it("reuses evidence an earlier trusted run produced, and runs conformance itself only when there is none", () => {
     const { jobs } = workflow("release");
     const lookup = jobs["local-harness-evidence-lookup"];
@@ -389,6 +381,22 @@ describe("pack release boundaries", () => {
     expect(preflight.run).toContain("local-harness-release-packs.mjs");
   });
 
+  it("translates the pack's x64 Node before a darwin-x64 session starts the bridge's clock", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    for (const [name, harness] of [["scenarios", "claude-code"], ["codex-scenarios", "codex"]] as const) {
+      const steps: any[] = jobs[name].steps;
+      const translate = steps.findIndex((step) => step.name === "Translate the pack's x64 Node");
+      expect(steps[translate]?.if, name).toBe("matrix.node_arch == 'x64' && runner.os == 'macOS'");
+      expect(steps[translate].run, name).toBe(`arch -x86_64 "$RUNNER_TEMP/conformance/runtime/${harness}/bin/node" --version`);
+      const packSteps = steps.flatMap((step, index) =>
+        /scripts\/(prepare-published-harness-conformance|build-local-harness-pack)\.mjs/.test(step.run ?? "") ? [index] : [],
+      );
+      expect(packSteps, name).toHaveLength(2);
+      expect(translate, name).toBeGreaterThan(Math.max(...packSteps));
+      expect(translate, name).toBeLessThan(steps.findIndex((step) => /conformance\/run-[a-z-]+\.m?ts/.test(step.run ?? "")));
+    }
+  });
+
   it("builds the adapter once and hands it to every platform leg", () => {
     const { jobs } = workflow("local-harness-conformance");
     const unit = jobs.unit.steps.map((step: any) => step.run ?? "").join("\n");
@@ -401,6 +409,19 @@ describe("pack release boundaries", () => {
       expect(download?.with.name, name).toBe(handOff.with.name);
       expect(jobs[name].needs, name).toContain("unit");
     }
+  });
+
+  it("plans a called run as a workflow_call, not as its caller's push", () => {
+    const { plan } = workflow("local-harness-conformance").jobs;
+    // A called run's github.workflow_ref names its caller: the push-started
+    // evidence run, the pack prebuild, or a release.
+    expect(plan.env.EVENT).toBe(
+      "${{ contains(github.workflow_ref, '/.github/workflows/local-harness-conformance.yml@') && github.event_name || 'workflow_call' }}",
+    );
+    for (const step of plan.steps) {
+      expect(JSON.stringify(step), step.name ?? step.id ?? step.uses).not.toContain("github.event_name");
+    }
+    expect(plan.steps.find((step: any) => step.name === "Fetch main's previous tip").if).toBe("env.EVENT == 'push'");
   });
 
   it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {

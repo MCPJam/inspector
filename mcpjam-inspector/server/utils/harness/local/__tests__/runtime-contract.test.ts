@@ -150,6 +150,12 @@ describe("which conformance legs run", () => {
     expect(quiet).toMatchObject({ run_claude: "false", run_codex: "false", run_windows: "false" });
     const release = planConformance({ event: "workflow_call", claudeVersion: "1.0.0", inputsUnchanged: true, record });
     expect(release).toMatchObject({ run_claude: "true", run_codex: "true" });
+    // Even read as a push (a called run's github context is its caller's), a
+    // run that names packs checks them: no push run ever did.
+    const named = planConformance({ event: "push", claudeVersion: "1.0.7", codexVersion: "1.0.3", inputsUnchanged: true, record });
+    expect(named).toMatchObject({ run_claude: "true", run_codex: "true", run_windows: "true" });
+    const candidate = planConformance({ event: "push", codexVersion: "1.0.4", harnesses: "codex", inputsUnchanged: true, record });
+    expect(candidate).toMatchObject({ run_claude: "false", run_codex: "true" });
   });
 
   it("runs darwin-x64 as x64 Node on an Apple Silicon runner", () => {
