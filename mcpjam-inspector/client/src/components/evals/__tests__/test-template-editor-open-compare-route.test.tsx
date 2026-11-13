@@ -1870,24 +1870,54 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("saves a case that stops failing on tool errors", async () => {
+  it.each([true, false])(
+    "saves a case that stops failing on tool errors: workspace=%s",
+    async (simpleCaseEditor) => {
+      const user = userEvent.setup();
+      activeCaseDoc = goldenCaseDoc;
+      renderGoldenCase({ simpleCaseEditor });
+
+      const toggle = await screen.findByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      });
+      expect(toggle).toBeChecked();
+      await user.click(toggle);
+      await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+      await waitFor(() => {
+        expect(updateTestCaseMutationMock).toHaveBeenCalled();
+      });
+      expect(
+        updateTestCaseMutationMock.mock.calls.at(-1)?.[0].advancedConfig,
+      ).toEqual({ failOnToolError: false });
+    },
+  );
+
+  it("runs with the cleared tool error setting sent explicitly", async () => {
+    // A run's case override falls back to the stored case when it carries no
+    // `advancedConfig`, and a retry in the same session does not save first.
     const user = userEvent.setup();
-    activeCaseDoc = goldenCaseDoc;
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      advancedConfig: { failOnToolError: false },
+    };
     renderGoldenCase();
 
-    const toggle = await screen.findByRole("switch", {
-      name: "Fail this case when a tool call returns an error",
-    });
-    expect(toggle).toBeChecked();
-    await user.click(toggle);
-    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+    await user.click(
+      await screen.findByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
 
     await waitFor(() => {
-      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+      expect(streamEvalTestCaseMock).toHaveBeenCalled();
     });
     expect(
-      updateTestCaseMutationMock.mock.calls.at(-1)?.[0].advancedConfig,
-    ).toEqual({ failOnToolError: false });
+      streamEvalTestCaseMock.mock.calls.at(-1)?.[0].testCaseOverrides
+        .advancedConfig,
+    ).toEqual({});
   });
 
   it("clears the tool error setting when it is turned back on", async () => {

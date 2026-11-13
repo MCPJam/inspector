@@ -305,6 +305,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
+import { ToolErrorSwitch } from "../evaluate/tool-error-switch";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import {
   buildCaseScorecard,
@@ -2019,9 +2020,10 @@ export function TestTemplateEditor({
     () => normalizeAdvancedConfig(currentTestCase?.advancedConfig),
     [currentTestCase],
   );
-  // `updateTestCase` keeps a field it is not sent and stores `null` as is, so
-  // clearing the case's last advanced setting has to send an empty object.
-  const advancedConfigForSave = (next: Record<string, unknown> | undefined) =>
+  // A save keeps, and a run falls back to, the stored `advancedConfig` when
+  // none is sent, and `updateTestCase` stores `null` as is. So clearing the
+  // case's last advanced setting has to send an empty object.
+  const explicitAdvancedConfig = (next: Record<string, unknown> | undefined) =>
     next ?? (currentAdvancedConfig ? {} : undefined);
 
   // True when today's case scenario differs from the snapshot of the run being
@@ -2902,7 +2904,7 @@ export function TestTemplateEditor({
         // And for the judge opt-out, so turning the switch back off actually
         // removes the stored override rather than leaving it in place.
         judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
-        advancedConfig: advancedConfigForSave(savePayload.advancedConfig),
+        advancedConfig: explicitAdvancedConfig(savePayload.advancedConfig),
       });
       track("eval_test_case_edited", {
         location: "test_template_editor",
@@ -3085,7 +3087,7 @@ export function TestTemplateEditor({
             matchOptions: savePayload.matchOptions ?? null,
             predicates: savePayload.predicates ?? null,
             judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
-            advancedConfig: advancedConfigForSave(savePayload.advancedConfig),
+            advancedConfig: explicitAdvancedConfig(savePayload.advancedConfig),
           }
         : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
@@ -3546,10 +3548,12 @@ export function TestTemplateEditor({
           modelValue,
           compareLabelByValue,
         );
-        const advancedConfig = mergeAdvancedConfigWithOverride({
-          baseAdvancedConfig: savePayload.advancedConfig,
-          override: undefined,
-        });
+        const advancedConfig = explicitAdvancedConfig(
+          mergeAdvancedConfigWithOverride({
+            baseAdvancedConfig: savePayload.advancedConfig,
+            override: undefined,
+          }),
+        );
 
         const testCaseOverrides = {
           query: savePayload.query,
@@ -5448,10 +5452,6 @@ export function TestTemplateEditor({
                       }
                       suiteJudgeConfig={suite?.judgeConfig}
                       suiteJudgeRubric={suite?.judgeRubric}
-                      failOnToolError={failsOnToolError(
-                        editForm.advancedConfig,
-                      )}
-                      onFailOnToolErrorChange={setFailOnToolError}
                       capabilities={caseCapabilities.capabilities}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
@@ -5916,6 +5916,12 @@ export function TestTemplateEditor({
                           stepStatusById={liveStepStatusById}
                           syncedStepId={syncedStepId}
                           onHoverStep={setSyncedStepId}
+                        />
+                      ) : null}
+                      {editForm && !readOnly ? (
+                        <ToolErrorSwitch
+                          checked={failsOnToolError(editForm.advancedConfig)}
+                          onCheckedChange={setFailOnToolError}
                         />
                       ) : null}
                     </div>
