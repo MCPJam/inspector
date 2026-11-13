@@ -285,8 +285,12 @@ describe("model observations in a graded result", () => {
       reason: "schema_invalid",
       detail: "observations[0].id is not a published observation id",
     });
+    // The decision checks are there, each saying why no model judged it.
     expect(
-      invalid.findings.some((finding) => finding.provenance === "llm"),
+      invalid.findings.some(
+        (finding) =>
+          finding.provenance === "llm" && finding.status !== "not-evaluated"
+      )
     ).toBe(false);
     expect(invalid.llmObservations?.status).toBe("invalid-output");
   });

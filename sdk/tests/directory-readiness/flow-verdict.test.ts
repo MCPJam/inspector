@@ -34,6 +34,11 @@ const INTRUSIVE = [
   "claude.intrusive.step-up-challenge",
 ];
 const RFC8707 = "claude.auth.rfc8707-resource-canonical";
+/** Off until a threshold is set, so no run gathers their answers. */
+const DECISIONS = [
+  "both.decision.annotation-matches-behaviour",
+  "claude.decision.cross-tool-direction",
+];
 
 function finding(
   id: string,
@@ -227,8 +232,11 @@ describe("checks the path cannot evaluate", () => {
       verdict: "ready",
       failing: [],
       undetermined: [],
-      notCheckedOnPath: [...INTRUSIVE, RFC8707].sort(),
+      notCheckedOnPath: [...INTRUSIVE, RFC8707, ...DECISIONS].sort(),
     });
+    for (const id of DECISIONS) {
+      expect(verdict.notCheckedReasons[id], id).toMatch(/scan is off/);
+    }
     for (const id of INTRUSIVE) {
       expect(verdict.notCheckedReasons[id], id).toBe(
         "hosted runs never make probes that change the server, such as registering an OAuth client or spending a refresh token"
@@ -244,7 +252,7 @@ describe("checks the path cannot evaluate", () => {
     expect(verdict).toMatchObject({
       verdict: "incomplete",
       undetermined: INTRUSIVE,
-      notCheckedOnPath: [RFC8707],
+      notCheckedOnPath: [RFC8707, ...DECISIONS].sort(),
     });
   });
 

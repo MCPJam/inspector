@@ -81,6 +81,8 @@ export type {
 
 // Submission forms as data. The flows barrel names its own exports, all pure.
 export * from "./flows/index.js";
+// The decision scan's questions, candidates and grading, all pure.
+export * from "./decisions/index.js";
 
 /**
  * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.

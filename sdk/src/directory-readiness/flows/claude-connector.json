@@ -669,7 +669,8 @@
         "claude.experience.tool-overlap",
         "claude.experience.connector-purpose-unclear",
         "claude.experience.destructive-tool-underexplained",
-        "claude.experience.app-copy-mismatched"
+        "claude.experience.app-copy-mismatched",
+        "both.decision.annotation-matches-behaviour"
       ]
     },
     {
@@ -835,6 +836,13 @@
       "needs": ["server"],
       "reads": ["connection.serverUrl"],
       "checks": ["claude.scan.cross-tool-direction-candidates"]
+    },
+    {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": ["server", "model"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.decision.cross-tool-direction"]
     },
     {
       "step": "review",

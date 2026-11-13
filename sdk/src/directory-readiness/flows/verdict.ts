@@ -15,6 +15,7 @@
 import { UNGATHERED_EVIDENCE_DETAIL_KEY } from "../helpers.js";
 import { isDispositiveDirectoryFinding } from "../types.js";
 import type { DirectoryReadinessFinding } from "../types.js";
+import { isUnsureModelFlag } from "./place.js";
 import type { PlacedFinding } from "./types.js";
 
 /** Which checks fail a run, by check id. `failOn` wins over `warnOnly`. */
@@ -96,11 +97,11 @@ export function directoryVerdict(
         !warnOnly.has(finding.id));
     if (!inGate) continue;
     gated += 1;
-    // Stale or blocked evidence settles nothing, whatever it once said.
-    const current =
-      placed === undefined ||
-      placed.evidenceStatus === "established" ||
-      placed.evidenceStatus === "inconclusive";
+    // Stale, blocked or inconclusive evidence settles nothing, whatever it
+    // once said: a model's unsure answer is never a pass.
+    const current = placed
+      ? placed.evidenceStatus === "established"
+      : !isUnsureModelFlag(finding);
     if (finding.status === "not-evaluated" || !current) {
       undetermined.add(finding.id);
     } else if (finding.status === "violated") {
