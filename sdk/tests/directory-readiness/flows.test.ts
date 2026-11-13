@@ -113,6 +113,13 @@ describe("field keys", () => {
       "dataHandling.sponsored",
       "testLaunch.instructions",
       "testLaunch.selfTested",
+      "testLaunch.identityTool",
+      "testLaunch.identityArgs",
+      "testLaunch.expectedIdentityPath",
+      "testLaunch.expectedIdentity",
+      "testLaunch.expectedOrganizationPath",
+      "testLaunch.expectedOrganization",
+      "testLaunch.fixtures",
       "compliance.acknowledgments",
       "compliance.additionalNotes",
     ]);

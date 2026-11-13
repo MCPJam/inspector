@@ -28,6 +28,9 @@ import { runOpenAIProfileChecks } from "./checks/profile.js";
  */
 
 import { enforceCapabilityGate } from "../directory-readiness/types.js";
+import { CHATGPT_PLUGIN_FLOW } from "../directory-readiness/flows/chatgpt-plugin.js";
+import type { DirectoryReviewerRunInput } from "../directory-readiness/reviewer/evidence.js";
+import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
 import { rollUpLaneStatus as rollUpDirectoryLaneStatus } from "../directory-readiness/types.js";
 import {
   decideLaneStatus,
@@ -78,6 +81,7 @@ import { runOpenAIMigrationChecks } from "./checks/migration.js";
 import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
 import { runOpenAIPolicyChecks } from "./checks/policy.js";
 import { runOpenAIReleaseContractChecks } from "./checks/release-contract.js";
+import { runOpenAIReviewerChecks } from "./checks/reviewer.js";
 import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
@@ -128,8 +132,10 @@ import type { PluginFileSource } from "../plugin-bundle/types.js";
  * Deliberately holds no functions, no streams and no client handles: an
  * evidence object that could not survive `JSON.stringify` would defeat the
  * split this module exists to make.
+ *
+ * A submission run also brings its reviewer path and client-signature probe.
  */
-export interface OpenAIReadinessEvidence {
+export interface OpenAIReadinessEvidence extends DirectoryReviewerRunInput {
   /** The endpoint or package the run graded, as the caller named it. */
   target: string;
   /** The DECLARED submission shape. Never inferred — see the module docblock. */
@@ -533,9 +539,10 @@ export function gradeOpenAIReadiness(
       ? annotatedToolNames(evidence.tools)
       : evidence.annotatedTools;
 
-  const findings: OpenAIReadinessFinding[] = enforceCapabilityGate(
+  const graded: OpenAIReadinessFinding[] = enforceCapabilityGate(
     [
       ...serverFindings,
+      ...runOpenAIReviewerChecks(evidence, stamp),
       ...runOpenAIMcpSkillChecks(
         { mode: evidence.mode, evidence: evidence.importedSkills },
         stamp
@@ -598,6 +605,11 @@ export function gradeOpenAIReadiness(
     ],
     evidence.capabilities
   ).map(withPortalCode);
+  const findings = holdToReviewerAccount(
+    graded,
+    CHATGPT_PLUGIN_FLOW,
+    evidence.reviewerPath?.account
+  );
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
 

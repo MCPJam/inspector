@@ -117,6 +117,17 @@
             ]
           },
           {
+            "fields": [
+              "reviewer.identityTool",
+              "reviewer.identityArgs",
+              "reviewer.expectedIdentityPath",
+              "reviewer.expectedIdentity",
+              "reviewer.expectedOrganizationPath",
+              "reviewer.expectedOrganization",
+              "reviewer.fixtures"
+            ]
+          },
+          {
             "heading": "Test cases",
             "fields": [
               "reviewer.testCases"
@@ -345,6 +356,40 @@
     "reviewer.signInSteps": {
       "label": "Sign-in steps",
       "placeholder": "Steps for this account"
+    },
+    "reviewer.identityTool": {
+      "label": "Identity tool",
+      "placeholder": "whoami",
+      "helper": "MCPJam's own check, not part of the portal: a read-only tool on your server that returns the signed-in account. MCPJam calls it as the reviewer."
+    },
+    "reviewer.identityArgs": {
+      "label": "Identity tool arguments",
+      "placeholder": "{}",
+      "helper": "Fixed JSON arguments, if the identity tool takes any."
+    },
+    "reviewer.expectedIdentityPath": {
+      "label": "Identity path",
+      "placeholder": "$.user.email",
+      "helper": "Where the tool's result names the account, as a JSON path."
+    },
+    "reviewer.expectedIdentity": {
+      "label": "Expected reviewer",
+      "placeholder": "review@example.com",
+      "helper": "The account reviewers sign in as."
+    },
+    "reviewer.expectedOrganizationPath": {
+      "label": "Organization path",
+      "placeholder": "$.organization.name",
+      "helper": "Where the tool's result names the organization or project, as a JSON path."
+    },
+    "reviewer.expectedOrganization": {
+      "label": "Expected organization",
+      "placeholder": "Sample Org",
+      "helper": "The organization or project reviewers should land in."
+    },
+    "reviewer.fixtures": {
+      "label": "Fixtures",
+      "helper": "MCPJam's own check: resources your test cases name, each with a read-only tool call that finds it in the reviewer's account."
     },
     "reviewer.testCases": {
       "label": "Test cases",
@@ -682,6 +727,62 @@
       ],
       "checks": [
         "openai.submission.demo-access"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "field": "reviewer.identityTool",
+      "needs": [
+        "server",
+        "reviewer"
+      ],
+      "reads": [
+        "mcp.serverUrl",
+        "reviewer.identityTool",
+        "reviewer.identityArgs",
+        "reviewer.expectedIdentityPath",
+        "reviewer.expectedIdentity",
+        "reviewer.expectedOrganizationPath",
+        "reviewer.expectedOrganization"
+      ],
+      "checks": [
+        "both.reviewer.identity"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "field": "reviewer.fixtures",
+      "needs": [
+        "server",
+        "reviewer"
+      ],
+      "reads": [
+        "mcp.serverUrl",
+        "reviewer.fixtures",
+        "reviewer.testCases",
+        "reviewer.negativeTestCases",
+        "reviewer.signInSteps",
+        "reviewer.identityTool",
+        "reviewer.identityArgs",
+        "reviewer.expectedIdentityPath",
+        "reviewer.expectedIdentity",
+        "reviewer.expectedOrganizationPath",
+        "reviewer.expectedOrganization"
+      ],
+      "checks": [
+        "both.reviewer.fixtures"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [
+        "server"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "both.auth.client-signatures"
       ]
     },
     {

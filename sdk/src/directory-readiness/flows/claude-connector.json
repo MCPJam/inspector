@@ -159,6 +159,20 @@
           {
             "heading": "Self-tested",
             "fields": ["testLaunch.selfTested"]
+          },
+          {
+            "heading": "Reviewer check",
+            "note": "MCPJam's own, not part of Claude's form: who the reviewer is signed in as, and whether the resources your instructions name exist for them.",
+            "fields": ["testLaunch.identityTool", "testLaunch.identityArgs"]
+          },
+          {
+            "fields": ["testLaunch.expectedIdentityPath", "testLaunch.expectedIdentity"]
+          },
+          {
+            "fields": ["testLaunch.expectedOrganizationPath", "testLaunch.expectedOrganization"]
+          },
+          {
+            "fields": ["testLaunch.fixtures"]
           }
         ]
       }
@@ -568,6 +582,40 @@
       "label": "I have run every tool via MCP Inspector or as a custom connector in Claude",
       "reviewLabel": "Self-tested"
     },
+    "testLaunch.identityTool": {
+      "label": "Identity tool",
+      "placeholder": "whoami",
+      "helper": "A read-only tool on your server that returns the signed-in account. MCPJam calls it as the reviewer."
+    },
+    "testLaunch.identityArgs": {
+      "label": "Identity tool arguments",
+      "placeholder": "{}",
+      "helper": "Fixed JSON arguments, if the identity tool takes any."
+    },
+    "testLaunch.expectedIdentityPath": {
+      "label": "Identity path",
+      "placeholder": "$.user.email",
+      "helper": "Where the tool's result names the account, as a JSON path."
+    },
+    "testLaunch.expectedIdentity": {
+      "label": "Expected reviewer",
+      "placeholder": "review@example.com",
+      "helper": "The account reviewers sign in as."
+    },
+    "testLaunch.expectedOrganizationPath": {
+      "label": "Organization path",
+      "placeholder": "$.organization.name",
+      "helper": "Where the tool's result names the organization or project, as a JSON path."
+    },
+    "testLaunch.expectedOrganization": {
+      "label": "Expected organization",
+      "placeholder": "Sample Org",
+      "helper": "The organization or project reviewers should land in."
+    },
+    "testLaunch.fixtures": {
+      "label": "Fixtures",
+      "helper": "Resources your instructions name, each with a read-only tool call that finds it in the reviewer's account."
+    },
     "compliance.acknowledgments": {
       "label": "Policy acknowledgements",
       "reviewLabel": "Policies acknowledged",
@@ -822,6 +870,45 @@
       "needs": [],
       "reads": ["testLaunch.instructions", "authentication.requirement"],
       "checks": ["claude.submission.test-instructions"]
+    },
+    {
+      "step": "testLaunch",
+      "field": "testLaunch.identityTool",
+      "needs": ["server", "reviewer"],
+      "reads": [
+        "connection.serverUrl",
+        "testLaunch.identityTool",
+        "testLaunch.identityArgs",
+        "testLaunch.expectedIdentityPath",
+        "testLaunch.expectedIdentity",
+        "testLaunch.expectedOrganizationPath",
+        "testLaunch.expectedOrganization"
+      ],
+      "checks": ["both.reviewer.identity"]
+    },
+    {
+      "step": "testLaunch",
+      "field": "testLaunch.fixtures",
+      "needs": ["server", "reviewer"],
+      "reads": [
+        "connection.serverUrl",
+        "testLaunch.fixtures",
+        "testLaunch.instructions",
+        "useCases.pairs",
+        "testLaunch.identityTool",
+        "testLaunch.identityArgs",
+        "testLaunch.expectedIdentityPath",
+        "testLaunch.expectedIdentity",
+        "testLaunch.expectedOrganizationPath",
+        "testLaunch.expectedOrganization"
+      ],
+      "checks": ["both.reviewer.fixtures"]
+    },
+    {
+      "step": "authentication",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["both.auth.client-signatures"]
     },
     {
       "step": "compliance",
