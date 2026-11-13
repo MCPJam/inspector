@@ -1,9 +1,8 @@
 /**
  * The Skills field in a suite's "Where it runs" row, and the hint lines under
  * its client table. Both read the suite's environments, which own their
- * skills: the field saves through the same derivation as the Servers pick,
- * and the hints read one skills preview per environment. Both stay hidden
- * without `skills-enabled`, the one flag every skills surface reads.
+ * skills: the field saves through the Servers pick's derivation, the hints
+ * read one preview per environment, and both hide without `skills-enabled`.
  */
 import { useEffect, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
@@ -73,9 +72,8 @@ type Delivery =
   | { status: "ready"; previews: ReadonlyMap<string, PaneSkillsPreview> };
 
 /**
- * One skills preview per environment, with the environment as the target. A
- * client target would add the caller's live project skills, personal ones
- * included, which an eval run never gets.
+ * One skills preview per environment, with the environment as the target: a
+ * client target adds the caller's live skills, which an eval run never gets.
  */
 function useSuiteSkillDelivery(
   projectId: string | null,

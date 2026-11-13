@@ -160,6 +160,8 @@ const leftOutLine: Record<
     `${listText(clients)} can’t use the ${one(skills.length, "name", "names")} ${listText(skills)}, so ${one(clients.length, "its", "their")} runs leave ${one(skills.length, "it", "them")} out.`,
   "name-collision": (clients, skills) =>
     `${listText(clients)} ${one(clients.length, "loads", "load")} ${one(skills.length, "another skill", "other skills")} named ${listText(skills)}, so ${one(clients.length, "its", "their")} runs leave ${one(skills.length, "this one", "these")} out.`,
+  "over-cap": (clients, skills) =>
+    `${listText(clients)} ${one(clients.length, "leaves", "leave")} out ${listText(skills)} after reaching the skill limit.`,
   "plugin-disabled": (clients, skills) =>
     `${listText(clients)} ${one(clients.length, "has", "have")} the plugin for ${listText(skills)} turned off, so ${one(clients.length, "its", "their")} runs leave ${one(skills.length, "it", "them")} out.`,
 };
