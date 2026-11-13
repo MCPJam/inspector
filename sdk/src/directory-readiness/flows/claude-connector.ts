@@ -73,7 +73,9 @@ const RULES: Record<FieldKey, FieldRules> = {
   "listing.description": req("textarea", {
     maxLength: LIMITS.descriptionMaxLength,
   }),
+  // The portal's category list was never captured.
   "listing.categories": req("multi-select", {
+    freeEntry: true,
     minItems: LIMITS.categoriesMin,
     maxItems: LIMITS.categoriesMax,
   }),
@@ -179,11 +181,7 @@ export const CLAUDE_CONNECTOR_FLOW: DirectoryFlow = {
   })),
   placements: data.placements.flatMap(
     ({ checks, needs, ...where }): DirectoryCheckPlacement[] =>
-      checks.map((checkId) => ({
-        checkId,
-        ...where,
-        ...(needs && { needs: needs.map(need) }),
-      }))
+      checks.map((checkId) => ({ checkId, ...where, needs: needs.map(need) }))
   ),
   laneSteps: data.laneSteps,
 };

@@ -265,6 +265,32 @@ describe("each issue code", () => {
     ).toBe("unknownOption");
   });
 
+  it("unknownOption: never for a free-entry field, and only for that", () => {
+    // The portal's category list was never captured, so any typed category
+    // is taken; the same field with a list would refuse one not on it.
+    expect(
+      validateDirectoryAnswerInput(FLOW, "listing.categories", [
+        "Any category a person types",
+      ])
+    ).toBeUndefined();
+    const listed = {
+      ...FLOW,
+      steps: FLOW.steps.map((step) => ({
+        ...step,
+        fields: step.fields.map((field) =>
+          field.key === "listing.categories"
+            ? { ...field, freeEntry: false }
+            : field
+        ),
+      })),
+    };
+    expect(
+      validateDirectoryAnswerInput(listed, "listing.categories", [
+        "Productivity",
+      ])?.code
+    ).toBe("unknownOption");
+  });
+
   it("unknownField: a key the flow does not have", () => {
     expect(validateDirectoryAnswerInput(FLOW, "listing.tagline", "x")).toEqual({
       key: "listing.tagline",

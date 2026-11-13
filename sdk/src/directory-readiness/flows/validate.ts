@@ -161,9 +161,12 @@ function shapeProblem(
   }
 }
 
-/** A field without options accepts any value: the portal's list was not captured. */
+/** A free-entry field takes any value; any other only the options it lists. */
 function offers(field: DirectoryFlowField, value: string): boolean {
-  return !field.options || field.options.some((entry) => entry.value === value);
+  return (
+    field.freeEntry === true ||
+    (field.options ?? []).some((entry) => entry.value === value)
+  );
 }
 
 function standsIn(

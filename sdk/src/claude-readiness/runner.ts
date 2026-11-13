@@ -34,6 +34,7 @@ import {
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
 import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
 import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
+import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
 import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
 import { runClaudeDeclarationChecks } from "./checks/declarations.js";
 import {
@@ -312,6 +313,7 @@ export function gradeClaudeReadiness(
         profile: parsedProfile.profile,
         profileIssues: parsedProfile.issues,
         observedAuthMode: input.observedAuthMode,
+        auth: authEvidence,
       },
       stamp,
     ),
@@ -319,6 +321,7 @@ export function gradeClaudeReadiness(
       { answers, tools: input.tools, listing },
       stamp,
     ),
+    ...runClaudeAnswerStepChecks(answers, stamp),
     ...optional.findings,
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
