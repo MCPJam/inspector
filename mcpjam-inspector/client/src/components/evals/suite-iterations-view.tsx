@@ -2358,9 +2358,7 @@ export function SuiteIterationsView({
                       !detailRows.failedRunIds.has(id),
                   )
                 }
-                readFailed={detailRunIds.some((id) =>
-                  detailRows.failedRunIds.has(id),
-                )}
+                failedRunIds={detailRows.failedRunIds}
                 projectId={projectId}
                 decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
                 onEditCase={

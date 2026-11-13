@@ -72,7 +72,7 @@ export function ResultNotFound({
     >
       <h1 className="text-lg font-semibold text-foreground">
         {readFailed
-          ? `Couldn't load the results of ${midSentence}`
+          ? `Couldn't load the results of ${midSentence}. Try again.`
           : `${runLabel} has no result at this link`}
       </h1>
       <p className="text-sm text-muted-foreground">

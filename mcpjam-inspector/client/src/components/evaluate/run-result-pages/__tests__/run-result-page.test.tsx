@@ -192,10 +192,10 @@ describe("RunResultPage", () => {
   });
 
   it("says a launch run failed to load instead of claiming no result", () => {
-    renderPage({ caseKey: "missing" }, { readFailed: true });
+    renderPage({ caseKey: "missing" }, { failedRunIds: new Set(["one"]) });
     expect(
       screen.getByRole("heading", {
-        name: "Couldn't load the results of Run #3",
+        name: "Couldn't load the results of Run #3. Try again.",
       }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Open Run #3" })).toBeVisible();
