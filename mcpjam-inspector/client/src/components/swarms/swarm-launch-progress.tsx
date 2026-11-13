@@ -60,7 +60,7 @@ export function SwarmPendingLaunchRows({
   const labels = {
     queued: "Queued",
     starting: "Starting",
-    failed: "Could not start",
+    failed: "Failed",
     not_started: "Not started",
   };
   return rows

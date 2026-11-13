@@ -1645,10 +1645,17 @@ export function NewSwarmCreateFlow({
                 err,
                 "A persona could not be created.",
               );
-              const error = errorMessageOf(err, "The persona could not be created.");
-              setLaunchRows((rows) => rows.map((row) =>
-                row.personaId === persona.key ? { ...row, status: "failed", error } : row,
-              ));
+              const error = errorMessageOf(
+                err,
+                "The persona could not be created. Try again from swarm setup.",
+              );
+              setLaunchRows((rows) =>
+                rows.map((row) =>
+                  row.personaId === persona.key
+                    ? { ...row, status: "failed", error }
+                    : row,
+                ),
+              );
               firstError ??= creationIssue;
               continue;
             }
@@ -1702,10 +1709,17 @@ export function NewSwarmCreateFlow({
                   err,
                   "A goal could not be created.",
                 );
-                const error = errorMessageOf(err, "The goal could not be created.");
-                setLaunchRows((rows) => rows.map((row) =>
-                  row.key === `${persona.key}:${journey.key}` ? { ...row, status: "failed", error } : row,
-                ));
+                const error = errorMessageOf(
+                  err,
+                  "The goal could not be created. Try again from swarm setup.",
+                );
+                setLaunchRows((rows) =>
+                  rows.map((row) =>
+                    row.key === `${persona.key}:${journey.key}`
+                      ? { ...row, status: "failed", error }
+                      : row,
+                  ),
+                );
                 firstError ??= creationIssue;
               }
             }
@@ -1863,10 +1877,17 @@ export function NewSwarmCreateFlow({
                 }
               }
             } catch (err) {
-              const error = errorMessageOf(err, "The run could not be started.");
-              setLaunchRows((rows) => rows.map((row) =>
-                row.key === progressKey ? { ...row, status: "failed", error } : row,
-              ));
+              const error = errorMessageOf(
+                err,
+                "The run could not be started. Try again from swarm setup.",
+              );
+              setLaunchRows((rows) =>
+                rows.map((row) =>
+                  row.key === progressKey
+                    ? { ...row, status: "failed", error }
+                    : row,
+                ),
+              );
               // The sponsored split moved under this run. Nothing was created
               // for it, and the rest of the wave stops with it: continuing
               // would launch runs against a split nobody looked at, and the

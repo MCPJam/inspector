@@ -1267,7 +1267,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.queryByTestId("new-swarm-running-progress")).not.toBeInTheDocument();
 
     failSecond(new Error("Client connection failed"));
-    await screen.findByText("Could not start: Wire up the subscription webhook");
+    await screen.findByText("Failed: Wire up the subscription webhook");
     expect(screen.getByText("Client connection failed")).toBeVisible();
     await waitFor(() => expect(screen.getByTestId("new-swarm-running-open-findings")).not.toBeDisabled());
     expect(screen.getByText("Pending: Refund a charge")).toBeVisible();
