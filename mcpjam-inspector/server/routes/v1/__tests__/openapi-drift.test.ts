@@ -256,6 +256,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   "patch /projects/{projectId}/directory-submissions/{submissionId}",
   "delete /projects/{projectId}/directory-submissions/{submissionId}",
   "post /projects/{projectId}/directory-submissions/{submissionId}/runs",
+  // A submission's reviewer sign-in attempts, gated with it.
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel",
 ]);
 
 /**

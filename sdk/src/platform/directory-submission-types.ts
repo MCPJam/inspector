@@ -89,6 +89,8 @@ export interface PlatformDirectorySubmissionUpdateBody {
 export interface PlatformDirectorySubmissionRunBody {
   idempotencyKey?: string;
   includeLlmObservations?: boolean;
+  /** A running reviewer sign-in attempt of this submission for the run to work on. */
+  reviewerAttemptId?: string;
 }
 
 export interface PlatformDirectorySubmissionDeleted {

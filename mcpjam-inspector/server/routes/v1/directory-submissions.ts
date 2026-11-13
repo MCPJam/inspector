@@ -30,6 +30,7 @@ import {
   startHostedReadinessRun,
   toReadinessRunDto,
 } from "../shared/readiness-runs.js";
+import { runnableReviewerAttemptId } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
@@ -99,6 +100,8 @@ const startSchema = z.strictObject({
   idempotencyKey,
   /** The one field that can spend. Off unless sent, as on the readiness starts. */
   includeLlmObservations: z.boolean().optional(),
+  /** A running reviewer sign-in attempt of this submission, for the run to work on. */
+  reviewerAttemptId: z.string().trim().min(1).max(100).optional(),
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -108,14 +111,14 @@ function idParam(value: string | undefined, param: string, notFound: string) {
   });
 }
 
-function scopeOf(c: Context) {
+export function scopeOf(c: Context) {
   return {
     projectId: requireProjectIdArg(c.req.param("projectId"), SCOPE),
     submissionId: idParam(c.req.param("submissionId"), "submissionId", NOT_FOUND),
   };
 }
 
-async function readSubmission(
+export async function readSubmission(
   convex: ConvexHttpClient,
   projectId: string,
   submissionId: string,
@@ -134,7 +137,7 @@ async function readSubmission(
   return row;
 }
 
-function flowOf(row: Submission): DirectoryFlow {
+export function flowOf(row: Submission): DirectoryFlow {
   const flow = getDirectoryFlow(row.flowId);
   if (!flow) {
     throw new WebRouteError(
@@ -303,6 +306,11 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
       "This submission has no saved server to grade. Create a submission for a saved server, then start its run.",
     );
   }
+  const reviewerAttemptId =
+    body.reviewerAttemptId &&
+    (await runnableReviewerAttemptId(convex, { projectId, submissionId }, body.reviewerAttemptId, (error) =>
+      readRefusal(error, "Reviewer attempt"),
+    ));
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
@@ -311,6 +319,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
+    ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>

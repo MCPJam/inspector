@@ -70,6 +70,21 @@ describe("fetchRuntimeSecrets", () => {
     });
   });
 
+  it("never hands a reviewer credential to a chat or harness session", async () => {
+    // The sign-in run sends those to its own browser, limited to the sign-in
+    // origin; a session here could type one on any page.
+    listSecrets.mockResolvedValueOnce([
+      { name: "MCPJAM_REVIEWER_SUB_PASSWORD", value: "reviewer-password" },
+      { name: "STRIPE_API_KEY", value: "sk" },
+    ]);
+    await expect(
+      fetchRuntimeSecrets("Bearer t", { projectId: "p1", environmentId: "e1" }),
+    ).resolves.toEqual({
+      ok: true,
+      secrets: [{ name: "STRIPE_API_KEY", value: "sk" }],
+    });
+  });
+
   it("reports a failure as { ok: false }, NEVER as an empty list", async () => {
     listSecrets.mockRejectedValueOnce(new Error("convex down"));
     await expect(
