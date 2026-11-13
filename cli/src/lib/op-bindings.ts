@@ -418,40 +418,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_directory_submission_results: {
     command: "readiness submission results",
   },
-  // Resuming a submission from its id. Each is owed the command named in its
-  // reason; until then the API, the SDK and the MCP tools serve them.
-  get_directory_submission_handoff: {
-    excluded:
-      "Owed `readiness submission handoff <id>`, which prints where the submission stands and what to do next.",
-  },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
   list_directory_submission_findings: {
-    excluded:
-      "Owed `readiness submission findings <id>`, with `--all` to follow the cursor past the first page.",
+    command: "readiness submission findings",
   },
-  get_directory_submission_finding: {
-    excluded:
-      "Owed `readiness submission finding <id> <checkId>`, which prints one check with its evidence.",
-  },
-  export_directory_submission: {
-    excluded:
-      "Owed `readiness submission export <id>`, which writes the pack's exact bytes to a file or stdout.",
-  },
-  list_directory_submission_events: {
-    excluded:
-      "Owed `readiness submission events <id>`, which lists the recorded statuses, snapshots and directory findings.",
-  },
-  record_directory_submission_status: {
-    excluded:
-      "Owed `readiness submission status <id> --state`, recorded as reported unless `--observed` is given.",
-  },
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
   record_directory_submission_snapshot: {
-    excluded:
-      "Owed `readiness submission snapshot <id> --label`, naming the server revision the copy holds.",
+    command: "readiness submission snapshot",
   },
-  import_directory_finding: {
-    excluded:
-      "Owed `readiness submission import-finding <id>`, reading the directory's words from a file or stdin so they stay verbatim.",
-  },
+  import_directory_finding: { command: "readiness submission import-finding" },
   // Hosted conformance, beside the local `mcpjam conformance` commands: those
   // grade what this machine reaches and record nothing in a project, these
   // run on the platform against a saved server and leave a run to poll.
