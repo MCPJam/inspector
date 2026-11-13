@@ -287,12 +287,44 @@ describe("ReadinessRoute", () => {
     expect(screen.getByText("Error: Slug is required")).toBeVisible();
   });
 
+  it("starts a ChatGPT plugin rehearsal from the directory choice", async () => {
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.createDirectorySubmission.mockResolvedValue(pluginSubmission());
+    api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
+    api.listServerSubmissions.mockResolvedValue([
+      { ...submission(), id: "sub_0", updatedAt: Date.now() },
+    ]);
+    render(<ReadinessRoute />);
+    expect(
+      await screen.findByText("Saved rehearsals for this server"),
+    ).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+    expect(screen.getByRole("button", { name: "ChatGPT" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The saved Claude rehearsal belongs to the other directory.
+    expect(screen.queryByText("Saved rehearsals for this server")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Upload new or existing plugin" }),
+    );
+    expect(api.createDirectorySubmission).toHaveBeenCalledWith(
+      { projectId: "proj_1", serverId: "srv_1", flowId: "chatgpt-plugin" },
+      expect.stringMatching(/^ui-srv_1-/),
+    );
+    expect(
+      await screen.findByText(/Choose the stored plugin to rehearse\./),
+    ).toBeVisible();
+  });
+
   it("opens a saved ChatGPT plugin rehearsal on the plugin page, which waits for a version", async () => {
     api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
     api.getDirectorySubmission.mockResolvedValue(pluginSubmission());
     // Untitled, so the list names it by its flow.
     api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
     render(<ReadinessRoute />);
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
     const saved = await screen.findByText("ChatGPT plugin");
     const row = saved.closest("li");
     if (!row) throw new Error("No saved rehearsal row");
