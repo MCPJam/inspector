@@ -103,6 +103,7 @@ export interface StartHostedReadinessRunInput {
    * worker downloads that version (`run-package.ts`).
    */
   pluginVersionId?: string;
+  /**
    * The submission's reviewer sign-in attempt the run works on. Handed to the
    * worker only: the backend run takes no attempt, and the run joins it.
    */
