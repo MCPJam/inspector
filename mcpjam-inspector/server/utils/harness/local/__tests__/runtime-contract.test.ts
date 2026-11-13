@@ -13,7 +13,11 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
-import { parseRuntimeCompat, readAdvertisedTargets } from "../../../../../scripts/local-harness-pack-tables.mjs";
+import {
+  parseRuntimeCompat,
+  readAdvertisedTargets,
+  type RuntimeCompatRecordJson,
+} from "../../../../../scripts/local-harness-pack-tables.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script
 import { planConformance } from "../../../../../scripts/plan-local-harness-conformance.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
@@ -202,14 +206,26 @@ describe("which conformance legs run", () => {
 });
 
 describe("the packs a release selects", () => {
-  const record = parseRuntimeCompat(COMMITTED);
+  // Built here rather than read from the committed record, which gains a pin
+  // for each runtime as its first pack is released.
+  const slot = (desired: string, permitted?: string) => ({
+    desired: { packVersion: desired, treeDigest: A },
+    ...(permitted ? { permitted: { packVersion: permitted, treeDigest: B } } : {}),
+  });
+  const baseline: RuntimeCompatRecordJson = {
+    schema: 1,
+    harnesses: {
+      "claude-code": { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.7", "1.0.6") } },
+      codex: { conformance: { version: "" }, targets: { "linux-x64": slot("1.0.3") } },
+      "copilot-cli": { conformance: { version: "" }, targets: {} },
+    },
+  };
 
-  it("names every other local runtime's packs as pairs, and keeps today's key until one has a pack", () => {
-    const today = releasePacks(record);
-    expect(today).toMatchObject({ runtime_desired: "", runtime_permitted: "" });
-    expect(today.key).toBe([today.claude_desired, today.codex_desired, today.claude_permitted, today.codex_permitted].join("/"));
+  it("names every other local runtime's packs as pairs, and keeps the key unchanged until one has a pack", () => {
+    const today = releasePacks(baseline);
+    expect(today).toMatchObject({ runtime_desired: "", runtime_permitted: "", key: "1.0.7/1.0.3/1.0.6/" });
 
-    const pinned = structuredClone(record);
+    const pinned = structuredClone(baseline);
     pinned.harnesses["copilot-cli"] = {
       conformance: { version: "" },
       targets: { "linux-x64": { desired: { packVersion: "1.0.1", treeDigest: A }, permitted: { packVersion: "1.0.0", treeDigest: B } } },
