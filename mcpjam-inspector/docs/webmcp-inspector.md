@@ -9,8 +9,8 @@ inspector — is [`webmcp-native-tools.md`](./webmcp-native-tools.md). The two
 share a protocol and nothing else: page tools are third-party and never
 trusted to describe themselves, MCPJam's own are first-party and curated.
 
-Visibility follows `local-browser-enabled` in Node/Electron and
-`hosted-browser-enabled` in hosted deployments.
+Node/Electron always show it; hosted deployments follow
+`hosted-browser-enabled`.
 
 ## What it is for
 
@@ -369,7 +369,7 @@ a window opened.
 | Server kill switch | `MCPJAM_WEBMCP_INSPECTOR_ENABLED` (default on)        | same                                                                     |
 | Who may launch     | —                                                     | the backend's `hosted-browser` gate, at desktop reservation              |
 | Backend verdict    | —                                                     | `desktopProvisionable`, refreshed every minute                           |
-| Client visibility  | `local-browser-enabled` (PostHog)                     | `hostedBrowser:getAvailability` (the flag plus readiness)                |
+| Client visibility  | always on                                             | `hostedBrowser:getAvailability` (the flag plus readiness)                |
 
 Off means **404, not 403**: a disabled capability should not be discoverable.
 The nav item's flag key must stay in `SIDEBAR_RESOLVED_FLAG_KEYS` or the item is

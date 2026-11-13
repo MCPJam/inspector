@@ -39,13 +39,15 @@ describe("resolveFeatureFlagSource", () => {
   it.each(["1", "true"])("turns every flag off under DO_NOT_TRACK=%s", (value) => {
     vi.stubEnv("DO_NOT_TRACK", value);
     expect(resolveFeatureFlagSource()).toEqual({ kind: "off" });
-    expect(rolloutAnswerWithoutPostHog("local-browser-enabled")).toBe(false);
+    expect(rolloutAnswerWithoutPostHog("hosted-browser-enabled")).toBe(false);
   });
 
   it("does not treat other DO_NOT_TRACK values as the opt-out", () => {
     vi.stubEnv("DO_NOT_TRACK", "0");
     expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
-    expect(rolloutAnswerWithoutPostHog("local-browser-enabled")).toBeUndefined();
+    expect(
+      rolloutAnswerWithoutPostHog("hosted-browser-enabled"),
+    ).toBeUndefined();
   });
 
   it("answers from the file instead of PostHog, with or without the opt-out", () => {
