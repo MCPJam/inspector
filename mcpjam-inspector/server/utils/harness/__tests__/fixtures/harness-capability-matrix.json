@@ -17,9 +17,18 @@
       "pinnedRuntimeVersion": "2.1.290",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.claude/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": true
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".claude/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": true,
+        "writeFolder": ".claude/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -52,10 +61,6 @@
       "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "anthropic-native",
-        "provider": "anthropic"
-      },
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
       "runtimeVersion": "2.1.290"
@@ -81,9 +86,18 @@
       "pinnedRuntimeVersion": "0.163.0",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
       },
       "supportedReasoningEfforts": [
         "low",
@@ -122,10 +136,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [
         "low",
@@ -145,20 +155,36 @@
       "approvalPermissionMode": "allow-reads",
       "defaultPermissionMode": "allow-all",
       "displayName": "GitHub Copilot CLI",
+      "forwardingRuntime": {
+        "configurationVersion": "copilot-native-mcp-v1",
+        "correlationKey": "mcpjam/toolCallId",
+        "passThroughOnly": true,
+        "runtimeVersion": "1.0.92"
+      },
       "id": "copilot-cli",
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
       "pinnedRuntimeVersion": "1.0.92",
       "promptImageInput": false,
+      "requiredForwarding": "pass-through",
       "requiresComputer": true,
-      "skillsBaseDir": "",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "bridge-opt-in",
+        "readFolders": [
+          ".copilot/skills"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".copilot/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
-      "supportsMcpToolApproval": false,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
       "supportsSkills": false
@@ -187,10 +213,6 @@
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
-      "orgUpstream": {
-        "profile": "openai-native",
-        "provider": "openai"
-      },
       "protocol": "openai-responses",
       "reasoningEfforts": [],
       "runtimeVersion": "1.0.92"
@@ -205,6 +227,14 @@
       "externalAccountCredentialEnv": [
         "CURSOR_API_KEY"
       ],
+      "forwardingRuntime": {
+        "boundApprovals": true,
+        "configurationVersion": "acp-forward-v1",
+        "nativeVersionNegotiation": "legacy-first",
+        "ownedInput": false,
+        "passThroughOnly": true,
+        "runtimeVersion": "2026.11.05-86047df"
+      },
       "hostToolApprovalAtRuntime": true,
       "id": "cursor",
       "mcpDelivery": "harness",
@@ -213,13 +243,29 @@
       "pinnedRuntimeVersion": "2026.11.05-86047df",
       "promptImageInput": true,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "sessionStableMcpConfig": true,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false,
+          "surface": "cli"
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.claude/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.codex/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.grok/skills",
+          ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills-cursor"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
-      "supportsMcpToolApproval": false,
+      "supportsMcpToolApproval": true,
       "supportsNativeToolApproval": true,
       "supportsPluginBundles": false,
       "supportsSkills": false
@@ -258,7 +304,6 @@
       "mcpClient": "harness",
       "modelAccess": "external-account",
       "orgKeys": false,
-      "orgUpstream": null,
       "protocol": null,
       "reasoningEfforts": [],
       "runtimeVersion": "2026.11.05-86047df"
@@ -274,12 +319,24 @@
       "liveApprovalRuntime": true,
       "mcpDelivery": "mcpjam",
       "modelAccess": "broker",
-      "pinnedRuntimeVersion": "1.18.23",
+      "pinnedRuntimeVersion": "1.18.34",
       "promptImageInput": false,
       "requiresComputer": true,
-      "skillsBaseDir": "/home/user/.agents/skills",
-      "skillsWriteOptions": {
-        "trailingNewline": false
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": false
+        },
+        "headlessLoading": "native",
+        "readFolders": [
+          ".agents/skills",
+          ".claude/skills",
+          ".config/opencode/skills",
+          ".config/opencode/skill"
+        ],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ".agents/skills"
       },
       "supportedReasoningEfforts": [],
       "supportsHostExecutedToolApproval": true,
@@ -311,11 +368,10 @@
       "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
-      "orgKeys": false,
-      "orgUpstream": null,
+      "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "1.18.23"
+      "runtimeVersion": "1.18.34"
     },
     "qualifiedDiscovery": []
   }

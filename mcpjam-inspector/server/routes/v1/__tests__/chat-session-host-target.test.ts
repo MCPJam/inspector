@@ -149,17 +149,8 @@ vi.mock("../../../utils/chat-ingestion.js", () => ({
     persistChatSessionToConvexMock(...args),
 }));
 
-vi.mock("../../../utils/computers/cloud-skill-tools.js", () => ({
-  listCloudRuntimeSkills: async () => [],
-}));
-
 vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
-}));
-
-vi.mock("../../../services/environments/effective-capabilities.js", () => ({
-  resolveEffectiveCapabilities: () => undefined,
-  buildLiveEffectiveCapabilities: () => undefined,
 }));
 
 vi.mock("../../../utils/analytics.js", () => ({
@@ -167,6 +158,7 @@ vi.mock("../../../utils/analytics.js", () => ({
 }));
 
 import chatSessions from "../chat-sessions.js";
+import type { TurnSkills } from "../../../services/environments/turn-skills.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
@@ -1073,7 +1065,7 @@ describe("an environment's skills reach the engine that runs", () => {
     aggregateHash: "hash_1",
   };
 
-  it("hands the HARNESS the environment's resolved set, not the project catalog", async () => {
+  it("hands the HARNESS the environment's resolved set, with the set that carries its files", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({ harness: "claude-code" }),
       skills: [ENV_SKILL],
@@ -1082,16 +1074,72 @@ describe("an environment's skills reach the engine that runs", () => {
     const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
     expect(response.status).toBe(200);
-    // Presence is what makes it authoritative: with this absent,
-    // `selectHarnessSkillSource` takes its `live` arm and the sandbox is
-    // written the whole PROJECT-WIDE catalog — the environment's decision
-    // honoured by the emulated engine and discarded by the harness.
-    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
-      expect.objectContaining({ runtimeSkillsOverride: [ENV_SKILL] }),
-    );
+    const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
+      Record<string, unknown> & {
+        effectiveCapabilities?: { standaloneSkills: { skillId: string }[] };
+      },
+    ];
+    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(
+      args.effectiveCapabilities?.standaloneSkills.map((s) => s.skillId),
+    ).toEqual(["sk_env"]);
+    expect(args.onBoxSkillsWritten).toBeTypeOf("function");
+    // The environment captured its server skills; the turn is not live.
+    expect(args).not.toHaveProperty("liveTurn");
+    // A harness gets its skills on its box: MCPJam's agent is handed no plan,
+    // so its prompt describes no skill tools the harness lacks.
+    const [prepared] = prepareChatV2Mock.mock.calls.at(-1) as [
+      { skills?: TurnSkills },
+    ];
+    expect(prepared.skills).toBeUndefined();
   });
 
-  it("delivers an environment's EMPTY set as empty rather than falling back", async () => {
+  it("plans an EMULATED turn's skills from the environment's set", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({}),
+      skills: [ENV_SKILL],
+    });
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).engine).toBe("emulated");
+    const [{ skills }] = prepareChatV2Mock.mock.calls.at(-1) as [
+      { skills: TurnSkills },
+    ];
+    // An environment's server skills were captured with it, so its plan adds
+    // no live ones.
+    expect(skills.agent).toEqual({ kind: "environment" });
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_env"]);
+    // A named environment keeps exactly its own skills.
+    expect(
+      resolveEnvironmentForRuntimeMock.mock.lastCall?.[1],
+    ).not.toHaveProperty("skillScope");
+  });
+
+  it("records the skills the turn handed its engine, with the environment", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue({
+      ...environmentSpec({}),
+      skills: [
+        { ...ENV_SKILL, provenance: { skillId: "sk_env", name: "deploy" } },
+      ],
+    });
+
+    await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    const persisted = persistChatSessionToConvexMock.mock.calls.at(-1)?.[0] as
+      { turnTrace?: Record<string, unknown> } | undefined;
+    expect(persisted?.turnTrace).toMatchObject({
+      environmentAtTurn: {
+        environmentId: ENVIRONMENT,
+        name: "prod",
+        revision: 1,
+      },
+      skillsAtTurn: [{ skillId: "sk_env", name: "deploy" }],
+    });
+  });
+
+  it("delivers an environment's EMPTY set as empty rather than leaving the box alone", async () => {
     resolveEnvironmentForRuntimeMock.mockResolvedValue({
       ...environmentSpec({ harness: "claude-code" }),
       skills: [],
@@ -1100,18 +1148,17 @@ describe("an environment's skills reach the engine that runs", () => {
     await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
     // "This environment delivers no skills" is a real answer, and a different
-    // one from "ask the project". An omitted field would mean the latter.
+    // one from "unknown". An omitted field would mean the latter.
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
     expect(args.runtimeSkillsOverride).toEqual([]);
   });
 
-  it("keeps ABSENT distinct from empty when the resolver did not answer", async () => {
-    // `skills` is an additive field — an older backend omits it entirely. An
-    // override built from that says "this environment has none" on the
-    // environment's behalf and strips the harness of every skill it should
-    // have had. Not-told must stay not-told, which is the live fetch.
+  it("reads an environment that names no skills as one with none, on both engines", async () => {
+    // `skills` is an additive field — an older backend omits it entirely. Its
+    // turn plans no skills for MCPJam's agent, so a harness gets none either,
+    // never some other source's.
     const spec = environmentSpec({ harness: "claude-code" });
     expect(spec).not.toHaveProperty("skills");
     resolveEnvironmentForRuntimeMock.mockResolvedValue(spec);
@@ -1121,13 +1168,10 @@ describe("an environment's skills reach the engine that runs", () => {
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
-    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+    expect(args.runtimeSkillsOverride).toEqual([]);
   });
 
-  it("leaves a host-only harness turn on the live catalog", async () => {
-    // No environment resolved anything, so there is no decision to honour and
-    // the legacy project-wide fetch is the correct source. An EMPTY override
-    // here would silently starve the turn of every skill it should have had.
+  it("gives a host's turn its client's skill selection, live on its servers", async () => {
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {
@@ -1136,13 +1180,33 @@ describe("an environment's skills reach the engine that runs", () => {
         selectedServerIds: ["srv_1"],
       },
     });
+    resolveEnvironmentForRuntimeMock.mockImplementation(
+      async (_client, args) => ({
+        ...environmentSpec({
+          hostId: HOST,
+          harness: "claude-code",
+          selectedServerIds: ["srv_1"],
+        }),
+        environmentRef: {
+          environmentId: args.environmentId,
+          name: "",
+          revision: 1,
+        },
+        skills: [ENV_SKILL],
+      }),
+    );
 
     await turn(firstTurn({ hostId: HOST }));
 
+    // The client's selection, all visible by default, is the backend's scope.
+    expect(resolveEnvironmentForRuntimeMock.mock.lastCall?.[1]).toMatchObject({
+      skillScope: "visible",
+    });
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown>,
     ];
-    expect(args).not.toHaveProperty("runtimeSkillsOverride");
+    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(args.liveTurn).toBe(true);
   });
 });
 

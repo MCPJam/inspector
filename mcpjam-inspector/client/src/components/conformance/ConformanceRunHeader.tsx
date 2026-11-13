@@ -54,6 +54,7 @@ export function ConformanceRunHeader({
       // run could not be found again, so it stays until the next run.
       backDisabled={busy || !showHistory}
       backTestId="conformance-run-back"
+      stackWhenNarrow
       title={
         <h1
           className="truncate text-xl font-bold tracking-tight text-foreground"

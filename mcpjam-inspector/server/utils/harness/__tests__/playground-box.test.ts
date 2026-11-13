@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { provisionMock, touchMock, releaseMock, dataPlaneMock, readinessMock } =
   vi.hoisted(() => ({
     provisionMock: vi.fn(),
-    touchMock: vi.fn(async () => "touched" as const),
+    touchMock: vi.fn(async () => ({ outcome: "touched" as const })),
     releaseMock: vi.fn(async () => {}),
     dataPlaneMock: vi.fn(() => true),
     readinessMock: vi.fn(),
@@ -214,7 +214,12 @@ describe("acquirePlaygroundHarnessBox", () => {
   it("provisions through the control plane and hands back a binding", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx", workdir: "/home/user" },
+      value: {
+        sandboxRowId: "row",
+        sandboxId: "sbx",
+        workdir: "/home/user",
+        idleMs: 5 * 60_000,
+      },
     });
     const result = await acquirePlaygroundHarnessBox({
       ...args,
@@ -234,20 +239,21 @@ describe("acquirePlaygroundHarnessBox", () => {
       sandboxId: "sbx",
       runtimeKind: "terminal",
       workdir: "/home/user",
+      idleMs: 5 * 60_000,
     });
     await result.box.release();
   });
 
-  it("keeps the box alive across a turn longer than its idle TTL, then leaves it for the next turn", async () => {
+  it("keeps the box alive across a turn longer than its idle window, then leaves it for the next turn", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx" },
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
     });
     const result = await acquirePlaygroundHarnessBox(args);
     if (!result.ok) throw new Error("expected a box");
-    // A playground box idles out at 30 minutes; the heartbeat is a quarter.
-    await vi.advanceTimersByTimeAsync(45 * 60_000);
-    expect(touchMock.mock.calls.length).toBeGreaterThanOrEqual(5);
+    // The backend's 5-minute window: the heartbeat is a quarter of it.
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(touchMock.mock.calls.length).toBe(12);
     expect(touchMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row", sandboxId: "sbx" }),
     );
@@ -273,7 +279,7 @@ describe("acquirePlaygroundHarnessBox", () => {
   it("stops beating when the turn's signal aborts, and leaves the box", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx" },
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
     });
     const turnAbort = new AbortController();
     const result = await acquirePlaygroundHarnessBox({
@@ -281,7 +287,7 @@ describe("acquirePlaygroundHarnessBox", () => {
       signal: turnAbort.signal,
     });
     if (!result.ok) throw new Error("expected a box");
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
     const beats = touchMock.mock.calls.length;
     expect(beats).toBeGreaterThan(0);
     turnAbort.abort();

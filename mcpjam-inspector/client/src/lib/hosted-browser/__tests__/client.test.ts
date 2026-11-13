@@ -13,6 +13,7 @@ import {
   createBrowserTokenCache,
   fetchHostedBrowserSession,
   HostedBrowserError,
+  hostedBrowserAwake,
   isSecureBrowserOrigin,
   openHostedBrowserFrameStream,
   sendHostedBrowserInput,
@@ -173,6 +174,37 @@ describe("an authorized call", () => {
     await expect(
       sendHostedBrowserInput(cache, { events: [] }),
     ).rejects.toMatchObject({ status: 423, code: "lease_held" });
+  });
+});
+
+describe("asking whether a paused desktop woke", () => {
+  const session = (extra: Record<string, unknown>) =>
+    json(200, {
+      ok: true,
+      bootId: "boot-1",
+      contextMode: "persistent",
+      lease: { state: "unknown" },
+      yours: false,
+      ...extra,
+    });
+
+  it("reads the session without ensure, which would wake it", async () => {
+    const { calls } = stubFetch(session({ asleep: false }));
+    const cache = createBrowserTokenCache(minter().mint);
+    expect(await hostedBrowserAwake(cache)).toBe(true);
+    expect(calls[0]!.url).toBe("/api/web/computers/browser/session");
+  });
+
+  it("answers no when the desktop is asleep, the server cannot say, or the read fails", async () => {
+    stubFetch(
+      session({ asleep: true }),
+      session({}),
+      json(503, { error: "browser_unavailable" }),
+    );
+    const cache = createBrowserTokenCache(minter().mint);
+    expect(await hostedBrowserAwake(cache)).toBe(false);
+    expect(await hostedBrowserAwake(cache)).toBe(false);
+    expect(await hostedBrowserAwake(cache)).toBe(false);
   });
 });
 

@@ -100,7 +100,8 @@ export function SavedRunActions({
 }) {
   const navigate = useAppNavigate();
   return (
-    <div className="ml-auto flex items-center gap-2">
+    // Wraps when the header stacks it on a narrow window.
+    <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
       {serverName && settings ? (
         <Button
           variant="outline"

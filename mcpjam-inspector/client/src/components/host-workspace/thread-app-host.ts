@@ -1,5 +1,7 @@
 import type { WidgetHost, WidgetHostServices } from "@mcpjam/widget-react";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import type { ThreadAppHandle } from "./thread-app-api";
+import { logExtensionEvent } from "./extension-log";
 import { createSandboxViewServices } from "../chat-v2/thread/mcp-apps/sandbox-view-services";
 
 /**
@@ -9,13 +11,25 @@ import { createSandboxViewServices } from "../chat-v2/thread/mcp-apps/sandbox-vi
  *   global), presented the way ChatGPT presents them: `fullscreen`, and only
  *   `fullscreen`. Where it is drawn (a right-rail tab or the global takeover)
  *   is the host's choice.
+ * - `inline`: a global entry App that can't go fullscreen, drawn at the top
+ *   of a new chat where the client opens those inline (Claude): `inline`,
+ *   and only `inline`.
  * - `model`: an App a model's tool call returned into the chat. It is not an
  *   entrypoint: it sits in its message inline, and goes fullscreen and comes
  *   back the way the client allows, like any chat App. Offering it
  *   fullscreen only made every way out (Exit full screen, the App's own
  *   Return, another side-panel tab) snap straight back to fullscreen.
  */
-export type ThreadAppPresentation = "thread" | "global" | "model";
+export type ThreadAppPresentation = "thread" | "global" | "inline" | "model";
+
+/** How an owned App's row is presented. */
+export function rowPresentation(row: {
+  inline?: true;
+  declaration: { kind: string };
+}): ThreadAppPresentation {
+  if (row.inline) return "inline";
+  return row.declaration.kind === "global" ? "global" : "thread";
+}
 
 type ChatDisplayMode = "inline" | "fullscreen";
 const CHAT_DISPLAY_MODES: readonly ChatDisplayMode[] = ["inline", "fullscreen"];
@@ -79,22 +93,48 @@ function ownedDocumentServices(
   return services;
 }
 
+/** Apps whose ignored preference is already in Logs: one row per App. */
+const warnedPreferences = new WeakSet<ThreadAppHandle>();
+
+/** A `_meta.ui.preferredDisplayMode` that isn't a mode is ignored; say so once. */
+function warnIgnoredPreferredDisplayMode(
+  handle: ThreadAppHandle,
+  serverId: string,
+) {
+  const ignored = handle.widgetContent?.ignoredPreferredDisplayMode;
+  if (ignored === undefined || warnedPreferences.has(handle)) return;
+  warnedPreferences.add(handle);
+  logExtensionEvent({
+    serverId,
+    label: "display-mode",
+    level: "warning",
+    message: `${handle.toolTitle}'s resource sets _meta.ui.preferredDisplayMode to ${ignored}, which MCPJam ignores. Set it to "fullscreen" or "inline".`,
+    detail: { resourceUri: handle.resourceUri, preferredDisplayMode: ignored },
+  });
+}
+
 /** Compose only the actual qualified ports. A normal chat host is not authority.
- * `openAIDisplayModes` is the client's Display modes extension toggle: on, the
- * App starts in the mode OpenAI's rules pick (see `openAIDisplayModes` in
- * `@mcpjam/sdk/widget-runtime`) instead of always inline. */
+ * `displayBehavior` is the client's display behavior while its Display modes
+ * extension is on: under `hint-first` the App starts in the mode OpenAI's
+ * rules pick (see `openAIDisplayModes` in `@mcpjam/sdk/widget-runtime`);
+ * otherwise it starts inline. */
 export function createThreadAppHost(
   host: WidgetHost,
   handle: ThreadAppHandle,
   serverId: string,
   presentation: ThreadAppPresentation = "thread",
-  { openAIDisplayModes = false, projectId }: {
-    openAIDisplayModes?: boolean;
+  {
+    displayBehavior,
+    projectId,
+  }: {
+    displayBehavior?: DisplayBehavior;
     /** Captured owner project; contributed servers need no ambient name lookup. */
     projectId?: string;
   } = {},
 ): WidgetHost {
   const model = presentation === "model";
+  const fixed: ChatDisplayMode =
+    presentation === "inline" ? "inline" : "fullscreen";
   const unavailable = async () => {
     throw new Error("This App capability is unavailable");
   };
@@ -112,24 +152,26 @@ export function createThreadAppHost(
       draftHostContext: model
         ? {
             ...draftHostContext,
-            ...(openAIDisplayModes ? {} : { displayMode: "inline" }),
+            ...(displayBehavior?.start === "hint-first"
+              ? {}
+              : { displayMode: "inline" }),
             availableDisplayModes: chatDisplayModes(
               draftHostContext.availableDisplayModes,
             ),
           }
         : {
             ...draftHostContext,
-            displayMode: "fullscreen",
-            availableDisplayModes: ["fullscreen"],
+            displayMode: fixed,
+            availableDisplayModes: [fixed],
           },
     },
     surface: {
       ...host.surface,
       playgroundCspMode: "widget-declared",
-      // An entrypoint is fullscreen by the host's choice, so an App that
-      // declares only `inline` still opens rather than being refused.
-      ...(model ? {} : { fixedDisplayMode: "fullscreen" as const }),
-      ...(openAIDisplayModes ? { openAIDisplayModes: true } : {}),
+      // An entrypoint's mode is the host's choice, so an App that declares
+      // only `inline` still opens rather than being refused.
+      ...(model ? {} : { fixedDisplayMode: fixed }),
+      ...(displayBehavior ? { displayBehavior } : {}),
     },
     resolvers: {
       // window.openai follows the client's own "Inject window.openai" setting,
@@ -155,8 +197,8 @@ export function createThreadAppHost(
             )
           : (
               host.resolvers.resolveEffectiveMcpAppsCapabilities(args)
-                .availableDisplayModes ?? ["fullscreen"]
-            ).filter((mode) => mode === "fullscreen"),
+                .availableDisplayModes ?? [fixed]
+            ).filter((mode) => mode === fixed),
         serverTools:
           handle.appToolsEnabled &&
           !!host.resolvers.resolveEffectiveHostCapabilities(args).serverTools &&
@@ -182,6 +224,8 @@ export function createThreadAppHost(
           request.serverId !== serverId
         )
           throw new Error("App resource changed");
+        if (displayBehavior?.hints === "ui")
+          warnIgnoredPreferredDisplayMode(handle, serverId);
         return handle.widgetContent;
       },
       readResource: unavailable,

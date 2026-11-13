@@ -52,6 +52,37 @@ describe("admitted sandbox lifecycle", () => {
     expect(prepare).toHaveBeenCalledTimes(1);
   });
 
+  it("posts nothing while new HTML is admitted again after the proxy was ready", async () => {
+    const { prepare, admission } = setup();
+    const next = deferred<PreparedSandboxView>();
+    prepare.mockResolvedValueOnce(first).mockReturnValueOnce(next.promise);
+    const view = (html: string) => (
+      <SandboxedIframe
+        html={html}
+        colorScheme="dark"
+        viewAdmission={{ ...admission, request: { ...admission.request, html } }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(view("<p>app</p>"));
+    await act(async () => { await Promise.resolve(); });
+    const iframe = container.querySelector("iframe")!;
+    expect(iframe.src).toBe(first.proxyUrl);
+    const post = vi.spyOn(iframe.contentWindow!, "postMessage").mockImplementation(() => {});
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready" },
+        source: iframe.contentWindow!, origin: new URL(first.proxyUrl).origin,
+      }));
+    });
+    expect(post).toHaveBeenCalled();
+    post.mockClear();
+
+    rerender(view("<p>new</p>"));
+    await act(async () => { await Promise.resolve(); });
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("does not load the legacy proxy after an admission failure", async () => {
     const { prepare, admission } = setup();
     prepare.mockRejectedValue(new Error("unavailable"));

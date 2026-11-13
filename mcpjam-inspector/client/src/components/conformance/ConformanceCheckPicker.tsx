@@ -34,6 +34,8 @@ import {
   TASKS_CATALOG,
   protocolAdviceCatalog,
   protocolCatalog,
+  shownTasksCatalog,
+  useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import { Collapse, SUITE_COPY } from "./conformance-ui";
 
@@ -242,7 +244,10 @@ export function ConformanceCheckPicker({
     checkId: string,
   ) => string | undefined;
 }) {
-  const catalogs = checkCatalogs(versionPin);
+  const catalogs = {
+    ...checkCatalogs(versionPin),
+    tasks: shownTasksCatalog(useTasksUpdateCheckEnabled()),
+  };
   const advice = adviceCatalogs(versionPin);
   const adviceCatalog = (suite: AdviceSuite) =>
     showAdvice ? advice[suite] : [];

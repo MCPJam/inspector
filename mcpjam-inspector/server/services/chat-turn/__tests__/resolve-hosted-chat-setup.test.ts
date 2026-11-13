@@ -186,7 +186,19 @@ describe("hosted setup normalization", () => {
         target,
         access: projectAccess,
       });
-      expect(result.usesLiveSkills).toBe(kind !== "environment");
+      // A client's turn (no environment of its own named) asks the backend
+      // for the client's skill selection as a scope.
+      expect(result.clientTurn).toBe(kind !== "environment");
+      expect(resolveChatTurn).toHaveBeenLastCalledWith(
+        expect.objectContaining(
+          kind === "environment" ? {} : { skillScope: "visible" },
+        ),
+      );
+      if (kind === "environment") {
+        expect(
+          vi.mocked(resolveChatTurn).mock.lastCall?.[0],
+        ).not.toHaveProperty("skillScope");
+      }
       expect(result.authoritativeConnectionPolicy).toBe(kind !== "adhoc");
       expect(result.pinsEnvironment).toBe(kind === "environment");
       expect(result.workspaceToolsBarred).toBe(false);
@@ -205,6 +217,136 @@ describe("hosted setup normalization", () => {
     });
     expect(result.toolConfigurationUnavailable).toBe(true);
     expect(result.toolConfiguration).toBeNull();
+  });
+  it.each([
+    ["an ad-hoc row", "adhoc", true],
+    ["a named row", "named", false],
+    ["a row of unknown origin", undefined, false],
+  ] as const)(
+    "asks for a hidden environment's scope, and treats %s as a client's turn only when ad hoc",
+    async (_label, origin, clientTurn) => {
+      vi.mocked(resolveChatTurn).mockResolvedValue({
+        kind: "project",
+        mode: "interactive",
+        composed: false,
+        access: { kind: "project", projectId: "p" },
+        selection: { kind: "environment-default" },
+        environment: {
+          environmentRef: { environmentId: "e", name: "Chat", revision: 1 },
+          ...(origin ? { environmentOrigin: origin } : {}),
+          host: { hostId: "h", runtimeConfig: {} },
+          servers: { effectiveServerIds: [] },
+        },
+      });
+      const result = await resolveHostedChatSetup({
+        ...common,
+        target: { kind: "environment", environmentId: "e" },
+        access: projectAccess,
+        hiddenEnvironment: true,
+      });
+      expect(resolveChatTurn).toHaveBeenLastCalledWith(
+        expect.objectContaining({ skillScope: "visible" }),
+      );
+      expect(result.clientTurn).toBe(clientTurn);
+    },
+  );
+  it("reports the skills a pane's plugin narrowing switched off", async () => {
+    const skill = (skillId: string, name: string) => ({
+      skillId,
+      name,
+      description: "",
+      content: "",
+      aggregateHash: `agg_${skillId}`,
+    });
+    vi.mocked(resolveChatTurn).mockResolvedValue({
+      kind: "project",
+      mode: "interactive",
+      composed: false,
+      access: { kind: "project", projectId: "p" },
+      selection: { kind: "environment-default" },
+      environment: {
+        environmentRef: { environmentId: "e", name: "Env", revision: 1 },
+        host: { hostId: "h", runtimeConfig: {} },
+        servers: { effectiveServerIds: [] },
+        skills: [skill("sk_kept", "kept"), skill("sk_plugin", "dropped")],
+        pluginVersions: [
+          { pluginId: "pl", pluginVersionId: "pv_1", name: "p" },
+        ],
+      },
+    });
+    vi.spyOn(client, "query").mockResolvedValue({
+      pluginVersions: [{ pluginId: "pl", pluginVersionId: "pv_1", name: "p" }],
+      effectiveServerIds: [],
+      serverComponents: [],
+      pluginSkills: [
+        {
+          pluginVersionId: "pv_1",
+          materializedSkillId: "sk_plugin",
+          modelRef: "p/dropped",
+        },
+      ],
+      unavailableComponents: [],
+    });
+    const result = await resolveHostedChatSetup({
+      ...common,
+      target: {
+        kind: "environment",
+        environmentId: "e",
+        overrides: { pluginVersionIds: [] },
+      },
+      access: projectAccess,
+    });
+    expect(result.environmentSpec?.skills?.map((s) => s.skillId)).toEqual([
+      "sk_kept",
+    ]);
+    expect(result.pluginDisabled.map((s) => s.skillId)).toEqual(["sk_plugin"]);
+  });
+  it("reads an environment-backed study's captured server skills", async () => {
+    vi.mocked(fetchScenarioRuntimeConfig).mockResolvedValue({
+      ok: true,
+      config: {
+        ...runtimeConfig,
+        scenarioId: "s",
+        accessVersion: 4,
+        environment: {
+          environmentRef: { environmentId: "e", name: "Study", revision: 2 },
+          servers: { effectiveServerIds: ["srv_1"] },
+          serverSkills: [
+            {
+              serverSkillId: "ss_1",
+              versionId: "ssv_1",
+              serverId: "srv_1",
+              serverSlug: "acme",
+              serverLabel: "Acme",
+              ref: "acme/refunds",
+              skillUri: "skill://acme/refunds",
+              name: "refunds",
+              description: "Handle refunds",
+              content: "# Refunds",
+              contentSha256: "sha",
+              versionHash: "vh",
+              versionNumber: 1,
+              capturedAt: 1,
+              files: [],
+            },
+            { serverSkillId: "ss_torn" },
+          ],
+        },
+      } as never,
+    });
+    const result = await resolveHostedChatSetup({
+      ...common,
+      target: { kind: "scenario", scenarioId: "s" },
+      access: { kind: "scenario", scenarioId: "s", accessVersion: 4 },
+    });
+    // A torn entry is dropped, not the study's turn.
+    expect(result.scenarioEnvironment?.serverSkills.map((s) => s.ref)).toEqual([
+      "acme/refunds",
+    ]);
+    expect(
+      result.effectiveCapabilities?.serverSkills.map((s) => s.ref),
+    ).toEqual(["acme/refunds"]);
+    expect(result.clientTurn).toBe(false);
   });
   it("does not read private project defaults for guests", async () => {
     const query = vi.spyOn(client, "query");

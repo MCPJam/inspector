@@ -547,16 +547,21 @@ describe("useChatSession — a harness client with no model it can run", () => {
 
   it("does not crash: it shows a disabled stand-in and refuses to send", async () => {
     // The only row is a key on this machine, which a brokered harness never
-    // runs: the picker list is empty.
+    // runs: the picker lists it disabled, and nothing is pickable.
     const { result } = await renderWithHarness(undefined, undefined, {
       harnessModelTarget: { harnessId: "claude-code" },
     });
     const session = result.current;
-    expect(session.availableModels).toEqual([]);
+    expect(session.availableModels).toEqual([
+      expect.objectContaining({
+        disabled: true,
+        disabledReason: expect.stringMatching(/organization's Anthropic key/),
+      }),
+    ]);
     expect(session.selectedModel).toMatchObject({
       disabled: true,
       disabledReason:
-        "Claude Code runs MCPJam models or your organization's Anthropic key. Add one in Organization models.",
+        "Claude Code runs MCPJam models, your organization's Anthropic key, or a gateway that serves Anthropic Messages. Set one up in Organization models.",
     });
     expect(session.submitBlocked).toBe(true);
   });

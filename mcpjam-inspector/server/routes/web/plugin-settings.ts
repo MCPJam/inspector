@@ -1,5 +1,4 @@
 import { reportRouteFailure } from "../../utils/route-error-report.js";
-import { randomBytes } from "node:crypto";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
   settingsOperationIntent,
@@ -10,6 +9,14 @@ import {
   pluginOperationRequest,
 } from "../../../shared/plugin-operation-authorization.js";
 import { settingsOperation } from "../../services/plugin-host/settings-operation.js";
+import {
+  closePluginSettingsChild,
+  issuePluginSettingsChild,
+  newPluginSettingsChildToken,
+  readPluginSettingsChild,
+  readPluginSettingsState,
+  storePluginSettingsDocument,
+} from "../../services/plugin-host/settings-state.js";
 import {
   preparePluginOperation,
   bindPluginOperation,
@@ -84,19 +91,7 @@ const invocation = handle.extend({
   toolName: z.string().optional(),
   approval: z.object({ id: z.string(), approved: z.boolean() }).optional(),
 });
-const children = new Map<
-  string,
-  {
-    parent: string;
-    action: string;
-    revision: string;
-    signal: AbortSignal;
-    dispose: () => void;
-  }
->();
 const childHandle = handle.extend({ childToken: z.string().min(1) });
-const documents = new Map<string, PluginSettingsDocument>();
-const observed = new Set<string>();
 const denied = () => new PluginInvocationError("INSTANCE_DENIED");
 async function identity(c: Context, body: z.infer<typeof scope>) {
   const bearer = await getConvexBearerForRequest(c);
@@ -187,7 +182,7 @@ routes.post("/renew", (c) =>
       })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
@@ -202,27 +197,20 @@ routes.post("/renew", (c) =>
       method: body.operation.params?.name,
       ...body.operation.params?.arguments,
     });
-    const child =
-      intent.method === "app/call"
-        ? children.get(intent.childToken)
-        : undefined;
-    if (
-      intent.method === "app/call" &&
-      (!child || child.parent !== body.instanceToken)
-    )
-      throw denied();
+    if (intent.method === "app/call")
+      await readPluginSettingsChild(
+        intent.childToken,
+        actor,
+        instance,
+        c.req.raw.signal,
+      );
     await assertPluginInstanceBindingCurrent({
       admission,
       bearer,
       instance,
       signal: c.req.raw.signal,
     });
-    const lifetime = child
-      ? AbortSignal.any([
-          pluginInstances.signal(body.instanceToken, actor),
-          child.signal,
-        ])
-      : pluginInstances.signal(body.instanceToken, actor);
+    const lifetime = pluginInstances.signal(body.instanceToken, actor);
     const operationAuthorization = await preparePluginOperation(
       c,
       instance,
@@ -230,7 +218,7 @@ routes.post("/renew", (c) =>
         instance,
         intent,
         body.operation.invocationId,
-        documents.get(body.instanceToken),
+        document,
       ),
       body.operation.requestId,
       lifetime,
@@ -304,17 +292,6 @@ routes.post("/open", (c) =>
         },
         c.req.raw.signal,
       );
-      if (!observed.has(opened.token)) {
-        observed.add(opened.token);
-        pluginInstances.signal(opened.token, actor).addEventListener(
-          "abort",
-          () => {
-            documents.delete(opened.token);
-            observed.delete(opened.token);
-          },
-          { once: true },
-        );
-      }
       return c.json({
         instanceToken: opened.token,
         instanceId: opened.instance.owner.instanceId,
@@ -331,14 +308,18 @@ for (const method of ["read", "update", "action"] as const)
     route(c, async () => {
       const body = invocation.parse(await c.req.json());
       const { bearer, admission, actor } = await identity(c, body);
-      const instance = await pluginInstances.getPersistent(
+      const state = await readPluginSettingsState(
         body.instanceToken,
         actor,
         c.req.raw.signal,
       );
+      const { instance } = state;
       const settings = instance.activation.settings;
       if (!settings) throw denied();
-      let document = documents.get(body.instanceToken);
+      let document = state.document;
+      // Set only when this request ran the read itself: a replayed receipt
+      // never validates, so it never overwrites a newer stored document.
+      let fresh: { content: unknown; document: PluginSettingsDocument } | undefined;
       const name =
         method === "read"
           ? settings.readTool
@@ -373,7 +354,7 @@ for (const method of ["read", "update", "action"] as const)
           { hostId: instance.hostId, serverId: instance.owner.serverId },
           instance,
         );
-        let catalog: Awaited<ReturnType<typeof runtime.catalog>>;
+        let catalog: Awaited<ReturnType<typeof runtime.catalog>> | undefined;
         const resolve = async (
           toolName: string,
           signal: AbortSignal,
@@ -392,7 +373,7 @@ for (const method of ["read", "update", "action"] as const)
             throw denied();
           return resolvePluginCatalogTool(catalog, toolName);
         };
-        return await invokePluginRequest(c, {
+        const response = await invokePluginRequest(c, {
           receiptOnly: authorization.receiptOnly,
           actor,
           owner: instance.owner,
@@ -419,13 +400,9 @@ for (const method of ["read", "update", "action"] as const)
                 mcpAppToolResultSchema.parse(result).structuredContent;
               if (method === "read") {
                 document = parsePluginSettingsDocument(content);
-                documents.set(body.instanceToken, document);
+                fresh = { content, document };
               } else if (method === "update") {
-                const values = parsePluginSettingsUpdate(
-                  document!.fields,
-                  content,
-                );
-                documents.set(body.instanceToken, { ...document!, values });
+                parsePluginSettingsUpdate(document!.fields, content);
               }
             });
           },
@@ -440,6 +417,16 @@ for (const method of ["read", "update", "action"] as const)
               "settings",
             ),
         });
+        if (fresh && catalog)
+          await storePluginSettingsDocument(
+            body.instanceToken,
+            actor,
+            state.version,
+            fresh.content,
+            settingsActionBindings(fresh.document, catalog),
+            c.req.raw.signal,
+          );
+        return response;
       } finally {
         authorization.dispose();
       }
@@ -449,13 +436,12 @@ routes.post("/actions", (c) =>
   route(c, async () => {
     const body = handle.parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
     const settings = instance.activation.settings;
-    const document = documents.get(body.instanceToken);
     if (!settings || !document) throw denied();
     const runtime = createPluginRequestRuntime(
       c,
@@ -500,7 +486,6 @@ routes.post("/close", (c) =>
       },
       c.req.raw.signal,
     );
-    documents.delete(body.instanceToken);
     return c.json({ ok: true });
   }),
 );
@@ -510,12 +495,11 @@ routes.post("/app/open", (c) =>
       .extend({ toolName: z.string().min(1) })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
-    const document = documents.get(body.instanceToken);
     if (!document || !instance.activation.settings) throw denied();
     const runtime = createPluginRequestRuntime(
       c,
@@ -566,19 +550,9 @@ routes.post("/app/open", (c) =>
         )
       )
         throw denied();
-      await pluginInstances.getPersistent(
-        body.instanceToken,
-        actor,
-        c.req.raw.signal,
-      );
-      if (
-        children.size >= 128 ||
-        [...children.values()].filter(
-          (child) => child.parent === body.instanceToken,
-        ).length >= 8
-      )
-        throw denied();
-      const childToken = randomBytes(32).toString("base64url");
+      // The view's receipt comes before the child's row, so an App whose
+      // view is refused leaves no row behind to count against its quota.
+      const childToken = newPluginSettingsChildToken();
       const sourceReceipt = await sandboxSourceReceipt(
         c,
         {
@@ -590,24 +564,14 @@ routes.post("/app/open", (c) =>
         widgetContent.csp,
         body.projectId,
       );
-      const signal = pluginInstances.signal(body.instanceToken, actor);
-      const lifetime = new AbortController();
-      const dispose = () => {
-        lifetime.abort();
-        children.delete(childToken);
-        signal.removeEventListener("abort", dispose);
-        clearTimeout(timer);
-      };
-      const timer = setTimeout(dispose, 30 * 60_000);
-      timer.unref?.();
-      children.set(childToken, {
-        parent: body.instanceToken,
-        action: body.toolName,
-        revision: action.revision,
-        signal: lifetime.signal,
-        dispose,
-      });
-      signal.addEventListener("abort", dispose, { once: true });
+      await issuePluginSettingsChild(
+        body.instanceToken,
+        actor,
+        await readPluginSettingsState(body.instanceToken, actor, c.req.raw.signal),
+        childToken,
+        { action: body.toolName, revision: action.revision, resourceUri: uri },
+        c.req.raw.signal,
+      );
       return c.json({
         childToken,
         resourceUri: uri,
@@ -637,21 +601,21 @@ routes.post("/app/call", (c) =>
       })
       .parse(await c.req.json());
     const { bearer, admission, actor } = await identity(c, body);
-    const instance = await pluginInstances.getPersistent(
+    const { instance, document } = await readPluginSettingsState(
       body.instanceToken,
       actor,
       c.req.raw.signal,
     );
-    const child = children.get(body.childToken);
-    const document = documents.get(body.instanceToken);
-    if (
-      !child ||
-      child.parent !== body.instanceToken ||
-      !document ||
-      !instance.activation.settings
-    )
-      throw denied();
-    const active = AbortSignal.any([c.req.raw.signal, child.signal]);
+    if (!document || !instance.activation.settings) throw denied();
+    // The action it was opened for. Its Settings App can close it from any
+    // replica, so each authorization below reads its row again.
+    const child = await readPluginSettingsChild(
+      body.childToken,
+      actor,
+      instance,
+      c.req.raw.signal,
+    );
+    const active = c.req.raw.signal;
     const authorization = await bindPluginOperation(
       c,
       instance,
@@ -678,7 +642,6 @@ routes.post("/app/call", (c) =>
       );
       const live = () => {
         active.throwIfAborted();
-        if (children.get(body.childToken) !== child) throw denied();
         pluginInstances.get(body.instanceToken, actor);
       };
       return await invokePluginRequest(c, {
@@ -697,6 +660,12 @@ routes.post("/app/call", (c) =>
           const catalog = await runtime.catalog(
             AbortSignal.any([signal, active]),
             read,
+          );
+          await readPluginSettingsChild(
+            body.childToken,
+            actor,
+            instance,
+            AbortSignal.any([signal, active]),
           );
           live();
           if (
@@ -755,18 +724,23 @@ routes.post("/app/close", (c) =>
       bearer,
       signal: c.req.raw.signal,
     });
-    await pluginInstances.getPersistent(
+    const cleanup = {
+      actorId,
+      projectId: body.projectId,
+      workspaceId: body.pluginWorkspace.workspaceId,
+      subject,
+    };
+    const parent = await pluginInstances.getPersistent(
       body.instanceToken,
-      {
-        actorId,
-        projectId: body.projectId,
-        workspaceId: body.pluginWorkspace.workspaceId,
-        subject,
-      },
+      cleanup,
       c.req.raw.signal,
     );
-    const child = children.get(body.childToken);
-    if (child?.parent === body.instanceToken) child.dispose();
+    await closePluginSettingsChild(
+      body.childToken,
+      cleanup,
+      parent,
+      c.req.raw.signal,
+    );
     return c.json({ ok: true });
   }),
 );

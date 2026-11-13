@@ -340,17 +340,12 @@ describe("OverallScoreCard", () => {
         }}
         serverName="amazon-test"
         version="2025-11-25"
-        oauthNotScored
       />,
     );
     expect(
       screen.getByText("Incomplete. 4 checks could not run."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "38 checks not applicable and OAuth not scored (no auth).",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("38 checks not applicable.")).toBeInTheDocument();
   });
 
   it("shows the fraction without a partial mark", () => {

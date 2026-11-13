@@ -17,6 +17,11 @@ import type { ConformanceDefaults } from "@/hooks/use-conformance-server-data";
 import { ConformanceSettings } from "../ConformanceSettings";
 import { SavedRunSettings } from "../ConformanceRunActions";
 const toolsMock = vi.hoisted(() => ({ outputSchema: true }));
+// The update check and its answers box are behind a flag; these tests cover it.
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) =>
+    key === "conformance-tasks-update-check",
+}));
 vi.mock("../ConformanceProbeField", async (original) => ({
   ...(await original<typeof import("../ConformanceProbeField")>()),
   useProbeTools: () => ({

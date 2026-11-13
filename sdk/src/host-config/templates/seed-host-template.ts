@@ -546,10 +546,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // SUPPORTED_MODELS entry → silently fell back to default.
         // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
         // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
+      // Claude's default Tool access mode is Auto, represented by omission.
+      delete base.progressiveToolDiscovery;
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -736,10 +738,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -792,10 +797,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // SUPPORTED_MODELS entry → silently fell back to default.
         // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
         // pick it without an Anthropic key.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
+      // Claude Desktop shares Claude's default Auto tool access mode.
+      delete base.progressiveToolDiscovery;
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -990,10 +997,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            // Claude advertises frameDomains and baseUriDomains and then
-            // blocks the origins it declared there (2026-08-19 probe), so
-            // neither is usable.
-            cspFrameDomains: false,
+            // From Claude's embedded-sites doc, not a probe: the origins a
+            // view declares in `_meta.ui.csp.frameDomains` load once a
+            // Verified listing or the user allows them
+            // (https://claude.com/docs/connectors/building/mcp-apps/embedded-sites).
+            cspFrameDomains: true,
+            // Claude advertises baseUriDomains and then blocks the origins it
+            // declared there, so it is not usable.
             cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
@@ -1073,10 +1083,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         elicitation: { form: {}, url: {} },
         extensions: { "io.modelcontextprotocol/tasks": {} },
       };
-      // The real Claude Code owns native tool discovery from the generated
-      // .mcp.json. Keep MCPJam's progressive meta-tools off for this template
-      // so `search_mcp_tools` never looks like a Claude Code built-in.
-      base.progressiveToolDiscovery = false;
+      // Records Claude Code's default. The native harness owns discovery and
+      // the orchestrator disables MCPJam's meta-tools for harness turns.
+      base.progressiveToolDiscovery = true;
       // CLI client: no widget rendering, so `hostContext` stays the
       // empty object.
       //
@@ -1146,7 +1155,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // entry → silently fell back. Luna is the current default ChatGPT
         // model and is hosted (every hosted model is guest-allowed), so
         // guests still get it without an OpenAI key.
-        modelId: "openai/gpt-5.6-luna",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1409,7 +1418,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       const base = emptyHostConfigInputV2({
         hostStyle: "mistral",
         // Default the Mistral host to Mistral Large 3 2512 (MCPJam-hosted).
-        modelId: "mistralai/mistral-large-2512",
+        modelId: "mistralai/mistral-small-2603",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1551,7 +1560,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Goose Desktop is model-provider agnostic. Use MCPJam's smallest
         // hosted model so the simulated chat runs before a user wires their
         // own Goose-like model stack.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1675,7 +1684,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // Slackbot's MCP host is model-provider agnostic toward the server.
         // Use MCPJam's smallest hosted model so simulated chats run before a
         // user wires their own Slackbot-shaped model stack.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -1838,13 +1847,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
+        progressiveToolDiscovery: true,
         // Canonical id (anthropic/<slug>) so the chat-composer model
         // picker resolves it. Bare "claude-sonnet-4-5" never matched a
         // SUPPORTED_MODELS entry → silently fell back. Sonnet 4.5 is in
         // MCPJAM_GUEST_ALLOWED_MODEL_IDS (4.6 is gated); guests get it
         // without an Anthropic key. Anthropic-flavored default matches
         // Cursor's typical chat config — users can swap any model after.
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
         // Real Cursor (3.4.20 probe) doesn't yet implement SEP-1865
@@ -1983,6 +1993,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // surface colors + the shimmering "Thinking" indicator). See
         // CODEX_HOST_STYLE in client-styles/built-ins.ts.
         hostStyle: "codex",
+        progressiveToolDiscovery: true,
         // Canonical hosted id so the chat-composer model picker resolves it.
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
@@ -2198,18 +2209,25 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-5.5",
         temperature: 1,
         requireToolApproval: true,
+        // The CLI lists and calls `_meta.ui.visibility: ["app"]` tools
+        // (measured on 1.0.92), so filtering them would hide tools it exposes.
+        respectToolVisibility: false,
         harness: "copilot-cli",
         computer: { kind: "personal" },
+        // MCPJam's outer limit, the only explicit timeout native forwarding
+        // admits.
+        connectionDefaults: { headers: {}, requestTimeout: 300_000 },
       }),
-      progressiveToolDiscovery: false,
+      // Native Copilot CLI enables search automatically above ~30 tools.
+      progressiveToolDiscovery: undefined,
+      // No capability, identity or protocol pins: this client is forward-only,
+      // so the CLI's own handshake reaches the server and any pin would keep
+      // MCPJam's connection from matching it. Kept in lockstep with the
+      // backend template, which records the measured handshake.
       clientCapabilities: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: { name: "MCPJam", version: "1.0" },
-        },
         apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
       },
     }),
@@ -2234,26 +2252,29 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "cursor/auto",
         temperature: 1.0,
         requireToolApproval: false,
+        // The real CLI ignores SEP-1865 App-only visibility: it lists
+        // `_meta.ui.visibility: ["app"]` tools to its model and calls them.
+        // Filtering them here would hide tools the CLI exposes.
+        respectToolVisibility: false,
         // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
         // of MCPJam's emulated engine. It executes inside an attached personal
         // computer, so seed one too — the backend enforces `harness ⇒ computer`
         // on write.
         harness: "cursor",
         computer: { kind: "personal" },
+        // MCPJam's outer limit, not Cursor's. Cursor cancels its own MCP calls
+        // 60 s after sending them, so that limit governs on every route, and
+        // native forwarding admits no other explicit timeout than this one.
+        connectionDefaults: { headers: {}, requestTimeout: 300_000 },
       });
-      // REPLACED, not spread. A spread would leak the SDK default's
-      // `extensions["io.modelcontextprotocol/ui"]` back in and advertise a
-      // widget-rendering surface a terminal CLI cannot have — the same move the
-      // Claude Code and Codex templates make, and for the same reason.
-      //
-      // Conservative rather than probed: unlike Claude Code's, these are NOT
-      // from a live `start-host-probe` capture. `roots` + `elicitation` is the
-      // floor an ACP client is expected to support; widen it only from a real
-      // capture (the backend catalog row is `provenance: 'assumed'` to match).
-      base.clientCapabilities = {
-        roots: {},
-        elicitation: {},
-      };
+      // REPLACED with an empty set, not spread. A spread would leak the SDK
+      // default's UI extension back in. There are no capability, identity or
+      // protocol pins at all, and so no `mcpProfile.initialize`: forwarding
+      // passes the real CLI's own handshake through, and any pin here would
+      // make MCPJam's connection differ from it, which keeps the client off
+      // pass-through. The backend catalog row records the measured handshake
+      // as evidence. Kept in lockstep with the backend template.
+      base.clientCapabilities = {};
       // The real Cursor CLI owns native tool discovery from the MCP servers
       // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
       // off — `search_mcp_tools` must never look like a Cursor built-in.
@@ -2268,32 +2289,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // The CLI's native toolset (bash/read/edit/…) is NOT seeded into
       // `builtInToolIds`: under `harness: "cursor"` those come from the real
       // runtime inside the sandbox, not MCPJam's built-in tool registry.
+      //
+      // The CLI's own negotiation, measured: `initialize` at 2025-11-25 on
+      // every server, and `server/discover` at 2026-07-28 only after a
+      // `-32022` refusal naming it. Not a pin: Auto would probe 2026-07-28
+      // first and land a both-era server on a revision the CLI never speaks.
       base.mcpProfile = {
         profileVersion: 1,
-        initialize: {
-          // ASSUMED, inherited from the same-vendor `cursor` template rather
-          // than measured — kept in lockstep with the backend catalog row.
-          supportedProtocolVersions: ["2025-11-25"],
-          // TODO(cursor-cli probe): capture the real clientInfo the cursor-agent
-          // MCP client sends and replace these.
-          //
-          // `version` is REQUIRED by the canonicalizer (non-empty string), so
-          // it cannot be omitted to signal "unknown". It carries the build
-          // actually OBSERVED during the harness spike — real, not a guess —
-          // but it is NOT a pin: the bootstrap installs via
-          // `curl https://cursor.com/install | bash`, which always fetches the
-          // current build, so most sessions run something newer. That gap is
-          // why the turn records the installed `agent --version` per session
-          // (see `runtimeVersionCommand` in the server registry); do not read
-          // this field as what ran. Kept in lockstep with the backend catalog.
-          clientInfo: {
-            name: "cursor-agent",
-            title: "Cursor CLI",
-            version: "2026.08.31-4057e58",
-            description: "Cursor's agentic coding CLI",
-            websiteUrl: "https://cursor.com/cli",
-          },
-        },
+        versionNegotiation: "legacy-first",
       };
       return base;
     },
@@ -2312,7 +2315,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "copilot",
         // Match the backend's supported default for Copilot so offline
         // template creation uses the same model as the live catalog.
-        modelId: "openai/gpt-5.6-luna",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2474,11 +2477,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "vscode",
+        // Tool search defaults on for supported Claude models.
+        progressiveToolDiscovery: true,
         // VS Code Copilot Chat offers both OpenAI and Anthropic models;
         // default to the same guest-allowed Anthropic model as Cursor
         // (Sonnet 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS) so the App
         // Builder works without a BYOK key. Users can swap any model after.
-        modelId: "anthropic/claude-sonnet-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
         // The 1.130 probe did not exercise SEP-1865 visibility filtering, so
@@ -2664,7 +2669,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // need AWS creds), so default to the guest-allowed hosted Claude
         // analog — Haiku 4.5 — so the App Builder works without AWS
         // credentials. Users can swap to a real Bedrock model id after.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2722,7 +2727,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "n8n",
         // n8n's MCP Client Tool is model-provider agnostic; this hosted
         // default only keeps MCPJam's simulated chat runnable out-of-the-box.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2754,7 +2759,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "gemini",
-        modelId: "google/gemini-3-pro",
+        modelId: "google/gemini-3.8-flash",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2863,7 +2868,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "perplexity",
         // The probe only identifies Perplexity's MCP client, not a reusable
         // model id; keep MCPJam's simulated chat runnable with a hosted model.
-        modelId: "openai/gpt-5-nano",
+        modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -2892,7 +2897,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "cline",
         // The probe only identifies Cline's MCP client, not a reusable model
         // id; keep MCPJam's simulated chat runnable with a hosted model.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });
@@ -2923,7 +2928,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "notion",
         // Notion AI is model-provider agnostic toward MCP servers; this hosted
         // default only keeps MCPJam's simulated chat runnable out-of-the-box.
-        modelId: "anthropic/claude-haiku-4.5",
+        modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
       });

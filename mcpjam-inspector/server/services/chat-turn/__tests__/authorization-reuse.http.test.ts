@@ -37,7 +37,9 @@ vi.mock("../resolve-hosted-chat-setup.js", () => ({
     environmentSpec: null,
     scenarioEnvironment: null,
     effectiveCapabilities: null,
-    usesLiveSkills: false,
+    clientTurn: false,
+    attribution: null,
+    pluginDisabled: [],
     authoritativeConnectionPolicy: false,
     pinsEnvironment: false,
     authoritativeCapabilities: false,
@@ -58,12 +60,6 @@ vi.mock("../../../utils/harness/local/run-resources.js", async (original) => ({
 vi.mock("../../../utils/skill-tools.js", async (original) => ({
   ...(await original<typeof import("../../../utils/skill-tools.js")>()),
   listLocalRuntimeSkills: async () => [],
-}));
-vi.mock("../../../utils/computers/cloud-skill-tools.js", async (original) => ({
-  ...(await original<
-    typeof import("../../../utils/computers/cloud-skill-tools.js")
-  >()),
-  listCloudRuntimeSkills: async () => [],
 }));
 import { resolveManagedTurnSetup } from "../managed-setup.js";
 import { getBackgroundRunBearerForRequest } from "../../../utils/v1-convex-token.js";

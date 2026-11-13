@@ -15,6 +15,11 @@ import {
   type HostConfigMcpProfileV1,
   type PluginExtensionCapabilityKey,
 } from "./types.js";
+import {
+  pluginExtensionStyleDefaults,
+  readPluginExtensionBehavior,
+  type HostConfigPluginExtensionBehaviorV1,
+} from "./plugin-extension-behavior.js";
 
 export type PluginExtensionCapabilities = Record<
   PluginExtensionCapabilityKey,
@@ -37,25 +42,13 @@ export interface PluginExtensionsHostInput {
 }
 
 /**
- * Client styles whose real counterpart supports OpenAI plugin extensions.
- * Everything else (Cursor, VS Code, Mistral, Goose, Slack, Copilot, …) is
- * off unless the client explicitly turns the setting on — even when it
- * shares ChatGPT's visual family.
+ * Style default used when a client has no explicit setting saved
+ * (`PLUGIN_EXTENSION_STYLE_DEFAULTS`).
  */
-const DEFAULT_ON_HOST_STYLES: ReadonlySet<string> = new Set([
-  "chatgpt",
-  "codex",
-]);
-
-/** Style default used when a client has no explicit setting saved. */
 export function pluginExtensionsDefaultEnabled(
   input: Pick<PluginExtensionsHostInput, "hostStyle" | "harness">
 ): boolean {
-  return (
-    (typeof input.hostStyle === "string" &&
-      DEFAULT_ON_HOST_STYLES.has(input.hostStyle)) ||
-    input.harness === "codex"
-  );
+  return pluginExtensionStyleDefaults(input).enabled;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,6 +61,7 @@ export function readPluginExtensionsSetting(
 ): {
   enabled: boolean;
   capabilities: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+  behavior: HostConfigPluginExtensionBehaviorV1;
 } | null {
   if (!isRecord(mcpProfile)) return null;
   const apps = mcpProfile.apps;
@@ -82,24 +76,29 @@ export function readPluginExtensionsSetting(
       if (typeof value === "boolean") capabilities[key] = value;
     }
   }
-  return { enabled: setting.enabled, capabilities };
+  return {
+    enabled: setting.enabled,
+    capabilities,
+    behavior: readPluginExtensionBehavior(setting.behavior),
+  };
 }
 
 /**
  * Resolve a client's plugin extensions. Master off (explicitly, or by style
- * default) turns every capability off; master on turns every capability on
- * except the ones explicitly switched off.
+ * default) turns every capability off. Master on gives each capability its
+ * saved value, else the client style's default for it, so a client that saved
+ * only the extensions it changed keeps its style's choice for the rest.
  */
 export function resolvePluginExtensions(
   input: PluginExtensionsHostInput | null | undefined
 ): ResolvedPluginExtensions {
   const setting = readPluginExtensionsSetting(input?.mcpProfile);
-  const enabled = setting
-    ? setting.enabled
-    : pluginExtensionsDefaultEnabled(input ?? {});
+  const defaults = pluginExtensionStyleDefaults(input ?? {});
+  const enabled = setting ? setting.enabled : defaults.enabled;
   const capabilities = {} as PluginExtensionCapabilities;
   for (const key of PLUGIN_EXTENSION_CAPABILITY_KEYS) {
-    capabilities[key] = enabled && setting?.capabilities[key] !== false;
+    capabilities[key] =
+      enabled && (setting?.capabilities[key] ?? defaults.capabilities[key]);
   }
   return { enabled, explicit: setting !== null, capabilities };
 }

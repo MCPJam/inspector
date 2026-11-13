@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MCP_CHECK_IDS, type MCPCheckId } from "@mcpjam/sdk/browser";
+import {
+  MCP_CHECK_IDS,
+  MCP_TASKS_CHECK_IDS,
+  type MCPCheckId,
+} from "@mcpjam/sdk/browser";
 import {
   conformanceSuiteConfigs,
   decodeStoredProbes,
@@ -9,7 +13,9 @@ import {
   protocolSdkFields,
   storedSelection,
   tasksSdkFields,
+  withoutTaskAnswersCheck,
   type ConformanceProbes,
+  type ConformanceSelection,
 } from "../conformance-settings";
 
 const echo = { toolName: "echo", arguments: { text: "hi" } };
@@ -142,6 +148,19 @@ describe("stored probes", () => {
   });
 });
 
+describe("withoutTaskAnswersCheck", () => {
+  it("drops the update check, under its old id too", () => {
+    expect(
+      withoutTaskAnswersCheck({
+        tasks: ["tasks-input-required-update-completes", "tasks-ttl-shape"],
+      } as ConformanceSelection).tasks,
+    ).toEqual(["tasks-ttl-shape"]);
+    expect(withoutTaskAnswersCheck(undefined).tasks).toEqual(
+      MCP_TASKS_CHECK_IDS.filter((id) => id !== "tasks-update-ack-shape"),
+    );
+  });
+});
+
 describe("conformanceSuiteConfigs", () => {
   const probes: ConformanceProbes = {
     logProbe: echo,
@@ -149,6 +168,18 @@ describe("conformanceSuiteConfigs", () => {
     toolCallProbe: echo,
     tasksProbe: createTask,
   };
+
+  it("never runs the update check or sends its saved answers", () => {
+    const { tasks } = conformanceSuiteConfigs(
+      {
+        selection: {},
+        probes: { tasksProbe: { ...createTask, inputResponses: { ok: 1 } } },
+      },
+      "2026-07-28",
+    );
+    expect(tasks.checkIds).not.toContain("tasks-update-ack-shape");
+    expect(tasks.inputResponses).toBeUndefined();
+  });
 
   it("sends a tool only for a picked check that runs at the pin", () => {
     const picked: MCPCheckId[] = [
@@ -193,10 +224,14 @@ describe("conformanceSuiteConfigs", () => {
     });
   });
 
-  it("runs every check, and calls no tool, for a server with no saved settings", () => {
+  it("runs every check but the update check, and calls no tool, for a server with no saved settings", () => {
     const configs = conformanceSuiteConfigs({ probes: {} }, "2025-11-25");
-    expect(configs).toMatchObject({ protocol: {}, apps: {}, tasks: {} });
-    expect(configs.selection).toBeUndefined();
+    const tasks = MCP_TASKS_CHECK_IDS.filter(
+      (id) => id !== "tasks-update-ack-shape",
+    );
+    expect(configs).toMatchObject({ protocol: {}, apps: {} });
+    expect(configs.selection).toEqual({ tasks });
+    expect(configs.tasks).toEqual({ checkIds: tasks });
   });
 
   it("reports a suite the settings leave out", () => {

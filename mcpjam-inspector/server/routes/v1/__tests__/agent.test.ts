@@ -547,7 +547,7 @@ describe("POST /api/v1/projects/:projectId/agent", () => {
     expect(res.status).toBe(200);
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0];
     expect(prepareOpts.selectedServers).toEqual([]);
-    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(prepareOpts.skills).toBeUndefined();
   });
 
   it("selects the docs server when the preflight succeeds", async () => {

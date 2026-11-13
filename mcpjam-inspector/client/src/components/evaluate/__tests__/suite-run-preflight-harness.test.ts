@@ -88,7 +88,7 @@ describe("a harness client under the policy", () => {
     expect(
       problemsFor("claude", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     ]);
   });
 
@@ -99,8 +99,63 @@ describe("a harness client under the policy", () => {
       fallback,
     });
     expect(problems).toEqual([
-      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider.",
+      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a gateway that serves Responses.",
     ]);
+  });
+
+  describe("on an organization gateway", () => {
+    const gateway = (apis: ("anthropicMessages" | "responses")[]) => ({
+      ...strict,
+      providers: [
+        ...strict.providers,
+        {
+          id: "conn_gateway",
+          providerKey: "custom:litellm",
+          enabled: true,
+          hasSecret: true,
+          policyEligibility: { eligible: true },
+          runtimeLocation: "cloud" as const,
+          apis,
+          models: [
+            { nativeModelId: "gpt-5.5", modelId: "openai/gpt-5.5" },
+            { nativeModelId: "claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4.5" },
+            { nativeModelId: "house-model" },
+          ],
+        },
+      ],
+    });
+    const onGateway = (name: string) =>
+      org(`custom:litellm/${name}`, "conn_gateway");
+
+    it("runs Claude Code on a Messages gateway and refuses Codex the API it needs", () => {
+      const messages = gateway(["anthropicMessages"]);
+      expect(
+        problemsFor("claude", "custom:litellm/claude-sonnet-4-5", onGateway("claude-sonnet-4-5"), messages),
+      ).toBeUndefined();
+      expect(
+        problemsFor("codex", "custom:litellm/gpt-5.5", onGateway("gpt-5.5"), messages),
+      ).toEqual([
+        "custom:litellm/gpt-5.5 can't run on Codex. This gateway doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
+      ]);
+    });
+
+    it("runs Codex on a Responses gateway and refuses Claude Code", () => {
+      const responses = gateway(["responses"]);
+      expect(
+        problemsFor("codex", "custom:litellm/gpt-5.5", onGateway("gpt-5.5"), responses),
+      ).toBeUndefined();
+      expect(
+        problemsFor("claude", "custom:litellm/claude-sonnet-4-5", onGateway("claude-sonnet-4-5"), responses)?.[0],
+      ).toMatch(/doesn't serve Anthropic Messages, which Claude Code needs/);
+    });
+
+    it("refuses an unmapped gateway model with the mapping it needs", () => {
+      expect(
+        problemsFor("claude", "custom:litellm/house-model", onGateway("house-model"), gateway(["anthropicMessages"])),
+      ).toEqual([
+        "custom:litellm/house-model can't run on Claude Code. Map this gateway model to a model in Organization models to use it with Claude Code.",
+      ]);
+    });
   });
 
   it("leaves an emulated client to the model check", () => {
@@ -171,7 +226,7 @@ describe("a harness client under the policy", () => {
         withKey("ready"),
       ),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     ]);
     expect(
       problemsFor(

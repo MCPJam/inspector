@@ -1,13 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { createSkillTools } from "../skill-tools";
-import { createEffectiveSkillTools } from "../computers/effective-skill-tools";
-import { withServerSkills } from "../server-skill-tools";
 import {
-  createCloudSkillTools,
-  createPinnedSkillTools,
-} from "../computers/cloud-skill-tools";
-import { SKILL_TOOL_NAMES } from "@/shared/eval-matching";
+  createEffectiveSkillTools,
+  getEffectiveSkillToolsAndPrompt,
+} from "../computers/effective-skill-tools";
+import { listLiveServerSkills } from "../computers/live-server-skills";
+import { createCloudSkillTools } from "../computers/cloud-skill-tools";
+import {
+  buildLiveEffectiveCapabilities,
+  withLiveServerSkills,
+} from "../../services/environments/effective-capabilities";
 import { toolOrigin } from "@/shared/tool-origin";
 import {
   createAiSdkEvalTraceContext,
@@ -26,11 +29,13 @@ it("marks all server skill tools builtin while keeping MCP identity authoritativ
     directoryRead: false,
   });
   vi.spyOn(manager, "listServerSkills").mockResolvedValue({ skills: [] });
-  const { tools } = withServerSkills(
-    {},
-    { manager, servers: [{ serverId: "server", serverLabel: "Server" }] },
+  const live = await listLiveServerSkills(manager, [
+    { serverId: "server", serverLabel: "Server" },
+  ]);
+  const { tools } = getEffectiveSkillToolsAndPrompt(
+    withLiveServerSkills(buildLiveEffectiveCapabilities({}), live!),
   );
-  for (const name of SKILL_TOOL_NAMES) {
+  for (const name of ["loadSkill", "listSkillFiles", "readSkillFile"]) {
     expect(Reflect.get(tools, name)).toHaveProperty("_toolOrigin", "builtin");
     expect(
       toolOrigin(name, { _toolOrigin: "builtin", _serverId: "external" }),
@@ -39,11 +44,13 @@ it("marks all server skill tools builtin while keeping MCP identity authoritativ
   const context = createAiSdkEvalTraceContext(Date.now());
   registerAiSdkPrepareStep(context, 0);
   const traced = wrapToolSetForEvalTrace(tools, context);
-  const listSkills = Reflect.get(traced, "listSkills");
-  await listSkills.execute({}, { toolCallId: "call" });
+  await traced.loadSkill?.execute(
+    { name: "missing" },
+    { toolCallId: "call", messages: [], context: {} },
+  );
   expect(
     context.recordedSpans.find((span) => span.toolCallId === "call"),
-  ).toMatchObject({ toolOrigin: "builtin", toolName: "listSkills" });
+  ).toMatchObject({ toolOrigin: "builtin", toolName: "loadSkill" });
 });
 
 it("tags live cloud tools and records real pinned skill loading as builtin", async () => {
@@ -55,14 +62,22 @@ it("tags live cloud tools and records real pinned skill loading as builtin", asy
     expect(definition).toHaveProperty("_toolOrigin", "builtin");
   const context = createAiSdkEvalTraceContext(Date.now());
   registerAiSdkPrepareStep(context, 0);
-  const pinned = createPinnedSkillTools([
-    {
-      name: "example",
-      description: "Example",
-      content: "Instructions",
-      contentHash: "hash",
-    },
-  ]);
+  const pinned = createEffectiveSkillTools({
+    skills: [
+      {
+        skillId: "sk_example",
+        ref: "example",
+        name: "example",
+        description: "Example",
+        content: "Instructions",
+        aggregateHash: "hash",
+        channels: [],
+        files: [],
+      },
+    ],
+    pluginRefs: new Set(),
+    serverRefs: new Set(),
+  });
   const traced = wrapToolSetForEvalTrace(pinned, context);
   expect(
     await traced.loadSkill.execute(

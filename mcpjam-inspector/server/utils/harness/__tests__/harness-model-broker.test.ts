@@ -626,6 +626,30 @@ describe("orgLeaseUpstreamFrom", () => {
       expect(orgLeaseUpstreamFrom(partial)).toBeNull();
     }
   });
+
+  it("accepts a gateway lease's own model name, slash included, on org-gateway only", () => {
+    // The backend's echo for a gateway lease: the protocol as the provider
+    // key, the gateway's model name, a 16-hex revision.
+    const gateway = {
+      credentialSource: "org",
+      upstreamProfile: "org-gateway",
+      upstreamProviderKey: "anthropic",
+      upstreamModelId: "anthropic/claude-haiku-4-5",
+      credentialRevision: "0123456789abcdef",
+    };
+    expect(orgLeaseUpstreamFrom(gateway)).toEqual({
+      credentialSource: "org",
+      profile: "org-gateway",
+      nativeModelId: "anthropic/claude-haiku-4-5",
+      credentialRevision: "0123456789abcdef",
+    });
+    expect(
+      orgLeaseUpstreamFrom({ ...gateway, upstreamModelId: "house-model" }),
+    ).toMatchObject({ profile: "org-gateway", nativeModelId: "house-model" });
+    for (const upstreamProfile of ["anthropic-native", "openai-native"]) {
+      expect(orgLeaseUpstreamFrom({ ...gateway, upstreamProfile })).toBeNull();
+    }
+  });
 });
 
 describe("readHarnessLeaseRefusal", () => {

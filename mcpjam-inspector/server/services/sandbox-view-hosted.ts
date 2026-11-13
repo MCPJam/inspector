@@ -75,12 +75,19 @@ function unpack(value: unknown): SandboxViewLease {
     unavailable(new Error("Hosted App document lease schema is invalid"));
   return validateSandboxViewLease(parsed.data);
 }
-function viewOrigin(keyHash: string): string {
-  // The sandbox origin the browser is served (`getInspectorClientRuntimeConfig`):
-  // a valid MCPJAM_SANDBOX_ORIGIN, else the build-time value.
-  const configured =
+/**
+ * The sandbox origin the browser is served (`getInspectorClientRuntimeConfig`):
+ * a valid MCPJAM_SANDBOX_ORIGIN, else the build-time value. Empty when this
+ * process has no hosted sandbox to put App documents under.
+ */
+export function configuredSandboxOrigin(): string | undefined {
+  return (
     sandboxOriginOf(process.env.MCPJAM_SANDBOX_ORIGIN) ??
-    process.env.VITE_MCPJAM_SANDBOX_ORIGIN;
+    process.env.VITE_MCPJAM_SANDBOX_ORIGIN
+  );
+}
+function viewOrigin(keyHash: string): string {
+  const configured = configuredSandboxOrigin();
   if (!configured)
     throw new Error(
       "Configure the hosted App sandbox origin before opening Apps",
