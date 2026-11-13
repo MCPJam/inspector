@@ -90,6 +90,13 @@ export type {
   DirectoryLazyAuthToolCall,
 } from "./directory-readiness/lazy-auth.js";
 
+/**
+ * Directory submission forms, so a page can draw the portal's steps and
+ * read its rules as the API does. A wildcard on purpose: the flows barrel
+ * lists its exports by name and is pure data and functions by contract.
+ */
+export * from "./directory-readiness/flows/index.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
