@@ -196,11 +196,12 @@ export interface ParkLocalSessionArgs<R> {
  * one whose continuation paused again (continuing → awaiting-approval).
  *
  * Model traffic is held from this moment: nothing may be generated against a
- * credential while nobody is deciding anything. Returns false — and parks
+ * credential while nobody is deciding anything. Returns the record, which the
+ * pausing turn's late Stop may end (`endParkIfWaiting`), or null — parking
  * nothing — if the session was invalidated in the meantime (a Stop that landed
  * while the turn was winding down), so the caller tears down as usual.
  */
-export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
+export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): ParkedLocalSession<R> | null {
   if (args.pendingApprovalIds.length === 0) {
     throw new Error("a parked session must be waiting on at least one approval");
   }
@@ -215,7 +216,7 @@ export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
     parked.delete(args.sessionId);
   } else if (existing?.state === "terminal") {
     // THIS process was stopped while its turn was winding down.
-    return false;
+    return null;
   }
   const prior = parked.get(args.sessionId);
   const now = clock.now();
@@ -254,7 +255,7 @@ export function parkLocalSession<R>(args: ParkLocalSessionArgs<R>): boolean {
     pending: entry.pending.size,
     ttlMs: ttl,
   });
-  return true;
+  return entry;
 }
 
 /**
@@ -417,6 +418,21 @@ export function noteParkedLocalSessionEnded(sessionId: string): void {
   expireTombstone(sessionId, entry);
 }
 
+/**
+ * End the park a turn made, for that turn's late Stop or a commit that did
+ * not land: only while it is still the record held for its session and still
+ * waiting. Once a newer turn has adopted the runtime (continuing) or kept it
+ * again (a newer record), the older turn has no say over it.
+ */
+export async function endParkIfWaiting(
+  entry: ParkedLocalSession,
+  reason: ParkInvalidationReason,
+): Promise<void> {
+  if (parked.get(entry.sessionId) !== entry) return;
+  if (entry.state !== "awaiting-approval" && entry.state !== "idle") return;
+  await invalidateParkedLocalSession(entry.sessionId, reason);
+}
+
 /** For a reconnecting UI and the status route: what is this session waiting on? */
 export function describeParkedLocalSession(sessionId: string):
   | {
@@ -471,19 +487,19 @@ export interface ParkLocalTurnArgs<R> {
  * Keep a runtime after a turn that completed (active or continuing → idle).
  *
  * Model traffic is held and the lease revoked from this moment, exactly as
- * for an approval. Returns false, keeping nothing, when the session was
- * stopped while its turn wound down, when the runtime has outlived its
- * lifetime, or when every slot is held by a turn in progress; the caller then
- * tears down as usual.
+ * for an approval. Returns the record, or null, keeping nothing, when the
+ * session was stopped while its turn wound down, when the runtime has
+ * outlived its lifetime, or when every slot is held by a turn in progress;
+ * the caller then tears down as usual.
  */
-export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): boolean {
+export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): ParkedLocalSession<R> | null {
   const existing = parked.get(args.sessionId);
   if (existing && existing.generation !== args.generation) {
     // Another process now owns this id; see `parkLocalSession`.
     if (existing.timer) clock.clearTimer(existing.timer);
     parked.delete(args.sessionId);
   } else if (existing?.state === "terminal") {
-    return false;
+    return null;
   }
   const prior = parked.get(args.sessionId);
   const now = clock.now();
@@ -493,9 +509,9 @@ export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): boolean {
     logger.info("[local-harness] kept runtime reached its lifetime", {
       sessionId: args.sessionId,
     });
-    return false;
+    return null;
   }
-  if (prior?.kept === undefined && !makeRoomForTurnPark()) return false;
+  if (prior?.kept === undefined && !makeRoomForTurnPark()) return null;
   if (prior?.timer) clock.clearTimer(prior.timer);
   args.holdModelTraffic();
   const idleUntil = now + (args.ttlMs ?? DEFAULT_TURN_PARK_TTL_MS);
@@ -533,7 +549,7 @@ export function parkLocalTurn<R>(args: ParkLocalTurnArgs<R>): boolean {
     sessionId: args.sessionId,
     ttlMs: expiresAt - now,
   });
-  return true;
+  return entry;
 }
 
 /**

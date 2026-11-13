@@ -64,6 +64,7 @@ import {
   parkLocalSession,
   parkLocalTurn,
   releaseParkedLocalSession,
+  type ParkedLocalSession,
   type ParkInvalidationReason,
 } from "./approval-park.js";
 import {
@@ -171,8 +172,9 @@ export interface PreparedLocalHarnessTurn {
    * Park this live runtime on a human approval instead of tearing it down
    * (`approval-park.ts`). Holds model traffic and revokes the lease now; the
    * tree, bridge, relay and gateway port stay up until a decision, a Stop, the
-   * idle TTL or a process death. Returns false when it could not park (the
-   * session was ended meanwhile) — the caller then tears down as usual.
+   * idle TTL or a process death. Returns the park, for this turn's own late
+   * Stop (`endParkIfWaiting`), or null when it could not park (the session
+   * was ended meanwhile) — the caller then tears down as usual.
    *
    * Only meaningful for a harness whose pending approval lives in the process
    * (`liveApprovalRuntime`: Claude Code, Codex and GitHub Copilot CLI). After
@@ -184,16 +186,16 @@ export interface PreparedLocalHarnessTurn {
     generation: string;
     pendingApprovalIds: readonly string[];
     ttlMs?: number;
-  }) => boolean;
+  }) => ParkedLocalSession | null;
   /**
    * Keep this runtime for the conversation's next turn instead of tearing it
-   * down, after a turn that completed (`kept-runtime.ts`). Holds traffic and
-   * revokes the lease like `park`. Resolves false, keeping nothing, when the
-   * turn made a call that can leave a process running, the process carries
-   * materialized secrets, its pack is no longer the one a fresh turn would
-   * select or an install is in flight, or the registry declines
-   * (`parkLocalTurn`); the caller then tears down as usual. After true the
-   * caller must NOT run `teardown`.
+   * down, after a turn that completed (`kept-runtime.ts`). Holds traffic,
+   * revokes the lease and resolves the park like `park`. Resolves null,
+   * keeping nothing, when the turn made a call that can leave a process
+   * running, the process carries materialized secrets, its pack is no longer
+   * the one a fresh turn would select or an install is in flight, or the
+   * registry declines (`parkLocalTurn`); the caller then tears down as usual.
+   * After a park the caller must NOT run `teardown`.
    */
   parkTurn: (args: {
     /** What the turn asked for (`keptLocalRuntimeTurn`). */
@@ -204,7 +206,7 @@ export interface PreparedLocalHarnessTurn {
     stateVersion: number;
     /** Every tool call the turn made, as the turn observed them. */
     toolCalls: readonly { toolName: string; serverId?: string }[];
-  }) => Promise<boolean>;
+  }) => Promise<ParkedLocalSession | null>;
   /** Adopted from a turn park: resume from the live bridge, not from disk. */
   keptRuntime?: boolean;
   /** A continuation finished without pausing again: give cleanup back to
@@ -814,12 +816,12 @@ async function prepareWithReservedRuntime(outer: {
         const generation = bridgeGenerationOf(resumeState);
         // Never kept with materialized secrets in its environment: an idle
         // process would hold them for as long as it waits.
-        if (generation === undefined || Object.keys(args.scopedEnv ?? {}).length > 0) return false;
+        if (generation === undefined || Object.keys(args.scopedEnv ?? {}).length > 0) return null;
         // Nor after a turn that ran a command or anything else that can leave
         // a process behind, approved or not: the next turn would inherit it
         // (a shell it could drive) without asking. An MCP call names a server.
         const keeping = localRuntime(harnessId).keptBetweenTurns;
-        if (!keeping || toolCalls.some((call) => call.serverId === undefined && keeping.processTools.includes(call.toolName))) return false;
+        if (!keeping || toolCalls.some((call) => call.serverId === undefined && keeping.processTools.includes(call.toolName))) return null;
         // Nor on a pack a fresh turn would not select, or one an install in
         // flight may replace: the next turn starts on what is current. A
         // selection that cannot be read keeps nothing; the turn's commit is
@@ -833,7 +835,7 @@ async function prepareWithReservedRuntime(outer: {
             return false;
           },
         );
-        if (!selected) return false;
+        if (!selected) return null;
         return parkLocalTurn<LiveLocalRuntime>({
           sessionId: args.sessionId,
           generation,

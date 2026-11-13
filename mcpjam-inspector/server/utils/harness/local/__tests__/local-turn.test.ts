@@ -155,7 +155,7 @@ vi.mock("../supervisor.js", () => ({
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
 const { noteTurnRuntimeStatus } = await import("../turn-runtime-status.js");
-const { resetApprovalParkForTests, describeParkedLocalSession } = await import(
+const { resetApprovalParkForTests, describeParkedLocalSession, endParkIfWaiting } = await import(
   "../approval-park.js"
 );
 // Real, not mocked: whether a reservation is still held is the subject here.
@@ -336,7 +336,7 @@ describe("a local setup that succeeds", () => {
     const manager = new MCPClientManager({});
     const plane = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "first" });
     const strategy = { ...plane.strategy };
-    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).toBe(true);
+    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).not.toBeNull();
     const request = () => fetch(`${strategy.baseUrl}/selected`, {
       method: "POST", headers: { "x-mcpjam-proxy-token": strategy.token },
     });
@@ -670,7 +670,7 @@ describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on a
     if (!first.ok) throw new Error(first.message);
     expect(
       first.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] }),
-    ).toBe(true);
+    ).not.toBeNull();
     return first.prepared;
   }
 
@@ -840,7 +840,7 @@ it("verifies a fresh turn's runtime once, at the spawn, and an adopted runtime's
   if (!fresh.ok) throw new Error(fresh.message);
   expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(expect.objectContaining({ runtimeVerifiedAtSpawn: true }));
   expect(revalidateRuntime).not.toHaveBeenCalled();
-  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).not.toBeNull();
   const adopted = await prepareLocalHarnessTurn(codexArgs({
     approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
   }));
@@ -853,7 +853,7 @@ it("verifies a fresh turn's runtime once, at the spawn, and an adopted runtime's
 it("refuses to hand an approval to a runtime whose pack changed while it waited", async () => {
   const fresh = await prepareLocalHarnessTurn(codexArgs());
   if (!fresh.ok) throw new Error(fresh.message);
-  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).not.toBeNull();
   revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed after consent was granted" });
   const adopted = await prepareLocalHarnessTurn(codexArgs({
     approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
@@ -913,8 +913,8 @@ describe("a local Codex runtime kept between turns", () => {
   ) {
     const first = await prepareLocalHarnessTurn(codexArgs({ keptRuntime: CONFIG, ...overrides }));
     if (!first.ok) throw new Error(first.message);
-    const kept = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls });
-    return { prepared: first.prepared, kept };
+    const park = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls });
+    return { prepared: first.prepared, park, kept: park !== null };
   }
 
   it("holds model traffic and revokes the lease while it waits, so it makes no model call", async () => {
@@ -953,7 +953,26 @@ describe("a local Codex runtime kept between turns", () => {
     );
     expect(revalidateRuntime).toHaveBeenCalledWith(parked.plan.runtime);
     // Kept again at its end, for the state version the next commit produces.
-    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).toBe(true);
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).not.toBeNull();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it("keeps running for the turn that adopted it when the turn that kept it aborts late", async () => {
+    // N commits and keeps its runtime, N+1 adopts it, then N's request aborts:
+    // N's Stop (and its finalizer) reach only the park N made, while it waits.
+    const { park } = await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBe(true);
+    await endParkIfWaiting(park!, "stopped");
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("continuing");
+    // N+1 keeps it again; N's park is still not the one held.
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).not.toBeNull();
+    await endParkIfWaiting(park!, "continuation-failed");
+    expect(supervisorFixture.stopCalls).toBe(0);
     expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
   });
 

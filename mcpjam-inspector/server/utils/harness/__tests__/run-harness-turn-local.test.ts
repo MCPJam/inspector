@@ -8,11 +8,16 @@ const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToSe
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
-const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
-vi.mock("../local/approval-park.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../local/approval-park.js")>()),
-  invalidateParkedLocalSession: parkRegistry.invalidate,
+// The registry is real; `endIfWaiting` records what a turn asks it to end.
+const parkRegistry = vi.hoisted(() => ({
+  endIfWaiting: vi.fn<typeof import("../local/approval-park.js").endParkIfWaiting>(),
+  park: { sessionId: "local-session" },
 }));
+vi.mock("../local/approval-park.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../local/approval-park.js")>();
+  parkRegistry.endIfWaiting.mockImplementation(actual.endParkIfWaiting);
+  return { ...actual, endParkIfWaiting: parkRegistry.endIfWaiting };
+});
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -34,8 +39,8 @@ const harnessState = vi.hoisted(() => ({
   discardState: vi.fn(async () => {}),
   liveApprovalRuntime: false,
   adapterOverrides: {} as Record<string, unknown>,
-  park: vi.fn((_args: unknown) => true),
-  parkTurn: vi.fn(async (_args: unknown) => true),
+  park: vi.fn((_args: unknown): object | null => parkRegistry.park),
+  parkTurn: vi.fn(async (_args: unknown): Promise<object | null> => parkRegistry.park),
   keptRuntime: false,
   unpark: vi.fn(() => {}),
   session: {
@@ -186,6 +191,7 @@ import {
 import { claimHarnessSessionState, commitHarnessSessionState, heartbeatHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
+import { claimLocalTurnPark, describeParkedLocalSession, parkLocalTurn, resetApprovalParkForTests } from "../local/approval-park.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
 
 vi.mock("../local/local-turn.js", () => ({
@@ -302,8 +308,8 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.holdStream = null;
     harnessState.liveApprovalRuntime = false;
     harnessState.adapterOverrides = {};
-    harnessState.park.mockReset().mockReturnValue(true);
-    harnessState.parkTurn.mockReset().mockResolvedValue(true);
+    harnessState.park.mockReset().mockReturnValue(parkRegistry.park);
+    harnessState.parkTurn.mockReset().mockResolvedValue(parkRegistry.park);
     harnessState.keptRuntime = false;
     harnessState.unpark.mockReset();
     harnessState.session.suspendTurn.mockImplementation(async () => ({ type: "continue-turn" }));
@@ -946,20 +952,19 @@ describe("runHarnessTurn local continuity", () => {
       // The pause won the race: the runtime parked, then the Stop arrived
       // before the response closed. Ignored, the parked process (and its
       // still-running command) lived on until the idle TTL.
-      parkRegistry.invalidate.mockClear();
       const stop = new AbortController();
       harnessState.park.mockImplementation(() => {
         stop.abort();
-        return true;
+        return parkRegistry.park;
       });
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: stop.signal }) as any, "none");
       expect(harnessState.park).toHaveBeenCalled();
-      expect(parkRegistry.invalidate).toHaveBeenCalledWith(expect.any(String), "stopped");
+      // Its own park: one a newer turn has since adopted is not its to end.
+      expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(parkRegistry.park, "stopped");
     });
 
     it("leaves a parked session alone once its response has closed", async () => {
-      parkRegistry.invalidate.mockClear();
       const socket = new AbortController();
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: socket.signal }) as any, "none");
@@ -967,11 +972,11 @@ describe("runHarnessTurn local continuity", () => {
       // A later disconnect is not a Stop of this turn: the session is waiting
       // for a decision and must stay parked.
       socket.abort();
-      expect(parkRegistry.invalidate).not.toHaveBeenCalled();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
     });
 
     it("tears down as usual when the session was ended before it could park", async () => {
-      harnessState.park.mockReturnValue(false);
+      harnessState.park.mockReturnValue(null);
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -1356,7 +1361,7 @@ describe("runHarnessTurn local continuity", () => {
       // tool calls the turn made (none here).
       expect(harnessState.parkTurn).toHaveBeenCalledWith({ kept: asked, resumeState: BRIDGE, stateVersion: 5, toolCalls: [] });
       expect(harnessState.teardown).not.toHaveBeenCalled();
-      expect(parkRegistry.invalidate).not.toHaveBeenCalled();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
     });
 
     it("hands the keep decision every tool call the turn made", async () => {
@@ -1402,15 +1407,43 @@ describe("runHarnessTurn local continuity", () => {
         onConversationComplete: vi.fn(async () => ({ outcome: "failed", failureKind: "exception" })),
       }) as never, "none");
       expect(harnessState.parkTurn).toHaveBeenCalledOnce();
-      expect(parkRegistry.invalidate).toHaveBeenCalledWith("local-session", "continuation-failed");
+      expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(parkRegistry.park, "continuation-failed");
+    });
+
+    it("is not ended by its turn's late Stop once the next turn adopted it", async () => {
+      // Turn N commits and keeps its runtime; turn N+1 adopts it while N's
+      // response is still open; then N's request aborts. N+1 keeps running.
+      committed(4);
+      const end = vi.fn(async (_reason: string) => {});
+      const parkedFor = { sessionId: "local-session", generation: "gen-7", userId: "user-1", projectId: "project-1" };
+      harnessState.parkTurn.mockImplementationOnce(async () => parkLocalTurn({
+        ...parkedFor, harnessId: "codex", runtimeDigest: "sha256:pack", stateVersion: 5,
+        fingerprint: "config", resources: {}, end, isAlive: () => true, holdModelTraffic: () => {},
+      }));
+      const stop = new AbortController();
+      try {
+        await runHarnessTurn(codexTurn({
+          abortSignal: stop.signal,
+          onConversationComplete: vi.fn(async () => {
+            expect(claimLocalTurnPark({ ...parkedFor, stateVersion: 5, fingerprint: "config" }).ok).toBe(true);
+            stop.abort();
+            return { outcome: "saved" };
+          }),
+        }) as never, "none");
+        expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(expect.objectContaining(parkedFor), "stopped");
+        expect(end).not.toHaveBeenCalled();
+        expect(describeParkedLocalSession("local-session")?.state).toBe("continuing");
+      } finally {
+        resetApprovalParkForTests();
+      }
     });
 
     it("tears down as before when the runtime was not kept", async () => {
       committed(4);
-      harnessState.parkTurn.mockResolvedValueOnce(false);
+      harnessState.parkTurn.mockResolvedValueOnce(null);
       await runHarnessTurn(codexTurn() as never, "none");
       expect(harnessState.teardown).toHaveBeenCalledOnce();
-      expect(parkRegistry.invalidate).not.toHaveBeenCalled();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
     });
 
     it("asks for nothing and keeps nothing with the switch off, or for Claude Code", async () => {

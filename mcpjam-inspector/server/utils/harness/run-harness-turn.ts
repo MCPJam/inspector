@@ -45,7 +45,7 @@ import { assertPendingPolicy, stampNativeForwardingPolicy, nativePolicyDigest,
 import { localHarnessEvidence } from "./local/evidence.js";
 import { withLocalRuntimeBootstrap } from "./local/pack-bootstrap.js";
 import { startLocalHarnessMcpPlane } from "./local/mcp-plane.js";
-import { invalidateParkedLocalSession } from "./local/approval-park.js";
+import { endParkIfWaiting, type ParkedLocalSession } from "./local/approval-park.js";
 import { bridgeGenerationOf, keptLocalRuntimeTurn, type KeptRuntimeTurn } from "./local/kept-runtime.js";
 import { getManagerConnections } from "../mcp-connections.js";
 import { harnessToolOutputError, toToolResultOutput } from "./tool-result-output.js";
@@ -986,7 +986,7 @@ export async function runHarnessTurn(
   // not run it.
   let localParked = false;
   // A runtime kept for the next turn, ended below if this turn did not commit.
-  let keptSessionId: string | undefined;
+  let keptPark: ParkedLocalSession | null = null;
   // Set while a turn that parked is still finalizing its response; see
   // `honourStopAfterPark`.
   let releaseStopAfterPark: (() => void) | null = null;
@@ -996,11 +996,12 @@ export async function runHarnessTurn(
   // started (a long `sleep` in the E2E), running until the idle TTL. Until the
   // response closes, a Stop ends the parked session the way a Stop ends a
   // running one; afterwards the listener is gone, so a later socket close can
-  // never end a session that is legitimately waiting for a decision.
-  const honourStopAfterPark = (parkedSessionId: string) => {
+  // never end a session that is legitimately waiting for a decision. Only the
+  // park THIS turn made, while it still waits: a newer turn may have adopted it.
+  const honourStopAfterPark = (park: ParkedLocalSession) => {
     if (!abortSignal) return;
     const stop = () => {
-      void invalidateParkedLocalSession(parkedSessionId, "stopped");
+      void endParkIfWaiting(park, "stopped");
     };
     if (abortSignal.aborted) {
       stop();
@@ -4558,13 +4559,14 @@ export async function runHarnessTurn(
             ) {
               const generation = bridgeGenerationOf(continueState);
               if (generation) {
-                localParked = localPrepared.park({
+                const park = localPrepared.park({
                   generation,
                   pendingApprovalIds,
                 });
-                if (localParked) {
+                if (park) {
+                  localParked = true;
                   localTeardown = null;
-                  honourStopAfterPark(session.sessionId);
+                  honourStopAfterPark(park);
                 }
               }
             }
@@ -4593,11 +4595,11 @@ export async function runHarnessTurn(
               ...(executionScope ? { executionScope } : {}),
             };
             // Keep the local runtime for the next turn instead of stopping it.
-            if (keptRuntime && localPrepared && await localPrepared.parkTurn({ kept: keptRuntime, resumeState, stateVersion: continuity.stateVersion + 1, toolCalls: observedHarnessToolCalls })) {
+            keptPark = keptRuntime && localPrepared ? await localPrepared.parkTurn({ kept: keptRuntime, resumeState, stateVersion: continuity.stateVersion + 1, toolCalls: observedHarnessToolCalls }) : null;
+            if (keptPark) {
               localParked = true;
               localTeardown = null;
-              keptSessionId = session.sessionId;
-              honourStopAfterPark(session.sessionId);
+              honourStopAfterPark(keptPark);
             }
           } else {
             if (localPrepared && retainLocalState) await session.stop();
@@ -4863,7 +4865,7 @@ export async function runHarnessTurn(
       }
     }
     // A kept runtime whose turn did not commit is not the one the lane names.
-    if (keptSessionId && !localStateCommitted) await invalidateParkedLocalSession(keptSessionId, "continuation-failed");
+    if (keptPark && !localStateCommitted) await endParkIfWaiting(keptPark, "continuation-failed");
     if (discardLocalState && !retainLocalState) {
       // Keep the lane claimed until its private state has been discarded, so
       // a successor cannot resume while this finalizer removes its directory.

@@ -3,6 +3,7 @@ import {
   claimLocalTurnPark,
   claimParkedLocalSession,
   describeParkedLocalSession,
+  endParkIfWaiting,
   hasLocalTurnPark,
   invalidateLocalTurnParks,
   MAX_TURN_PARKS,
@@ -60,7 +61,7 @@ function keep(overrides: Partial<Parameters<typeof parkLocalTurn>[0]> = {}) {
   const end = vi.fn(async (_reason: string) => {});
   const hold = vi.fn();
   let alive = true;
-  const kept = parkLocalTurn({
+  const park = parkLocalTurn({
     sessionId: "s1",
     generation: "gen-1",
     userId: "u1",
@@ -75,7 +76,7 @@ function keep(overrides: Partial<Parameters<typeof parkLocalTurn>[0]> = {}) {
     holdModelTraffic: hold,
     ...overrides,
   });
-  return { kept, end, hold, kill: () => (alive = false) };
+  return { kept: park !== null, park, end, hold, kill: () => (alive = false) };
 }
 
 const claim = (overrides: Partial<Parameters<typeof claimLocalTurnPark>[0]> = {}) =>
@@ -147,6 +148,21 @@ describe("keeping a runtime between turns", () => {
     noteParkedLocalSessionEnded("s1");
     expect(claim()).toEqual({ ok: false, reason: "terminal" });
     expect(hasLocalTurnPark("s1")).toBe(false);
+  });
+
+  it("is ended by the turn that kept it only while it still waits", async () => {
+    // That turn's late Stop, or its commit not landing, after the next turn
+    // adopted the runtime (or kept it again) is not the newer turn's to obey.
+    const { park: first, end } = keep();
+    expect(claim().ok).toBe(true);
+    await endParkIfWaiting(first!, "stopped");
+    expect(describeParkedLocalSession("s1")?.state).toBe("continuing");
+    const { park: second } = keep({ stateVersion: 3, end });
+    await endParkIfWaiting(first!, "continuation-failed");
+    expect(end).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s1")?.state).toBe("idle");
+    await endParkIfWaiting(second!, "stopped");
+    expect(end).toHaveBeenCalledWith("stopped");
   });
 
   it("keeps its first creation time across turns, and is not kept past its lifetime", () => {
