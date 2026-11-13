@@ -781,6 +781,10 @@ export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.j
 export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
 // Directory submission forms as data: flows, answer validation, placement.
 export * from "./directory-readiness/flows/index.js";
+// Directory test plans: drafting, validation, call outcomes per tool.
+export * from "./directory-readiness/test-plan/index.js";
+// The decision scan: question ids, rule candidates, the request, grading.
+export * from "./directory-readiness/decisions/index.js";
 // What a submission's reader resumes from, and the pack its team receives.
 export * from "./directory-readiness/handoff.js";
 export * from "./directory-readiness/handoff-markdown.js";

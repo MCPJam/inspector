@@ -200,7 +200,12 @@ describe("a server nothing answers", () => {
       ...input,
       llmObservations: { status: "completed", envelope },
     });
-    expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
+    // The decision checks are there, each saying why no model judged it.
+    expect(
+      result.findings.some(
+        (f) => f.provenance === "llm" && f.status !== "not-evaluated"
+      )
+    ).toBe(false);
   });
 
   it("keeps verdicts over a tool listing the caller already held", async () => {
