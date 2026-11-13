@@ -33,6 +33,7 @@ import {
   executeHostedReadinessRun,
   type ExecuteHostedReadinessOptions,
 } from "../../services/readiness/worker.js";
+import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
@@ -108,6 +109,8 @@ export interface StartHostedReadinessRunInput {
    * worker only: the backend run takes no attempt, and the run joins it.
    */
   reviewerAttemptId?: string;
+  /** The submission's reviewer account, authorized as itself (`reviewerAccountForRun`). */
+  reviewer?: ReadinessReviewerAccount;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -258,6 +261,7 @@ export async function startHostedReadinessRun(
         ...(input.reviewerAttemptId
           ? { reviewerAttemptId: input.reviewerAttemptId }
           : {}),
+        ...(input.reviewer ? { reviewer: input.reviewer } : {}),
         analyticsActor: input.analyticsActor,
       },
       input.authorized,
@@ -275,6 +279,18 @@ export async function startHostedReadinessRun(
   };
 }
 
+/** The headers an authorize exchange's account sends on MCP requests. */
+export function readinessMcpHeaders(
+  authorized: AuthorizedReadinessServer,
+): Record<string, string> {
+  return {
+    ...(authorized.serverConfig.headers ?? {}),
+    ...(authorized.oauthAccessToken
+      ? { authorization: `Bearer ${authorized.oauthAccessToken}` }
+      : {}),
+  };
+}
+
 /**
  * Execute a run in this process, detached, on a lease this node holds, with
  * the credentials of the authorize exchange that let it start or resume.
@@ -283,12 +299,7 @@ export function executeHostedReadinessRunDetached(
   run: Omit<ExecuteHostedReadinessOptions, "mcpHeaders" | "fetchFn">,
   authorized: AuthorizedReadinessServer,
 ): void {
-  const headers: Record<string, string> = {
-    ...(authorized.serverConfig.headers ?? {}),
-  };
-  if (authorized.oauthAccessToken) {
-    headers.authorization = `Bearer ${authorized.oauthAccessToken}`;
-  }
+  const headers = readinessMcpHeaders(authorized);
 
   void executeHostedReadinessRun({
     ...run,

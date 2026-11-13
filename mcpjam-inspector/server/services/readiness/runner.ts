@@ -47,6 +47,10 @@ import {
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import type { PluginFileSource } from "@mcpjam/sdk/plugin-bundle";
+import {
+  gatherReviewerPath,
+  type ReviewerPathOptions,
+} from "./reviewer-path.js";
 
 export type ReadinessPublisher = "claude" | "openai" | "muse";
 
@@ -117,7 +121,23 @@ export interface RunReadinessOptions {
     source: PluginFileSource;
     archive: OpenAIArchiveObservations;
   };
+  /** A submission run's reviewer path, checked on the reviewer account only. */
+  reviewer?: ReviewerPathOptions;
   now?: () => Date;
+}
+
+/** The reviewer path once the server's evidence names its discovery documents. */
+async function reviewerEvidence(
+  options: RunReadinessOptions,
+  documents: { prm?: string; authorizationServer?: string },
+) {
+  if (!options.reviewer) return {};
+  const evidence = await gatherReviewerPath(options.reviewer, options, {
+    "protected-resource": documents.prm,
+    "authorization-server": documents.authorizationServer,
+  });
+  assertNotCancelled(options.signal);
+  return evidence;
 }
 
 /**
@@ -443,6 +463,11 @@ export async function runDirectoryReadiness(
       now: options.now,
     });
     assertNotCancelled(options.signal);
+    const reviewer = await reviewerEvidence(options, {
+      prm: evidence.auth?.prm?.url,
+      authorizationServer:
+        evidence.auth?.authorizationServers?.[0]?.metadataUrl,
+    });
 
     const observations = await resolveObservations(
       options,
@@ -459,6 +484,7 @@ export async function runDirectoryReadiness(
     return {
       result: gradeOpenAIReadiness({
         ...evidence,
+        ...reviewer,
         llmObservations: observations,
       }),
       observations,
@@ -481,6 +507,10 @@ export async function runDirectoryReadiness(
     now: options.now,
   });
   assertNotCancelled(options.signal);
+  const reviewer = await reviewerEvidence(options, {
+    prm: evidence.auth.prm?.url,
+    authorizationServer: evidence.auth.firstAuthorizationServer?.metadataUrl,
+  });
 
   const observations = await resolveObservations(
     options,
@@ -497,6 +527,7 @@ export async function runDirectoryReadiness(
   return {
     result: gradeClaudeReadiness({
       ...evidence,
+      ...reviewer,
       llmObservations: observations,
       ...(options.submissionAnswers
         ? { submissionAnswers: options.submissionAnswers }
