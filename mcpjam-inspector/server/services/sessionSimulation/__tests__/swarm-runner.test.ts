@@ -1766,6 +1766,28 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(b.runtime.pinnedSkillSource.harnessSkills).toEqual([]);
   });
 
+  it("downloads the pinned supporting file before the swarm starts its sessions", async () => {
+    const file = {
+      path: "scripts/check.sh",
+      contentHash: "file-hash",
+      size: 9,
+      url: "data:text/plain,echo%20test",
+    };
+    fetchPinnedSkillMock.mockResolvedValue({
+      ...pinnedArtifact("hash-1"),
+      files: [file],
+    });
+
+    await startJourneyRun(baseOpts({ hosts: [ENV_TARGET_A], sessionsPerTarget: 1 }));
+
+    const session = runSyntheticHostSessionMock.mock.calls[0]?.[0];
+    expect(session?.runtime.pinnedSkillSource.harnessSkills[0].files).toEqual([
+      { path: file.path, mimeType: "text/plain", content: "echo test" },
+    ]);
+    const [supporting] = session.runtime.pinnedSkillSource.set.standaloneSkills[0].files;
+    expect(new TextDecoder().decode(await supporting.read())).toBe("echo test");
+  });
+
   it("addresses a plugin's skill by the target's pinned plugin version", async () => {
     fetchPinnedSkillMock.mockResolvedValue({
       name: "summarize",
