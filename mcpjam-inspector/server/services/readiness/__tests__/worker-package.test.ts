@@ -125,6 +125,8 @@ function tamper(bytes: Uint8Array, text: string): Uint8Array {
 type Answer = { status: number; body: unknown };
 
 /** The bundle route's answer and what the link serves. Records each fetch. */
+const LEDGER_ROUTE = "/internal/v1/claude-readiness/runs/calls";
+
 function stubBackend(link: Answer, download?: () => Response) {
   const calls: Array<{ url: URL; token: string | null }> = [];
   vi.stubGlobal(
@@ -132,6 +134,9 @@ function stubBackend(link: Answer, download?: () => Response) {
     vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = new URL(String(input));
       const token = new Headers(init?.headers).get("x-inspector-service-token");
+      // A run reads its call ledger for a test plan to execute. An empty
+      // ledger means no plan, so the package lane's calls are the rest.
+      if (url.pathname === LEDGER_ROUTE) return Response.json({ calls: [] });
       calls.push({ url, token });
       if (url.pathname === BUNDLE_ROUTE) {
         return Response.json(link.body, { status: link.status });
