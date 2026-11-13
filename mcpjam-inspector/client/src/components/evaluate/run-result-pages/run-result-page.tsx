@@ -16,6 +16,7 @@ import { trialChainDisplay } from "../case-scorecard/trial-chain-state";
 import { IterationResultsPage } from "./iteration-results-page";
 import { ResultNotFound, ResultPageSkeleton } from "./result-page-parts";
 import {
+  BACK_TO_GRID_STATE,
   findTarget,
   openResult,
   targetParam,
@@ -163,7 +164,8 @@ export function RunResultPage({
               },
               { label: `Iteration #${iterationNumber}` },
             ],
-      onOpenRun: () => openResult(runRef),
+      onOpenRun: () =>
+        openResult(runRef, undefined, { state: BACK_TO_GRID_STATE }),
     });
     return () => onCrumbsChange(null);
   }, [

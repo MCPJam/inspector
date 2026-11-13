@@ -10,7 +10,7 @@ import type { RunResultPageRoute } from "@/lib/eval-route-types";
 import { RunResultsMatrix } from "../../run-results-matrix";
 import { RunResultPage } from "../run-result-page";
 import { useCaseResultLinks } from "../result-page-links";
-import { rememberRunView } from "../run-view-memory";
+import { readRunView, rememberRunView } from "../run-view-memory";
 
 const mocks = vi.hoisted(() => ({
   flag: { value: undefined as boolean | undefined },
@@ -441,6 +441,19 @@ describe("run grid cells", () => {
       }),
     );
     expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("forget the grid's state unless the user is coming back to it", () => {
+    const runRow = { suiteId: "suite", _id: "memory-run" };
+    rememberRunView("memory-run", { search: "refund" });
+    renderHook(() => useCaseResultLinks(runRow));
+    expect(readRunView("memory-run")).toEqual({});
+
+    rememberRunView("memory-run", { search: "refund" });
+    window.history.replaceState({ restoreRunView: true }, "");
+    renderHook(() => useCaseResultLinks(runRow));
+    expect(readRunView("memory-run")).toEqual({ search: "refund" });
+    window.history.replaceState(null, "");
   });
 
   it("get links only while the flag is on", () => {

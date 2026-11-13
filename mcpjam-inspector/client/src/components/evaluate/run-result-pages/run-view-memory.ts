@@ -20,6 +20,10 @@ export function readRunView(runId: string | undefined): Partial<RunView> {
   return (runId && views.get(runId)) || {};
 }
 
+export function forgetRunView(runId: string): void {
+  views.delete(runId);
+}
+
 export function rememberRunView(
   runId: string | undefined,
   patch: Partial<RunView>,
@@ -52,22 +56,41 @@ export function useRunScrollMemory(
       if (reached()) restored.current = true;
     };
     apply();
-    const content = element.firstElementChild;
-    if (restored.current || !content || typeof ResizeObserver === "undefined") {
+    if (
+      restored.current ||
+      element.children.length === 0 ||
+      typeof ResizeObserver === "undefined" ||
+      typeof MutationObserver === "undefined"
+    ) {
       restored.current = true;
       return;
     }
-    const observer = new ResizeObserver(() => {
+    // Every child, re-observed as children are swapped: a loading panel can be
+    // replaced by the grid after this effect runs.
+    const disconnect = () => {
+      resizes.disconnect();
+      swaps.disconnect();
+    };
+    const recheck = () => {
       apply();
-      if (restored.current) observer.disconnect();
+      if (restored.current) disconnect();
+    };
+    const resizes = new ResizeObserver(recheck);
+    const observeChildren = () => {
+      for (const child of Array.from(element.children)) resizes.observe(child);
+    };
+    const swaps = new MutationObserver(() => {
+      observeChildren();
+      recheck();
     });
-    observer.observe(content);
+    observeChildren();
+    swaps.observe(element, { childList: true });
     const stop = window.setTimeout(() => {
       restored.current = true;
-      observer.disconnect();
+      disconnect();
     }, RESTORE_WINDOW_MS);
     return () => {
-      observer.disconnect();
+      disconnect();
       window.clearTimeout(stop);
     };
   }, [runId, rowsReady]);

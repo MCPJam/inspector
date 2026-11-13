@@ -36,6 +36,23 @@ describe("resultLinkRewrite", () => {
     ).toBe("/evaluate/suite/s1/runs/r1");
   });
 
+  it("names only a saved test case id in the legacy link", () => {
+    expect(
+      rewrite({
+        enabled: false,
+        resultPage: { caseKey: "snapshot-key", iterationId: "i2" },
+        iterations: [
+          {
+            _id: "i2",
+            suiteRunId: "r1",
+            testCaseSnapshot: { caseKey: "snapshot-key" },
+          },
+        ] as EvalIteration[],
+      }),
+    ).toBe("/evaluate/suite/s1/runs/r1?iteration=i2");
+    expect(rewrite({ enabled: false, loading: true })).toBeNull();
+  });
+
   it("moves an old link to its page", () => {
     expect(
       rewrite({

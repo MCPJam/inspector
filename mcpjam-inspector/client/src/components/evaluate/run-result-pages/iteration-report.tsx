@@ -74,7 +74,9 @@ export function IterationReport({
           testCase={null}
           layoutMode="full"
           traceDetailPlacement={traceDetailPlacement}
-          activeTab={modeForTab(tab)}
+          // A link without a tab opens on the scorecard, even after an
+          // in-page click moved the tab elsewhere.
+          activeTab={onTabChange ? (modeForTab(tab) ?? "scorecard") : undefined}
           onTabChange={onTabChange && ((mode) => onTabChange(tabForMode(mode)))}
           trialVerdictWord={outcomeLabel(result)}
           scorecard={{

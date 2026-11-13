@@ -28,11 +28,16 @@ export function resultLinkRewrite({
 }): string | null {
   const { caseKey, iterationId } = resultPage;
   if (enabled === false && !fromOldLink) {
+    if (loading) return null;
+    // The legacy view opens only a saved test case id; a snapshot or title
+    // key would leave it blank, so such a link opens the run instead.
+    const owner = iterations.find((item) =>
+      iterationId ? item._id === iterationId : matrixCaseKey(item) === caseKey,
+    );
     return buildEvaluatePath({
       type: "run-detail",
       ...run,
-      // A title key names no test case the legacy view can open.
-      ...(caseKey.startsWith("title:") ? {} : { testCaseId: caseKey }),
+      ...(owner?.testCaseId ? { testCaseId: owner.testCaseId } : {}),
       ...(iterationId ? { iteration: iterationId } : {}),
     });
   }

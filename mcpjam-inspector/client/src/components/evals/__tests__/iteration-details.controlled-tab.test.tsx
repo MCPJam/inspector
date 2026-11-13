@@ -111,6 +111,21 @@ describe("IterationDetails with a controlled tab", () => {
     expect(onTabChange).toHaveBeenCalledWith("scorecard");
   });
 
+  it("falls back to its default when the given tab is not shown", () => {
+    // This iteration has no browser artifacts, so there is no Replay tab.
+    render(
+      <IterationDetails
+        iteration={iteration}
+        testCase={testCase}
+        layoutMode="full"
+        scorecard={scorecard}
+        activeTab="browser"
+        onTabChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
+  });
+
   it("still opens on its own default without one", () => {
     render(
       <IterationDetails

@@ -408,7 +408,6 @@ export function IterationDetails({
   const [ownTraceMode, setOwnTraceMode] = useState<IterationReportMode>(
     scorecard ? "scorecard" : "chat",
   );
-  const previewTraceMode = activeTab ?? ownTraceMode;
   const setPreviewTraceMode = (mode: IterationReportMode) => {
     setOwnTraceMode(mode);
     onTabChange?.(mode);
@@ -758,6 +757,19 @@ export function IterationDetails({
   // this pane exists to fix. Missing trace views explain their unavailable data.
   /** The tabs that read the trace blob, and therefore wait for it. */
   const traceTabsReady = hasTrace && !loading && !error;
+  // A tab named by a link but not shown for this iteration falls back to the
+  // default, so the panel is never blank with no tab selected.
+  const tabShown: Record<IterationReportMode, boolean> = {
+    timeline: true,
+    chat: true,
+    raw: true,
+    tools: Boolean(scorecard) || (hasEvalToolCalls && traceTabsReady),
+    browser: hasBrowserArtifacts && traceTabsReady,
+    steps: hasSteps && (Boolean(scorecard) || traceTabsReady),
+    scorecard: Boolean(scorecard),
+  };
+  const previewTraceMode =
+    activeTab && tabShown[activeTab] ? activeTab : ownTraceMode;
   const previewTraceToolbar =
     layoutMode === "full" &&
     (scorecard || (hasTrace && !loading && !error)) ? (
