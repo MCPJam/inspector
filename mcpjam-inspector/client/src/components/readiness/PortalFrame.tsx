@@ -9,6 +9,7 @@ import { useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import {
   directoryFlowField,
+  type DirectoryAnswer,
   type DirectoryFieldIssue,
   type DirectoryFlow,
   type DirectoryFlowField,
@@ -23,6 +24,7 @@ import type {
   DirectorySubmissionSession,
 } from "@/hooks/use-directory-submission";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
+import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
 import { McpjamChecks, McpjamMark } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
 import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
@@ -34,19 +36,26 @@ function StepBody({
   flow,
   step,
   values,
+  answers,
   issues,
   findings,
   server,
+  people,
   onAnswer,
+  onConfirm,
 }: {
   flow: DirectoryFlow;
   step: DirectoryFlowStep;
   values: AnswerValues;
+  /** Each answer with where it came from, for the mark under its field. */
+  answers: ReadonlyMap<string, DirectoryAnswer>;
   /** Only once the step is marked, as the portal shows them. */
   issues: readonly DirectoryFieldIssue[];
   findings: readonly PlacedFinding[];
   server: { url?: string; name?: string };
+  people: People;
   onAnswer: (key: string, value: AnswerValues[string]) => void;
+  onConfirm: (key: string) => void;
 }) {
   const blocks: DirectoryLayoutBlock[] =
     step.layout?.blocks ??
@@ -54,19 +63,31 @@ function StepBody({
   const shown = new Set(blocks.flatMap((block) => block.fields ?? []));
   const fieldsOf = (block: DirectoryLayoutBlock) =>
     step.fields.filter((field) => block.fields?.includes(field.key));
-  const renderField = (field: DirectoryFlowField, label?: string) => (
-    <PortalField
-      key={field.key}
-      field={field}
-      label={label}
-      value={values[field.key]}
-      issue={issues.find((issue) => issue.key === field.key)}
-      findings={findings.filter((entry) => entry.field === field.key)}
-      serverUrl={server.url}
-      serverName={server.name}
-      onChange={(value) => onAnswer(field.key, value)}
-    />
-  );
+  const renderField = (field: DirectoryFlowField, label?: string) => {
+    const issue = issues.find((entry) => entry.key === field.key);
+    return (
+      <PortalField
+        key={field.key}
+        field={field}
+        label={label}
+        value={values[field.key]}
+        issue={issue}
+        findings={findings.filter((entry) => entry.field === field.key)}
+        serverUrl={server.url}
+        serverName={server.name}
+        mark={
+          <AnswerOrigin
+            field={field}
+            answer={answers.get(field.key)}
+            issue={issue}
+            people={people}
+            onConfirm={() => onConfirm(field.key)}
+          />
+        }
+        onChange={(value) => onAnswer(field.key, value)}
+      />
+    );
+  };
   return (
     <div className="space-y-7">
       {blocks.map((block, index) => (
@@ -176,6 +197,7 @@ export function PortalFrame({
   session,
   serverUrl,
   serverName,
+  people = NO_PEOPLE,
   onClose,
 }: {
   flow: DirectoryFlow;
@@ -183,6 +205,8 @@ export function PortalFrame({
   session: DirectorySubmissionSession;
   serverUrl?: string;
   serverName?: string;
+  /** Who wrote each answer, by name; ids alone read as "a project member". */
+  people?: People;
   onClose: () => void;
 }) {
   const [active, setActive] = useState(0);
@@ -213,6 +237,9 @@ export function PortalFrame({
       notChecked: counts?.notChecked ?? 0,
     };
   });
+  const answers = new Map(
+    session.answers.map((answer) => [answer.key, answer]),
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -276,10 +303,13 @@ export function PortalFrame({
                 flow={flow}
                 step={step}
                 values={session.values}
+                answers={answers}
                 issues={marked(active) ? issuesOf(step.id) : []}
                 findings={placed(step.id)?.findings ?? []}
                 server={{ url: serverUrl, name: serverName }}
+                people={people}
                 onAnswer={session.setAnswer}
+                onConfirm={session.confirm}
               />
             )}
             <div className="flex flex-wrap items-center gap-2 pt-2">

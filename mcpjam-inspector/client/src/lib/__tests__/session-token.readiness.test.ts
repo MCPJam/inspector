@@ -60,6 +60,13 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/results",
+    // The handoff loop: without these the summary and the export 401.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/handoff",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/export",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/snapshots",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/claude.endpoint.https",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -96,8 +103,12 @@ describe("authFetch bearer on directory-readiness routes", () => {
     // Submission paths stay as narrow as the run paths above.
     "/api/v1/directory-flows/claude-connector/steps",
     "/api/v1/projects/proj_1/directory-submissions-export",
-    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs/run_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/handoff/raw",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events/evt_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/check_1/details",
+    // A sub-path the API does not serve.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/answers",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });

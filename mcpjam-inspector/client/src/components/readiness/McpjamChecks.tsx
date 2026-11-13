@@ -7,12 +7,10 @@
  * answer reads as a likely flag, never as a blocker.
  */
 import type { ReactNode } from "react";
-import type {
-  DirectoryEvidenceStatus,
-  PlacedFinding,
-} from "@mcpjam/sdk/browser";
+import type { PlacedFinding } from "@mcpjam/sdk/browser";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@mcpjam/design-system/cn";
+import { EvidenceNote, EvidenceStatusBadge } from "./EvidenceStatus";
 
 const SOURCE: Record<string, string> = {
   wire: "Verified on your server",
@@ -21,14 +19,6 @@ const SOURCE: Record<string, string> = {
   declared: "From your answers",
   manual: "Recorded by a person",
   llm: "Read by a model, not verified",
-};
-
-const EVIDENCE: Record<DirectoryEvidenceStatus, string> = {
-  established: "Established",
-  inconclusive: "Inconclusive",
-  stale: "Stale",
-  "not-tested": "Not tested",
-  blocked: "Blocked",
 };
 
 type Tone = "fail" | "flag" | "pass" | "idle";
@@ -87,10 +77,13 @@ export function McpjamMark({ children }: { children?: ReactNode }) {
 function CheckResult({ entry }: { entry: PlacedFinding }) {
   const { finding, evidenceStatus } = entry;
   const severity = severityOf(entry);
+  // A result without a verdict says why in its evidence note instead.
   const detail =
     finding.status === "violated"
       ? finding.remediation
-      : finding.notEvaluatedReason;
+      : finding.status === "not-evaluated"
+        ? undefined
+        : finding.notEvaluatedReason;
   return (
     <li className={cn("rounded-md text-sm", TONE[severity.tone])}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -98,23 +91,13 @@ function CheckResult({ entry }: { entry: PlacedFinding }) {
         {severity.label ? (
           <Badge variant="outline">{severity.label}</Badge>
         ) : null}
-        <Badge
-          variant="outline"
-          className={cn(evidenceStatus !== "established" && "border-dashed")}
-        >
-          {EVIDENCE[evidenceStatus]}
-        </Badge>
+        <EvidenceStatusBadge status={evidenceStatus} />
       </div>
       <p className="text-xs text-muted-foreground">
         {SOURCE[finding.provenance] ?? finding.provenance}
       </p>
       {detail ? <p className="mt-1">{detail}</p> : null}
-      {evidenceStatus === "stale" ? (
-        <p className="mt-1 text-xs text-muted-foreground">
-          An answer it read changed after this run. Run checks again to update
-          it.
-        </p>
-      ) : null}
+      <EvidenceNote entry={entry} />
     </li>
   );
 }
