@@ -952,6 +952,9 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // The turn failed with an error, not a Stop. Kept apart from the pause
+  // flags, which the continuation save still reads after a failure.
+  let turnErrored = false;
   // The file-capable sandbox session, captured from `onSandboxSession` so the
   // turn-end adoption pass (in the finally, before the box is released) can read
   // `~/.claude/skills` and write the managed-skills manifest. The finally's own
@@ -4626,6 +4629,7 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
+      turnErrored = true;
       // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
@@ -4885,12 +4889,14 @@ export async function runHarnessTurn(
     }
   };
 
-  // A turn paused on a decision ended cleanly. A Stop that only ended a
-  // background drain kept the answer, so that turn is not `aborted` either.
+  // A turn paused on a decision ended cleanly, unless it then failed. A Stop
+  // that only ended a background drain kept the answer, so is not `aborted`.
   const closeTurnEvent = () =>
     turnEvent.close({
       aborted,
-      completed: runSucceeded || pausedForApproval || pausedForScopeStepUp,
+      completed:
+        !turnErrored &&
+        (runSucceeded || pausedForApproval || pausedForScopeStepUp),
       bootstrap: harnessBootstrapOutcome(bakeObservedSandbox),
     });
 

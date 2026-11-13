@@ -87,8 +87,9 @@ const numbers = new Set([
   "excluded_over_cap_count",
   "not_delivered_count",
   "failed_count",
-  ...HARNESS_TURN_DURATIONS,
 ]);
+/** harness_turn_completed's timings: whole milliseconds, never a fraction. */
+const wholeMilliseconds = new Set<string>(HARNESS_TURN_DURATIONS);
 /**
  * The organization a server-side check verified (a `LogConvexId` from the
  * request context), kept only in a Convex ID's shape.
@@ -107,7 +108,7 @@ const booleans = new Set([
 export type ServerAnalyticsFieldRule =
   | { values: readonly string[] }
   | { kind: "boolean" }
-  | { kind: "number"; max: number }
+  | { kind: "number"; max: number; integer?: true }
   | { kind: "convexId" };
 
 /** The rule a property must meet to be forwarded, if it has one. */
@@ -118,6 +119,8 @@ export function serverAnalyticsFieldRule(
   if (Object.hasOwn(enums, key)) return { values: enums[key] };
   if (booleans.has(key)) return { kind: "boolean" };
   if (numbers.has(key)) return { kind: "number", max: 86400000 };
+  if (wholeMilliseconds.has(key))
+    return { kind: "number", max: 86400000, integer: true };
   if (ids.has(key)) return { kind: "convexId" };
   return undefined;
 }
@@ -150,7 +153,8 @@ export function rebuildServerAnalytics(
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= rule.max
+      value <= rule.max &&
+      (!rule.integer || Number.isInteger(value))
     )
       properties[key] = value;
   }

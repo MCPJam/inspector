@@ -42,10 +42,28 @@ describe("harness_turn_completed at the strict analytics boundary", () => {
     "forwards %s as whole milliseconds only",
     (field) => {
       expect(forwarded({ [field]: 1_250 })).toEqual({ [field]: 1_250 });
+      expect(forwarded({ [field]: 1.5 })).toEqual({});
       expect(forwarded({ [field]: -5 })).toEqual({});
       expect(forwarded({ [field]: "1250" })).toEqual({});
     },
   );
+
+  it("drops a fraction of a millisecond, and leaves other numbers as they were", () => {
+    expect(forwarded({ first_text_ms: 1.5 })).toEqual({});
+    expect(forwarded({ first_text_ms: 1500 })).toEqual({ first_text_ms: 1500 });
+    expect(
+      explainTelemetry({
+        analytics: "harness_turn_completed",
+        actorId: USER,
+        properties: { first_text_ms: 1.5 },
+      }).dropped.first_text_ms,
+    ).toBe("expects a whole number from 0 to 86400000, got 1.5");
+    expect(
+      rebuildServerAnalytics("api_chat_session_turn_completed", USER, {
+        duration_ms: 1.5,
+      })?.properties,
+    ).toEqual({ duration_ms: 1.5 });
+  });
 
   it("forwards a whole event, organization included", () => {
     const event = {

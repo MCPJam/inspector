@@ -13,6 +13,8 @@ const harnessState = vi.hoisted(() => ({
   streamParts: [] as Array<Record<string, unknown> & { type?: string }>,
   finalText: "",
   streamError: null as Error | null,
+  /** Thrown once every part has gone out. */
+  errorAfterParts: null as Error | null,
   afterFirstPart: null as (() => void) | null,
   claim: {
     stateVersion: 1,
@@ -25,6 +27,7 @@ const harnessState = vi.hoisted(() => ({
     stop: vi.fn(async () => ({})),
     destroy: vi.fn(async () => {}),
     detach: vi.fn(async () => ({})),
+    suspendTurn: vi.fn(async () => ({ type: "continue-turn" })),
   })),
 }));
 
@@ -38,6 +41,7 @@ vi.mock("@ai-sdk/harness/agent", () => ({
           yield part;
           harnessState.afterFirstPart?.();
         }
+        if (harnessState.errorAfterParts) throw harnessState.errorAfterParts;
       })(),
       text: Promise.resolve(harnessState.finalText),
     }));
@@ -201,6 +205,7 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     ];
     harnessState.finalText = "Hi.";
     harnessState.streamError = null;
+    harnessState.errorAfterParts = null;
     harnessState.afterFirstPart = null;
     harnessState.claim = {
       stateVersion: 1,
@@ -347,6 +352,23 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     ]) {
       expect(serialized).not.toMatch(leak);
     }
+  });
+
+  it("reports a turn that asked for an approval and then failed as failed", async () => {
+    harnessState.streamParts = [
+      {
+        type: "tool-approval-request",
+        approvalId: "approval-1",
+        toolCall: { toolCallId: "call-1" },
+      },
+    ];
+    harnessState.errorAfterParts = new Error("The bridge closed the turn.");
+    const onEngineError = vi.fn();
+    const { sink, options } = turn("web", { onEngineError });
+    await runToClose(options);
+    // The turn failed: its error reached the caller.
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onlyEvent(sink)).toMatchObject({ outcome: "failed" });
   });
 
   it("sends one event for a stopped turn", async () => {
