@@ -8,6 +8,7 @@ import { runClientIdentity } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import { IterationDetails } from "../../evals/iteration-details";
+import type { TraceDetailPlacement } from "../../evals/use-trace-detail-direction";
 import { RunAccountsProvider } from "../../evals/run-accounts-context";
 import { useSelectedRun } from "../../evals/use-selected-run";
 import { IterationReportScorecard } from "../case-scorecard/iteration-report-subscriber";
@@ -25,12 +26,14 @@ export function IterationReport({
   diagnostic,
   chain,
   onEditEvaluator,
+  traceDetailPlacement,
 }: {
   iteration: EvalIteration;
   target: RunResultsMatrixData["targets"][number];
   diagnostic?: EvalRunDecisionDiagnostic;
   chain?: EvalRunDecisionChain;
   onEditEvaluator?: () => void;
+  traceDetailPlacement?: TraceDetailPlacement;
 }) {
   const result = computeIterationResult(iteration);
   const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
@@ -58,6 +61,7 @@ export function IterationReport({
           iteration={iteration}
           testCase={null}
           layoutMode="full"
+          traceDetailPlacement={traceDetailPlacement}
           trialVerdictWord={outcomeLabel(result)}
           scorecard={{
             render: (context) => (
