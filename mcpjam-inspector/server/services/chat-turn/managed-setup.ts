@@ -9,9 +9,10 @@ import {
 } from "../../utils/harness/local/run-resources.js";
 import {
   ensureLocalHarnessTarget,
-  LOCAL_HARNESS_DISPLAY_NAMES,
   LocalAutoApproveConsentRequiredError,
 } from "../../utils/harness/local/readiness.js";
+import { DEFAULT_LOCAL_HARNESS_ID } from "../../utils/harness/local/runtimes/index.js";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { LocalHarnessExecutionTarget } from "../../utils/harness/local/local-turn.js";
 import { readWebConversationState } from "../../routes/web/web-conversation-state.js";
 import { enforceNativeDiscoverySessionPin } from "../../utils/harness/native-discovery.js";
@@ -518,8 +519,8 @@ export async function resolveManagedTurnSetup(args: {
     turnMode === "interactive"
   ) {
     const localHarnessId =
-      localHarnessIdOf(resolvedExecution.harness) ?? "claude-code";
-    const localHarnessName = LOCAL_HARNESS_DISPLAY_NAMES[localHarnessId];
+      localHarnessIdOf(resolvedExecution.harness) ?? DEFAULT_LOCAL_HARNESS_ID;
+    const localHarnessName = harnessDisplayName(localHarnessId);
     if (!hostedBody.projectId)
       return {
         response: c.json(
@@ -571,6 +572,8 @@ export async function resolveManagedTurnSetup(args: {
     const availability = checkHarnessRuntimeAvailable({
       mcpClient: resolveAgentLoop(hostRuntimeConfig ?? { harness: resolvedExecution.harness }).mcpClient,
       harnessId: resolvedExecution.harness,
+      surface: turnMode === "recorded" ? "user-testing" : "playground",
+      agentLoop: hostRuntimeConfig?.agentLoop !== undefined,
       localExecution: Boolean(harnessExecutionTarget),
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       requireToolApproval,

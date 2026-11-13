@@ -352,14 +352,14 @@ describe("SuiteDetailOverview", () => {
 
     // "Edit" is the SUITE's (→ settings); the cases card says what it does.
     await user.click(
-      screen.getByRole("button", { name: "Configure suite evaluators" }),
+      screen.getByRole("button", { name: "Suite settings" }),
     );
     expect(onEditSuite).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Add case" }));
     await user.click(screen.getByRole("menuitem", { name: "Add manually" }));
     expect(onEditCases).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onRerun).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Start run" }));
     expect(onRerun).toHaveBeenCalledWith(
@@ -875,7 +875,7 @@ it("keeps draft review out of the suite, but still warns drafts are waiting", as
   await userEvent
     .setup()
     .hover(
-      screen.getByRole("button", { name: "Setup Run", exact: true })
+      screen.getByRole("button", { name: "Run", exact: true })
         .parentElement!,
     );
   expect(await screen.findByRole("tooltip")).toHaveTextContent(
@@ -1124,7 +1124,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
     renderLocked({ declaredSuiteId: "s_from_file" });
 
     expect(
-      screen.queryByRole("button", { name: "Configure suite evaluators" }),
+      screen.queryByRole("button", { name: "Suite settings" }),
     ).toBeNull();
     // The reason and the remedy TOGETHER. A disabled Edit with a tooltip would
     // make the way out discoverable only by hovering the thing that does not
@@ -1181,7 +1181,7 @@ describe("SuiteDetailOverview — a CI-managed suite", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Configure suite evaluators" }),
+      screen.getByRole("button", { name: "Suite settings" }),
     ).toBeTruthy();
     expect(screen.queryByTestId("suite-detail-ci-owned")).toBeNull();
     // …and the escape hatch is not offered where there is nothing to escape.

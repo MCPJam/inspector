@@ -56,14 +56,13 @@
       },
       "credential": null,
       "displayName": "Claude Code",
-      "guest": true,
-      "local": true,
       "mcpClient": "harness",
       "modelAccess": "broker",
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "2.1.290"
+      "runtimeVersion": "2.1.290",
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": []
   },
@@ -131,8 +130,6 @@
       },
       "credential": null,
       "displayName": "Codex",
-      "guest": true,
-      "local": true,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
@@ -143,7 +140,8 @@
         "high",
         "xhigh"
       ],
-      "runtimeVersion": "0.163.0"
+      "runtimeVersion": "0.163.0",
+      "unavailableOn": {}
     },
     "qualifiedDiscovery": [
       "forwarded-bridge",
@@ -208,14 +206,15 @@
       },
       "credential": null,
       "displayName": "GitHub Copilot CLI",
-      "guest": false,
-      "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
       "protocol": "openai-responses",
       "reasoningEfforts": [],
-      "runtimeVersion": "1.0.92"
+      "runtimeVersion": "1.0.92",
+      "unavailableOn": {
+        "local": "GitHub Copilot CLI can't run on your computer yet. Run it in the cloud instead."
+      }
     },
     "qualifiedDiscovery": []
   },
@@ -299,14 +298,19 @@
         "label": "Cursor API key"
       },
       "displayName": "Cursor CLI",
-      "guest": false,
-      "local": false,
       "mcpClient": "harness",
       "modelAccess": "external-account",
       "orgKeys": false,
       "protocol": null,
       "reasoningEfforts": [],
-      "runtimeVersion": "2026.11.05-86047df"
+      "runtimeVersion": "2026.11.05-86047df",
+      "unavailableOn": {
+        "api": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
+        "events": "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
+        "guests": "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
+        "local": "Cursor CLI can't run on your computer yet. Run it in the cloud instead.",
+        "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study."
+      }
     },
     "qualifiedDiscovery": []
   },
@@ -364,14 +368,16 @@
       },
       "credential": null,
       "displayName": "OpenCode",
-      "guest": false,
-      "local": false,
       "mcpClient": "mcpjam",
       "modelAccess": "broker",
       "orgKeys": true,
       "protocol": "anthropic-messages",
       "reasoningEfforts": [],
-      "runtimeVersion": "1.18.34"
+      "runtimeVersion": "1.18.34",
+      "unavailableOn": {
+        "guests": "OpenCode isn't available to guests until it's tested with them.",
+        "local": "OpenCode can't run on your computer yet. Run it in the cloud instead."
+      }
     },
     "qualifiedDiscovery": []
   }

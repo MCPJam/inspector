@@ -618,7 +618,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       }`;
     }
     case "suite-edit":
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/settings${route.tab === "evaluators" ? "/evaluators" : ""}${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
     case "commit-detail": {
       // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
       // so a commit route built there degrades to that mode's list.
