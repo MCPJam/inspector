@@ -23,6 +23,13 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("forks when the server skill catalog in retained instructions changes", () => {
+    const first = { ...base, serverSkillCatalog: "**docs/lookup**" };
+    expect(harnessRuntimeFingerprint(first)).not.toBe(
+      harnessRuntimeFingerprint({ ...first, serverSkillCatalog: "**docs/search**" }),
+    );
+  });
+
   it("retains the warm session across per-turn approval and sandbox changes", () => {
     const codex = { ...base, harnessId: "codex" };
     const approved = { ...codex, permissionMode: "allow-reads", commandSandbox: "read-only" };

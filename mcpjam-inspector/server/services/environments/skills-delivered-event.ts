@@ -83,9 +83,11 @@ export function reportSkillsDelivered(
   surface: SkillsDeliveredSurface,
   skills: TurnSkills,
   result: TurnSkillsResult = { delivered: skills.delivered, failed: [] },
+  live?: BoxSkillsResult["liveDelivery"],
 ): void {
   const attempted =
-    skills.delivered.length + skills.excluded.length + result.failed.length;
+    skills.delivered.length + skills.excluded.length + result.failed.length +
+    (live?.delivered ?? 0) + (live?.collisions ?? 0);
   if (attempted === 0) return;
   const counts = zeroCounts();
   const familyOf = skillFamilies(skills.set);
@@ -94,13 +96,16 @@ export function reportSkillsDelivered(
     if (ref.omittedFromCatalog) counts.omitted_from_catalog_count += 1;
   }
   for (const { reason } of skills.excluded) counts[EXCLUDED_FIELD[reason]] += 1;
+  counts.delivered_mcp_server_count += live?.delivered ?? 0;
+  counts.excluded_name_collision_count += live?.collisions ?? 0;
+  counts.omitted_from_catalog_count += live?.omittedFromCatalog ?? 0;
   counts.not_delivered_count =
     skills.delivered.length - result.delivered.length - result.failed.length;
   counts.failed_count = result.failed.length;
   const outcome =
     result.failed.length === 0
       ? "ok"
-      : result.delivered.length > 0
+      : result.delivered.length + (live?.delivered ?? 0) > 0
         ? "partial"
         : "failed";
   capture({
@@ -144,7 +149,7 @@ export function reportBoxSkillsDelivered(
       const error = viaTools(ref) ? undefined : failed.get(ref.name);
       return error === undefined ? [] : [{ ref, error }];
     }),
-  });
+  }, written.liveDelivery);
 }
 
 /**
