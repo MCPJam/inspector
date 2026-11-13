@@ -411,6 +411,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_directory_submission: { command: "readiness submission create" },
   list_directory_submissions: { command: "readiness submission list" },
   get_directory_submission: { command: "readiness submission get" },
+  // `readiness submission gate` runs it too, with only `checkGate`.
   update_directory_submission: { command: "readiness submission set" },
   delete_directory_submission: { command: "readiness submission delete" },
   start_directory_submission_run: { command: "readiness submission run" },
