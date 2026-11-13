@@ -59,8 +59,10 @@ type ProjectHistoryEntry = { detail: HistoryDetail };
  */
 const SETTLED = new Map<string, ProjectHistoryEntry>();
 const LATEST = new Map<string, Map<string, HistoryDetail>>();
-const SETTLED_LIMIT = 500;
-const LATEST_LIMIT = 20;
+// Each entry holds a run's full iteration list and lives for the tab, so the
+// caps stay small: a few history pages and the last few grids.
+const SETTLED_LIMIT = 100;
+const LATEST_LIMIT = 5;
 
 function remember<V>(
   cache: Map<string, V>,
