@@ -1,6 +1,6 @@
 /**
- * The public directory submission reads: what a read derives from the
- * stored answers, and where a run's findings land.
+ * The public directory submission surface: what a caller may write, what a
+ * read derives, and where a run's findings land.
  *
  * Convex is mocked at the `convex/browser` boundary and the report fetch at
  * `fetch`, as in the readiness tests, so these prove the GATEWAY's behaviour
@@ -11,16 +11,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { getFunctionName } from "convex/server";
+import { ConvexError } from "convex/values";
 import { CLAUDE_CONNECTOR_FLOW } from "@mcpjam/sdk";
 
 const {
   validateGuestTokenMock,
   convexQueryMock,
   convexMutationMock,
+  authorizeServerMock,
+  executeHostedReadinessRunMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   convexQueryMock: vi.fn(),
   convexMutationMock: vi.fn(),
+  authorizeServerMock: vi.fn(),
+  executeHostedReadinessRunMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -35,6 +40,15 @@ vi.mock("convex/browser", () => ({
     };
   }),
 }));
+vi.mock("../../../services/readiness/worker.js", () => ({
+  executeHostedReadinessRun: executeHostedReadinessRunMock,
+}));
+vi.mock("../../web/auth.js", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    "../../web/auth.js",
+  );
+  return { ...actual, authorizeServer: authorizeServerMock };
+});
 
 import v1Routes from "../index.js";
 
@@ -112,6 +126,14 @@ function request(
   );
 }
 
+function mutationArgs(name: string): Record<string, unknown> {
+  const call = convexMutationMock.mock.calls.find(
+    ([ref]) => nameOf(ref) === name,
+  );
+  expect(call, `${name} was not called`).toBeDefined();
+  return call![1] as Record<string, unknown>;
+}
+
 function finding(id: string, status: string) {
   return {
     id,
@@ -154,6 +176,12 @@ describe("v1 directory submissions", () => {
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     queries = {
       "directorySubmissions:getDirectorySubmission": () => ROW,
+      "users:getCurrentUser": () => ({
+        name: "Sample Person",
+        email: "review@example.com",
+      }),
+      "projects:getProjectCapabilities": () => ({ organizationId: "org_1" }),
+      "organizations:getOrganization": () => ({ name: "Acme" }),
     };
     mutations = {};
     convexQueryMock.mockImplementation(async (ref, args) => {
@@ -166,6 +194,14 @@ describe("v1 directory submissions", () => {
       if (!handler) throw new Error(`unexpected mutation ${nameOf(ref)}`);
       return handler(args);
     });
+    authorizeServerMock.mockResolvedValue({
+      authorized: true,
+      serverConfig: {
+        transportType: "http",
+        url: "https://connector.example.com/mcp",
+      },
+    });
+    executeHostedReadinessRunMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -180,14 +216,19 @@ describe("v1 directory submissions", () => {
     it.each([
       ["GET", "/api/v1/directory-flows"],
       ["GET", BASE],
-      ["GET", `${BASE}/${SUBMISSION}`],
+      ["POST", BASE],
+      ["PATCH", `${BASE}/${SUBMISSION}`],
+      ["POST", `${BASE}/${SUBMISSION}/runs`],
       ["GET", `${BASE}/${SUBMISSION}/results`],
     ])("denies a guest %s %s", async (method, path) => {
       validateGuestTokenMock.mockResolvedValue({
         valid: true,
         guestId: "guest_1",
       });
-      const res = await request(method, path, { token: "guest-jwt" });
+      const res = await request(method, path, {
+        token: "guest-jwt",
+        body: method === "GET" ? undefined : {},
+      });
       expect(res.status).toBe(401);
       expect(convexQueryMock).not.toHaveBeenCalled();
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -221,6 +262,89 @@ describe("v1 directory submissions", () => {
       );
       const missing = await request("GET", "/api/v1/directory-flows/nope");
       expect(missing.status).toBe(404);
+    });
+  });
+
+  describe("creating", () => {
+    beforeEach(() => {
+      mutations["directorySubmissions:createDirectorySubmission"] = () => ({
+        submissionId: SUBMISSION,
+        revision: 1,
+        reused: false,
+      });
+    });
+
+    it("stores the account's facts as prefills and derives defaults on read", async () => {
+      const res = await request("POST", BASE, {
+        body: { flowId: "claude-connector", serverId: SERVER },
+      });
+      expect(res.status).toBe(201);
+      const args = mutationArgs("directorySubmissions:createDirectorySubmission");
+      expect(args).toMatchObject({
+        projectId: PROJECT,
+        serverId: SERVER,
+        flowId: "claude-connector",
+        flowVersion: VERSION,
+      });
+      // Defaults are never stored: only the three account facts go in.
+      expect(args.prefill).toEqual([
+        { key: "company.name", value: "Acme", wordingRevision: VERSION },
+        { key: "company.contactName", value: "Sample Person", wordingRevision: VERSION },
+        { key: "company.contactEmail", value: "review@example.com", wordingRevision: VERSION },
+      ]);
+
+      const view = (await res.json()) as Record<string, any>;
+      expect(view.answers).toContainEqual(
+        expect.objectContaining({ key: "company.contactEmail", origin: "account" }),
+      );
+      expect(view.answers).toContainEqual({
+        key: "useCases.access",
+        value: "read-only",
+        origin: "default",
+      });
+      expect(view.submissionUrl).toBe(CLAUDE_CONNECTOR_FLOW.submissionUrl);
+      expect(view.steps).toHaveLength(CLAUDE_CONNECTOR_FLOW.steps.length);
+      expect(view.resultsRunId).toBeNull();
+    });
+
+    it("leaves a prefill empty when its value cannot be read", async () => {
+      queries["organizations:getOrganization"] = () => {
+        throw new Error("convex is down");
+      };
+      queries["users:getCurrentUser"] = () => ({ name: "", email: "review@example.com" });
+      const res = await request("POST", BASE, {
+        body: { flowId: "claude-connector", serverId: SERVER },
+      });
+      expect(res.status).toBe(201);
+      const args = mutationArgs("directorySubmissions:createDirectorySubmission");
+      expect(args.prefill).toEqual([
+        { key: "company.contactEmail", value: "review@example.com", wordingRevision: VERSION },
+      ]);
+    });
+
+    it("says when an idempotency key answered from an earlier create", async () => {
+      mutations["directorySubmissions:createDirectorySubmission"] = () => ({
+        submissionId: SUBMISSION,
+        revision: 3,
+        reused: true,
+      });
+      const res = await request("POST", BASE, {
+        body: { flowId: "claude-connector", serverId: SERVER, idempotencyKey: "k1" },
+      });
+      expect(((await res.json()) as { replayed?: boolean }).replayed).toBe(true);
+      expect(
+        mutationArgs("directorySubmissions:createDirectorySubmission").idempotencyKey,
+      ).toBe("k1");
+    });
+
+    it.each([
+      ["an unknown key", { flowId: "claude-connector", serverId: SERVER, answers: {} }],
+      ["a missing server", { flowId: "claude-connector" }],
+      ["a flow that does not exist", { flowId: "nope", serverId: SERVER }],
+    ])("refuses %s before anything is written", async (_label, body) => {
+      const res = await request("POST", BASE, { body });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });
 
@@ -277,6 +401,163 @@ describe("v1 directory submissions", () => {
       const res = await request("GET", `${BASE}?limit=500`);
       expect(res.status).toBe(400);
       expect(convexQueryMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updating", () => {
+    beforeEach(() => {
+      mutations["directorySubmissions:updateDirectorySubmission"] = () => ({
+        ...ROW,
+        revision: 4,
+      });
+    });
+
+    it("stamps the wording revision, the verified channel and the declared agent", async () => {
+      const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: {
+          expectedRevision: 3,
+          answers: { "listing.name": "Acme Search" },
+          idempotencyKey: "w1",
+        },
+        headers: {
+          "x-mcpjam-launcher": JSON.stringify({
+            kind: "mcp",
+            client: "claude-code",
+            version: "2.1",
+          }),
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(mutationArgs("directorySubmissions:updateDirectorySubmission")).toEqual({
+        submissionId: SUBMISSION,
+        expectedRevision: 3,
+        set: [
+          {
+            key: "listing.name",
+            value: "Acme Search",
+            origin: "set",
+            wordingRevision: VERSION,
+          },
+        ],
+        // A bearer the gateway could not verify reads as the API.
+        setVia: "api",
+        actorLabel: "claude-code 2.1",
+        idempotencyKey: "w1",
+      });
+      expect(((await res.json()) as { revision: number }).revision).toBe(4);
+    });
+
+    it("refuses a value the field cannot hold, in the flow's words", async () => {
+      const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: { expectedRevision: 3, answers: { "useCases.access": "everything" } },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, any>;
+      expect(body.message).toBe(
+        "useCases.access: Choose one of: read-only, write-only, read-write.",
+      );
+      expect(body.details).toMatchObject({
+        field: "useCases.access",
+        step: "useCases",
+        reason: "unknownOption",
+      });
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["an unknown field", { expectedRevision: 3, answers: { "listing.nope": "x" } }],
+      ["confirming an unknown field", { expectedRevision: 3, confirm: ["listing.nope"] }],
+      ["an unknown key", { expectedRevision: 3, actorLabel: "me" }],
+      ["no expected revision", { answers: { "listing.name": "x" } }],
+    ])("refuses %s before anything is written", async (_label, body) => {
+      const res = await request("PATCH", `${BASE}/${SUBMISSION}`, { body });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("removes with null, even a field the flow no longer has", async () => {
+      await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: { expectedRevision: 3, answers: { "listing.retired": null } },
+      });
+      expect(
+        mutationArgs("directorySubmissions:updateDirectorySubmission").unset,
+      ).toEqual(["listing.retired"]);
+    });
+
+    it("confirms a stored answer, and stores a preselected one as confirmed", async () => {
+      await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: {
+          expectedRevision: 3,
+          confirm: ["company.contactEmail", "useCases.access"],
+        },
+      });
+      const args = mutationArgs("directorySubmissions:updateDirectorySubmission");
+      expect(args.confirm).toEqual([
+        { key: "company.contactEmail", wordingRevision: VERSION },
+      ]);
+      expect(args.set).toEqual([
+        {
+          key: "useCases.access",
+          value: "read-only",
+          origin: "confirmed",
+          wordingRevision: VERSION,
+        },
+      ]);
+    });
+
+    it("sets and confirms one key in a single entry", async () => {
+      await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: {
+          expectedRevision: 3,
+          answers: { "dataHandling.sponsored": "no" },
+          confirm: ["dataHandling.sponsored"],
+        },
+      });
+      const args = mutationArgs("directorySubmissions:updateDirectorySubmission");
+      expect(args.set).toEqual([
+        expect.objectContaining({ key: "dataHandling.sponsored", origin: "confirmed" }),
+      ]);
+      expect(args).not.toHaveProperty("confirm");
+    });
+
+    it("answers a conflict with the conflicting keys and the submission as it is now", async () => {
+      mutations["directorySubmissions:updateDirectorySubmission"] = () => {
+        throw new ConvexError({
+          code: "CONFLICT",
+          message:
+            "This submission changed since you read it. Read it again and reapply your change.",
+          currentRevision: 5,
+          conflictingKeys: ["listing.oneLiner"],
+        });
+      };
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...ROW,
+        revision: 5,
+      });
+      const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: { expectedRevision: 1, answers: { "listing.oneLiner": "Mine" } },
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as Record<string, any>;
+      expect(body.code).toBe("CONFLICT");
+      expect(body.details.currentRevision).toBe(5);
+      expect(body.details.conflictingKeys).toEqual(["listing.oneLiner"]);
+      expect(body.details.current).toMatchObject({ id: SUBMISSION, revision: 5 });
+      expect(body.details.current.steps).toHaveLength(
+        CLAUDE_CONNECTOR_FLOW.steps.length,
+      );
+    });
+
+    it("marks a replayed write", async () => {
+      mutations["directorySubmissions:updateDirectorySubmission"] = () => ({
+        ...ROW,
+        replayed: true,
+      });
+      const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+        body: { expectedRevision: 2, answers: { "listing.name": "x" }, idempotencyKey: "w1" },
+      });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { replayed?: boolean }).replayed).toBe(true);
     });
   });
 
@@ -402,5 +683,80 @@ describe("v1 directory submissions", () => {
         "The readiness report could not be read from storage. Try again in a minute.",
       );
     });
+  });
+
+  describe("starting a run", () => {
+    beforeEach(() => {
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => ({
+        runId: RUN,
+        jobId: "job_1",
+        reused: false,
+      });
+    });
+
+    it("grades the submission's own server and forwards the submission", async () => {
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { idempotencyKey: "r1" },
+      });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        runId: RUN,
+        serverId: SERVER,
+        readinessKind: "claude",
+        includeLlmObservations: false,
+      });
+      expect(authorizeServerMock).toHaveBeenCalledWith(
+        expect.anything(),
+        "tok",
+        PROJECT,
+        SERVER,
+      );
+      expect(mutationArgs("claudeReadinessRuns:requestReadinessRun")).toMatchObject({
+        projectId: PROJECT,
+        serverId: SERVER,
+        serverUrl: "https://connector.example.com/mcp",
+        readinessKind: "claude",
+        submissionId: SUBMISSION,
+        idempotencyKey: "r1",
+      });
+      expect(executeHostedReadinessRunMock.mock.calls[0]![0]).toMatchObject({
+        lease: { runId: RUN, jobId: "job_1" },
+        publisher: "claude",
+        submissionId: SUBMISSION,
+      });
+    });
+
+    it("refuses a run the backend says does not match the submission", async () => {
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
+        throw new ConvexError({
+          code: "submission_mismatch",
+          message:
+            "This submission is for a different server. Start the run against the submission's server.",
+        });
+      };
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, { body: {} });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as Record<string, any>;
+      expect(body.message).toContain("different server");
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a body that names its own server", async () => {
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { serverId: "srvotherxxxxxxxxxxxxxxxxxxxxxxxx" },
+      });
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+      expect(authorizeServerMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("deletes a submission and says so", async () => {
+    mutations["directorySubmissions:deleteDirectorySubmission"] = () => ({
+      deleted: true,
+    });
+    const res = await request("DELETE", `${BASE}/${SUBMISSION}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: SUBMISSION, deleted: true });
   });
 });
