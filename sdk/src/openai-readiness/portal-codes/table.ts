@@ -6,7 +6,8 @@
  * that lists it, whether it blocks, and when the portal reports it. Where the
  * page names the field or file a code is about, so does the code, and where its
  * rule is a field's presence, type, length, pattern, values or count, the
- * validators in `validate.ts` check it.
+ * validators in `validate.ts` check it. MCPJam's own issue ids are matched to
+ * these codes in `issue-codes.ts`.
  *
  * Pure data. Safe from the browser entry.
  */

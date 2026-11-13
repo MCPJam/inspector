@@ -17,6 +17,7 @@ import {
   OPENAI_PORTAL_CODES_BY_CODE,
   isOpenAIPortalCode,
 } from "../../src/openai-readiness/portal-codes/table.js";
+import { OPENAI_PORTAL_ERRORS_BY_ID } from "../../src/openai-readiness/portal-errors.js";
 
 /** Rows per table, counted on the captured page. */
 const PAGE_COUNTS = {
@@ -221,5 +222,38 @@ describe("what each code is about", () => {
     expect(tokensOf(message).slice(1)).toEqual([
       ...OPENAI_PORTAL_LISTING_CATEGORIES,
     ]);
+  });
+});
+
+describe("the codes as catalog entries", () => {
+  it("can be raised by code, blocking unless the page says warning", () => {
+    for (const definition of OPENAI_PORTAL_CODES) {
+      const entry = OPENAI_PORTAL_ERRORS_BY_ID[definition.code];
+      expect(entry, definition.code).toBeDefined();
+      expect(entry.message).toBe(definition.message);
+      expect(entry.severity).toBe(
+        definition.severity === "warning" ? "advisory" : "blocking"
+      );
+      expect(entry.source).toMatchObject({
+        page: "deploy/submission-errors",
+        section: `§${definition.table}`,
+        snapshotDate: "2026-11-13",
+      });
+    }
+  });
+
+  it("groups them under the package lane's findings", () => {
+    const category = (code: string) =>
+      OPENAI_PORTAL_ERRORS_BY_ID[code].category;
+    expect(category("plugin_root_has_siblings")).toBe("package-archive");
+    expect(category("archive_member_path_too_deep")).toBe("package-archive");
+    expect(category("plugin_manifest_missing")).toBe("package-manifest");
+    expect(category("plugin_display_name_too_long")).toBe("package-manifest");
+    expect(category("skill_agent_yaml_malformed")).toBe("package-skills");
+    expect(category("skill_file_ignored")).toBe("package-skills");
+    expect(category("svg_dimensions_not_square")).toBe("package-assets");
+    expect(category("app_configuration_excluded")).toBe("exclusions");
+    expect(category("submission_subtitle_too_long")).toBe("listing-fields");
+    expect(category("scan_required")).toBe("mcp-server");
   });
 });
