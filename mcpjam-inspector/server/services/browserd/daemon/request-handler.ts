@@ -32,7 +32,9 @@ import {
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
+  type BrowserCommandSecret,
 } from "../protocol";
+import { isWebOrigin } from "./secret-substitution";
 import type {
   BrowserLedgerActor,
   BrowserLedgerRow,
@@ -149,13 +151,26 @@ interface CommandRequestBody {
    * Values for the command's `{{secret:NAME}}` placeholders. Outside `command`
    * so no ledger, trace or mirror writer is ever handed them.
    */
-  secrets?: Array<{ name: string; value: string }>;
+  secrets?: BrowserCommandSecret[];
 }
 
 /** How many secrets one command may carry. */
 const MAX_COMMAND_SECRETS = 32;
+/** How many origins one secret may be typed on. */
+const MAX_SECRET_ORIGINS = 8;
 /** The backend's own charset for a secret name. */
 const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * A secret's `origins`, keeping only exact web origins. Anything that is not a
+ * list still limits the secret, to no page: dropping it would lift the limit.
+ */
+function readSecretOrigins(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, MAX_SECRET_ORIGINS)
+    .filter((origin): origin is string => typeof origin === "string" && isWebOrigin(origin));
+}
 
 /**
  * Read the `secrets` sibling. Malformed entries are dropped, not refused, so
@@ -163,15 +178,16 @@ const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
  */
 function readCommandSecrets(
   raw: unknown,
-): Array<{ name: string; value: string }> | undefined {
+): BrowserCommandSecret[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const secrets: Array<{ name: string; value: string }> = [];
+  const secrets: BrowserCommandSecret[] = [];
   for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { name, value } = entry as { name?: unknown; value?: unknown };
+    const { name, value, origins } = entry as Record<string, unknown>;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({ name, value });
+    const limit = origins === undefined ? {} : { origins: readSecretOrigins(origins) };
+    secrets.push({ name, value, ...limit });
   }
   return secrets.length > 0 ? secrets : undefined;
 }

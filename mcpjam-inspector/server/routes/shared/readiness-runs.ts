@@ -95,6 +95,11 @@ export interface StartHostedReadinessRunInput {
    * run; the worker grades that frozen copy.
    */
   submissionId?: string;
+  /**
+   * The submission's reviewer sign-in attempt the run works on. Handed to the
+   * worker only: the backend run takes no attempt, and the run joins it.
+   */
+  reviewerAttemptId?: string;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -239,6 +244,9 @@ export async function startHostedReadinessRun(
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        ...(input.reviewerAttemptId
+          ? { reviewerAttemptId: input.reviewerAttemptId }
+          : {}),
         analyticsActor: input.analyticsActor,
       },
       input.authorized,

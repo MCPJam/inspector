@@ -16,7 +16,13 @@ var BROWSERD_WEBMCP_FEATURES = [
    * not a protocol bump, so deploys don't kill live browsers. Without it the
    * server must refuse placeholders: an old daemon would type them literally.
    */
-  "secret-placeholders"
+  "secret-placeholders",
+  /**
+   * A `secrets` entry may carry `origins`, and is then typed only on a page at
+   * one of them. Without it the server must not send such an entry: an old
+   * daemon ignores `origins` and would type the value on any page.
+   */
+  "secret-origins"
 ];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
@@ -79,6 +85,11 @@ var BROWSERD_ERROR_CODES = [
   "secret_unresolved",
   /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
   "secret_too_short",
+  /**
+   * A secret limited to some origins was typed on a page outside them, or a
+   * reviewer credential arrived with no origins; nothing was typed.
+   */
+  "secret_origin_refused",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.
@@ -1092,6 +1103,82 @@ function computeStateToken(inputs) {
 // server/services/browserd/daemon/request-handler.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
 
+// server/utils/secrets/reviewer-secrets.ts
+var REVIEWER_SECRET_PREFIX = "MCPJAM_REVIEWER_";
+function isReviewerSecretName(name) {
+  return name.startsWith(REVIEWER_SECRET_PREFIX);
+}
+
+// server/services/browserd/daemon/secret-substitution.ts
+function isWebOrigin(value) {
+  try {
+    const url = new URL(value);
+    return /^https?:$/.test(url.protocol) && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+function originOf(url) {
+  if (!url) return void 0;
+  try {
+    const { origin } = new URL(url);
+    return origin === "null" ? void 0 : origin;
+  } catch {
+    return void 0;
+  }
+}
+function requireAllowedOrigin(secret, pageUrl) {
+  const allowed = secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
+  if (allowed === void 0) return;
+  const origin = originOf(pageUrl);
+  if (origin !== void 0 && allowed.includes(origin)) return;
+  const detail = allowed.length === 0 ? `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.` : `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.`;
+  throw new Error(formatBrowserdError("secret_origin_refused", detail));
+}
+function resolveActSecrets(action, secrets, pageUrl) {
+  const byName = new Map((secrets ?? []).map((s) => [s.name, s]));
+  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const texts = [
+    ...action.value === void 0 ? [] : [action.value],
+    ...(action.fields ?? []).flatMap(
+      (field) => typeof field.value === "string" ? [field.value] : []
+    )
+  ];
+  for (const name of new Set(texts.flatMap(secretNamesIn))) {
+    const secret = byName.get(name);
+    if (secret === void 0) continue;
+    if (secret.value.length < MIN_SCRUBBABLE_LENGTH) {
+      throw new Error(
+        formatBrowserdError(
+          "secret_too_short",
+          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
+        )
+      );
+    }
+    requireAllowedOrigin(secret, pageUrl);
+  }
+  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
+  const fields = action.fields?.map(
+    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
+  );
+  if (value === null || fields?.some((field) => field.value === null)) {
+    throw new Error(
+      formatBrowserdError(
+        "secret_unresolved",
+        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
+      )
+    );
+  }
+  const valueChanged = value !== void 0 && value !== action.value;
+  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
+  if (!valueChanged && !fieldsChanged) return action;
+  return {
+    ...action,
+    ...value === void 0 ? {} : { value },
+    ...fields === void 0 ? {} : { fields }
+  };
+}
+
 // server/services/browserd/daemon/auth.ts
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 function presentedBearer(headerValue2) {
@@ -1846,16 +1933,25 @@ var MOTION_ACTIONS = /* @__PURE__ */ new Set([
   "act"
 ]);
 var MAX_COMMAND_SECRETS = 32;
+var MAX_SECRET_ORIGINS = 8;
 var SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+function readSecretOrigins(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_SECRET_ORIGINS).filter((origin) => typeof origin === "string" && isWebOrigin(origin));
+}
 function readCommandSecrets(raw) {
   if (!Array.isArray(raw)) return void 0;
   const secrets = [];
   for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { name, value } = entry;
+    const { name, value, origins } = entry;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({ name, value });
+    secrets.push({
+      name,
+      value,
+      ...origins === void 0 ? {} : { origins: readSecretOrigins(origins) }
+    });
   }
   return secrets.length > 0 ? secrets : void 0;
 }
@@ -5758,48 +5854,6 @@ function createBrowserSecretRegistry() {
   };
 }
 
-// server/services/browserd/daemon/secret-substitution.ts
-function resolveActSecrets(action, secrets) {
-  const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
-  const texts = [
-    ...action.value === void 0 ? [] : [action.value],
-    ...(action.fields ?? []).flatMap(
-      (field) => typeof field.value === "string" ? [field.value] : []
-    )
-  ];
-  for (const name of new Set(texts.flatMap(secretNamesIn))) {
-    const secret = values.get(name);
-    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
-      throw new Error(
-        formatBrowserdError(
-          "secret_too_short",
-          `"${name}" is shorter than ${MIN_SCRUBBABLE_LENGTH} characters, too short to hide reliably in what the page shows back; nothing was typed. Ask the user to type it themselves.`
-        )
-      );
-    }
-  }
-  const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
-  const fields = action.fields?.map(
-    (field) => typeof field.value === "string" ? { ...field, value: substituteSecrets(field.value, values) } : field
-  );
-  if (value === null || fields?.some((field) => field.value === null)) {
-    throw new Error(
-      formatBrowserdError(
-        "secret_unresolved",
-        "this act referenced a {{secret:NAME}} the browser was not given a value for; nothing was typed. Check the name, and that the secret is set for this environment."
-      )
-    );
-  }
-  const valueChanged = value !== void 0 && value !== action.value;
-  const fieldsChanged = fields !== void 0 && fields.some((field, index) => field.value !== action.fields?.[index]?.value);
-  if (!valueChanged && !fieldsChanged) return action;
-  return {
-    ...action,
-    ...value === void 0 ? {} : { value },
-    ...fields === void 0 ? {} : { fields }
-  };
-}
-
 // server/services/browserd/daemon/page-text.ts
 var PAGE_TEXT_FN = `() => {
   const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
@@ -6168,7 +6222,7 @@ var MAX_EARLY_RESPONSES = 16;
 var MAX_SETTLED_IDS = 32;
 var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
 var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
-function originOf(url) {
+function originOf2(url) {
   try {
     return new URL(url).origin;
   } catch {
@@ -6786,7 +6840,7 @@ var WebMcpBridge = class {
       description: tool.description ?? "",
       ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
       ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
-      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      origin: originOf2(this.frames.get(tool.frameId) ?? ""),
       isMainFrame: tool.frameId === this.mainFrameId,
       registrationSeq,
       registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
@@ -8095,8 +8149,13 @@ var ChromiumDriver = class {
         return this.observe(tabId, action, permit);
       case "act": {
         let resolved = action;
+        const page = this.tabs.get(tabId)?.page;
         try {
-          resolved = resolveActSecrets(action, context?.secrets);
+          resolved = resolveActSecrets(
+            action,
+            context?.secrets,
+            page && safeUrl(page)
+          );
         } catch (error) {
           return {
             ok: false,

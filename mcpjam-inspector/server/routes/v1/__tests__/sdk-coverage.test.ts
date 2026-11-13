@@ -203,6 +203,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "startDirectorySubmissionRun",
   "get /projects/{projectId}/directory-submissions/{submissionId}/results":
     "getDirectorySubmissionResults",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts":
+    "createDirectoryReviewerAttempt",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts":
+    "listDirectoryReviewerAttempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}":
+    "getDirectoryReviewerAttempt",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume":
+    "resumeDirectoryReviewerAttempt",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel":
+    "cancelDirectoryReviewerAttempt",
 
   // Persisted conformance runs
   "post /projects/{projectId}/servers/{serverId}/conformance-runs":

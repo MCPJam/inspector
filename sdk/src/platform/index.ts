@@ -118,6 +118,13 @@ export type {
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
+export type {
+  PlatformReviewerAttempt,
+  PlatformReviewerAttemptCreateBody,
+  PlatformReviewerAttemptStart,
+  PlatformReviewerAttemptState,
+  PlatformReviewerStage,
+} from "./directory-reviewer-attempt-types.js";
 // The nine directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
 
