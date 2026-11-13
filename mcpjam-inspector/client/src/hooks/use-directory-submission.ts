@@ -10,9 +10,11 @@
  */
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import {
+  directoryFlowField,
   validateDirectoryAnswers,
   type DirectoryAnswer,
   type DirectoryAnswerValue,
+  type DirectoryFieldIssue,
   type DirectoryFlow,
 } from "@mcpjam/sdk/browser";
 import { directorySubmissionConflict } from "@mcpjam/sdk/platform";
@@ -22,6 +24,7 @@ import {
   getDirectorySubmission,
   startDirectorySubmissionRun,
   updateDirectorySubmission,
+  type SubmissionPlugin,
   type SubmissionScope,
   type SubmissionView,
 } from "@/lib/apis/directory-submissions-api";
@@ -39,6 +42,9 @@ interface Draft {
   saving: boolean;
   savedAt: number | null;
   error: string | null;
+  /** A ChatGPT plugin choice on its way, and why the last one was refused. */
+  pluginSaving: boolean;
+  pluginError: string | null;
 }
 
 const EMPTY: Draft = {
@@ -50,6 +56,8 @@ const EMPTY: Draft = {
   saving: false,
   savedAt: null,
   error: null,
+  pluginSaving: false,
+  pluginError: null,
 };
 const SAVE_DELAY_MS = 800;
 /** The submission changes rarely; a run polls on its own ladder. */
@@ -207,7 +215,55 @@ export function createDraftStore(render: () => void) {
       queue();
     },
     keepSaved: () => set({ conflict: null }),
+    /**
+     * Replaces a ChatGPT submission's plugin at once, guarded like an answer
+     * by the revision the person chose on: a plugin someone else saved in
+     * between wins, and the page shows it.
+     */
+    async setPlugin(plugin: SubmissionPlugin | null) {
+      const target = scope;
+      const expectedRevision = draft.view?.revision;
+      if (!target || expectedRevision === undefined) return;
+      set({ pluginSaving: true, pluginError: null });
+      try {
+        const saved = await updateDirectorySubmission(target, {
+          expectedRevision,
+          plugin,
+        });
+        if (!isOpen(saved.id)) return;
+        set({ pluginSaving: false });
+        adopt(saved);
+      } catch (error) {
+        if (!isOpen(target.submissionId)) return;
+        const conflict = directorySubmissionConflict(error);
+        set({
+          pluginSaving: false,
+          pluginError: conflict
+            ? "The plugin changed in another session, so yours was not saved. The page shows the saved one; choose yours again to replace it."
+            : `The plugin was not saved. ${messageOf(error)} Choose it again.`,
+        });
+        if (conflict?.current) adopt(conflict.current);
+        else if (conflict) void load();
+      }
+    },
   };
+}
+
+/**
+ * A package-managed field with no answer was never imported: the package
+ * holds it, and a run grades the package itself. So it is not known to be
+ * missing, and the portal's error line would claim it is.
+ */
+function knownIssues(
+  flow: DirectoryFlow,
+  issues: readonly DirectoryFieldIssue[],
+  answered: ReadonlySet<string>,
+): DirectoryFieldIssue[] {
+  return issues.filter(
+    (issue) =>
+      directoryFlowField(flow, issue.key)?.managedBy !== "package" ||
+      answered.has(issue.key),
+  );
 }
 
 export function useDirectorySubmission({
@@ -238,14 +294,16 @@ export function useDirectorySubmission({
     };
   }, [store, projectId, submissionId]);
 
-  // The run reuses the readiness run poller; a new `start` resets it.
+  // The run reuses the readiness run poller; a new `start` resets it. So the
+  // plugin version a ChatGPT run grades is read when the run starts.
   const start = useCallback(
     (key: string) =>
       startDirectorySubmissionRun(
         { projectId, submissionId: submissionId ?? "" },
         key,
+        store.draft().view?.pluginVersionId,
       ),
-    [projectId, submissionId],
+    [projectId, submissionId, store],
   );
   const runner = useDirectoryReadinessRun({
     publisher: "claude",
@@ -277,10 +335,11 @@ export function useDirectorySubmission({
     [answers],
   );
   // The portal's own checks, live as the person types.
-  const issues = useMemo(
-    () => (flow ? validateDirectoryAnswers(flow, answers) : []),
-    [flow, answers],
-  );
+  const issues = useMemo(() => {
+    if (!flow) return [];
+    const answered = new Set(answers.map((answer) => answer.key));
+    return knownIssues(flow, validateDirectoryAnswers(flow, answers), answered);
+  }, [flow, answers]);
   // The review page also asks for what no step does, such as Claude's author.
   const reviewIssues = useMemo(
     () =>
@@ -306,6 +365,7 @@ export function useDirectorySubmission({
     saveNow: store.saveNow,
     reapply: store.reapply,
     keepSaved: store.keepSaved,
+    setPlugin: store.setPlugin,
   };
 }
 

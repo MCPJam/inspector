@@ -84,7 +84,7 @@ export function McpjamMark({ children }: { children?: ReactNode }) {
   );
 }
 
-function CheckResult({ entry }: { entry: PlacedFinding }) {
+export function CheckResult({ entry }: { entry: PlacedFinding }) {
   const { finding, evidenceStatus } = entry;
   const severity = severityOf(entry);
   const detail =
