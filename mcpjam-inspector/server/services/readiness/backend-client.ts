@@ -1,13 +1,15 @@
 import {
   DIRECTORY_OBSERVATION_STATUSES,
   type DirectoryAnswer,
+  type DirectoryDecisionAnswer,
+  type DirectoryDecisionItem,
 } from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
- * Six service-token calls against the backend's `/internal/v1/claude-readiness/*`
- * routes: claim, heartbeat, request observations, read the frozen submission
- * answers, finalize, fail. The backend already
+ * Seven service-token calls against the backend's `/internal/v1/claude-readiness/*`
+ * routes: claim, heartbeat, request observations, ask decision questions,
+ * read the frozen submission answers, finalize, fail. The backend already
  * owns the durable side — claim, lease, recovery, retention — and nothing here
  * duplicates it; this is the client a worker holds while it executes.
  *
@@ -30,6 +32,9 @@ import {
 } from "../internal-backend.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
 import { isOrgKeyPolicyRefusalCode } from "../../../shared/ai-execution-refusal.js";
+import { logger } from "../../utils/logger.js";
+import { abortableSleep } from "../../utils/run-supervisor/backoff.js";
+import type { DecisionBrokerAnswer } from "./decision-scan.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
@@ -73,6 +78,8 @@ async function postInternal(
   path: string,
   body: unknown,
   timeoutMs: number,
+  /** The run's own signal, for a call too long to wait out after a cancel. */
+  signal?: AbortSignal,
 ): Promise<{ response: Response; release: () => void }> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const controller = new AbortController();
@@ -86,7 +93,9 @@ async function postInternal(
         "x-inspector-service-token": serviceToken,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: signal
+        ? AbortSignal.any([controller.signal, signal])
+        : controller.signal,
     });
     return { response, release };
   } catch (error) {
@@ -297,6 +306,127 @@ export async function requestManagedObservations(
   } finally {
     release();
   }
+}
+
+const DECISIONS_PATH = "/internal/v1/claude-readiness/decisions";
+/**
+ * A full pass asks 24 questions four at a time and gives each 30 seconds:
+ * three minutes at worst, plus its holds. Past this the checks go unjudged.
+ */
+const DECISIONS_TIMEOUT_MS = 4 * 60_000;
+/**
+ * A pass already running for this run (a replaced node's, say) is waited for
+ * as long as a worst-case pass takes; the retry then gets its answers.
+ */
+const DECISIONS_RETRY_DELAY_MS = 30_000;
+const DECISIONS_RETRIES = 6;
+/** Refusals that mean the scan is off for this run, skipped quietly. */
+const DECISIONS_OFF = ["decisions_disabled", "decisions_not_requested"];
+
+function isDecisionAnswer(entry: unknown): entry is DirectoryDecisionAnswer {
+  const answer = entry as Partial<
+    Record<keyof DirectoryDecisionAnswer, unknown>
+  > | null;
+  return (
+    typeof answer?.questionId === "string" &&
+    typeof answer.candidateKey === "string" &&
+    typeof answer.verdict === "string" &&
+    typeof answer.quote === "string" &&
+    typeof answer.confidence === "number"
+  );
+}
+
+/** One request to the decision route: its status and body, or a throw. */
+async function postDecisions(
+  lease: ReadinessLease,
+  items: readonly DirectoryDecisionItem[],
+  signal?: AbortSignal,
+): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const { response, release } = await postInternal(
+    DECISIONS_PATH,
+    { ...lease, items },
+    DECISIONS_TIMEOUT_MS,
+    signal,
+  );
+  try {
+    const body = parseJsonObject(await response.text());
+    return { status: response.status, body };
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Ask the broker's decision pass about the run's candidates.
+ *
+ * As for observations, every failure but a lost lease is an answer: a
+ * refusal, a timeout or an unreadable body leaves the decision checks
+ * unjudged. A pass still running for this run is waited for, then given up
+ * on the same way. Any other 409 is a lost lease.
+ */
+export async function requestReadinessDecisions(
+  lease: ReadinessLease,
+  items: readonly DirectoryDecisionItem[],
+  signal?: AbortSignal,
+): Promise<DecisionBrokerAnswer> {
+  const unanswered = (detail: string): DecisionBrokerAnswer => {
+    // The run row has no field for this pass, so the log is its record.
+    logger.warn("[readiness] decision questions went unanswered", {
+      runId: lease.runId,
+      detail,
+    });
+    return { status: "unanswered", detail };
+  };
+  // A cancelled run stops with its own reason once this returns.
+  const cancelled: DecisionBrokerAnswer = {
+    status: "unanswered",
+    detail: "cancelled",
+  };
+  for (let attempt = 0; attempt <= DECISIONS_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      await abortableSleep(DECISIONS_RETRY_DELAY_MS, signal);
+      if (signal?.aborted) return cancelled;
+    }
+    let reply: Awaited<ReturnType<typeof postDecisions>>;
+    try {
+      reply = await postDecisions(lease, items, signal);
+    } catch (error) {
+      if (signal?.aborted) return cancelled;
+      const message = error instanceof Error ? error.message : String(error);
+      return unanswered(
+        error instanceof Error && error.name === "AbortError"
+          ? `no answer within ${DECISIONS_TIMEOUT_MS / 60_000} minutes`
+          : `the broker could not be reached: ${message}`,
+      );
+    }
+    const { status, body } = reply;
+    const code = typeof body?.error === "string" ? body.error : undefined;
+    if (status === 409 && code === "decisions_in_progress") continue;
+    if (status === 409) throw new ReadinessLeaseLostError();
+    if (status === 403 && code !== undefined && DECISIONS_OFF.includes(code)) {
+      return { status: "off", detail: code };
+    }
+    if (status !== 200) {
+      return unanswered(`HTTP ${status}${code ? ` ${code}` : ""}`);
+    }
+    // Picked to the graded fields; the SDK checks each verdict and quote.
+    const answers = (Array.isArray(body?.decisions) ? body.decisions : [])
+      .filter(isDecisionAnswer)
+      .map(({ questionId, candidateKey, verdict, quote, confidence }) => ({
+        questionId,
+        candidateKey,
+        verdict,
+        quote,
+        confidence,
+      }));
+    return answers.length > 0
+      ? { status: "answered", answers }
+      : unanswered(`no verdicts (${String(body?.status ?? "no status")})`);
+  }
+  const waited = (DECISIONS_RETRIES * DECISIONS_RETRY_DELAY_MS) / 60_000;
+  return unanswered(
+    `another decision pass for this run was still running after ${waited} minutes`,
+  );
 }
 
 /** The answers a run grades, frozen when the run was requested. */

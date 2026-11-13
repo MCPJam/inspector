@@ -4,10 +4,10 @@
  * ONE implementation for every publisher and both execution modes. A local
  * `/api/mcp/…` request and a hosted durable run reach the same four steps in
  * the same order — gather pinned evidence, optionally ask the backend broker
- * for model observations, validate and map them, grade — and differ only in
- * what they do with the result. Forking it per surface is how a hosted run and
- * a local run of the same server end up disagreeing, and the first question
- * anyone asks about a disagreement is which one to believe.
+ * for model observations and decisions, validate and map them, grade — and
+ * differ only in what they do with the result. Forking it per surface is how
+ * a hosted run and a local run of the same server end up disagreeing, and the
+ * first question anyone asks about a disagreement is which one to believe.
  *
  * WHAT THIS FILE DOES NOT DO, structurally rather than by discipline:
  *
@@ -34,6 +34,7 @@ import {
   parseOpenAIExperienceObservations,
   type ClaudeReadinessResult,
   type DirectoryAnswer,
+  type DirectoryDecisionScan,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
   type DirectoryFeatureClaim,
@@ -44,6 +45,14 @@ import {
   type OpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import { logger } from "../../utils/logger.js";
+import {
+  claudeDecisionInput,
+  decisionScanFor,
+  openaiDecisionInput,
+  type DecisionRequester,
+  type DecisionScanInput,
+} from "./decision-scan.js";
 
 export type ReadinessPublisher = "claude" | "openai" | "muse";
 
@@ -94,6 +103,8 @@ export interface RunReadinessOptions {
   signal?: AbortSignal;
   /** Absent ⇒ this run cannot request observations and cannot spend. */
   requestObservations?: ObservationRequester;
+  /** Absent ⇒ this run asks no decision questions and cannot spend on them. */
+  requestDecisions?: DecisionRequester;
   /** Per-request budget. The caller owns the run-level deadline. */
   timeoutMs?: number;
   /**
@@ -342,6 +353,28 @@ async function resolveObservations<Kind extends string, Id extends string>(
 }
 
 /**
+ * Ask the decision questions, TOTAL like the observation pass: the stop
+ * signals pass, and any other failure leaves the decision checks unjudged.
+ */
+async function resolveDecisions(
+  options: RunReadinessOptions,
+  input: DecisionScanInput,
+): Promise<DirectoryDecisionScan | undefined> {
+  const request = options.requestDecisions;
+  if (!request) return undefined;
+  return decisionScanFor(input, async (items) => {
+    try {
+      return await request({ items, signal: options.signal });
+    } catch (error) {
+      if (isStopSignal(error)) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.warn("[readiness] decision request failed", { detail });
+      return { status: "unanswered", detail };
+    }
+  });
+}
+
+/**
  * Whether the Claude gather recorded that it could not use the server, which
  * the SDK's partial-results gather sets as `serverFailure`. Read by name, so
  * a gather that never sets it reads as a server that answered.
@@ -435,11 +468,17 @@ export async function runDirectoryReadiness(
       parseOpenAIExperienceObservations,
     );
     assertNotCancelled(options.signal);
+    const decisionScan = await resolveDecisions(
+      options,
+      openaiDecisionInput(evidence),
+    );
+    assertNotCancelled(options.signal);
 
     return {
       result: gradeOpenAIReadiness({
         ...evidence,
         llmObservations: observations,
+        decisionScan,
       }),
       observations,
     };
@@ -473,11 +512,17 @@ export async function runDirectoryReadiness(
     parseClaudeExperienceObservations,
   );
   assertNotCancelled(options.signal);
+  const decisionScan = await resolveDecisions(
+    options,
+    claudeDecisionInput(evidence),
+  );
+  assertNotCancelled(options.signal);
 
   return {
     result: gradeClaudeReadiness({
       ...evidence,
       llmObservations: observations,
+      decisionScan,
       ...(options.submissionAnswers
         ? { submissionAnswers: options.submissionAnswers }
         : {}),
