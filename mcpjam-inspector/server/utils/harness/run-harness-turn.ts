@@ -4884,7 +4884,10 @@ export async function runHarnessTurn(
         // failure then stays unclassified rather than being guessed from the
         // sentence above.
         ...(failureEvidence ? { infra: failureEvidence } : {}),
-        reportedOrigin: report.origin,
+        // Whether it paged, never its origin: the reporter had only the
+        // message, which reads our own broker's 401/429 as the user's. With
+        // no origin, the eval driver still captures what it declined.
+        reportedCaptured: report.captured,
       });
     } finally {
       stopScopeStepUpBridge();

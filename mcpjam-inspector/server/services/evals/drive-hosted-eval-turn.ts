@@ -508,24 +508,26 @@ export function failedLayerForEngineError(
  * Whether a failed turn's log line must capture. `logger.error` with no error
  * object always captures, untagged, so it is skipped only when the engine's
  * reporter already recorded this failure:
- * - it classified it (`reportedOrigin` set, not `ambiguous`): it paged if
- *   ours and declined otherwise (INSPECTOR-HONO-70);
+ * - it sent it to Sentry (`reportedCaptured`);
+ * - it classified it (`reportedOrigin` set, not `ambiguous`) and declined it
+ *   as not ours (INSPECTOR-HONO-70), or found it already handled;
  * - an empty step: the emitter decided ownership itself
  *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
  *   `ambiguous` on purpose.
  * Anything else — `ambiguous`, no verdict, no engine error — has no other
- * Sentry record. Nor does a harness setup failure, whatever its verdict: the
- * harness catch classifies it from the message alone, so a 401 or 429 from
- * our own control plane can read as `user_config`.
+ * Sentry record. The harness reports `reportedCaptured` only: it classifies
+ * from the message alone, so a decline there is not a verdict.
  */
 export function failedTurnNeedsCapture(
   event:
-    | Pick<MCPJamEngineErrorEvent, "code" | "infra" | "reportedOrigin">
+    | Pick<
+        MCPJamEngineErrorEvent,
+        "code" | "reportedCaptured" | "reportedOrigin"
+      >
     | undefined,
 ): boolean {
+  if (event?.reportedCaptured) return false;
   if (event?.code === "provider_empty_response") return false;
-  const setup = event?.infra?.source;
-  if (setup === "sandbox_setup" || setup === "platform_setup") return true;
   return (
     event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
   );

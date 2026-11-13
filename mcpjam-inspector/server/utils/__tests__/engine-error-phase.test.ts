@@ -95,6 +95,7 @@ vi.mock("@sentry/node", () => ({
 type EngineErrorEvent = {
   phase?: "setup" | "stream";
   reportedOrigin?: ErrorOrigin;
+  reportedCaptured?: boolean;
   message?: string;
   httpStatus?: number;
   stepIndex?: number;
@@ -266,7 +267,10 @@ describe("the emulated engine reports which side of the handover it died on", ()
       // re-opens INSPECTOR-HONO-70.
       const { events } = await runTurn(stage());
       expect(events).toHaveLength(1);
-      expect(events[0].reportedOrigin).toBeDefined();
+      expect(events[0]).toMatchObject({
+        reportedOrigin: expect.any(String),
+        reportedCaptured: expect.any(Boolean),
+      });
     },
   );
 
@@ -297,6 +301,7 @@ describe("the emulated engine reports which side of the handover it died on", ()
     expect(events[0]).toMatchObject({
       httpStatus: 429,
       reportedOrigin: "user_config",
+      reportedCaptured: false,
     });
     expect(captureOriginErrorToSentry).not.toHaveBeenCalled();
     expect(failedTurnNeedsCapture(events[0])).toBe(false);
@@ -309,7 +314,10 @@ describe("the emulated engine reports which side of the handover it died on", ()
       },
     });
 
-    expect(events[0].reportedOrigin).toBe("ambiguous");
+    expect(events[0]).toMatchObject({
+      reportedOrigin: "ambiguous",
+      reportedCaptured: false,
+    });
     expect(captureOriginErrorToSentry).not.toHaveBeenCalled();
     expect(failedTurnNeedsCapture(events[0])).toBe(true);
   });

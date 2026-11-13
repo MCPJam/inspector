@@ -611,11 +611,7 @@ describe("a failed turn's log line captures only what the engine's reporter did 
     runAssistantTurnMock.mockReset();
   });
 
-  const failWith = (
-    code: string,
-    reportedOrigin?: string,
-    infra?: Record<string, unknown>,
-  ) =>
+  const failWith = (code: string, reported: Record<string, unknown> = {}) =>
     runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
       opts.onEngineError?.({
         message: "Backend step returned no content (stream error or empty response)",
@@ -624,8 +620,7 @@ describe("a failed turn's log line captures only what the engine's reporter did 
         promptIndex: 0,
         stepIndex: 0,
         phase: "stream",
-        ...(reportedOrigin ? { reportedOrigin } : {}),
-        ...(infra ? { infra } : {}),
+        ...reported,
       });
       return {
         messages: [{ role: "user", content: "hello" }],
@@ -637,7 +632,10 @@ describe("a failed turn's log line captures only what the engine's reporter did 
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
     // A provider-owned empty step is reported as `ambiguous` on purpose.
-    failWith("provider_empty_response", "ambiguous");
+    failWith("provider_empty_response", {
+      reportedOrigin: "ambiguous",
+      reportedCaptured: false,
+    });
 
     const outcome = await driveHostedEvalTurn(baseParams());
 
@@ -673,6 +671,7 @@ describe("a failed turn's log line captures only what the engine's reporter did 
         phase: "stream",
         // The reporter declined it as user-owned.
         reportedOrigin: "user_config",
+        reportedCaptured: false,
       });
       return {
         messages: [{ role: "user", content: "hello" }],
@@ -696,61 +695,76 @@ describe("a failed turn's log line captures only what the engine's reporter did 
     warn.mockRestore();
   });
 
-  it("logs a failure the reporter already paged on as a warning", async () => {
-    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
-    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
-    failWith("capability_missing", "mcpjam");
-
-    await driveHostedEvalTurn(baseParams());
-
-    expect(error).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("engineError=capability_missing"),
-    );
-    error.mockRestore();
-    warn.mockRestore();
+  const setupInfra = (httpStatus: number) => ({
+    source: "sandbox_setup",
+    code: "harness_broker_unavailable",
+    httpStatus,
   });
 
   it.each([
-    ["the reporter left unclassified", "ambiguous"],
-    ["no reporter recorded", undefined],
-  ])("keeps a failure %s on logger.error", async (_label, reportedOrigin) => {
-    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
-    failWith("provider_error", reportedOrigin);
-
-    await driveHostedEvalTurn(baseParams());
-
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("engineError=provider_error"),
-    );
-    error.mockRestore();
-  });
-
-  it.each(["sandbox_setup", "platform_setup"])(
-    "keeps a harness %s failure on logger.error even when the reporter called it the user's",
-    async (source) => {
+    [
+      "paged on",
+      "capability_missing",
+      { reportedOrigin: "mcpjam", reportedCaptured: true },
+    ],
+    [
+      "declined as the user's server",
+      "provider_error",
+      { reportedOrigin: "user_server", reportedCaptured: false },
+    ],
+    [
+      "paged on in a harness setup step",
+      "harness_broker_unavailable",
+      { reportedCaptured: true, infra: setupInfra(503) },
+    ],
+  ])(
+    "logs a failure the reporter %s as a warning",
+    async (_label, code, reported) => {
       const error = vi.spyOn(logger, "error").mockImplementation(() => {});
       const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
-      // The harness catch classifies from the message alone, so a 429 from
-      // our own control plane reads as `user_config`.
-      failWith("harness_broker_unavailable", "user_config", {
-        source,
-        code: "harness_broker_unavailable",
-        httpStatus: 429,
-      });
+      failWith(code, reported);
 
       await driveHostedEvalTurn(baseParams());
 
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining("engineError=harness_broker_unavailable"),
-      );
-      expect(warn).not.toHaveBeenCalledWith(
-        expect.stringContaining("engineError="),
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining(`engineError=${code}`),
       );
       error.mockRestore();
       warn.mockRestore();
     },
   );
+
+  it.each([
+    [
+      "the reporter left unclassified",
+      "provider_error",
+      { reportedOrigin: "ambiguous", reportedCaptured: false },
+    ],
+    ["no reporter recorded", "provider_error", {}],
+    // The harness reports no origin: it classifies from the message alone,
+    // so a 429 from our own broker reads as the user's.
+    [
+      "the harness reporter declined",
+      "harness_broker_unavailable",
+      { reportedCaptured: false, infra: setupInfra(429) },
+    ],
+  ])("keeps a failure %s on logger.error", async (_label, code, reported) => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith(code, reported);
+
+    await driveHostedEvalTurn(baseParams());
+
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(`engineError=${code}`),
+    );
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("engineError="),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
 
   it("keeps a failure with no engine error on logger.error", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
