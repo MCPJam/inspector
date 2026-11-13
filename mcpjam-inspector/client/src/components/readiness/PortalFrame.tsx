@@ -29,6 +29,7 @@ import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
 import { PortalWidget } from "./PortalWidgets";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
+import { ReviewerPath } from "./ReviewerSection";
 
 function StepBody({
   flow,
@@ -282,6 +283,12 @@ export function PortalFrame({
                 onAnswer={session.setAnswer}
               />
             )}
+            <ReviewerPath
+              flow={flow}
+              step={step}
+              view={view}
+              session={session}
+            />
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
                 type="button"
