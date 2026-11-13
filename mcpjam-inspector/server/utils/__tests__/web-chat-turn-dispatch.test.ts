@@ -77,6 +77,16 @@ vi.mock("../harness/harness-proxy-strategy.js", () => ({
   })),
 }));
 
+// The delivery event is a PostHog capture; these tests read what it is handed.
+const reported = vi.hoisted(() => ({
+  delivered: vi.fn(),
+  box: vi.fn(),
+}));
+vi.mock("../../services/environments/skills-delivered-event.js", () => ({
+  reportSkillsDelivered: reported.delivered,
+  reportBoxSkillsDelivered: reported.box,
+}));
+
 import { streamWebChatTurn } from "../web-chat-turn";
 
 function args(
@@ -131,6 +141,7 @@ describe("streamWebChatTurn model dispatch", () => {
     handlers.hostedOrg.mockClear();
     handlers.localOrg.mockClear();
     handlers.direct.mockClear();
+    reported.delivered.mockClear();
     // stubEnv (not a bare assignment) so the value is restored after each
     // test and can't leak into suites that assert CONVEX_HTTP_URL is unset.
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
@@ -224,6 +235,37 @@ describe("streamWebChatTurn model dispatch", () => {
       expect(handlers.localOrg).toHaveBeenCalledTimes(refused ? 0 : 1);
     },
   );
+
+  it("reports the skills the prepared turn holds, not the plan it started with", async () => {
+    // The connected servers' own skills join the plan once `prepareChatV2` has
+    // connected them, so the plan alone undercounts a live turn.
+    const orchestration = await import("../chat-v2-orchestration.js");
+    const planned = { runtime: { kind: "agent" }, delivered: [] };
+    const effective = {
+      runtime: { kind: "agent" },
+      delivered: [
+        {
+          skillId: "skill://acme/refunds/SKILL.md",
+          ref: "acme/refunds",
+          name: "refunds",
+        },
+      ],
+    };
+    vi.mocked(orchestration.prepareChatV2).mockResolvedValueOnce({
+      allTools: {},
+      enhancedSystemPrompt: "",
+      scrubMessages: (m: unknown[]) => m,
+      effectiveSkills: effective,
+    } as never);
+    await streamWebChatTurn(
+      args({ id: "openai/gpt-5-nano", provider: "openai" }, null, {
+        skills: planned,
+        skillsSurface: "playground",
+      }) as never,
+    );
+    expect(reported.delivered).toHaveBeenCalledTimes(1);
+    expect(reported.delivered).toHaveBeenCalledWith("playground", effective);
+  });
 
   it("fences every tool result on the direct-provider path, as its prompt says", async () => {
     await streamWebChatTurn(

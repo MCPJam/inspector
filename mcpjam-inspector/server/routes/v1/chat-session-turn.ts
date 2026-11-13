@@ -1582,11 +1582,6 @@ async function handleTurn(c: Context): Promise<Response> {
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
-    // MCPJam's agent holds its skill tools now; a harness turn reports from
-    // its box writer (`onBoxSkillsWritten` below).
-    if (engine.kind !== "harness") {
-      reportSkillsDelivered("api", turnSkills.skills);
-    }
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
     // than folded into the step budget. One step can emit several parallel
@@ -1770,6 +1765,12 @@ async function handleTurn(c: Context): Promise<Response> {
         body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
+    // MCPJam's agent holds its skill tools, the connected servers' own among
+    // them, and its engine starts next. A harness turn reports from its box
+    // writer (`onBoxSkillsWritten` below).
+    if (engine.kind !== "harness" && prepared.effectiveSkills) {
+      reportSkillsDelivered("api", prepared.effectiveSkills);
+    }
     const result = await runUnifiedAssistantTurn({
       runtime: runtime.runtime as never,
       streamSink: "none",
