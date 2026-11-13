@@ -77,7 +77,7 @@ export const CLAUDE_CODE_WEB_HOST_STYLE: HostStyleDefinition = {
     // Must match the catalog label byte-for-byte (see CLAUDE_DESKTOP_HOST_STYLE).
     label: "Claude Code Web",
     shortLabel: "Claude Code Web-style host",
-    pickerDescription: "Claude Code on the web",
+    pickerDescription: "Claude Code Web in the browser",
     logoSrc: claudeCodeLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
@@ -129,7 +129,7 @@ export const CHATGPT_WORK_HOST_STYLE: HostStyleDefinition = {
   chatUi: {
     label: "ChatGPT Work",
     shortLabel: "ChatGPT Work-style host",
-    pickerDescription: "ChatGPT work mode on the web",
+    pickerDescription: "ChatGPT Work in the browser",
     logoSrc: openaiLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
