@@ -24,6 +24,7 @@ import {
   siblingSamplePackageFiles,
   wrappedSamplePackageFiles,
 } from "../plugin-bundle/chatgpt-package-fixtures.js";
+import { PLUGIN_SCHEMA_URL } from "../plugin-bundle/fixtures.js";
 import { InMemoryOpenAIPackageSource } from "./package-fixtures.js";
 
 const read = (files: Record<string, string | Uint8Array>) =>
@@ -104,21 +105,58 @@ describe("the Agent Plugins layout", () => {
     );
   });
 
+  for (const [label, schema] of [
+    ["an object whose toString is null", { toString: null }],
+    ["an array holding the supported URL", [PLUGIN_SCHEMA_URL]],
+  ] as const) {
+    it(`refuses a $schema given as ${label}, without throwing`, async () => {
+      const evidence = await read(samplePackageFiles({ $schema: schema }));
+      expect(evidence.issues).toContainEqual(
+        expect.objectContaining({
+          id: "plugin_manifest_missing",
+          subject: "plugin.json",
+        })
+      );
+    });
+  }
+
+  const stdioStatus = async (files: Record<string, string>) =>
+    runOpenAIMigrationChecks(await read(files), STAMP).find(
+      (finding) => finding.id === "openai.migration.stdio-transport"
+    )?.status;
+  const withMcpJson = (servers: Record<string, unknown>) => ({
+    ...samplePackageFiles(),
+    "mcp.json": JSON.stringify({ mcpServers: servers }),
+  });
+
   it("scans mcp.json, so a stdio server there is not a pass", async () => {
-    const findings = runOpenAIMigrationChecks(
-      await read({
-        ...samplePackageFiles(),
-        "mcp.json": JSON.stringify({
-          mcpServers: { local: { type: "stdio", command: "node" } },
-        }),
-      }),
-      STAMP
-    );
+    for (const server of [
+      { command: "node" },
+      { type: "stdio" },
+      { transport: "stdio" },
+    ]) {
+      expect(await stdioStatus(withMcpJson({ local: server }))).toBe(
+        "violated"
+      );
+    }
+  });
+
+  it("does not read a header named command, or a header value of stdio, as a stdio server", async () => {
+    const remote = {
+      type: "streamable-http",
+      url: "https://mcp.example.com/mcp",
+      headers: { "X-Transport": "stdio", command: "run" },
+    };
+    expect(await stdioStatus(withMcpJson({ remote }))).toBe("satisfied");
+    // The manifest's own server map is read the same way.
     expect(
-      findings.find(
-        (finding) => finding.id === "openai.migration.stdio-transport"
-      )?.status
-    ).toBe("violated");
+      await stdioStatus({
+        ".codex-plugin/plugin.json": JSON.stringify({
+          name: "sample",
+          mcpServers: { remote },
+        }),
+      })
+    ).toBe("satisfied");
   });
 
   it("scans mcp.json for a ${user_config.*} placeholder", async () => {

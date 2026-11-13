@@ -108,17 +108,17 @@ export async function readPluginManifest(
     const version = readStringField(parsed, "version");
 
     // The portal reads a root `plugin.json` as a manifest only when it names
-    // a supported Agent Plugins schema.
-    const schema = parsed?.$schema;
+    // a supported Agent Plugins schema, as a string (nothing is coerced).
+    const schema = readStringField(parsed, "$schema");
     if (
       parsed &&
       located.layout === "agent-plugins" &&
-      !Object.values(PLUGIN_MANIFEST_SCHEMAS).includes(String(schema))
+      !(schema && Object.values(PLUGIN_MANIFEST_SCHEMAS).includes(schema))
     ) {
       issues.push(
         openaiPortalIssue("plugin_manifest_missing", {
           subject: manifestPath,
-          observed: typeof schema === "string" ? schema : undefined,
+          observed: schema,
         }),
       );
     }

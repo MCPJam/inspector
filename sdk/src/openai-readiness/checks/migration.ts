@@ -150,6 +150,30 @@ function walkStrings(
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Stdio servers in a server map, by each entry's own `command`, `type` or
+ * `transport`: a header named `command`, or valued "stdio", is not one.
+ */
+function stdioDeclarations(servers: unknown, at: string): string[] {
+  if (!isRecord(servers)) return [];
+  const paths: string[] = [];
+  for (const [name, server] of Object.entries(servers)) {
+    if (!isRecord(server)) continue;
+    const entry = at ? `${at}.${name}` : name;
+    if (server.command !== undefined) paths.push(`${entry}.command`);
+    for (const key of ["type", "transport"]) {
+      const value = server[key];
+      if (typeof value === "string" && value.toLowerCase() === "stdio") {
+        paths.push(`${entry}.${key}`);
+      }
+    }
+  }
+  return paths;
+}
+
 export function runOpenAIMigrationChecks(
   evidence: OpenAIPluginPackageEvidence | undefined,
   stamp: OpenAICheckStamp,
@@ -248,11 +272,11 @@ export function runOpenAIMigrationChecks(
   // A stdio server is declared by a `command`, not by a URL. The distinction is
   // structural rather than textual: a public submission's server has to be
   // reachable over the network, and a command is a process on somebody's laptop.
-  const stdioServer = (text: string, path: string) => {
-    if (/(^|\.)command$/.test(path) || /^stdio$/i.test(text)) stdio.push(path);
-  };
-  walkStrings(document.mcpServers, stdioServer);
-  if (config) walkStrings(config.document, stdioServer, config.path);
+  stdio.push(...stdioDeclarations(document.mcpServers, ""));
+  if (config) {
+    const at = `${config.path}.mcpServers`;
+    stdio.push(...stdioDeclarations(config.document.mcpServers, at));
+  }
 
   findings.push(
     placeholders.length === 0
