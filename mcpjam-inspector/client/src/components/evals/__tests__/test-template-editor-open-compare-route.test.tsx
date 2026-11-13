@@ -1247,7 +1247,7 @@ describe("TestTemplateEditor run view from route", () => {
       activeCaseDoc = { ...goldenCaseDoc, runs: 7 };
       renderGoldenCase({ simpleCaseEditor });
       await screen.findByRole("button", {
-        name: simpleCaseEditor ? "Setup Run" : "Quick Run",
+        name: simpleCaseEditor ? "Run" : "Quick Run",
       });
       if (simpleCaseEditor) {
         expect(screen.queryByTestId("quick-case-cost-estimate")).toBeNull();
@@ -1277,7 +1277,7 @@ describe("TestTemplateEditor run view from route", () => {
       environments: [{ environmentId: "env-1", hostId: "client-a1b2c3", modelId: "sonnet" }],
       hostNamesById: new Map([["client-a1b2c3", "Claude"]]),
     } });
-    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    await user.click(await screen.findByRole("button", { name: "Run" }));
     expect(screen.getByTestId("case-run-client-names")).toHaveTextContent("Claude");
     expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
     await user.click(screen.getByRole("button", { name: "Run test case" }));
@@ -1293,7 +1293,7 @@ describe("TestTemplateEditor run view from route", () => {
     useQueryMock.mockImplementation((name: string, args: unknown) =>
       name === "testSuites:getTestSuite" ? undefined : original(name, args));
     renderGoldenCase({ onRunCase: vi.fn() });
-    await userEvent.setup().click(await screen.findByRole("button", { name: "Setup Run" }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Run" }));
     expect(screen.queryByRole("dialog", { name: "Setup Run" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Run test case" })).toBeNull();
     expect(streamEvalTestCaseMock).not.toHaveBeenCalled();
@@ -1305,7 +1305,7 @@ describe("TestTemplateEditor run view from route", () => {
       activeCaseDoc = goldenCaseDoc;
       const onRunCase = vi.fn();
       renderGoldenCase({ onRunCase, evalRunsDisabledReason });
-      await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+      await user.click(await screen.findByRole("button", { name: "Run" }));
       expect(screen.getByTestId("case-run-block")).toHaveTextContent(evalRunsDisabledReason);
       // The mock intentionally calls onStart even while blocked to exercise the callback guard.
       await user.click(screen.getByRole("button", { name: "Run test case" }));
@@ -1320,7 +1320,7 @@ describe("TestTemplateEditor run view from route", () => {
     activeCaseDoc = goldenCaseDoc;
     const onRunCase = vi.fn();
     renderGoldenCase({ onRunCase, observeFirst });
-    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    await user.click(await screen.findByRole("button", { name: "Run" }));
     expect(screen.getByTestId("suite-run-cases")).toHaveTextContent('["case-1"]');
     await user.click(screen.getByRole("button", { name: "Run test case" }));
     expect(onRunCase).toHaveBeenCalledWith("case-1", {
@@ -1351,7 +1351,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     const onRunCase = vi.fn();
     renderGoldenCase({ onRunCase });
-    await user.click(await screen.findByRole("button", { name: "Setup Run" }));
+    await user.click(await screen.findByRole("button", { name: "Run" }));
     await user.click(screen.getByRole("switch", { name: "Use raw JSON editor" }));
     fireEvent.change(screen.getByLabelText("Arguments"), {
       target: { value: '{"unfinished":' },
@@ -1373,7 +1373,7 @@ describe("TestTemplateEditor run view from route", () => {
     const prompt = await screen.findByLabelText("What does the user ask?");
     await user.clear(prompt);
     await user.type(prompt, "Find my current account");
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     await user.click(screen.getByRole("button", { name: "Run test case" }));
     await screen.findByText("Client is disconnected");
     expect(updateTestCaseMutationMock).toHaveBeenCalled();
@@ -1543,7 +1543,7 @@ describe("TestTemplateEditor run view from route", () => {
     activeCaseDoc = { ...goldenCaseDoc, lastMessageRun: undefined } as any;
     renderGoldenCase({ readOnly: true });
     expect(await screen.findByText("Who am I signed in as?")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Setup Run/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
     expect(
       screen.queryByRole("button", { name: /Configure test case evaluators/i }),
     ).toBeNull();
@@ -1735,7 +1735,7 @@ describe("TestTemplateEditor run view from route", () => {
     fireEvent.change(prompt, {
       target: { value: "Final prompt to actually run" },
     });
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     await user.click(screen.getByRole("button", { name: "Run test case" }));
     await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
     expect(
@@ -1749,7 +1749,7 @@ describe("TestTemplateEditor run view from route", () => {
     renderGoldenCase({ observeFirst: true });
     const prompt = await screen.findByLabelText("What does the user ask?");
     fireEvent.change(prompt, { target: { value: "" } });
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(
       screen.getByRole("button", { name: "Run test case" }),
     ).toBeDisabled();
@@ -1788,7 +1788,7 @@ describe("TestTemplateEditor run view from route", () => {
       defaultChecks,
     );
     expect(defaultChecks.parentElement).toContainElement(
-      screen.getByRole("button", { name: "Setup Run" }),
+      screen.getByRole("button", { name: "Run" }),
     );
   });
 
@@ -1929,7 +1929,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByTestId("case-spine")).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run test case" }));
 
@@ -2115,7 +2115,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeInTheDocument();
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Setup Run" }));
+      .click(screen.getByRole("button", { name: "Run" }));
     expect(
       screen.getByRole("button", { name: "Run test case" }),
     ).toBeDisabled();
@@ -2264,7 +2264,7 @@ describe("TestTemplateEditor run view from route", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run test case" }));
     await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
@@ -2343,7 +2343,7 @@ describe("TestTemplateEditor run view from route", () => {
       ).toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: "Iterations" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run test case" }));
     await waitFor(() => expect(streamEvalTestCaseMock).toHaveBeenCalled());
