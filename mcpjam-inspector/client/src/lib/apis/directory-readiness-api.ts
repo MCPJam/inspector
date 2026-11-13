@@ -118,6 +118,9 @@ function client(): PlatformApiClient {
   });
 }
 
+/** The same client for directory submissions: one transport, one bearer owner. */
+export { client as readinessPlatformClient };
+
 // ── Local: synchronous, free, no run row ────────────────────────────────
 
 export async function runLocalReadiness(
