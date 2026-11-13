@@ -5,7 +5,6 @@ import { ConnectionAccountsSection } from "../ConnectionAccountsSection";
 const mocks = vi.hoisted(() => ({
   hook: vi.fn(),
   update: vi.fn(),
-  flag: vi.fn(),
   sharing: vi.fn(),
   setSharing: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
@@ -13,9 +12,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
-}));
-vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
-  useMultiAccountConnectionsEnabled: mocks.flag,
 }));
 vi.mock("@/lib/apis/web/oauth-connections", () => ({
   updateOAuthConnection: mocks.update,
@@ -71,7 +67,6 @@ describe("ConnectionAccountsSection", () => {
       shared: false,
       loaded: true,
     });
-    mocks.flag.mockReturnValue(true);
     mocks.sharing.mockReturnValue({
       isAdmin: false,
       canShare: false,
@@ -213,18 +208,6 @@ describe("ConnectionAccountsSection", () => {
     expect(addButton().disabled).toBe(true);
   });
 
-  it("hides add behind the rollout flag while still managing what exists", () => {
-    mocks.flag.mockReturnValue(false);
-    mount();
-    expect(
-      screen.queryByRole("button", { name: /Connect another account/ }),
-    ).toBeNull();
-    // A de-flagged org must still see and take down what it has.
-    expect(
-      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
-    ).toBeTruthy();
-  });
-
   it("reconnects an account that needs it in place, by its own id", async () => {
     const user = userEvent.setup();
     const auth = vi.fn();
@@ -285,7 +268,7 @@ describe("ConnectionAccountsSection", () => {
         setSharing: mocks.setSharing,
       });
       mount({ onAuthenticate: auth });
-      // With the flag off there is no switch, so the note says it is shared.
+      // Without the share switch, the note says it is shared.
       expect(screen.getByText(/Your hosted runs can act/)).toBeTruthy();
       await user.click(
         screen.getByRole("button", { name: /Connect another account/ }),
@@ -332,7 +315,7 @@ describe("ConnectionAccountsSection", () => {
     it.each([
       ["a member", { isAdmin: false, canShare: false }, true, false],
       [
-        "an admin while the flag is off",
+        "an admin who cannot share",
         { isAdmin: true, canShare: false },
         true,
         false,
@@ -343,12 +326,7 @@ describe("ConnectionAccountsSection", () => {
         false,
         false,
       ],
-      [
-        "an admin while the flag is on",
-        { isAdmin: true, canShare: true },
-        true,
-        true,
-      ],
+      ["an admin who can share", { isAdmin: true, canShare: true }, true, true],
     ])("for %s", (_label, role, loaded, shown) => {
       mocks.hook.mockReturnValue({ connections: rows, shared: false, loaded });
       mocks.sharing.mockReturnValue({ ...role, setSharing: mocks.setSharing });
