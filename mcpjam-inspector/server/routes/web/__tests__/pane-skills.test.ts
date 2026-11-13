@@ -94,7 +94,8 @@ describe("per-pane Skills preview", () => {
   it.each([
     ["claude-code", viaTools, 3, null],
     ["codex", viaTools, 3, null],
-    ["cursor", "takes no skills", 0, "unsupported-harness"],
+    ["cursor", "takes Library and plugin skills", 2, "server-skill-unsupported"],
+    ["not-a-harness", "takes no skills", 0, "unsupported-harness"],
     [undefined, "is MCPJam's agent", 3, null],
   ])(
     "predicts the delivered count for %s, which %s",
@@ -355,7 +356,7 @@ describe("suite Skills preview", () => {
   };
   const loops: Record<string, string> = {
     env1: "claude-code",
-    env2: "cursor",
+    env2: "not-a-harness",
   };
 
   beforeEach(() => {

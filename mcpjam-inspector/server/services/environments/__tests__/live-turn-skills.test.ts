@@ -126,10 +126,12 @@ describe("environmentTurnSkills", () => {
   });
 
   it("records nothing delivered on a harness with no skill channel", () => {
+    // An id no adapter claims has none, whichever runtimes gain one: Cursor
+    // took this seat until it got a skills folder.
     const turn = environmentTurnSkills({
       spec: environment(),
       attribution: null,
-      runtime: harness("cursor"),
+      runtime: harness("no-skill-channel"),
     });
     expect(turn.turnProvenance).toEqual({
       environmentAtTurn: ENVIRONMENT_REF,
