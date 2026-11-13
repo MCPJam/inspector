@@ -144,12 +144,10 @@ describe("GET /api/web/flags", () => {
 
     expect(mocks.getAllFlags.mock.calls[0][1].personProperties).toEqual({
       deployment: "self_hosted",
-      local_browser_security_version: "1",
       platform: "mac",
     });
     expect(mocks.getAllFlags.mock.calls[1][1].personProperties).toEqual({
       deployment: "self_hosted",
-      local_browser_security_version: "1",
     });
   });
 
