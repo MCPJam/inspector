@@ -45,6 +45,7 @@ import {
   finalizeReadinessRun,
   getReadinessRunSubmission,
   heartbeatReadinessRun,
+  joinReviewerAttempt,
   ReadinessSubmissionUnreadableError,
   requestManagedObservations,
   type ReadinessClaimRefusal,
@@ -112,6 +113,11 @@ export interface ExecuteHostedReadinessOptions {
   claimedFeatures?: DirectoryFeatureClaim[];
   /** The directory submission the run grades: its answers are read at the start. */
   submissionId?: string;
+  /**
+   * The submission's reviewer sign-in attempt, held in memory: the backend run
+   * takes no attempt, so the run joins it before anything dials.
+   */
+  reviewerAttemptId?: string;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -223,6 +229,22 @@ function gradesPackage(options: ExecuteHostedReadinessOptions): boolean {
 }
 
 /**
+ * Join the reviewer attempt the run carries. An attempt it cannot join (ended,
+ * held by another run) leaves the run grading the submission without it.
+ */
+async function joinAttempt(options: ExecuteHostedReadinessOptions): Promise<void> {
+  const attemptId = options.reviewerAttemptId;
+  if (!attemptId) return;
+  const join = await joinReviewerAttempt(options.lease, attemptId);
+  if (join.joined) return;
+  logger.warn("[readiness] the run did not join its reviewer attempt", {
+    runId: options.lease.runId,
+    attemptId,
+    reason: join.reason,
+  });
+}
+
+/**
  * Claim the run this node started. Returns why it must not execute, or
  * nothing when it may.
  */
@@ -306,6 +328,7 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "abandoned", terminalReason: refusal };
       return;
     }
+    await joinAttempt(options);
     const submissionAnswers = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;

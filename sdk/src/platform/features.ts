@@ -123,6 +123,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_directory_submission: "directory-readiness",
   update_directory_submission: "directory-readiness",
   start_directory_submission_run: "directory-readiness",
+  // A reviewer sign-in starts a run, as a submission's run does.
+  create_reviewer_attempt: "directory-readiness",
+  resume_reviewer_attempt: "directory-readiness",
   // Resuming runs a run again under the gate it started under: `conformance`
   // for a server's run, `directory-readiness` for a submission's. The backend
   // checks which one the run needs.
@@ -252,6 +255,10 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_directory_submission: null,
   get_directory_submission_results: null,
   delete_directory_submission: null,
+  // Reading and stopping a reviewer sign-in stay open, as on the backend.
+  list_reviewer_attempts: null,
+  get_reviewer_attempt: null,
+  cancel_reviewer_attempt: null,
   list_personas: null,
   get_persona: null,
   delete_persona: null,

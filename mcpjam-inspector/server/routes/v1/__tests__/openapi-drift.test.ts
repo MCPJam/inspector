@@ -263,6 +263,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/directory-submissions/{submissionId}/events",
   "post /projects/{projectId}/directory-submissions/{submissionId}/events",
   "get /projects/{projectId}/directory-submissions/{submissionId}/snapshots",
+  // A submission's reviewer sign-in attempts, gated with it.
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel",
 ]);
 
 /**

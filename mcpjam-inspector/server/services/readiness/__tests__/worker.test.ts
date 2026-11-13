@@ -24,6 +24,7 @@ const finalizeReadinessRun = vi.fn();
 const failReadinessRun = vi.fn();
 const requestManagedObservations = vi.fn();
 const getReadinessRunSubmission = vi.fn();
+const joinReviewerAttempt = vi.fn();
 
 // The real classes, imported rather than restated: the worker distinguishes
 // them with `instanceof`, and a look-alike would make the test pass while the
@@ -42,6 +43,7 @@ vi.mock("../backend-client.js", () => ({
     requestManagedObservations(...args),
   getReadinessRunSubmission: (...args: unknown[]) =>
     getReadinessRunSubmission(...args),
+  joinReviewerAttempt: (...args: unknown[]) => joinReviewerAttempt(...args),
   ReadinessLeaseLostError,
   ReadinessSubmissionUnreadableError,
 }));
@@ -573,6 +575,63 @@ describe("a run that grades a directory submission", () => {
     });
     expect(getReadinessRunSubmission).not.toHaveBeenCalled();
     expect(listingStatus()).toBe("not-evaluated");
+  });
+});
+
+describe("a run that carries a reviewer attempt", () => {
+  function run(fetchFn: typeof fetch = wireFetch()) {
+    return executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn,
+      includeLlmObservations: false,
+      reviewerAttemptId: "att_1",
+    });
+  }
+
+  it("joins it after the claim and before anything dials", async () => {
+    joinReviewerAttempt.mockResolvedValue({ joined: true });
+    const joinedWhenDialled: boolean[] = [];
+    const base = wireFetch();
+    await run((async (url: any, init?: any) => {
+      joinedWhenDialled.push(joinReviewerAttempt.mock.calls.length > 0);
+      return base(url, init);
+    }) as unknown as typeof fetch);
+    expect(joinReviewerAttempt).toHaveBeenCalledWith(LEASE, "att_1");
+    expect(claimReadinessRun.mock.invocationCallOrder[0]).toBeLessThan(
+      joinReviewerAttempt.mock.invocationCallOrder[0]!,
+    );
+    expect(joinedWhenDialled.length).toBeGreaterThan(0);
+    expect(joinedWhenDialled.every(Boolean)).toBe(true);
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("still grades the submission when the attempt cannot be joined", async () => {
+    joinReviewerAttempt.mockResolvedValue({ joined: false, reason: "attempt_busy" });
+    await run();
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+    expect(failReadinessRun).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the lease is lost at the join", async () => {
+    joinReviewerAttempt.mockRejectedValue(new ReadinessLeaseLostError());
+    const fetchFn = vi.fn(wireFetch());
+    await run(fetchFn as unknown as typeof fetch);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).not.toHaveBeenCalled();
+    expect(failReadinessRun).not.toHaveBeenCalled();
+  });
+
+  it("joins nothing for a run without one", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+    expect(joinReviewerAttempt).not.toHaveBeenCalled();
   });
 });
 

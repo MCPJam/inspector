@@ -30,6 +30,7 @@ import {
   startHostedReadinessRun,
   toReadinessRunDto,
 } from "../shared/readiness-runs.js";
+import { runnableReviewerAttemptId } from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
@@ -117,6 +118,8 @@ const startSchema = z.strictObject({
   includeLlmObservations: z.boolean().optional(),
   /** The stored plugin version a ChatGPT plugin submission's run grades. */
   pluginVersionId: optionalId,
+  /** A running reviewer sign-in attempt of this submission, for the run to work on. */
+  reviewerAttemptId: z.string().trim().min(1).max(100).optional(),
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -393,6 +396,11 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
       "This submission has no saved server to grade. Create a submission for a saved server, then start its run.",
     );
   }
+  const reviewerAttemptId =
+    body.reviewerAttemptId &&
+    (await runnableReviewerAttemptId(convex, { projectId, submissionId }, body.reviewerAttemptId, (error) =>
+      readRefusal(error, "Reviewer attempt"),
+    ));
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
@@ -402,6 +410,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
     ...graded,
+    ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>

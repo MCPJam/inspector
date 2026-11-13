@@ -117,6 +117,8 @@ export interface PlatformDirectorySubmissionRunBody {
    * required there. It is never read from the submission.
    */
   pluginVersionId?: string;
+  /** A running reviewer sign-in attempt of this submission for the run to work on. */
+  reviewerAttemptId?: string;
 }
 
 export interface PlatformDirectorySubmissionDeleted {

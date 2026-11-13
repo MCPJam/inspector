@@ -1,6 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
-import { DirectorySubmissionClient } from "./directory-submission-client.js";
+import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -714,7 +714,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient extends DirectorySubmissionClient {
+export class PlatformApiClient extends DirectoryReviewerAttemptClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;

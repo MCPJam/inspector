@@ -35,6 +35,7 @@ import {
   type HostedReadinessReceipt,
   type ReadinessPublisher,
 } from "./readiness-runs.js";
+import { reviewerAttemptForRun } from "./reviewer-attempts.js";
 
 /** The run's own start inputs, as the backend's resume hands them back. */
 interface ResumedRun {
@@ -158,6 +159,11 @@ export async function resumeHostedReadinessRun(
 
   const { includeLlmObservations, lazyAuthProbe, claimedFeatures } =
     resumed.options;
+  // The node that held the attempt in memory stopped; the attempt still names
+  // this run.
+  const reviewerAttemptId = input.submissionId
+    ? await reviewerAttemptForRun(input.convex, input.submissionId, resumed.runId)
+    : undefined;
   executeHostedReadinessRunDetached(
     {
       lease,
@@ -170,6 +176,7 @@ export async function resumeHostedReadinessRun(
       ...(lazyAuthProbe?.enabled === true ? { lazyAuthProbe } : {}),
       ...(claimedFeatures?.length ? { claimedFeatures } : {}),
       ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+      ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
       analyticsActor: input.analyticsActor,
     },
     authorized,
