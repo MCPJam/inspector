@@ -58,7 +58,8 @@ function runStatus(run: DirectoryReadinessState, flowVersion: string): string {
   const rules = ` · Rules as of ${day}`;
   const last = run.run;
   if (run.status === "running") return "Checking your server and answers…";
-  if (run.status === "error") return `The checks did not start. ${run.error}`;
+  if (run.status === "error")
+    return `The checks did not start. ${run.error} Try running them again.`;
   if (run.status === "unavailable") {
     return "Checks need a remote server. Choose one with an HTTP URL.";
   }
@@ -103,7 +104,9 @@ function PortalStart({
       const key = `ui-${serverId}-${Date.now()}`;
       onOpen((await createDirectorySubmission(scope, key)).id);
     } catch (failure) {
-      setError(`The rehearsal did not start. ${messageOf(failure)}`);
+      setError(
+        `The rehearsal did not start. ${messageOf(failure)} Try starting it again.`,
+      );
       setBusy(false);
     }
   };
@@ -273,7 +276,7 @@ export function ReadinessPage({
   } else if (session.error) {
     body = (
       <Notice>
-        This rehearsal did not open. {session.error}{" "}
+        This rehearsal did not open. {session.error} Try opening it again.{" "}
         <Button type="button" variant="link" onClick={() => setOpen(null)}>
           Back to Submissions
         </Button>
