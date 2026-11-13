@@ -43,8 +43,6 @@ export interface CatalogEntry {
   description?: string;
   /** Era restriction, shown only when no version is pinned. */
   note?: string;
-  /** The spec section the check tests, linked from its description. */
-  sourceUrl?: string;
 }
 
 function formatDetailLabel(label: string) {
@@ -600,6 +598,12 @@ export function CatalogRow({
   notApplicable?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Like a result row, the link follows the revision the rows around it are
+  // for: a saved run's, or the pin before a run.
+  const sourceUrl = conformanceCheckSourceUrl(
+    entry.id,
+    useConformanceSourceVersion(),
+  );
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
   const extra = typeof children === "function" ? children(expanded) : children;
@@ -667,10 +671,10 @@ export function CatalogRow({
       <Collapse open={expanded && Boolean(entry.description)}>
         <div className="px-6 pb-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
           {entry.description}
-          {entry.sourceUrl ? (
+          {sourceUrl ? (
             <>
               {" "}
-              <SourceLink href={entry.sourceUrl} checkTitle={entry.title} />
+              <SourceLink href={sourceUrl} checkTitle={entry.title} />
             </>
           ) : null}
         </div>

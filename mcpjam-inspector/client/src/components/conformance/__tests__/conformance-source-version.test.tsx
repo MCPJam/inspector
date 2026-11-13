@@ -1,7 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { CheckRow } from "../ConformanceCheckRows";
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
+import { CatalogList, CheckRow } from "../ConformanceCheckRows";
+import { ConformanceCheckPicker } from "../ConformanceCheckPicker";
+import { suiteCatalog } from "../conformance-catalogs";
 import { SuiteList, sourceVersionOf } from "../conformance-source-version";
+
+const LEGACY_TOKEN_HANDLING =
+  "https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#token-handling";
+const tokenHandlingLinks = () =>
+  screen
+    .getAllByRole("link", { hidden: true })
+    .map((link) => link.getAttribute("href") ?? "")
+    .filter((href) => href.endsWith("#token-handling"));
 
 describe("sourceVersionOf", () => {
   it("prefers the scored version, then the negotiated one, then the pin", () => {
@@ -39,5 +54,28 @@ describe("SuiteList", () => {
       "href",
       "https://modelcontextprotocol.io/specification/2025-11-25/server/tools#listing-tools",
     );
+  });
+});
+
+describe("catalog links follow the revision", () => {
+  it("links a saved run's not-applicable suite in the run's revision", () => {
+    render(
+      <SuiteList version="2025-11-25">
+        <CatalogList catalog={suiteCatalog("oauth")} />
+      </SuiteList>,
+    );
+    expect(tokenHandlingLinks()).toEqual([LEGACY_TOKEN_HANDLING]);
+  });
+
+  it("links the pinned revision before a run", () => {
+    render(
+      <ConformanceCheckPicker
+        versionPin="2025-11-25"
+        selection={{}}
+        onChange={() => {}}
+        defaultOpen
+      />,
+    );
+    expect(tokenHandlingLinks()).toEqual([LEGACY_TOKEN_HANDLING]);
   });
 });

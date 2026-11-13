@@ -409,7 +409,6 @@ describe("spec source link", () => {
           id: "server-initialize",
           title: "Server Initialize",
           description: "Server responds to initialize.",
-          sourceUrl: LEGACY_INITIALIZE,
         }}
       />,
     );
@@ -417,5 +416,32 @@ describe("spec source link", () => {
     expect(link.closest("[inert]")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Server Initialize/ }));
     expect(screen.getByRole("link")).toHaveAttribute("href", LEGACY_INITIALIZE);
+  });
+
+  it("links a catalog entry in the revision of the list it sits in", () => {
+    const entry = {
+      id: "tools-list",
+      title: "Tools List",
+      description: "Server lists its tools.",
+    };
+    const href = () =>
+      screen.getByRole("link", { hidden: true }).getAttribute("href");
+    const { rerender } = render(
+      <ConformanceSourceVersion version="2025-11-25">
+        <CatalogRow entry={entry} />
+      </ConformanceSourceVersion>,
+    );
+    expect(href()).toBe(LEGACY_TOOLS_LIST);
+
+    rerender(
+      <ConformanceSourceVersion version="2026-07-28">
+        <CatalogRow entry={entry} />
+      </ConformanceSourceVersion>,
+    );
+    expect(href()).toBe(MODERN_TOOLS_LIST);
+
+    // No revision known yet (an "auto" list): the current one.
+    rerender(<CatalogRow entry={entry} />);
+    expect(href()).toBe(MODERN_TOOLS_LIST);
   });
 });

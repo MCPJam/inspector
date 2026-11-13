@@ -18,7 +18,6 @@ import {
   READINESS_ERAS,
   TASKS_CHECK_CATALOG,
   TASKS_READINESS_CATALOG,
-  conformanceCheckSourceUrl,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -46,10 +45,6 @@ export function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
         pinnedEra === undefined && eras.length === 1
           ? `${eras[0]} only`
           : undefined,
-      sourceUrl: conformanceCheckSourceUrl(
-        id,
-        pin === "auto" ? undefined : pin,
-      ),
     };
   });
 }
@@ -81,18 +76,17 @@ export const OAUTH_ADVICE_CATALOG: CatalogEntry[] = MCP_OAUTH_READINESS_IDS.map(
   (id) => ({ id, ...OAUTH_READINESS_CATALOG[id] }),
 );
 
-// Before a run the negotiated revision is unknown, so these link the current
-// one; a result row links the revision its run actually used.
+// Catalog rows carry no spec link: `CatalogRow` builds it from the id and the
+// revision of the list it sits in (`ConformanceSourceVersion`), so a saved
+// run's rows and a pinned pre-run list link the pages they are graded against.
 export const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
   id,
   ...APPS_CHECK_CATALOG[id],
-  sourceUrl: conformanceCheckSourceUrl(id),
 }));
 
 export const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
   id,
   ...TASKS_CHECK_CATALOG[id],
-  sourceUrl: conformanceCheckSourceUrl(id),
 }));
 
 /**
@@ -120,7 +114,6 @@ export const OAUTH_CATALOG: CatalogEntry[] = (
   id,
   title: CONFORMANCE_CHECK_METADATA[id].title,
   description: CONFORMANCE_CHECK_METADATA[id].summary,
-  sourceUrl: conformanceCheckSourceUrl(id),
 }));
 
 /** A saved run does not record its pin, so its protocol list is the "auto" one. */
