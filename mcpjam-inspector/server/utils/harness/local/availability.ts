@@ -139,11 +139,12 @@ export interface LocalHarnessAvailabilityQuery {
    */
   runtimeDigest?: string;
   /**
-   * Set by a caller whose every process starts through the supervised
-   * provider, which re-verifies the runtime immediately before each spawn
-   * (`supervised-provider.ts`), and by one adopting a live process that was
-   * verified when it spawned and can start no other. The gate then leaves
-   * the re-verification to the spawn rather than running it twice a turn.
+   * Set by a caller that re-verifies the runtime itself, closer to where
+   * anything executes from it: a fresh turn, whose every process starts
+   * through the supervised provider and its check before each spawn
+   * (`supervised-provider.ts`), and an adoption, which re-verifies the parked
+   * process's own pack (`local-turn.ts`). The gate then does not run the same
+   * check a second time in the turn.
    */
   runtimeVerifiedAtSpawn?: boolean;
   /** Test seams. */

@@ -116,6 +116,13 @@ vi.mock("../availability.js", () => ({
   resolveLocalHarnessAvailability: (query: Record<string, unknown>) =>
     resolveLocalHarnessAvailability(query),
 }));
+// The pack re-verification, controllable: an adoption re-verifies the parked
+// process's own pack, and a test changes that pack's answer.
+const revalidateRuntime = vi.hoisted(() => vi.fn(async (_runtime: unknown) => ({ ok: true as boolean, message: "" })));
+vi.mock("../runtime-identity.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../runtime-identity.js")>(),
+  revalidateRuntime: (runtime: unknown) => revalidateRuntime(runtime),
+}));
 vi.mock("../grants.js", () => ({
   localHarnessStateRoot: () => stateRoot,
 }));
@@ -824,23 +831,38 @@ it("reads the runtime selection once a turn, taking the one readiness resolved t
   expect(readRuntimeInstallStatus).toHaveBeenCalledOnce();
   await again.prepared.teardown();
 });
-it("verifies the runtime once a turn: at the spawn, or at an adopted runtime's own spawn", async () => {
-  // The provider re-verifies right before it spawns (`assertCanStart`), and
-  // an adopted runtime can spawn nothing (`forbidNewProcesses`), so neither
-  // turn asks the availability gate to verify it again.
+it("verifies a fresh turn's runtime once, at the spawn, and an adopted runtime's own pack again", async () => {
+  // The provider re-verifies right before it spawns (`assertCanStart`), so a
+  // fresh turn does not ask the availability gate to verify it again. A parked
+  // process is not done with its pack: its bridge starts a new vendor process
+  // from it when the runtime configuration changes or the app-server dies.
   const fresh = await prepareLocalHarnessTurn(codexArgs());
   if (!fresh.ok) throw new Error(fresh.message);
+  expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(expect.objectContaining({ runtimeVerifiedAtSpawn: true }));
+  expect(revalidateRuntime).not.toHaveBeenCalled();
   expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
   const adopted = await prepareLocalHarnessTurn(codexArgs({
     approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
   }));
   if (!adopted.ok) throw new Error(adopted.message);
-  expect(resolveLocalHarnessAvailability).toHaveBeenCalledTimes(2);
-  for (const [query] of resolveLocalHarnessAvailability.mock.calls) {
-    expect(query).toMatchObject({ runtimeVerifiedAtSpawn: true });
-  }
+  expect(revalidateRuntime).toHaveBeenCalledOnce();
+  expect(revalidateRuntime).toHaveBeenCalledWith(fresh.prepared.plan.runtime);
   adopted.prepared.unpark();
   await adopted.prepared.teardown();
+});
+it("refuses to hand an approval to a runtime whose pack changed while it waited", async () => {
+  const fresh = await prepareLocalHarnessTurn(codexArgs());
+  if (!fresh.ok) throw new Error(fresh.message);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed after consent was granted" });
+  const adopted = await prepareLocalHarnessTurn(codexArgs({
+    approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
+  }));
+  expect(adopted).toMatchObject({ ok: false, status: "runtime-changed" });
+  // No lease for it, and the parked process is ended.
+  expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(supervisorFixture.stopCalls).toBe(1));
+  expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "authorization-revoked" });
 });
 it("refuses Off without acknowledgement before spawning or minting a lease", async () => {
   vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
@@ -922,10 +944,11 @@ describe("a local Codex runtime kept between turns", () => {
     expect(startLoopbackModelBroker).toHaveBeenLastCalledWith(expect.objectContaining({ reasoningEffort: "high" }));
     expect(next.prepared.brokerRunId).toBe("run_2");
     expect(supervisorFixture.wallClockRestarts).toEqual(["s_local_1"]);
-    // Re-authorized with this turn's grant, without re-verifying the running pack.
+    // Re-authorized with this turn's grant, and its own pack re-verified.
     expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(
-      expect.objectContaining({ grantToken: "grant-token", runtimeVerifiedAtSpawn: true }),
+      expect.objectContaining({ grantToken: "grant-token" }),
     );
+    expect(revalidateRuntime).toHaveBeenCalledWith(parked.plan.runtime);
     // Kept again at its end, for the state version the next commit produces.
     expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3 })).toBe(true);
     expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
@@ -1004,6 +1027,17 @@ describe("a local Codex runtime kept between turns", () => {
       expect(next.prepared.keptRuntime).toBeUndefined();
       await next.prepared.teardown();
     }
+  });
+
+  it("is ended when its pack changed while it waited, and the turn starts fresh", async () => {
+    await keptSession();
+    revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed after consent was granted" });
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "authorization-revoked" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await next.prepared.teardown();
   });
 
   it("is ended when its renewed lease is refused, and the turn starts fresh", async () => {

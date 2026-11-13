@@ -33,6 +33,7 @@ import {
   type RuntimeInstallStatus,
 } from "./runtime-install.js";
 import { localRuntime } from "./runtimes/index.js";
+import { revalidateRuntime } from "./runtime-identity.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 import { takeTurnRuntimeStatus } from "./turn-runtime-status.js";
 
@@ -127,13 +128,12 @@ export async function adoptKeptLocalTurn(
  * After a claim, which is synchronous and exactly-once (`approval-park.ts`),
  * everything re-establishes AUTHORITY rather than assuming it survived the
  * wait: the availability gate runs again (kill switch, actor, consent,
- * workspace, a selectable pack), and the model lease, revoked when it parked,
- * is replaced by a fresh one bound to the gateway the process already knows.
- * The runtime is not re-verified on disk: it was verified when it spawned,
- * and an adopted provider can start no other. Any failure ends the parked
- * session: a decision that cannot be delivered under current authority is not
- * delivered at all. Refusals are worded for that decision, the one kind of
- * refusal a person reads.
+ * workspace, a selectable pack), the parked process's own pack is re-verified
+ * on disk, and the model lease, revoked when it parked, is replaced by a
+ * fresh one bound to the gateway the process already knows. Any failure ends
+ * the parked session: a decision that cannot be delivered under current
+ * authority is not delivered at all. Refusals are worded for that decision,
+ * the one kind of refusal a person reads.
  */
 async function adoptParkedRuntime(
   args: PrepareLocalHarnessTurnArgs,
@@ -192,7 +192,8 @@ async function adoptParkedRuntime(
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
-    // Verified when it spawned; an adopted provider can start no other.
+    // The parked process's own pack is re-verified below, once it is known
+    // to be the runtime this turn names.
     runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
@@ -209,6 +210,16 @@ async function adoptParkedRuntime(
       "authorization-revoked",
       "approval-runtime-changed",
       "The runtime or workspace changed while this approval was waiting; " +
+        "the pending action will not run.",
+    );
+  }
+  // Not "verified once at spawn": the bridge starts a new vendor process from
+  // this pack when its runtime configuration changes or the app-server dies.
+  if (!(await revalidateRuntime(live.prepared.plan.runtime)).ok) {
+    return fail(
+      "authorization-revoked",
+      "runtime-changed",
+      "The local runtime changed on disk while this approval was waiting; " +
         "the pending action will not run.",
     );
   }

@@ -405,7 +405,7 @@ describe("what the gateway refuses", () => {
     expect(response.status).toBe(200);
   });
 
-  it("asks who is calling once per connection, not once per request", async () => {
+  it("looks up who is calling once per connection, and asks if it belongs on every request", async () => {
     const resolvePeerPid = vi.fn(async () => 4_242);
     const isSupervisedPid = vi.fn(() => true);
     const g = await gateway({ resolvePeerPid, isSupervisedPid });
@@ -416,7 +416,7 @@ describe("what the gateway refuses", () => {
       expect([first.status, second.status]).toEqual([200, 200]);
       expect(second.localPort).toBe(first.localPort);
       expect(resolvePeerPid).toHaveBeenCalledOnce();
-      expect(isSupervisedPid).toHaveBeenCalledOnce();
+      expect(isSupervisedPid.mock.calls).toEqual([[4_242], [4_242]]);
     } finally {
       kept.destroy();
     }
@@ -442,6 +442,47 @@ describe("what the gateway refuses", () => {
       const second = await postOn(kept, g);
       expect([first.status, second.status]).toEqual([403, 403]);
       expect(second.localPort).toBe(first.localPort);
+      expect(resolvePeerPid).toHaveBeenCalledOnce();
+    } finally {
+      kept.destroy();
+    }
+  });
+
+  it("refuses a kept-alive connection once the session's processes have gone", async () => {
+    // A descendant left behind after every root exited still holds the
+    // socket it opened while it belonged; from then on it is refused.
+    let rootsAlive = true;
+    const g = await gateway({
+      resolvePeerPid: async () => 4_242,
+      isSupervisedPid: () => rootsAlive,
+    });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      rootsAlive = false;
+      const second = await postOn(kept, g);
+      expect(second.localPort).toBe(first.localPort);
+      expect([first.status, second.status]).toEqual([200, 403]);
+    } finally {
+      kept.destroy();
+    }
+  });
+
+  it("does not lock a connection out for one failed membership check", async () => {
+    // `ownsPid` answers no when it cannot read a process group; it is asked
+    // again on the next request rather than remembered.
+    const isSupervisedPid = vi
+      .fn<(pid: number) => boolean>()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const resolvePeerPid = vi.fn(async () => 4_242);
+    const g = await gateway({ resolvePeerPid, isSupervisedPid });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      const second = await postOn(kept, g);
+      expect(second.localPort).toBe(first.localPort);
+      expect([first.status, second.status]).toEqual([403, 200]);
       expect(resolvePeerPid).toHaveBeenCalledOnce();
     } finally {
       kept.destroy();
