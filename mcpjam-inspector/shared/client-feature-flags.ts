@@ -20,6 +20,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "discord-agent",
   "eval-account-selection-enabled",
   "eval-run-stage-analytics",
+  "eval-suite-settings-tabs",
   "evaluate-enabled",
   "evaluate-observe-first",
   "evaluate-run-result-pages",

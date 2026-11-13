@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
-import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
+import {
+  LOCAL_HARNESS_IDS,
+  harnessSurfaceRefusal,
+} from "@/shared/harness-descriptors";
 import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
 import { buildBrokerDummyAuth } from "../../registry";
 import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
@@ -68,12 +71,12 @@ describe.each(CASES)(
     });
 
     it("runs locally exactly when the descriptor and the local manifest agree", () => {
-      const local = (LOCAL_HARNESS_IDS as readonly string[]).includes(id);
-      expect(local).toBe(descriptor.local);
-      expect(Object.hasOwn(LOCAL_HARNESS_MANIFEST, id)).toBe(descriptor.local);
+      const runsLocally = !harnessSurfaceRefusal(id, "local");
+      expect((LOCAL_HARNESS_IDS as readonly string[]).includes(id)).toBe(runsLocally);
+      expect(Object.hasOwn(LOCAL_HARNESS_MANIFEST, id)).toBe(runsLocally);
       if (descriptor.modelAccess === "external-account") {
-        expect(descriptor.guest).toBe(false);
-        expect(descriptor.local).toBe(false);
+        expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+        expect(runsLocally).toBe(false);
       }
     });
   },
