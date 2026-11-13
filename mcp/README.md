@@ -77,6 +77,11 @@ beta; they are listed [after the table](#held-tools).
 | `delete_directory_submission` | Delete a directory submission and its answers. | — |
 | `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
 | `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale. | — |
+| `create_reviewer_attempt` | Start MCPJam signing in to a submission's server as the directory's reviewer, with credentials named as project secrets, never their values. In beta. | — |
+| `list_reviewer_attempts` | List a submission's reviewer sign-in attempts, newest first, with their state and stages. | — |
+| `get_reviewer_attempt` | Read one reviewer sign-in attempt: its state, each stage with its evidence, and what it waits for. | — |
+| `resume_reviewer_attempt` | Continue a reviewer sign-in attempt that waits for a person, in a new run. In beta. | — |
+| `cancel_reviewer_attempt` | Stop a reviewer sign-in attempt that is running or waiting for a person. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
