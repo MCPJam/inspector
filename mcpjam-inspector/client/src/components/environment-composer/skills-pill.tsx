@@ -15,6 +15,8 @@ import {
   type SkillSelectionAcross,
   type SkillSelectionEdit,
 } from "@/components/project-environments/ProjectEnvironmentSkillsPicker";
+import type { AllLibraryChoice } from "@/components/project-environments/all-library-skills";
+import type { ServerSkillsChoice } from "@/components/project-environments/server-skills-section";
 import type { ProjectEnvironmentSkillSelection } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,8 @@ export function SkillsPill({
   readOnly = false,
   notice,
   across,
+  allLibrary,
+  serverSkills,
 }: {
   projectId: string;
   value: ProjectEnvironmentSkillSelection | null;
@@ -55,20 +59,30 @@ export function SkillsPill({
   /** One line above the list: why it is read only, or what a click does. */
   notice?: string;
   across?: SkillSelectionAcross;
+  allLibrary?: AllLibraryChoice;
+  serverSkills?: ServerSkillsChoice;
 }) {
   const [open, setOpen] = useState(false);
   const field = variant === "field";
-  const mixed = (across?.partialIds.size ?? 0) > 0;
-  const selectedCount = value?.skillIds.length ?? 0;
+  const mixed =
+    (across?.partialIds.size ?? 0) > 0 ||
+    (serverSkills?.across.partialIds.size ?? 0) > 0 ||
+    allLibrary?.state === "partial";
+  const serverCount = serverSkills?.value?.serverSkillIds.length ?? 0;
+  const selectedCount = (value?.skillIds.length ?? 0) + serverCount;
   const triggerLabel = mixed
     ? "Mixed skills"
-    : selectedCount === 0
-      ? field
-        ? "No skills"
-        : "No skills · pick some"
-      : selectedCount === 1
-        ? "1 skill"
-        : `${selectedCount} skills`;
+    : allLibrary?.state === true
+      ? serverCount
+        ? `All shared Library skills + ${serverCount}`
+        : "All shared Library skills"
+      : selectedCount === 0
+        ? field
+          ? "No skills"
+          : "No skills · pick some"
+        : selectedCount === 1
+          ? "1 skill"
+          : `${selectedCount} skills`;
 
   return (
     <Popover open={open} onOpenChange={(next) => {
@@ -105,7 +119,10 @@ export function SkillsPill({
               field
                 ? cn(
                     "text-left text-sm",
-                    selectedCount === 0 && !mixed && "text-muted-foreground",
+                    selectedCount === 0 &&
+                      !mixed &&
+                      allLibrary?.state !== true &&
+                      "text-muted-foreground",
                   )
                 : "text-xs font-medium",
             )}
@@ -116,7 +133,8 @@ export function SkillsPill({
         </button>
       </PopoverTrigger>
       <PopoverContent
-        className={cn("p-2", field ? "w-80" : "w-72")}
+        // A field's rows carry server badges and version menus.
+        className={cn("p-2", field ? "w-96" : "w-72")}
         align="start"
         sideOffset={4}
         portalled={!inModal}
@@ -133,6 +151,8 @@ export function SkillsPill({
           onChange={onChange}
           disabled={disabled || readOnly}
           across={across}
+          allLibrary={allLibrary}
+          serverSkills={serverSkills}
         />
       </PopoverContent>
     </Popover>

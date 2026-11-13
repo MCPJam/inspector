@@ -58,6 +58,26 @@ describe("environmentComposition", () => {
     });
     expect(new Set([a, b, c]).size).toBe(3);
   });
+
+  it("tells the All shared Library skills scope apart, and carries it into a new cell", () => {
+    const scoped = {
+      serverAttachmentId: "g",
+      skillScope: "all-shared-library" as const,
+    };
+    expect(compositionKey(scoped)).not.toBe(
+      compositionKey({ serverAttachmentId: "g" }),
+    );
+    expect(
+      chooseTemplate([
+        env({ environmentId: "1", serverAttachmentId: "g" }),
+        env({ environmentId: "2", ...scoped }),
+      ]).kind,
+    ).toBe("ambiguous");
+    expect(composeAdhocStack(scoped, { hostId: "h" })).toEqual({
+      hostId: "h",
+      ...scoped,
+    });
+  });
 });
 
 describe("chooseTemplate", () => {

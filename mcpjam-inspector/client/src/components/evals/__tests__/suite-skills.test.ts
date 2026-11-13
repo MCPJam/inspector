@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { PaneSkillsPreview } from "@/shared/pane-skills-preview";
 import { planSuiteClients } from "../suite-clients-settings";
+import { libraryChange } from "../suite-skill-channels";
 import {
   editedSkillSelection,
   skillDeliveryLines,
@@ -210,10 +211,7 @@ describe("planSuiteClients with a Skills edit", () => {
       group: "servers",
       lossless: true,
       skills: (row) =>
-        editedSkillSelection(row.skillSelection, {
-          kind: "add",
-          skillId: "reply",
-        }),
+        libraryChange(row, { kind: "add", skillId: "reply" }),
     });
     expect(plan).toEqual([
       {
@@ -244,10 +242,7 @@ describe("planSuiteClients with a Skills edit", () => {
       group: "servers",
       lossless: true,
       skills: (row) =>
-        editedSkillSelection(row.skillSelection, {
-          kind: "remove",
-          skillId: "triage",
-        }),
+        libraryChange(row, { kind: "remove", skillId: "triage" }),
     });
     expect(plan).toEqual([
       {
@@ -266,7 +261,7 @@ describe("planSuiteClients with a Skills edit", () => {
     expect(() =>
       planSuiteClients(suite, environments, selections, {
         group: "servers",
-        skills: () => null,
+        skills: () => ({ skillSelection: null }),
       }),
     ).toThrow(/Environments page/);
   });
