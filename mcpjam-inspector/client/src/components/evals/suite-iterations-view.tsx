@@ -113,6 +113,11 @@ import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
+import {
+  RunResultPage,
+  type RunResultCrumbs,
+} from "../evaluate/run-result-pages/run-result-page";
+import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -520,6 +525,7 @@ export function SuiteIterationsView({
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
   onGeneratingChange,
+  onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -701,6 +707,8 @@ export function SuiteIterationsView({
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
   ) => void;
+  /** Breadcrumbs for an open run result page; see {@link RunResultPage}. */
+  onResultCrumbsChange?: (crumbs: RunResultCrumbs | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -725,10 +733,11 @@ export function SuiteIterationsView({
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const selectedRunState = useSelectedRun(suite._id, selectedRunId);
   const selectedRunDetails = selectedRunState.run;
-  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
-    suite._id,
-    listedRuns,
-  );
+  const {
+    runs: groupRuns,
+    loadGroup,
+    groupStatus,
+  } = useRunGroupSummaries(suite._id, listedRuns);
   const runs = useMemo(() => {
     if (route.type !== "run-detail") return listedRuns;
     if (!selectedRunDetails) return groupRuns;
@@ -1223,6 +1232,19 @@ export function SuiteIterationsView({
     [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
   );
   const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A result page can name a sibling column, so it waits for the launch's
+  // full membership; an unknown sibling is a failed read, not a missing result.
+  const launchGroupId = selectedRunDetails?.runGroupId;
+  const launchGroupStatus = launchGroupId
+    ? groupStatus(launchGroupId)
+    : "ready";
+  const resultPageFailedRunIds = useMemo(
+    () =>
+      launchGroupStatus === "failed" && selectedRunDetails
+        ? new Set(detailRows.failedRunIds).add(selectedRunDetails._id)
+        : detailRows.failedRunIds,
+    [launchGroupStatus, selectedRunDetails, detailRows.failedRunIds],
+  );
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
@@ -1556,6 +1578,8 @@ export function SuiteIterationsView({
 
   const selectedRunTestCaseId =
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+  // Old `?case=` and `?iteration=` links open their page once this is on.
+  const resultPagesEnabled = useRunResultPagesEnabled();
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -2361,6 +2385,52 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : route.type === "run-detail" &&
+              (route.resultPage ||
+                (resultPagesEnabled === true &&
+                  (route.testCaseId || route.iteration))) &&
+              suiteDetailOverview &&
+              !selectedRunState.isUnavailable ? (
+              <RunResultPage
+                key={`${contentKey}-result`}
+                suiteId={suite._id}
+                runId={route.runId}
+                resultPage={
+                  route.resultPage ?? {
+                    caseKey: route.testCaseId ?? "",
+                    iterationId: route.iteration,
+                  }
+                }
+                fromOldLink={!route.resultPage}
+                run={selectedRunDetails ?? null}
+                runs={runs}
+                allIterations={allIterations}
+                hostNamesById={hostNamesById}
+                // This launch's rows only, so a sibling column resolves and
+                // a comparison run's read does not hold the page.
+                loading={
+                  !selectedRunDetails
+                    ? !selectedRunState.isUnavailable
+                    : launchGroupStatus === "loading" ||
+                      launchRuns(selectedRunDetails, runs).some(
+                        ({ _id: id }) =>
+                          !detailRows.byRun.has(id) &&
+                          !detailRows.failedRunIds.has(id),
+                      )
+                }
+                failedRunIds={resultPageFailedRunIds}
+                projectId={projectId}
+                decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                onEditCase={
+                  editingDisabled
+                    ? undefined
+                    : (testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                }
+                onCrumbsChange={onResultCrumbsChange}
+              />
             ) : selectedRunId && selectedRunState.isLoading ? (
               <RowsLoading key={contentKey} label="Loading run..." />
             ) : selectedRunId && selectedRunState.isUnavailable ? (

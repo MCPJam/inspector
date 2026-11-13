@@ -66,6 +66,7 @@ import {
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type {
   HostConfigDtoV2,
@@ -182,6 +183,8 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /** Where the trace timeline puts its span detail; see `TraceTimeline`. */
+  traceDetailPlacement?: TraceDetailPlacement;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -439,6 +442,7 @@ export function TraceViewer({
   activeHost,
   hostSnapshot,
   mcpToolResultImageRendering,
+  traceDetailPlacement = "below",
 }: TraceViewerProps) {
   const persistedRequestPayloads = useMemo(
     () => readTraceRequestPayloads(trace),
@@ -642,9 +646,9 @@ export function TraceViewer({
     [preparedTrace, trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
 
-  // Frozen replay: when simply VIEWING a completed run, show each widget's
-  // RECORDED screenshot instead of a live re-render — which drifts to the
-  // widget's default state once its MCP server is gone. While a widget is armed
+  // Frozen replay: when simply VIEWING a completed run, show the live App from
+  // its saved copy, and the RECORDED screenshot only when the run clicked inside
+  // that App (or there is no saved copy). While a widget is armed
   // for recording, keep widgets live: the record flow needs the real widget and
   // a reachable server (which then shows real data, so no drift). Non-eval
   // surfaces carry no `browserObservations`, so this is a no-op there.
@@ -1088,6 +1092,7 @@ export function TraceViewer({
                 }
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
+                detailPlacement={traceDetailPlacement}
               />
             </div>
           </Suspense>

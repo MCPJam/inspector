@@ -16,6 +16,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseRuntimeCompat } from "../../../../../scripts/local-harness-pack-tables.mjs";
 // eslint-disable-next-line import/extensions -- plain ESM script
 import { planConformance } from "../../../../../scripts/plan-local-harness-conformance.mjs";
+// eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
+import { computeConformanceInputsDigest } from "../../../../../scripts/conformance-inputs-digest.mjs";
 import { inspectorLayerDigest } from "../inspector-layer.js";
 import {
   EXPECTED_PACK_VERSIONS,
@@ -121,6 +123,40 @@ describe("which conformance legs run", () => {
   it("refuses a version that is not a pack semver", () => {
     expect(() => planConformance({ event: "workflow_call", codexVersion: "1.0.0; rm -rf", record })).toThrow(/not a pack version/);
   });
+
+  it("blocks exactly the legs whose target the manifest advertises, and a release runs only those", () => {
+    const facts = {
+      "claude-code": { nativePlatforms: ["darwin", "linux", "win32"] },
+      codex: { nativePlatforms: ["darwin", "linux", "win32"], nativeTargets: ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"] },
+    };
+    const legs = (plan: { codex_matrix: string }) =>
+      JSON.parse(plan.codex_matrix).map((leg: { platform_key: string; certified: boolean }) => [leg.platform_key, leg.certified]);
+    expect(legs(planConformance({ event: "push", record, facts }))).toEqual([
+      ["linux-x64", true],
+      ["darwin-arm64", true],
+      ["linux-arm64", false],
+      ["darwin-x64", true],
+      ["win32-x64", true],
+    ]);
+    const release = planConformance({ event: "workflow_call", codexVersion: "1.0.0", certifiedOnly: true, record, facts });
+    expect(legs(release).map(([target]: [string]) => target)).toEqual(["linux-x64", "darwin-arm64", "darwin-x64", "win32-x64"]);
+    expect(JSON.parse(release.posix_matrix)).toHaveLength(4);
+  });
+
+  it("runs no legs for a push that changed no conformance input, and still runs a release's", () => {
+    const quiet = planConformance({ event: "push", inputsUnchanged: true, record });
+    expect(quiet).toMatchObject({ run_claude: "false", run_codex: "false", run_windows: "false" });
+    const release = planConformance({ event: "workflow_call", claudeVersion: "1.0.0", inputsUnchanged: true, record });
+    expect(release).toMatchObject({ run_claude: "true", run_codex: "true" });
+  });
+
+  it("runs darwin-x64 as x64 Node on an Apple Silicon runner", () => {
+    const plan = planConformance({ event: "push", record });
+    for (const matrix of [plan.posix_matrix, plan.codex_matrix]) {
+      const leg = JSON.parse(matrix).find((entry: { platform_key: string }) => entry.platform_key === "darwin-x64");
+      expect(leg).toMatchObject({ runner: "macos-latest", node_arch: "x64", node_dist: "darwin-x64" });
+    }
+  });
 });
 
 describe("the release gate's conformance evidence", () => {
@@ -134,7 +170,7 @@ describe("the release gate's conformance evidence", () => {
   });
 
   /** One evidence record per advertised target, optionally skipping one. */
-  async function writeEvidence(opts: { skip?: string; layer?: string | null } = {}) {
+  async function writeEvidence(opts: { skip?: string; layer?: string | null; inputs?: string } = {}) {
     await rm(dir, { recursive: true, force: true });
     const { mkdir } = await import("node:fs/promises");
     await mkdir(dir, { recursive: true });
@@ -157,6 +193,7 @@ describe("the release gate's conformance evidence", () => {
               pack: { treeDigest: ref.treeDigest, packVersion: ref.packVersion },
               layerDigest: opts.layer !== undefined && harnessId === "codex" ? opts.layer : inspectorLayerDigest(harnessId as "codex"),
               commit: "c0ffee",
+              ...(opts.inputs !== undefined ? { conformanceInputs: opts.inputs } : {}),
               run: `https://github.com/MCPJam/inspector/actions/runs/${harnessId.length}`,
             }),
           );
@@ -215,5 +252,19 @@ describe("the release gate's conformance evidence", () => {
     await writeEvidence();
     const result = await gate(["--commit", "deadbeef"]);
     expect(result.code).not.toBe(0);
+  }, 120_000);
+
+  it("accepts evidence from an earlier commit whose conformance inputs are this one's", async () => {
+    await writeEvidence({ inputs: computeConformanceInputsDigest() });
+    const result = await gate(["--commit", "deadbeef"]);
+    expect(result.out).toMatch(/target\(s\) ready/);
+    expect(result.code).toBe(0);
+  }, 120_000);
+
+  it("blocks evidence from an earlier commit whose conformance inputs differ", async () => {
+    await writeEvidence({ inputs: `sha256:${"9".repeat(64)}` });
+    const result = await gate(["--commit", "deadbeef"]);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/no conformance evidence for/);
   }, 120_000);
 });

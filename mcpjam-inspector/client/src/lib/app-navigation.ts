@@ -586,6 +586,9 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     }
     case "run-detail": {
       const params = new URLSearchParams();
+      const result = route.resultPage;
+      if (result?.target) params.set("target", result.target);
+      if (result?.tab) params.set("tab", result.tab);
       if (route.iteration) params.set("iteration", route.iteration);
       if (route.testCaseId) params.set("case", route.testCaseId);
       if (route.insightsFocus) params.set("insights", "1");
@@ -593,7 +596,15 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
-      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${
+        result
+          ? `/cases/${encodeURIComponent(result.caseKey)}${
+              result.iterationId
+                ? `/iterations/${encodeURIComponent(result.iterationId)}`
+                : ""
+            }`
+          : ""
+      }${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
