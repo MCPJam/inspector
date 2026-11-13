@@ -1656,7 +1656,11 @@ describe("useChatSession fork preservation", () => {
     expect(onReset).toHaveBeenLastCalledWith("hydrate", {
       appSessionScopeId: scope, messages: expect.arrayContaining([
         expect.objectContaining({ parts: expect.arrayContaining([expect.objectContaining({ toolCallId: "refresh-call" })]) }),
-      ]), toolRenderOverrides: {},
+      ]), toolRenderOverrides: {
+        "refresh-call": {
+          toolOutput: { content: [{ type: "text", text: "counter" }] },
+        },
+      },
     });
     await result.current.loadChatSession({ chatSessionId: "other-refresh-row", version: 5, messagesBlobUrl: "https://storage.test/real-refresh-v5" });
     expect(result.current.appSessionScopeId).not.toBe(scope);

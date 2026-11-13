@@ -18,6 +18,8 @@ import { localHarnessManifestsForDevelopment } from "./availability.js";
 import { localHarnessAccountEnabled } from "./readiness.js";
 import { scratchRoot, recordScratchOwner, forgetScratchOwner } from "./scratch-janitor.js";
 import { logger } from "../../logger.js";
+import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
+import { DEFAULT_LOCAL_HARNESS_ID, localRuntime } from "./runtimes/index.js";
 
 /** Narrow an untrusted harness id to one with a local runtime, or null. */
 export function localHarnessIdOf(harness: string | undefined): SupportedLocalHarnessId | null {
@@ -150,23 +152,25 @@ export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: Ab
 export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string }) {
   const unsupported = args.builtInToolIds?.filter(id => ["bash", "browser", "computer", "desktop", "video"].includes(id)) ?? [];
   if (args.computerEnvironmentId || args.hasAttachments || args.browserToolPolicy || unsupported.length) {
-    const name = args.harnessId === "codex" ? "Codex" : "Claude Code";
+    const name = harnessDisplayName(args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID);
     throw new Error(`This client requires cloud computer features. Local ${name} supports its own file and command tools, but cannot use a pinned computer image, seeded attachments, or injected browser/desktop/bash tools.`);
   }
 }
 
 /**
- * Git hygiene for an unattended run. Claude Code runs its Bash tool through
- * Git for Windows, so on Windows it needs Git Bash itself; Codex runs its own
- * shell and needs only a git that honours the per-run config overrides.
+ * Git hygiene for an unattended run. A runtime that runs shell commands
+ * through Git for Windows (`gitBashOnWindows`) needs Git Bash itself on
+ * Windows; one with its own shell needs only a git that honours the per-run
+ * config overrides.
  */
 async function assertUnattendedGit(harnessId: SupportedLocalHarnessId): Promise<void> {
-  const name = harnessId === "codex" ? "Codex" : "Claude Code";
+  const name = harnessDisplayName(harnessId);
   let stdout: string;
   try {
     if (process.platform === "darwin") await promisify(execFile)("/usr/bin/xcode-select", ["-p"], { timeout: 5_000 });
-    const bash = harnessId === "claude-code" ? await resolveGitBashPath(process.platform) : undefined;
-    if (process.platform === "win32" && harnessId === "claude-code" && !bash) throw new Error("Git for Windows is missing");
+    const gitBash = localRuntime(harnessId).gitBashOnWindows;
+    const bash = gitBash ? await resolveGitBashPath(process.platform) : undefined;
+    if (process.platform === "win32" && gitBash && !bash) throw new Error("Git for Windows is missing");
     const gitPath = process.platform === "win32"
       ? (bash ? join(dirname(bash), "git.exe") : "git.exe")
       : "/usr/bin/git";
@@ -177,7 +181,7 @@ async function assertUnattendedGit(harnessId: SupportedLocalHarnessId): Promise<
 }
 
 export async function prepareLocalHarnessRun(args: { bearer: string; projectId: string; trustedActor?: LocalHarnessActor; harnessId?: SupportedLocalHarnessId }) {
-  const harnessId = args.harnessId ?? "claude-code";
+  const harnessId = args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID;
   await assertUnattendedGit(harnessId);
   const root = scratchRoot();
   await mkdir(root, { recursive: true, mode: 0o700 });

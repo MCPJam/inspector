@@ -10,6 +10,10 @@
  */
 import type { Context } from "hono";
 import { z } from "zod";
+import {
+  agentAttributionHeaders,
+  stableAgentAttribution,
+} from "../../utils/agent-attribution.js";
 import { buildConvexAuthHeaders, callerContextFromHono } from "../web/auth.js";
 import { assertBearerToken, ErrorCode, WebRouteError } from "../web/errors.js";
 import { retryAfterFromMs } from "./convex-errors.js";
@@ -143,10 +147,13 @@ export async function callAccountsBackend<T>(
       "Server missing CONVEX_HTTP_URL configuration",
     );
   }
-  const headers = buildConvexAuthHeaders(
-    callerContextFromHono(c),
-    assertBearerToken(c),
-  );
+  const headers = {
+    ...buildConvexAuthHeaders(callerContextFromHono(c), assertBearerToken(c)),
+    // An account write's audit row names the channel and API key behind it.
+    // The backend reads these only on its service-token delegation, where
+    // the caller cannot have set them.
+    ...agentAttributionHeaders(stableAgentAttribution(c)),
+  };
   let response: Response;
   let text: string;
   try {

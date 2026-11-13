@@ -531,10 +531,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
+  { path: "evals/suite/:suiteId/settings", kind: "screen", surfaceId: "evals", scope: "project" },
+  { path: "evals/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evals", scope: "project" },
   {
     path: "evals/suite/:suiteId/edit",
-    kind: "screen",
-    surfaceId: "evals",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
     scope: "project",
   },
   // Runs mode. Same suite screens as Suites mode above, plus the cross-suite
@@ -576,10 +578,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evals",
     scope: "project",
   },
+  { path: "evals/runs/suite/:suiteId/settings", kind: "screen", surfaceId: "evals", scope: "project" },
+  { path: "evals/runs/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evals", scope: "project" },
   {
     path: "evals/runs/suite/:suiteId/edit",
-    kind: "screen",
-    surfaceId: "evals",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
     scope: "project",
   },
   // Public Evaluate. A sibling tree of `/evals`, so
@@ -604,10 +608,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "evaluate",
     scope: "project",
   },
+  { path: "evaluate/suite/:suiteId/settings", kind: "screen", surfaceId: "evaluate", scope: "project" },
+  { path: "evaluate/suite/:suiteId/settings/evaluators", kind: "screen", surfaceId: "evaluate", scope: "project" },
   {
     path: "evaluate/suite/:suiteId/edit",
-    kind: "screen",
-    surfaceId: "evaluate",
+    kind: "redirect",
+    note: "Old Suite settings address; redirects to …/settings with its query.",
     scope: "project",
   },
   {
