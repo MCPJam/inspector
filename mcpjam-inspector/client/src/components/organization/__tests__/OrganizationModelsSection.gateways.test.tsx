@@ -1,10 +1,12 @@
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { OrganizationModelsSection } from "../OrganizationModelsSection";
 
 const mocks = vi.hoisted(() => ({
   flag: false as boolean | undefined,
+  providers: [] as unknown[],
   testProviderConnection: vi.fn(async (_args: unknown) => ({
     reachable: true,
     origin: "backend",
@@ -27,7 +29,7 @@ vi.mock("@/lib/app-navigation", () => ({
 vi.mock("convex/react", () => ({
   useQuery: (name: string) =>
     name === "organizationModelProviders:getVisibleConfig"
-      ? { providers: [] }
+      ? { providers: mocks.providers }
       : undefined,
   usePaginatedQuery: () => ({ results: [], status: "Exhausted", loadMore: vi.fn() }),
   useAction: (ref: string | FunctionReference<"action">) =>
@@ -39,12 +41,33 @@ vi.mock("convex/react", () => ({
 
 vi.mock("../OrganizationAiCards", () => ({ OrganizationAiCards: () => null }));
 
-describe("OrganizationModelsSection gateway editor flag", () => {
-  beforeEach(() => mocks.testProviderConnection.mockClear());
+/** No Responses, and one model not mapped. */
+const LITELLM: OrgModelProvider = {
+  providerKey: "custom:litellm",
+  displayName: "litellm",
+  enabled: true,
+  hasSecret: true,
+  baseUrl: "https://litellm.acme.example/v1",
+  runtimeLocation: "cloud",
+  apis: ["chatCompletions", "anthropicMessages"],
+  models: [
+    { nativeModelId: "claude-sonnet-4.5", modelId: "anthropic/claude-sonnet-4.5", mappingSource: "name" },
+    { nativeModelId: "claude-opus-4.5", modelId: "anthropic/claude-opus-4.5", mappingSource: "name" },
+    { nativeModelId: "team-llama-70b" },
+  ],
+};
 
-  it("keeps today's Add Custom Provider dialog with the flag off", () => {
+describe("OrganizationModelsSection custom provider flag", () => {
+  beforeEach(() => {
+    mocks.testProviderConnection.mockClear();
+    mocks.providers = [];
+  });
+
+  it("keeps today's Add Custom Provider dialog and rows with the flag off", () => {
     mocks.flag = false;
+    mocks.providers = [LITELLM];
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+    expect(screen.queryByText("litellm.acme.example")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Custom Provider" }));
     expect(screen.getByRole("dialog", { name: "Add Custom Provider" })).toBeInTheDocument();
     expect(screen.getByText("Protocol")).toBeInTheDocument();
@@ -66,10 +89,43 @@ describe("OrganizationModelsSection gateway editor flag", () => {
       target: { value: "https://litellm.acme.example" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Test" }));
-    expect(await screen.findByText("Connected")).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Connected. Found 1 model and 1 API.");
     expect(mocks.testProviderConnection).toHaveBeenCalledWith({
       organizationId: "org_1",
       baseUrl: "https://litellm.acme.example",
     });
+  });
+
+  it("shows a custom provider's host, models and what needs an admin, and each badge opens its editor", () => {
+    mocks.flag = true;
+    mocks.providers = [LITELLM];
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+    expect(screen.getByText("litellm.acme.example")).toBeInTheDocument();
+    expect(screen.getByText("3 models")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "3 features unavailable" }));
+    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "1 not mapped" }));
+    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
+  });
+
+  it("opens the editor from the row's edit button", () => {
+    mocks.flag = true;
+    mocks.providers = [LITELLM];
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: "Configure litellm" }));
+    expect(screen.getByRole("dialog", { name: "Edit litellm" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  });
+
+  it("shows members the host and models but no badges to act on", () => {
+    mocks.flag = true;
+    mocks.providers = [LITELLM];
+    render(<OrganizationModelsSection organizationId="org_1" isAdmin={false} />);
+    expect(screen.getByText("litellm.acme.example")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "1 not mapped" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Configure litellm" })).not.toBeInTheDocument();
   });
 });
