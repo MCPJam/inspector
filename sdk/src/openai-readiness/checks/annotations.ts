@@ -97,7 +97,7 @@ const ANNOTATION_HONESTY: OpenAICheckDefinition = {
   title: "Annotations look consistent with what the tools appear to do",
   lane: "experience-insights",
   class: "heuristic",
-  source: openaiPolicySource("app-guidelines", "§Predictable side effects"),
+  source: openaiPolicySource("plugin-guidelines", "§Predictable side effects"),
   provenance: "static",
   intrusiveness: "passive",
 };

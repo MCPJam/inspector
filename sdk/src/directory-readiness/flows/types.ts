@@ -99,6 +99,8 @@ export interface DirectoryFlowField {
   placeholder?: string;
   helper?: string;
   options?: DirectoryFlowOption[];
+  /** A choice field whose options were never captured takes any value. */
+  freeEntry?: boolean;
   pairs?: {
     columns: [string, string];
     keys: [string, string];

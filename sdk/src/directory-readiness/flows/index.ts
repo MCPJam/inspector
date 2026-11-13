@@ -34,6 +34,12 @@ export {
 } from "./validate.js";
 export { placeDirectoryResults } from "./place.js";
 export type { PlaceDirectoryResultsInput } from "./place.js";
+export { directoryVerdict } from "./verdict.js";
+export type {
+  DirectoryCheckGate,
+  DirectoryRunPath,
+  DirectoryVerdict,
+} from "./verdict.js";
 export type {
   DirectoryAnswer,
   DirectoryAnswerOrigin,

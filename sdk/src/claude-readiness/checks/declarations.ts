@@ -56,7 +56,7 @@ const ACCESS_KEY = "useCases.access";
 const NAMES_IN_TEXT = 10;
 /** Tool names a finding's details keep. */
 const NAMES_IN_DETAILS = 50;
-const NO_ANSWERS =
+export const NO_ANSWERS =
   "this check reads a connector submission's answers, and this run had none";
 
 export interface ClaudeDeclarationEvidence {
@@ -193,7 +193,9 @@ function confirmedFinding(
   );
 }
 
-function describeUnconfirmed(entry: DirectoryUnconfirmedDeclaration): string {
+export function describeUnconfirmed(
+  entry: DirectoryUnconfirmedDeclaration
+): string {
   switch (entry.origin) {
     case undefined:
       return `${entry.label} (no answer)`;

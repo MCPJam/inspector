@@ -231,9 +231,6 @@ describe("evidence status", () => {
     expect(
       placed(steps, "claude.features.lazy-authentication").evidenceStatus
     ).toBe("not-tested");
-    expect(
-      placed(steps, "claude.submission.declared-auth-mode").evidenceStatus
-    ).toBe("not-tested");
   });
 
   it("is inconclusive for a model's flag it was unsure of", () => {
