@@ -1,4 +1,5 @@
 import { revokeLocalHarnessGrants } from "./grants.js";
+import { DEFAULT_LOCAL_HARNESS_ID } from "../../../../shared/harness-descriptors.js";
 import {
   stopLocalHarnessWorkspace,
   stopLocalHarnessProject,
@@ -67,7 +68,7 @@ async function write(state: { authorizations: LocalHarnessAuthorization[] }) {
     harnessAuthorizations: state.authorizations.filter((a) => a.harnessId !== "claude-code"),
   });
 }
-export async function readLocalHarnessAuthorization(userId: string, machineId: string, projectId: string, harnessId: AuthorizedHarnessId = "claude-code") {
+export async function readLocalHarnessAuthorization(userId: string, machineId: string, projectId: string, harnessId: AuthorizedHarnessId = DEFAULT_LOCAL_HARNESS_ID) {
   return (await read()).authorizations.find(a => a.userId === userId && a.machineId === machineId && a.projectId === projectId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION) ?? null;
 }
 /**
@@ -75,13 +76,13 @@ export async function readLocalHarnessAuthorization(userId: string, machineId: s
  * policy version)? What boot asks before fetching a runtime nobody is waiting
  * for: a machine where nobody chose to run a harness downloads nothing for it.
  */
-export async function hasLocalHarnessAuthorizationOnMachine(machineId: string, harnessId: AuthorizedHarnessId = "claude-code"): Promise<boolean> {
+export async function hasLocalHarnessAuthorizationOnMachine(machineId: string, harnessId: AuthorizedHarnessId = DEFAULT_LOCAL_HARNESS_ID): Promise<boolean> {
   return (await read()).authorizations.some(a => a.machineId === machineId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION);
 }
 export async function authorizeLocalHarness(args: Pick<LocalHarnessAuthorization, "userId" | "machineId" | "projectId" | "workspaceGrantId"> & { harnessId?: AuthorizedHarnessId }) {
   return lock(async () => {
     const state = await read();
-    const harnessId = args.harnessId ?? "claude-code";
+    const harnessId = args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID;
     const existing = state.authorizations.find(a => a.userId === args.userId && a.machineId === args.machineId && a.projectId === args.projectId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION);
     const record: LocalHarnessAuthorization = { ...(existing?.autoApproveAcknowledgedAt ? { autoApproveAcknowledgedAt: existing.autoApproveAcknowledgedAt } : {}), ...args, harnessId, policyVersion: LOCAL_HARNESS_POLICY_VERSION, authorizedAt: new Date().toISOString(), unattended: true };
     state.authorizations = state.authorizations.filter(a => !(a.userId === args.userId && a.machineId === args.machineId && a.projectId === args.projectId && a.harnessId === harnessId));
@@ -111,7 +112,7 @@ export async function revokeLocalHarnessAuthorization(
 export async function updateAuthorizedWorkspace(args: Pick<LocalHarnessAuthorization, "userId" | "machineId" | "projectId" | "workspaceGrantId"> & { harnessId?: AuthorizedHarnessId }) {
   await lock(async () => {
     const state = await read();
-    const harnessId = args.harnessId ?? "claude-code";
+    const harnessId = args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID;
     const record = state.authorizations.find(a => a.userId === args.userId && a.machineId === args.machineId && a.projectId === args.projectId && a.harnessId === harnessId && a.policyVersion === LOCAL_HARNESS_POLICY_VERSION);
     if (!record) return;
     record.workspaceGrantId = args.workspaceGrantId;
