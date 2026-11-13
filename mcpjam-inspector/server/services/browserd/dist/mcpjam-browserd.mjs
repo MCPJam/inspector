@@ -1110,34 +1110,25 @@ function isReviewerSecretName(name) {
 }
 
 // server/services/browserd/daemon/secret-substitution.ts
-function isWebOrigin(value) {
-  try {
-    const url = new URL(value);
-    return /^https?:$/.test(url.protocol) && url.origin === value;
-  } catch {
-    return false;
-  }
-}
 function originOf(url) {
-  if (!url) return void 0;
   try {
-    const { origin } = new URL(url);
-    return origin === "null" ? void 0 : origin;
+    const { origin, protocol } = new URL(url ?? "");
+    return /^https?:$/.test(protocol) ? origin : void 0;
   } catch {
     return void 0;
   }
 }
+var isWebOrigin = (value) => originOf(value) === value;
 function requireAllowedOrigin(secret, pageUrl) {
   const allowed = secret.origins ?? (isReviewerSecretName(secret.name) ? [] : void 0);
-  if (allowed === void 0) return;
   const origin = originOf(pageUrl);
-  if (origin !== void 0 && allowed.includes(origin)) return;
-  const detail = allowed.length === 0 ? `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.` : `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.`;
+  if (!allowed || origin && allowed.includes(origin)) return;
+  const detail = allowed.length ? `"${secret.name}" can be typed only on ${allowed.join(", ")}, and this page is ${origin ?? "not on a web origin"}, so nothing was typed. Open the sign-in page on that origin, then type it there.` : `"${secret.name}" is a reviewer credential sent with no sign-in origin, so nothing was typed. Only MCPJam's reviewer sign-in can type it.`;
   throw new Error(formatBrowserdError("secret_origin_refused", detail));
 }
 function resolveActSecrets(action, secrets, pageUrl) {
-  const byName = new Map((secrets ?? []).map((s) => [s.name, s]));
   const values = new Map((secrets ?? []).map((s) => [s.name, s.value]));
+  const sent = new Map((secrets ?? []).map((s) => [s.name, s]));
   const texts = [
     ...action.value === void 0 ? [] : [action.value],
     ...(action.fields ?? []).flatMap(
@@ -1145,9 +1136,8 @@ function resolveActSecrets(action, secrets, pageUrl) {
     )
   ];
   for (const name of new Set(texts.flatMap(secretNamesIn))) {
-    const secret = byName.get(name);
-    if (secret === void 0) continue;
-    if (secret.value.length < MIN_SCRUBBABLE_LENGTH) {
+    const secret = values.get(name);
+    if (secret !== void 0 && secret.length < MIN_SCRUBBABLE_LENGTH) {
       throw new Error(
         formatBrowserdError(
           "secret_too_short",
@@ -1155,7 +1145,8 @@ function resolveActSecrets(action, secrets, pageUrl) {
         )
       );
     }
-    requireAllowedOrigin(secret, pageUrl);
+    const limited = sent.get(name);
+    if (limited) requireAllowedOrigin(limited, pageUrl);
   }
   const value = action.value === void 0 ? void 0 : substituteSecrets(action.value, values);
   const fields = action.fields?.map(
@@ -1947,11 +1938,8 @@ function readCommandSecrets(raw) {
     const { name, value, origins } = entry;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({
-      name,
-      value,
-      ...origins === void 0 ? {} : { origins: readSecretOrigins(origins) }
-    });
+    const limit = origins === void 0 ? {} : { origins: readSecretOrigins(origins) };
+    secrets.push({ name, value, ...limit });
   }
   return secrets.length > 0 ? secrets : void 0;
 }
