@@ -4,11 +4,19 @@ import {
   type ServerAnalyticsEventName,
 } from "./analytics-events";
 import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
+import {
+  HARNESS_TURN_BOOTSTRAPS,
+  HARNESS_TURN_DURATIONS,
+  HARNESS_TURN_FALLBACK_REASONS,
+  HARNESS_TURN_KINDS,
+  HARNESS_TURN_STARTS,
+} from "./harness-turn-event";
+import { isLogConvexIdShape } from "./strict-log";
 
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api", "eval", "playground", "scenario"],
+  surface: ["api", "eval", "playground", "scenario", "web", "local"],
   outcome: [
     "ok",
     "partial",
@@ -17,7 +25,13 @@ const enums: Record<string, readonly string[]> = {
     "timeout",
     "completed",
     "cancelled",
+    "aborted",
   ],
+  // harness_turn_completed
+  kind: HARNESS_TURN_KINDS,
+  start: HARNESS_TURN_STARTS,
+  fallback_reason: HARNESS_TURN_FALLBACK_REASONS,
+  bootstrap: HARNESS_TURN_BOOTSTRAPS,
   runtime: ["agent", "harness"],
   readiness_kind: ["claude", "chatgpt"],
   submission_mode: ["submit", "prepare", "existing"],
@@ -73,7 +87,13 @@ const numbers = new Set([
   "excluded_over_cap_count",
   "not_delivered_count",
   "failed_count",
+  ...HARNESS_TURN_DURATIONS,
 ]);
+/**
+ * The organization a server-side check verified (a `LogConvexId` from the
+ * request context), kept only in a Convex ID's shape.
+ */
+const ids = new Set(["organization_id"]);
 const booleans = new Set([
   "include_llm_observations",
   "success",
@@ -87,7 +107,8 @@ const booleans = new Set([
 export type ServerAnalyticsFieldRule =
   | { values: readonly string[] }
   | { kind: "boolean" }
-  | { kind: "number"; max: number };
+  | { kind: "number"; max: number }
+  | { kind: "convexId" };
 
 /** The rule a property must meet to be forwarded, if it has one. */
 export function serverAnalyticsFieldRule(
@@ -97,6 +118,7 @@ export function serverAnalyticsFieldRule(
   if (Object.hasOwn(enums, key)) return { values: enums[key] };
   if (booleans.has(key)) return { kind: "boolean" };
   if (numbers.has(key)) return { kind: "number", max: 86400000 };
+  if (ids.has(key)) return { kind: "convexId" };
   return undefined;
 }
 
@@ -122,6 +144,8 @@ export function rebuildServerAnalytics(
         properties[key] = value;
     } else if (rule.kind === "boolean") {
       if (typeof value === "boolean") properties[key] = value;
+    } else if (rule.kind === "convexId") {
+      if (isLogConvexIdShape(value)) properties[key] = value;
     } else if (
       typeof value === "number" &&
       Number.isFinite(value) &&

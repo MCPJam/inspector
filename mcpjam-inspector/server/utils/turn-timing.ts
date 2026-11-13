@@ -1,3 +1,5 @@
+import type { HarnessTurnEventSink } from "./harness/harness-turn-event.js";
+
 /**
  * Where one chat turn's time goes before the model's first text reaches the
  * browser, on a monotonic clock from the moment the route starts the turn.
@@ -5,7 +7,8 @@
  * The route closes each stage as it finishes. The stages that end before the
  * response headers also go out as `Server-Timing`, so the browser's own trace
  * shows them; the harness adds them, with the time to the first text it
- * forwards, to its per-turn `[harness][timing]` line.
+ * forwards, to its per-turn `[harness][timing]` line, and sends its closing
+ * event to the route's `harnessTurnEvent` sink.
  */
 export const TURN_TIMING_STAGES = [
   "setup",
@@ -19,13 +22,23 @@ export const TURN_TIMING_STAGES = [
 export type TurnTimingStage = (typeof TURN_TIMING_STAGES)[number];
 
 export class TurnTiming {
+  /** Where a harness turn on this request sends `harness_turn_completed`. */
+  readonly harnessTurnEvent: HarnessTurnEventSink | undefined;
+  private readonly now: () => number;
   private readonly startedAt: number;
   private previous: number;
   private readonly stages: Array<[TurnTimingStage, number]> = [];
   private firstTextAfter: number | undefined;
 
-  constructor(private readonly now: () => number = () => performance.now()) {
-    this.startedAt = now();
+  constructor(
+    options: {
+      harnessTurnEvent?: HarnessTurnEventSink;
+      now?: () => number;
+    } = {},
+  ) {
+    this.harnessTurnEvent = options.harnessTurnEvent;
+    this.now = options.now ?? (() => performance.now());
+    this.startedAt = this.now();
     this.previous = this.startedAt;
   }
 
