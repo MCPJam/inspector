@@ -392,6 +392,19 @@ describe("pack release boundaries", () => {
     }
   });
 
+  it("plans a called run as a workflow_call, not as its caller's push", () => {
+    const { plan } = workflow("local-harness-conformance").jobs;
+    // A called run's github.workflow_ref names its caller: the push-started
+    // evidence run, the pack prebuild, or a release.
+    expect(plan.env.EVENT).toBe(
+      "${{ contains(github.workflow_ref, '/.github/workflows/local-harness-conformance.yml@') && github.event_name || 'workflow_call' }}",
+    );
+    for (const step of plan.steps) {
+      expect(JSON.stringify(step), step.name ?? step.id ?? step.uses).not.toContain("github.event_name");
+    }
+    expect(plan.steps.find((step: any) => step.name === "Fetch main's previous tip").if).toBe("env.EVENT == 'push'");
+  });
+
   it("records conformance evidence in every leg, and plans PR legs against the pinned packs", () => {
     const { jobs } = workflow("local-harness-conformance");
     expect(jobs.plan.steps.some((step: any) => /plan-local-harness-conformance\.mjs/.test(step.run ?? ""))).toBe(true);

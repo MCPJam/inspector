@@ -131,6 +131,11 @@ jobs:
     name: plan legs
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # What started this run. A called run's `github` context is its caller's,
+      # so a release evidence run started by a push to main would read as a
+      # push here, and the push-only skip would run none of its legs.
+      EVENT: ${{ contains(github.workflow_ref, '/.github/workflows/local-harness-conformance.yml@') && github.event_name || 'workflow_call' }}
     outputs:
       claude_pack_version: ${{ steps.plan.outputs.claude_pack_version }}
       codex_pack_version: ${{ steps.plan.outputs.codex_pack_version }}
@@ -144,13 +149,12 @@ jobs:
       # A push runs no legs when it changed no conformance input, which the
       # plan decides against main's previous tip; that tree is needed here.
       - name: Fetch main's previous tip
-        if: github.event_name == 'push'
+        if: env.EVENT == 'push'
         env:
           BEFORE: ${{ github.event.before }}
         run: git fetch --no-tags --depth=1 origin "$BEFORE" || echo "::warning::Could not fetch $BEFORE, so every leg runs."
       - id: plan
         env:
-          EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           CLAUDE_INPUT: ${{ inputs.published_pack_version }}
           CODEX_INPUT: ${{ inputs.codex_published_pack_version }}
