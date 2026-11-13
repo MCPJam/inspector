@@ -34,6 +34,7 @@ import {
   type ExecuteHostedReadinessOptions,
 } from "../../services/readiness/worker.js";
 import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
+import { rehearseReviewerSignInLive } from "../../services/readiness/reviewer-sign-in-live.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
@@ -304,13 +305,18 @@ export function readinessMcpHeaders(
  * the credentials of the authorize exchange that let it start or resume.
  */
 export function executeHostedReadinessRunDetached(
-  run: Omit<ExecuteHostedReadinessOptions, "mcpHeaders" | "fetchFn">,
+  run: Omit<
+    ExecuteHostedReadinessOptions,
+    "mcpHeaders" | "fetchFn" | "reviewerSignIn"
+  >,
   authorized: AuthorizedReadinessServer,
 ): void {
   const headers = readinessMcpHeaders(authorized);
 
   void executeHostedReadinessRun({
     ...run,
+    // Run only on a reviewer attempt the worker joined.
+    reviewerSignIn: rehearseReviewerSignInLive,
     // The saved credential goes only on MCP requests to the endpoint. The
     // SDK keeps it off discovery, including authorization-server metadata
     // on an origin the server chooses.
