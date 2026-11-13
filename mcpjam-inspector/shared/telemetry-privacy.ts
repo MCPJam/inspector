@@ -419,6 +419,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "eval-server",
   "evals",
   "evaluate",
+  "evaluators",
   "events",
   "github",
   "github-checks",
