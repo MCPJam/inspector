@@ -6029,6 +6029,10 @@ export interface PlatformReadinessRun {
   llmObservations: PlatformReadinessObservationState;
   hasReport: boolean;
   reportUrl: string | null;
+  /** The directory submission the run graded; `null` for a run started from a server. */
+  submissionId: string | null;
+  /** The submission's revision when the run was requested: the answers it graded. */
+  submissionRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }
