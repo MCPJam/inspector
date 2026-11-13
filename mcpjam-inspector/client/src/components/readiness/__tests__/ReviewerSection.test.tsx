@@ -67,6 +67,9 @@ function claudeStep(id: string): DirectoryFlowStep {
 const TEST_LAUNCH = claudeStep("testLaunch");
 const SAVED = [secretRow(EMAIL_SECRET), secretRow(PASSWORD_SECRET)];
 const PASSWORD = "sample-reviewer-pass-7Q";
+// No flow's placeholder carries this sample, so finding it in React's state
+// means the typed value was kept.
+const EMAIL = "sample-reviewer-7Q@example.com";
 
 function renderSection(
   step: DirectoryFlowStep = TEST_LAUNCH,
@@ -156,10 +159,7 @@ describe("ReviewerSection", () => {
   it("saving writes each value straight to its secret, and nothing keeps or shows it", async () => {
     const user = userEvent.setup();
     const { container } = renderSection();
-    await user.type(
-      await screen.findByLabelText("Reviewer email"),
-      "review@example.com",
-    );
+    await user.type(await screen.findByLabelText("Reviewer email"), EMAIL);
     await user.type(screen.getByLabelText("Reviewer password"), PASSWORD);
     await user.click(screen.getByRole("button", { name: "Save credentials" }));
 
@@ -179,7 +179,7 @@ describe("ReviewerSection", () => {
       expect(input.value).not.toBe(PASSWORD);
     }
     expect(heldByReact(container)).not.toContain(PASSWORD);
-    expect(heldByReact(container)).not.toContain("review@example.com");
+    expect(heldByReact(container)).not.toContain(EMAIL);
 
     // The rehearsal names the secrets; it never carries a value.
     api.startReviewerAttempt.mockResolvedValue(attemptIn("running"));
@@ -202,10 +202,7 @@ describe("ReviewerSection", () => {
       new Error("Secret name must be at most 64 characters."),
     );
     renderSection();
-    await user.type(
-      await screen.findByLabelText("Reviewer email"),
-      "review@example.com",
-    );
+    await user.type(await screen.findByLabelText("Reviewer email"), EMAIL);
     await user.type(screen.getByLabelText("Reviewer password"), PASSWORD);
     await user.click(screen.getByRole("button", { name: "Save credentials" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -409,19 +406,20 @@ describe("ReviewerSection", () => {
   });
 
   it("asks for answers the flow keeps on this step outside the portal's layout", async () => {
-    const identityTool: DirectoryFlowField = {
-      key: "testLaunch.identityTool",
-      label: "Identity tool",
+    // A key no layout lists, so only this section can draw it.
+    const outside: DirectoryFlowField = {
+      key: "testLaunch.sampleAnswer",
+      label: "Sample answer",
       control: "text",
       errors: {},
     };
     const onAnswer = vi.fn();
     renderSection(
-      { ...TEST_LAUNCH, fields: [...TEST_LAUNCH.fields, identityTool] },
+      { ...TEST_LAUNCH, fields: [...TEST_LAUNCH.fields, outside] },
       onAnswer,
     );
-    await userEvent.type(await screen.findByLabelText("Identity tool"), "g");
-    expect(onAnswer).toHaveBeenCalledWith("testLaunch.identityTool", "g");
+    await userEvent.type(await screen.findByLabelText("Sample answer"), "g");
+    expect(onAnswer).toHaveBeenCalledWith("testLaunch.sampleAnswer", "g");
     // The portal's own fields stay where the step draws them.
     expect(within(region()).queryByText("Test setup instructions")).toBeNull();
   });
