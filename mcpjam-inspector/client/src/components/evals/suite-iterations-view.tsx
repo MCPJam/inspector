@@ -2343,7 +2343,8 @@ export function SuiteIterationsView({
               (route.resultPage ||
                 (resultPagesEnabled === true &&
                   (route.testCaseId || route.iteration))) &&
-              suiteDetailOverview ? (
+              suiteDetailOverview &&
+              !selectedRunState.isUnavailable ? (
               <RunResultPage
                 key={`${contentKey}-result`}
                 suiteId={suite._id}
@@ -2368,6 +2369,9 @@ export function SuiteIterationsView({
                       !detailRows.failedRunIds.has(id),
                   )
                 }
+                readFailed={detailRunIds.some((id) =>
+                  detailRows.failedRunIds.has(id),
+                )}
                 projectId={projectId}
                 decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
                 onEditCase={

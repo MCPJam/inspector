@@ -47,6 +47,7 @@ export function RunResultPage({
   allIterations,
   hostNamesById,
   loading,
+  readFailed = false,
   projectId,
   decisionSummaryEnabled,
   onEditCase,
@@ -62,6 +63,8 @@ export function RunResultPage({
   allIterations: readonly EvalIteration[];
   hostNamesById: ReadonlyMap<string, string | null>;
   loading: boolean;
+  /** A launch run's results failed to load, so a missing result may exist. */
+  readFailed?: boolean;
   projectId: string | null | undefined;
   decisionSummaryEnabled: boolean;
   onEditCase?: (testCaseId: string) => void;
@@ -103,6 +106,7 @@ export function RunResultPage({
   // The scorecard's decision chain, read for the iteration's own run.
   const iterationRun = iteration ? target?.run : undefined;
   const active =
+    enabled === true &&
     Boolean(projectId && iterationRun) &&
     decisionSummaryEnabled &&
     isEvalRunTerminalStatus(iterationRun?.status);
@@ -191,6 +195,7 @@ export function RunResultPage({
         <ResultNotFound
           runLabel={runNumber == null ? "This run" : `Run #${runNumber}`}
           onOpenRun={() => openResult(runRef)}
+          readFailed={readFailed}
         />
       ) : iteration && iterationNumber !== null ? (
         <IterationResultsPage
@@ -202,6 +207,14 @@ export function RunResultPage({
             (item) => item.iterationId === iteration._id,
           )}
           chain={chains.chains.get(iteration._id)}
+          chainDisplay={
+            chains.status === "loading"
+              ? "loading"
+              : chains.status === "error"
+                ? "error"
+                : "settled"
+          }
+          onRetryChain={chains.retry}
           onEditCase={editCase}
           pager={
             pager && (

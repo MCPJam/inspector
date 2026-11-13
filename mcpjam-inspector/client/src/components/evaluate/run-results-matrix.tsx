@@ -552,8 +552,9 @@ export function RunResultsMatrix({
                         <a
                           href={caseResultHref(row.key, linkTarget(target))}
                           onClick={(event) =>
+                            onOpenCaseResult &&
                             followLink(event, () =>
-                              onOpenCaseResult?.(row.key, linkTarget(target)),
+                              onOpenCaseResult(row.key, linkTarget(target)),
                             )
                           }
                           aria-label={`Open ${row.title} on ${target.client} · ${target.model}`}

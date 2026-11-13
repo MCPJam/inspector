@@ -193,6 +193,7 @@ describe("RunResultPage", () => {
       "/evaluate/suite/suite/runs/one?iteration=it1&case=refund",
       { replace: true },
     );
+    expect(mocks.navigateApp).toHaveBeenCalledTimes(1);
   });
 
   it("moves an old `?iteration=` link to its page without counting a view", () => {
@@ -257,6 +258,16 @@ describe("RunResultPage", () => {
       expect.objectContaining({ replace: true }),
     );
     expect(mocks.track).toHaveBeenCalledTimes(2);
+  });
+
+  it("says a launch run failed to load instead of claiming no result", () => {
+    renderPage({ caseKey: "missing" }, { readFailed: true });
+    expect(
+      screen.getByRole("heading", {
+        name: "Couldn't load the results of Run #3",
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open Run #3" })).toBeVisible();
   });
 
   it("renders a test case page with column links and iteration links", async () => {
