@@ -33,7 +33,6 @@ import { getEvalIterationQuotaLabel } from "@/lib/eval-iteration-quota";
 
 interface SidebarCreditsProps {
   organizationId: string;
-  billingUiEnabled: boolean;
   /** Opens the organization's billing settings. */
   onExplorePlans: () => void;
 }
@@ -54,13 +53,10 @@ interface SidebarCreditsProps {
  */
 export function SidebarCredits({
   organizationId,
-  billingUiEnabled,
   onExplorePlans,
 }: SidebarCreditsProps) {
   const { balance, isLoading } = useCreditBalance({ organizationId });
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled: billingUiEnabled,
-  });
+  const billingStatus = useOrganizationBillingStatus(organizationId);
   const isV2 =
     billingStatus?.pricingVersion === "v2" ||
     balance?.billingModel === "monthly_flat";

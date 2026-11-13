@@ -177,14 +177,13 @@ export function filterByFeatureFlags(
 export function applyBillingGateNavState(
   sections: NavSection[],
   options: {
-    billingUiEnabled: boolean;
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
   },
 ): NavSection[] {
-  const { billingUiEnabled, gateDenied, enforcementActive } = options;
-  if (!billingUiEnabled || !enforcementActive) {
+  const { gateDenied, enforcementActive } = options;
+  if (!enforcementActive) {
     return sections;
   }
 
@@ -519,7 +518,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
-  billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
 }
@@ -539,7 +537,6 @@ export function MCPSidebar({
   onSwitchOrganization,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
-  billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
   ...props
@@ -631,12 +628,9 @@ export function MCPSidebar({
   }, [canOpenInviteDialog]);
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId },
   );
   const trialActive =
-    billingUiEnabled &&
-    trialBilling?.trialStatus === "active" &&
-    !!trialBilling.trialEndsAt;
+    trialBilling?.trialStatus === "active" && !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
     appNavigate(`/organizations/${activeProject.organizationId}/billing`);
@@ -920,7 +914,6 @@ export function MCPSidebar({
           {isAuthenticated && user && activeOrganizationId ? (
             <SidebarCredits
               organizationId={activeOrganizationId}
-              billingUiEnabled={billingUiEnabled}
               onExplorePlans={() =>
                 appNavigate(
                   buildOrganizationPath(activeOrganizationId, "billing"),

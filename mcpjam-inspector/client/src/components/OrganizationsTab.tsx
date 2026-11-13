@@ -23,7 +23,6 @@ import {
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -720,11 +719,7 @@ function OrganizationPage({
     enabled: isAuthenticated,
     includeSeatPaymentIntent: true,
   });
-  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui",
-  );
   const unlimitedCredits = useUnlimitedCredits();
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
   // The client flag decides whether to ADVERTISE the section. The section
@@ -788,7 +783,6 @@ function OrganizationPage({
     const viewKey = `${organization._id}:${activeSection}`;
     if (
       billingViewTrackedKeyRef.current === viewKey ||
-      !billingUiEnabled ||
       isLoadingBilling ||
       isLoadingPlanCatalog ||
       !billingStatus
@@ -813,7 +807,6 @@ function OrganizationPage({
   }, [
     activeSection,
     billingStatus,
-    billingUiEnabled,
     checkoutIntent,
     isLoadingBilling,
     isLoadingPlanCatalog,
@@ -821,14 +814,11 @@ function OrganizationPage({
     trackBillingEvent,
   ]);
   const memberInviteGate = resolveBillingGateState({
-    billingUiEnabled,
     organizationId: organization._id,
     billingStatus,
     premiumness: organizationPremiumness,
     gate: BILLING_GATES.memberInvites,
-    isLoading:
-      billingUiEnabled &&
-      (isLoadingBilling || isLoadingOrganizationPremiumness),
+    isLoading: isLoadingBilling || isLoadingOrganizationPremiumness,
   });
   const memberUpsellTeaser = getBillingUpsellTeaser({
     planCatalog,
@@ -1335,8 +1325,10 @@ function OrganizationPage({
     }
   };
 
-  const auditLogLocked =
-    billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
+  const auditLogLocked = isGateAccessDenied(
+    organizationPremiumness,
+    "auditLog",
+  );
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     appNavigate(buildOrganizationPath(organization._id, nextSection));
   };
@@ -1845,7 +1837,6 @@ function OrganizationPage({
             )}
             <OrganizationBillingSection
               organizationId={organization._id}
-              showPlanBilling={billingUiEnabled}
               showCredits={activeSection === "billing"}
               showPlanComparison={activeSection === "plans"}
               billingStatus={billingStatus}
@@ -1866,61 +1857,57 @@ function OrganizationPage({
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
               currentPlanPanel={
-                billingUiEnabled ? (
-                  <Card className="gap-3 border-0 bg-transparent py-0 shadow-none">
-                    {activeSection !== "plans" ? (
-                      <CardHeader className="flex flex-row items-center justify-between gap-3 p-0">
-                        <h2 className="text-lg font-semibold">Current plan</h2>
-                        <Button
-                          variant="link"
-                          size="sm"
-                          className="h-auto p-0"
-                          onClick={() => navigateToSection("plans")}
-                        >
-                          Compare plans
-                        </Button>
-                      </CardHeader>
+                <Card className="gap-3 border-0 bg-transparent py-0 shadow-none">
+                  {activeSection !== "plans" ? (
+                    <CardHeader className="flex flex-row items-center justify-between gap-3 p-0">
+                      <h2 className="text-lg font-semibold">Current plan</h2>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        onClick={() => navigateToSection("plans")}
+                      >
+                        Compare plans
+                      </Button>
+                    </CardHeader>
+                  ) : null}
+                  <CardContent className="space-y-3 p-0">
+                    {isLoadingBilling ? (
+                      <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                        Loading billing details...
+                      </div>
+                    ) : billingStatus && !billingStatus.billingConfigured ? (
+                      <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                        Purchases are unavailable here. You can still view the
+                        plans.
+                      </div>
+                    ) : billingStatus ? (
+                      <>
+                        <OrganizationCurrentPlanPanel
+                          billingStatus={billingStatus}
+                          planCatalog={planCatalog}
+                          isLoadingPlanCatalog={isLoadingPlanCatalog}
+                          onChangeBillingInterval={handleChangeBillingInterval}
+                          onCancelScheduledBillingChange={
+                            scheduledBillingChangeCancellation
+                              ? handleOpenScheduledBillingChangeCancelDialog
+                              : undefined
+                          }
+                          cancelScheduledBillingChangeLabel={
+                            scheduledBillingChangeCancellation?.ctaLabel ?? null
+                          }
+                          onManageBilling={handleManageBilling}
+                          isOpeningPortal={isOpeningPortal}
+                        />
+                        {!billingStatus.canManageBilling ? (
+                          <p className="min-w-0 text-sm font-medium text-primary">
+                            Only organization owners can manage billing.
+                          </p>
+                        ) : null}
+                      </>
                     ) : null}
-                    <CardContent className="space-y-3 p-0">
-                      {isLoadingBilling ? (
-                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Loading billing details...
-                        </div>
-                      ) : billingStatus && !billingStatus.billingConfigured ? (
-                        <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                          Purchases are unavailable here. You can still view the plans.
-                        </div>
-                      ) : billingStatus ? (
-                        <>
-                          <OrganizationCurrentPlanPanel
-                            billingStatus={billingStatus}
-                            planCatalog={planCatalog}
-                            isLoadingPlanCatalog={isLoadingPlanCatalog}
-                            onChangeBillingInterval={
-                              handleChangeBillingInterval
-                            }
-                            onCancelScheduledBillingChange={
-                              scheduledBillingChangeCancellation
-                                ? handleOpenScheduledBillingChangeCancelDialog
-                                : undefined
-                            }
-                            cancelScheduledBillingChangeLabel={
-                              scheduledBillingChangeCancellation?.ctaLabel ??
-                              null
-                            }
-                            onManageBilling={handleManageBilling}
-                            isOpeningPortal={isOpeningPortal}
-                          />
-                          {!billingStatus.canManageBilling ? (
-                            <p className="min-w-0 text-sm font-medium text-primary">
-                              Only organization owners can manage billing.
-                            </p>
-                          ) : null}
-                        </>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-                ) : null
+                  </CardContent>
+                </Card>
               }
             />
             {billingError ? (
@@ -2183,9 +2170,7 @@ function OrganizationPage({
                   </SettingsPageDescription>
                 </header>
                 <div className="space-y-3">
-                  {billingUiEnabled &&
-                  (isLoadingEntitlements ||
-                    isLoadingOrganizationPremiumness) ? (
+                  {isLoadingEntitlements || isLoadingOrganizationPremiumness ? (
                     <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                       Loading audit log access...
                     </div>
@@ -2198,11 +2183,9 @@ function OrganizationPage({
                       <p className="text-base text-muted-foreground">
                         Audit logs are available on Enterprise plans.
                       </p>
-                      {billingUiEnabled ? (
-                        <Button asChild>
-                          <a href={enterpriseContactHref}>Contact us</a>
-                        </Button>
-                      ) : null}
+                      <Button asChild>
+                        <a href={enterpriseContactHref}>Contact us</a>
+                      </Button>
                       {!billingStatus?.canManageBilling ? (
                         <p className="text-xs text-muted-foreground">
                           Ask an organization owner to upgrade your plan.

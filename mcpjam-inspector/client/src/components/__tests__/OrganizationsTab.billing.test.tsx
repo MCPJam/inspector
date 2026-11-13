@@ -405,10 +405,7 @@ describe("OrganizationsTab billing", () => {
     removeMemberMock.mockResolvedValue(undefined);
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
-      if (flag === "billing-entitlements-ui") return true;
-      return true;
-    });
+    mockUseFeatureFlagEnabled.mockImplementation(() => true);
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -1017,26 +1014,6 @@ describe("OrganizationsTab billing", () => {
         }),
       );
     });
-  });
-
-  it("does not report a plan impression while plan billing is disabled", async () => {
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "billing-entitlements-ui" ? false : true,
-    );
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({ plan: "free" }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="plans" />);
-    await waitFor(() =>
-      expect(
-        trackMock.mock.calls.filter(
-          ([event]) => event === "billing_plans_viewed",
-        ),
-      ).toHaveLength(0),
-    );
   });
 
   it("reports a fresh impression when the organization changes", async () => {
@@ -2048,39 +2025,6 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the overview billing card when the billing UI flag is off", () => {
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripeCurrentPeriodEnd: 1_705_000_000_000,
-          stripePriceId: "price_123",
-        }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.queryByRole("button", { name: "Plans & billing" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("Billing account")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "View plans" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Manage billing" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Upgrade plan" }),
-    ).not.toBeInTheDocument();
-  });
-
   it("shows the billing subview summary and plan cards", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -2379,7 +2323,7 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
+  it("shows Team as a purchasable upgrade", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -3508,31 +3452,6 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("skips the audit-log loading placeholder when the billing UI flag is off", () => {
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_123",
-        }),
-        isLoadingEntitlements: true,
-        isLoadingOrganizationPremiumness: true,
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="audit-log" />);
-
-    expect(
-      screen.queryByText("Loading audit log access..."),
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
-  });
-
   it("calls onOrganizationDeleted and skips the fallback redirect when provided", async () => {
     window.history.replaceState({}, "", "/organizations/org-1");
     const onOrganizationDeleted = vi.fn();
@@ -3855,43 +3774,6 @@ describe("OrganizationsTab billing", () => {
 
         await screen.findByText("Plan options");
         expect(scrollIntoView).not.toHaveBeenCalled();
-      } finally {
-        restore();
-      }
-    });
-
-    it("waits for the billing flag to resolve before scrolling", async () => {
-      const { scrollIntoView, restore } = withScrollSpy();
-      try {
-        // PostHog answers `undefined` until the flag loads, so the section the
-        // link points at is not mounted on the first render. Scrolling then
-        // would target nothing and the deep link would silently do nothing.
-        mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-          flag === "billing-entitlements-ui" ? undefined : true,
-        );
-        window.history.replaceState(
-          null,
-          "",
-          "/organizations/org-1/plans?plans=open",
-        );
-
-        const view = render(
-          <OrganizationsTab organizationId="org-1" section="plans" />,
-        );
-
-        expect(screen.queryByText("Plan options")).not.toBeInTheDocument();
-        expect(scrollIntoView).not.toHaveBeenCalled();
-        // Consumed on mount, not when the scroll finally fires: the section is
-        // still absent here. Reading it later would mean a reload between the
-        // two renders replays the jump.
-        expect(window.location.search).toBe("");
-
-        mockUseFeatureFlagEnabled.mockImplementation(() => true);
-        view.rerender(
-          <OrganizationsTab organizationId="org-1" section="plans" />,
-        );
-
-        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       } finally {
         restore();
       }

@@ -38,7 +38,6 @@ const {
     mockUseIsMemberActor: vi.fn(() => true as boolean | undefined),
     mockUseViewerProjectRole: vi.fn(),
     mockRouteContext: {
-      billingUiEnabled: true,
       activeTabBillingLocked: false,
       activeTabBillingFeature: "scenarios" as string | null,
       convexProjectId: "project-1" as string | null,
@@ -192,7 +191,6 @@ describe("gated feature routes — hosted", () => {
     mockSwarmsTab.mockClear();
     mockUserTestingTab.mockClear();
     mockRouteContext.activeTabBillingLocked = false;
-    mockRouteContext.billingUiEnabled = true;
     mockRouteContext.convexProjectId = "project-1";
     mockRouteContext.isAuthenticated = true;
     mockUseViewerProjectRole.mockClear();
