@@ -33,6 +33,8 @@ const shared = vi.hoisted(() => ({
   /** Context writes waiting at the store, while `holdContext` is set. */
   contextWrites: [] as (() => void)[],
   holdContext: false,
+  /** Holds a request's runtime release, as a slow connection close would. */
+  releaseHold: undefined as undefined | (() => Promise<void>),
   /** Holds a call's catalog read, as a cold connection would. */
   catalogHold: undefined as undefined | (() => Promise<void>),
   hold: undefined as undefined | (() => Promise<void>),
@@ -152,7 +154,9 @@ vi.mock("../../../services/plugin-host/request-runtime.js", () => {
         await admitted(read);
         return new Map(names.map((name) => [name, tool(name)]));
       },
-      release: async () => undefined,
+      release: async () => {
+        await shared.releaseHold?.();
+      },
     }),
     assertPluginInstanceBindingCurrent: async () => {
       shared.bindingChecks++;
@@ -376,6 +380,7 @@ beforeEach(() => {
   shared.contextWrites = [];
   shared.holdContext = false;
   shared.catalogHold = undefined;
+  shared.releaseHold = undefined;
   shared.hold = undefined;
 });
 afterEach(() => vi.useRealTimers());
@@ -622,6 +627,25 @@ describe("model Apps across replicas", () => {
     await expect(c.turn([token])).rejects.toMatchObject({
       code: "MODEL_APP_UNAVAILABLE",
     });
+  });
+
+  it("refuses a turn whose last App closed elsewhere while the turn was still releasing", async () => {
+    const [a, b] = await replicas(2);
+    const first = (await publish(a)).instanceToken!;
+    const last = (await publish(a)).instanceToken!;
+    expect((await update(a, first, 1, "First")).status).toBe(200);
+    expect((await update(a, last, 1, "Last")).status).toBe(200);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let releases = 0;
+    shared.releaseHold = async () => {
+      if (++releases === 2) await held;
+    };
+    const turn = b.turn([first, last]);
+    await vi.waitFor(() => expect(releases).toBe(2));
+    expect((await a.post("close", handle(last))).status).toBe(200);
+    release();
+    await expect(turn).rejects.toMatchObject({ code: "MODEL_APP_UNAVAILABLE" });
   });
 
   it("refuses a turn whose earlier App closed elsewhere while a later one was read", async () => {

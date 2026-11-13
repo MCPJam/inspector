@@ -44,6 +44,13 @@ const sameOwner = (
   owner.workspaceId === actor.workspaceId;
 const matches = (owner: PluginFormOwner, actor: PluginInstanceIdentity) =>
   sameOwner(owner.owner, actor) && owner.subject === actor.subject;
+type ContextCommand =
+  | {
+      kind: "update";
+      request: PluginContextUpdate;
+      limits?: PluginContextLimits;
+    }
+  | { kind: "remove-all"; request: PluginContextRemoveAll };
 /** Local closes are an optimization over the store's own closed rows. */
 const CLOSED_TOMBSTONES = 4096;
 /** A minute under the store's ceiling, so a replica whose clock runs a little
@@ -82,6 +89,8 @@ export interface ModelApp {
 export class ModelAppRegistry {
   private readonly entries = new Map<string, ModelApp>();
   private readonly closed = new Map<string, number>();
+  /** The context write each App is waiting on in this process. */
+  private readonly writes = new Map<string, Promise<unknown>>();
   constructor(
     private readonly ttlMs = MODEL_APP_TTL_MS,
     private readonly memory = pluginContextMemory,
@@ -373,16 +382,28 @@ export class ModelAppRegistry {
   /** Compare-and-set on the stored context, retried on a concurrent write.
    * Call right after a `fence` read: the first attempt stands on the copy
    * that read refreshed, and the store refuses a write to a closed App. */
-  async changeContext(
+  changeContext(
     token: string,
     actor: PluginInstanceIdentity,
-    command:
-      | {
-          kind: "update";
-          request: PluginContextUpdate;
-          limits?: PluginContextLimits;
-        }
-      | { kind: "remove-all"; request: PluginContextRemoveAll },
+    command: ContextCommand,
+    signal: AbortSignal,
+  ) {
+    // One write per App at a time in this process, so each holds the App's
+    // memory reservation until it commits or fails. Writes from other
+    // replicas are ordered by the store's compare-and-set.
+    const write = () => this.writeContext(token, actor, command, signal);
+    const previous = this.writes.get(token) ?? Promise.resolve();
+    const current = previous.then(write, write);
+    this.writes.set(token, current);
+    return current.finally(() => {
+      if (this.writes.get(token) === current) this.writes.delete(token);
+    });
+  }
+
+  private async writeContext(
+    token: string,
+    actor: PluginInstanceIdentity,
+    command: ContextCommand,
     signal: AbortSignal,
   ) {
     const port = this.port(actor);
@@ -429,14 +450,16 @@ export class ModelAppRegistry {
           if (isCode(error, "INSTANCE_CONTEXT_CONFLICT")) continue;
           throw this.refusal(token, actor, error);
         }
-        signal.throwIfAborted();
-        // The reply leaves out the envelope this write stored.
+        // The write is stored: this copy follows it before any abort, so its
+        // memory charge matches what it holds. The reply leaves out the
+        // envelope this write stored.
         this.restoreContext(
           app,
           saved.contextVersion === expectedVersion + 1
             ? { ...saved, contextJson }
             : saved,
         );
+        signal.throwIfAborted();
       }
       return { result, snapshot: app.context.snapshot(instanceId, generation) };
     }

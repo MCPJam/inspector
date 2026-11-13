@@ -441,3 +441,35 @@ describe("this process's copy of a durable model App", () => {
     ]);
   });
 });
+
+it("keeps one App's pending write reserved while a later write to it waits", async () => {
+  const registry = new ModelAppRegistry(
+    60_000,
+    new PluginContextMemory(64 * 1024, 1024 * 1024),
+  );
+  const first = await publish(registry, "first");
+  const second = await publish(registry, "second");
+  await Promise.all([
+    registry.restore(first, actor, signal()),
+    registry.restore(second, actor, signal()),
+  ]);
+  const change = (token: string, request: ReturnType<typeof text>) =>
+    registry.changeContext(
+      token,
+      actor,
+      { kind: "update", request: request as never },
+      signal(),
+    );
+  // A smaller second write to the same App must not replace the first
+  // write's reservation and free budget for another App.
+  const results = await Promise.allSettled([
+    change(first, text(1, "x".repeat(40_000))),
+    change(first, text(2, "x", false)),
+    change(second, text(1, "y".repeat(40_000))),
+  ]);
+  expect(results.map((result) => result.status)).toEqual([
+    "fulfilled",
+    "fulfilled",
+    "rejected",
+  ]);
+});
