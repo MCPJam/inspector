@@ -126,14 +126,14 @@ function idParam(value: string | undefined, param: string, notFound: string) {
   });
 }
 
-function scopeOf(c: Context) {
+export function scopeOf(c: Context) {
   return {
     projectId: requireProjectIdArg(c.req.param("projectId"), SCOPE),
     submissionId: idParam(c.req.param("submissionId"), "submissionId", NOT_FOUND),
   };
 }
 
-async function readSubmission(
+export async function readSubmission(
   convex: ConvexHttpClient,
   projectId: string,
   submissionId: string,
@@ -152,7 +152,7 @@ async function readSubmission(
   return row;
 }
 
-function flowOf(row: Submission): DirectoryFlow {
+export function flowOf(row: Submission): DirectoryFlow {
   const flow = getDirectoryFlow(row.flowId);
   if (!flow) {
     throw new WebRouteError(

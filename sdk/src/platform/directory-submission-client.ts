@@ -17,6 +17,16 @@ import {
   type PlatformDirectorySubmissionUpdateBody,
   type PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
+import type {
+  PlatformDirectorySubmissionEvent as SubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionExportFile,
+  PlatformDirectorySubmissionFinding as Finding,
+  PlatformDirectorySubmissionFindingsQuery,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionSnapshotsView,
+} from "./directory-submission-handoff-types.js";
+import type { DirectorySnapshotLabel } from "../directory-readiness/handoff.js";
 import { isPlatformApiError } from "./errors.js";
 import { ServerAccountClient } from "./server-account-client.js";
 import type { PlatformPage, PlatformReadinessRunReceipt } from "./types.js";
@@ -130,6 +140,77 @@ export abstract class DirectorySubmissionClient extends ServerAccountClient {
     const { projectId, submissionId, runId } = params;
     const target = path(projectId, submissionId, "results");
     return this.request("GET", target, { query: { runId } }, options);
+  }
+
+  /** Where to resume: status, counts, blockers, missing answers and next actions, built on each read. */
+  getDirectorySubmissionHandoff(
+    params: Scope,
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionHandoff> {
+    const target = path(params.projectId, params.submissionId, "handoff");
+    return this.request("GET", target, {}, options);
+  }
+
+  /** One page of the stored results, newest first. Pass `nextCursor` back as `cursor`. */
+  listDirectorySubmissionFindings(
+    params: Scope & PlatformDirectorySubmissionFindingsQuery,
+    options?: RequestOptions
+  ): Promise<PlatformPage<Finding>> {
+    const { projectId, submissionId, status, step, lane, cursor, limit } = params;
+    const query = { status, step, lane, cursor, limit };
+    return this.request("GET", path(projectId, submissionId, "findings"), { query }, options);
+  }
+
+  /** One check's stored result, with the observation behind it. */
+  getDirectorySubmissionFinding(
+    params: Scope & { checkId: string },
+    options?: RequestOptions
+  ): Promise<Finding> {
+    const findings = path(params.projectId, params.submissionId, "findings");
+    return this.request("GET", `${findings}/${encodeURIComponent(params.checkId)}`, {}, options);
+  }
+
+  /** The pack as a file, JSON unless `format` says otherwise: save `content` as it is. */
+  exportDirectorySubmission(
+    params: Scope & { format?: "json" | "markdown" },
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionExportFile> {
+    const target = path(params.projectId, params.submissionId, "export");
+    return this.request("GET", target, { query: { format: params.format } }, options);
+  }
+
+  /** Recorded events, newest first, at most 100. */
+  listDirectorySubmissionEvents(
+    params: Scope & { kind?: SubmissionEvent["kind"]; limit?: number },
+    options?: RequestOptions
+  ): Promise<PlatformPage<SubmissionEvent>> {
+    const { projectId, submissionId, kind, limit } = params;
+    return this.request("GET", path(projectId, submissionId, "events"), { query: { kind, limit } }, options);
+  }
+
+  /** Record what happened in the directory, as seen or as relayed. Never a secret's value. */
+  recordDirectorySubmissionEvent(
+    params: Scope & PlatformDirectorySubmissionEventBody,
+    options?: RequestOptions
+  ): Promise<SubmissionEvent> {
+    // Picked, not spread: the body is strict, and a wider object would 400.
+    const { projectId, submissionId, kind, reportedOrObserved, state, uncertain } = params;
+    const { directoryLabel, detail, link, reference, evidence, snapshot, finding, idempotencyKey } = params;
+    const body = {
+      kind, reportedOrObserved, state, uncertain, directoryLabel, detail,
+      link, reference, evidence, snapshot, finding, idempotencyKey,
+    };
+    const target = path(projectId, submissionId, "events");
+    return this.request("POST", target, { body, declareLaunch: true }, options);
+  }
+
+  /** The latest snapshot under each label; `compare` adds the diff between two labels' revisions. */
+  getDirectorySubmissionSnapshots(
+    params: Scope & { compare?: [DirectorySnapshotLabel, DirectorySnapshotLabel] },
+    options?: RequestOptions
+  ): Promise<PlatformDirectorySubmissionSnapshotsView> {
+    const target = path(params.projectId, params.submissionId, "snapshots");
+    return this.request("GET", target, { query: { compare: params.compare?.join(",") } }, options);
   }
 }
 

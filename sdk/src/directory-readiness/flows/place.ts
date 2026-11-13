@@ -75,6 +75,24 @@ export function directoryPlacementOf(
   );
 }
 
+/**
+ * The step and field a finding is shown under: its placement's, else its
+ * lane's step, else the flow's last step. One rule for every reader, so a
+ * findings page filtered by step agrees with the counts by step.
+ */
+export function directoryFindingPlace(
+  flow: DirectoryFlow,
+  finding: { id: string; lane: string }
+): { step: string; field?: string } {
+  const placement = directoryPlacementOf(flow, finding.id);
+  const wanted = placement?.step ?? flow.laneSteps[finding.lane];
+  const known = flow.steps.some((step) => step.id === wanted);
+  return {
+    step: known && wanted ? wanted : (flow.steps.at(-1)?.id ?? ""),
+    ...(placement?.field ? { field: placement.field } : {}),
+  };
+}
+
 export function placeDirectoryResults(
   input: PlaceDirectoryResultsInput
 ): PlacedStep[] {
@@ -89,14 +107,10 @@ export function placeDirectoryResults(
   const changed = input.gradedAnswers
     ? changedKeys(flow, input.gradedAnswers, input.answers)
     : new Set<string>();
-  const stepIds = new Set(flow.steps.map((step) => step.id));
-  const fallback = flow.steps[flow.steps.length - 1]?.id ?? "";
 
   const placed = findings.map((finding): PlacedFinding => {
     const placement = placements.get(finding.id);
-    const wanted = placement?.step ?? flow.laneSteps[finding.lane];
-    const step =
-      wanted !== undefined && stepIds.has(wanted) ? wanted : fallback;
+    const { step, field } = directoryFindingPlace(flow, finding);
     let evidenceStatus = statusOf(finding, placement, lacking);
     const staleBecause = (placement?.reads ?? []).filter((key) =>
       changed.has(key)
@@ -107,7 +121,7 @@ export function placeDirectoryResults(
     return {
       finding,
       step,
-      ...(placement?.field ? { field: placement.field } : {}),
+      ...(field ? { field } : {}),
       evidenceStatus,
       ...(evidenceStatus === "stale" ? { staleBecause } : {}),
     };
