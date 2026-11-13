@@ -201,6 +201,22 @@ describe("RunResultPage", () => {
     expect(screen.getByRole("button", { name: "Reload page" })).toBeVisible();
   });
 
+  it("says a sibling column failed to load when another run supplies the case", () => {
+    renderPage(
+      { caseKey: "refund", target: "two~gpt" },
+      {
+        allIterations: iterations.filter((item) => item.suiteRunId !== "two"),
+        failedRunIds: new Set(["two"]),
+      },
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: "Couldn't load the results of Run #3. Reload the page to try again.",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("No recorded iterations")).toBeNull();
+  });
+
   it("renders a test case page with column links and iteration links", async () => {
     const { onEditCase, onCrumbsChange } = renderPage({ caseKey: "refund" });
     expect(screen.getByRole("heading", { name: "Refund order" })).toBeVisible();
