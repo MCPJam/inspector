@@ -52,6 +52,13 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs/run_1",
     "/api/v1/projects/proj_1/readiness-runs/run_1/cancel",
     "/api/v1/projects/proj_1/readiness-runs/run_1/report",
+    // The Readiness page: without these, every call there 401s unseen.
+    "/api/v1/directory-flows",
+    "/api/v1/directory-flows/claude-connector",
+    "/api/v1/projects/proj_1/directory-submissions",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/runs",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/results",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -64,7 +71,12 @@ describe("authFetch bearer on directory-readiness routes", () => {
       "/api/v1/projects/proj_1/readiness-runs?readinessKind=claude&limit=1",
       { method: "GET" },
     );
+    await sessionToken.authFetch(
+      "/api/v1/projects/proj_1/directory-submissions?serverId=srv_1",
+      { method: "GET" },
+    );
     expect(headersOf(0).Authorization).toBe("Bearer hosted-bearer");
+    expect(headersOf(1).Authorization).toBe("Bearer hosted-bearer");
   });
 
   for (const path of [
@@ -79,6 +91,11 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs/run_1/report/raw",
     // The publisher is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/servers/srv_1/readiness-runs/anthropic",
+    // Submission paths stay as narrow as the run paths above.
+    "/api/v1/directory-flows/claude-connector/steps",
+    "/api/v1/projects/proj_1/directory-submissions-export",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/runs/run_1",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });

@@ -40,6 +40,7 @@ import {
   type DirectoryReadinessResult,
   type HostedSubmissionMode,
   type ReadinessRun,
+  type ReadinessRunReceipt,
 } from "@/lib/apis/directory-readiness-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
 
@@ -104,6 +105,12 @@ export interface UseDirectoryReadinessRunOptions {
   /** Required for OpenAI. Never inferred — see the section component. */
   submissionMode?: HostedSubmissionMode;
   includeLlmObservations?: boolean;
+  /**
+   * Starts the run through another route, such as a directory submission's.
+   * Always hosted, and no report is fetched: that caller reads the results
+   * placed on its own form. Keep it stable: a new one resets the run.
+   */
+  start?: (idempotencyKey: string) => Promise<ReadinessRunReceipt>;
 }
 
 export function useDirectoryReadinessRun({
@@ -111,6 +118,7 @@ export function useDirectoryReadinessRun({
   server,
   submissionMode,
   includeLlmObservations = false,
+  start,
 }: UseDirectoryReadinessRunOptions) {
   const hosted = isHostedMode();
 
@@ -168,9 +176,10 @@ export function useDirectoryReadinessRun({
 
   useEffect(() => {
     reset();
-    // `serverConfigKey` is the trigger; the rest is read through it.
+    // `serverConfigKey` is the trigger; the rest is read through it. A new
+    // `start` is a new thing to grade, such as another submission.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverConfigKey, publisher]);
+  }, [serverConfigKey, publisher, start]);
 
   useEffect(() => {
     return () => {
@@ -252,7 +261,7 @@ export function useDirectoryReadinessRun({
     setState({ status: "running" });
 
     try {
-      if (!hosted) {
+      if (!hosted && !start) {
         const controller = new AbortController();
         abortRef.current = controller;
         const { result } = await runLocalReadiness(publisher, server.name, {
@@ -263,13 +272,16 @@ export function useDirectoryReadinessRun({
         return;
       }
 
-      const receipt = await startHostedReadiness(publisher, server.name, {
-        submissionMode,
-        includeLlmObservations,
-        // One key per start press: a double-click replays onto the run it
-        // already made rather than dialling somebody's server twice.
-        idempotencyKey: `ui-${publisher}-${token}-${Date.now()}`,
-      });
+      // One key per start press: a double-click replays onto the run it
+      // already made rather than dialling somebody's server twice.
+      const idempotencyKey = `ui-${publisher}-${token}-${Date.now()}`;
+      const receipt = start
+        ? await start(idempotencyKey)
+        : await startHostedReadiness(publisher, server.name, {
+            submissionMode,
+            includeLlmObservations,
+            idempotencyKey,
+          });
       if (!isCurrent(token)) return;
       activeRunIdRef.current = receipt.runId;
       void pollRun(receipt.runId, token, 0);
@@ -288,8 +300,21 @@ export function useDirectoryReadinessRun({
     pollRun,
     publisher,
     server.name,
+    start,
     submissionMode,
   ]);
+
+  /** Follow a run started elsewhere, such as one still going after a reload. */
+  const watch = useCallback(
+    (runId: string) => {
+      if (activeRunIdRef.current === runId) return;
+      runTokenRef.current += 1;
+      activeRunIdRef.current = runId;
+      clearPoll();
+      void pollRun(runId, runTokenRef.current, 0);
+    },
+    [clearPoll, pollRun],
+  );
 
   const cancel = useCallback(async () => {
     const runId = activeRunIdRef.current;
@@ -353,10 +378,10 @@ export function useDirectoryReadinessRun({
   // with nothing under them, which reads as "nothing found" when the truth is
   // "49 findings you cannot see".
   useEffect(() => {
-    if (!state.run || !isTerminalRunStatus(state.run.status)) return;
+    if (start || !state.run || !isTerminalRunStatus(state.run.status)) return;
     if (!state.run.hasReport || state.report || state.reportLoading) return;
     void loadReport();
-  }, [loadReport, state.report, state.reportLoading, state.run]);
+  }, [loadReport, start, state.report, state.reportLoading, state.run]);
 
   /**
    * Adopt the newest run for this server after a reload.
@@ -394,6 +419,7 @@ export function useDirectoryReadinessRun({
     hosted,
     isOpenAI,
     run,
+    watch,
     cancel,
     loadReport,
     rediscover,
