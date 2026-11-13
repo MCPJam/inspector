@@ -14,14 +14,16 @@ import {
   META_TOOL_NAMES,
   META_TOOL_SEARCH,
   notLoadedToolMessage,
-  offersOnlyMetaTools,
   parseProgressiveToolsEnv,
   resolveActiveToolNames,
   searchToolCatalog,
   shouldForceInitialToolSearch,
-  singleToolCallProviderOptions,
   sumCatalogTokens,
 } from "../src/progressive-discovery/discovery.js";
+import {
+  offersOnlyMetaTools,
+  singleToolCallProviderOptions,
+} from "../src/progressive-discovery/single-tool-call.js";
 
 // ---------------------------------------------------------------------------
 // helpers
