@@ -46,6 +46,7 @@ function receiptStore() {
 function publication(registry: ModelAppRegistry, receipts: PluginInvocationReceiptPort) {
   const execute = vi.fn(async () => registry.publish(
     { content: [] }, source, "tool", "revision", { ui: { resourceUri: "ui://app" } },
+    new AbortController().signal,
   ));
   const ports: PluginInvocationPorts = {
     receipts,
@@ -63,22 +64,29 @@ it.each(["close", "expiry"] as const)(
   "keeps the receipt's original App token dead after %s and process replacement",
   async (end) => {
     vi.useFakeTimers();
+    const signal = new AbortController().signal;
     const store = receiptStore();
     const registry = new ModelAppRegistry(100);
     const first = publication(registry, store.port);
     const result = await first.invoke();
     const token = tokenOf(result);
     expect(JSON.parse(store.read()!.legs[0]!.valueJson!)).toEqual(result);
-    if (end === "close") registry.close(token, actor);
+    // Live, the published App restores in a process that never saw it.
+    await new ModelAppRegistry(100).restore(token, actor, signal);
+    if (end === "close") await registry.close(token, actor, signal);
     else vi.advanceTimersByTime(101);
     expect(await first.invoke()).toEqual(result);
     expect(first.execute).toHaveBeenCalledOnce();
-    expect(() => registry.get(token, actor)).toThrow();
+    await expect(registry.restore(token, actor, signal)).rejects.toThrow(
+      "MODEL_APP_UNAVAILABLE",
+    );
     const replacement = new ModelAppRegistry();
     const cold = publication(replacement, store.port);
     expect(await cold.invoke()).toEqual(result);
     expect(cold.execute).not.toHaveBeenCalled();
-    expect(() => replacement.get(token, actor)).toThrow();
+    await expect(replacement.restore(token, actor, signal)).rejects.toThrow(
+      "MODEL_APP_UNAVAILABLE",
+    );
     cold.close(); first.close();
   },
 );
