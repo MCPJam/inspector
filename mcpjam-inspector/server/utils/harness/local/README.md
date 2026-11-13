@@ -405,7 +405,9 @@ enforced in code, not by convention.
    (`runtime-compat.generated.json`, generated, never hand-typed). A release
    proves it: conformance evidence for the build's layer digest × each pack it
    may select × every advertised target (`check-local-harness-release.mjs
-   --evidence`), attested as `runtime-contract.json`. A pack becomes desired
+   --evidence`), recorded at the release commit or at one with the same
+   conformance inputs digest (`scripts/conformance-inputs-digest.mjs`), and
+   attested as `runtime-contract.json`. A pack becomes desired
    only through the version PR that pins it: `prepare-release.yml` runs
    `local-harness-pack-pipeline.yml` per harness and writes the pin once this
    layer passed conformance on the pack; the pack being replaced

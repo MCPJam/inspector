@@ -20,5 +20,11 @@ export declare function planConformance(input: {
   /** Published packs of the other local runtimes, `<harnessId>=<version>` pairs. */
   runtimeVersions?: string;
   harnesses?: string;
+  /** Drop legs for targets the harness's manifest does not advertise. */
+  certifiedOnly?: boolean;
+  /** A push that changed no conformance input runs no legs. */
+  inputsUnchanged?: boolean;
   record?: RuntimeCompatRecordJson;
+  /** Manifest facts by harness id; defaults to the committed definitions. */
+  facts?: Record<string, { nativePlatforms: string[]; nativeTargets?: string[] }>;
 }): ConformancePlan;

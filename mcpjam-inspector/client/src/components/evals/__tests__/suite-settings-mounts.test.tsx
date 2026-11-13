@@ -75,7 +75,7 @@ vi.mock("@/hooks/useComputersEnabled", () => ({
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
-vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: () => true }));
+vi.mock("posthog-js/react", () => ({ useFeatureFlagEnabled: (flag: string) => flag !== "eval-suite-settings-tabs" }));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: () => [],
   useModelMatrixCapability: () => true,

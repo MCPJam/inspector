@@ -12,10 +12,24 @@ export interface ToolRenderOverride {
    * run (from the eval `widgetRenderObservations`). When set, the transcript
    * shows this frozen image INSTEAD of mounting a live widget — so a completed
    * run's replay can't drift to the widget's default state when its backing MCP
-   * server is gone. Only the eval trace-viewer sets this, only for completed,
-   * non-interactive runs; live/record-armed surfaces leave it unset.
+   * server is gone. Only the eval trace-viewer sets this, only for completed
+   * runs that clicked inside the App or have no saved App copy; live and
+   * record-armed surfaces leave it unset.
    */
   frozenScreenshotUrl?: string | null;
+  /**
+   * Recorded screenshot kept as a backup when the live App is preferred. The
+   * transcript shows it only when the live App can't render here (for example
+   * the viewed host doesn't support widgets), so the tool call never ends up
+   * with neither the App nor the picture.
+   */
+  fallbackScreenshotUrl?: string | null;
+  /**
+   * Viewing a finished eval run: the live App is a replay, so it gets no tool
+   * call or message handlers. Opening a run must not run tools against today's
+   * server or start a chat.
+   */
+  readOnly?: boolean;
   /** Eval-only browser evidence captured with a frozen widget screenshot. */
   recordedWidgetErrors?: {
     consoleErrors: string[];

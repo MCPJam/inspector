@@ -176,6 +176,22 @@ describe("scrubNamesFromUrl", () => {
     ).toBe(`https://app.mcpjam.com/servers?server=[name]&project=${id}`);
   });
 
+  it("keeps a run result page's route words and query keys, not its names", async () => {
+    const { scrubNamesFromUrl } = await load();
+    expect(
+      scrubNamesFromUrl(
+        `/p/${id}/evaluate/suite/${id}/runs/${id}/cases/${id}/iterations/${id}?tab=trace&target=${id}~sonnet`,
+      ),
+    ).toBe(
+      `/p/${id}/evaluate/suite/${id}/runs/${id}/cases/${id}/iterations/${id}?tab=[name]&target=[name]`,
+    );
+    expect(
+      scrubNamesFromUrl(
+        `/evaluate/suite/${id}/runs/${id}/cases/title%3ARefund`,
+      ),
+    ).toBe(`/evaluate/suite/${id}/runs/${id}/cases/[name]`);
+  });
+
   it("treats encoded names as names and leaves non-URLs alone", async () => {
     const { scrubNamesFromUrl } = await load();
     expect(scrubNamesFromUrl("/servers/My%20Server")).toBe("/servers/[name]");

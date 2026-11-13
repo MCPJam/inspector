@@ -89,6 +89,7 @@ import {
   PROJECT_RUNS_PAGE_SIZE,
 } from "../project-runs-table";
 import { runMetricsFromIterations } from "../run-metrics";
+import { clearProjectRunHistoryCache } from "../use-project-run-history";
 import { GroupSummaryRow } from "../project-run-suite-groups";
 import {
   formatRunHistoryDate,
@@ -155,6 +156,7 @@ function inTable() {
 }
 
 beforeEach(() => {
+  clearProjectRunHistoryCache();
   setRows([]);
   mocks.query.mockReset();
   mocks.queryArgs.length = 0;

@@ -2,7 +2,7 @@
 // completion of an Inspector release whose desktop build failed after npm.
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { githubReleaseExists, planRelease } from "./release-plan.mjs";
+import { githubReleaseExists, needsInspectorArtifacts, planRelease } from "./release-plan.mjs";
 
 const inspector = (newVersion = "3.15.0") => ({ name: "@mcpjam/inspector", newVersion });
 
@@ -65,6 +65,16 @@ test("refuses a webapp deploy with no Inspector release", () => {
       }),
     /requires an inspector release/,
   );
+});
+
+test("tells the evidence run whether conformance is needed, and answers no when nothing would ship", () => {
+  const base = { inspectorVersion: "3.15.0", inspectorReleaseExists: true };
+  assert.equal(needsInspectorArtifacts({ ...base, unpublished: [inspector()] }), true);
+  assert.equal(needsInspectorArtifacts({ ...base, unpublished: [{ name: "@mcpjam/sdk", newVersion: "9.0.0" }] }), false);
+  assert.equal(needsInspectorArtifacts({ ...base, unpublished: [], inspectorReleaseExists: false }), true);
+  // Where planRelease refuses, this is an ordinary push to main.
+  assert.throws(() => planRelease({ ...base, unpublished: [] }), /Nothing to release/);
+  assert.equal(needsInspectorArtifacts({ ...base, unpublished: [] }), false);
 });
 
 test("tells a missing GitHub release from an error it cannot read", () => {
