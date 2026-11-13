@@ -566,6 +566,16 @@ describe("ChatTabV2 history sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    // `clearAllMocks` keeps implementations; a test that holds or answers a
+    // read must not hand that to the next one.
+    mockGetChatHistoryDetail.mockReset();
+    mockGetChatHistoryDetail.mockImplementation((...args: unknown[]) =>
+      mockReadHistory(...args),
+    );
+    mockGetChatHistoryState.mockReset();
+    mockGetChatHistoryState.mockImplementation((...args: unknown[]) =>
+      mockReadHistory(...args),
+    );
   });
 
   it("loads org model config from the effective hosted project id", () => {
@@ -1202,16 +1212,6 @@ describe("ChatTabV2 history sync", () => {
     expect(screen.getByTestId("chat-input-form")).toHaveAttribute(
       "data-submitting",
       "false",
-    );
-    // `clearAllMocks` keeps implementations; hand the next test the default
-    // reads again.
-    mockGetChatHistoryDetail.mockReset();
-    mockGetChatHistoryDetail.mockImplementation((...args: unknown[]) =>
-      mockReadHistory(...args),
-    );
-    mockGetChatHistoryState.mockReset();
-    mockGetChatHistoryState.mockImplementation((...args: unknown[]) =>
-      mockReadHistory(...args),
     );
   });
 

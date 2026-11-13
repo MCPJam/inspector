@@ -2351,6 +2351,9 @@ describe("PlaygroundMain", () => {
       await act(async () => releaseSync());
 
       await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // A late second send would land after one more flush.
+      await act(async () => {});
+      expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({ text: "second message" }),
       );
@@ -2503,6 +2506,9 @@ describe("PlaygroundMain", () => {
       await act(async () => ready());
 
       await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // A late second send would land after one more flush.
+      await act(async () => {});
+      expect(sendMessage).toHaveBeenCalledTimes(1);
       // The second click never started a send of its own.
       expect(ensureServersReady).toHaveBeenCalledTimes(1);
       expect(sendMessage).toHaveBeenCalledWith(
@@ -2527,6 +2533,9 @@ describe("PlaygroundMain", () => {
       await act(async () => releaseSync());
 
       await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // A late second send would land after one more flush.
+      await act(async () => {});
+      expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({ text: "Hello" }),
       );
