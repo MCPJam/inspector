@@ -5,6 +5,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
@@ -49,6 +50,9 @@ function getClientLogo(
   const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
   if (haystack.includes("mcpjam") || haystack.includes("mcp-jam"))
     return mcpjamLogo;
+  // Claude Code's desktop and web variants carry their app's mark.
+  if (/claude[ -]?code[ -]?desktop/.test(haystack)) return claudeDesktopLogo;
+  if (/claude[ -]?code[ -]?web/.test(haystack)) return claudeLogo;
   if (haystack.includes("claude-code") || haystack.includes("claude code"))
     return claudeCodeLogo;
   if (
@@ -67,6 +71,8 @@ function getClientLogo(
   if (haystack.includes("grok")) return grokbotLogo;
   if (haystack.includes("cursor")) return cursorLogo;
   // ChatGPT's work mode sends `openai-mcp (Codex)`; its name says ChatGPT.
+  // ChatGPT's desktop app, in either mode, has its own mark.
+  if (/chatgpt[ -]?(work[ -]?)?desktop/.test(haystack)) return chatgptDesktopLogo;
   if (haystack.includes("chatgpt")) return openaiLogo;
   if (haystack.includes("codex")) return codexLogo;
   // GitHub Copilot CLI before the bare "copilot", which is Microsoft 365

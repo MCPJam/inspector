@@ -4,7 +4,9 @@
  * clients (Muse, Grokbot). `built-ins.ts` lists them in BUILT_IN_HOST_STYLES.
  */
 
-import claudeCodeLogo from "/claude_code_logo.png";
+import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import openaiLogo from "/openai_logo.png";
 import codexLogo from "/codex-logo.svg";
 import museLogo from "/muse_logo.png";
@@ -57,7 +59,7 @@ export const CLAUDE_CODE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
     label: "Claude Code Desktop",
     shortLabel: "Claude Code Desktop-style host",
     pickerDescription: "Claude Code in the Claude desktop app",
-    logoSrc: claudeCodeLogo,
+    logoSrc: claudeDesktopLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeCodeCliIndicator,
@@ -78,7 +80,7 @@ export const CLAUDE_CODE_WEB_HOST_STYLE: HostStyleDefinition = {
     label: "Claude Code Web",
     shortLabel: "Claude Code Web-style host",
     pickerDescription: "Claude Code on the web",
-    logoSrc: claudeCodeLogo,
+    logoSrc: claudeLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeCodeCliIndicator,
@@ -106,7 +108,7 @@ export const CHATGPT_DESKTOP_HOST_STYLE: HostStyleDefinition = {
     label: "ChatGPT Desktop",
     shortLabel: "ChatGPT Desktop-style host",
     pickerDescription: "ChatGPT desktop app chrome",
-    logoSrc: openaiLogo,
+    logoSrc: chatgptDesktopLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: ChatGptDotIndicator,
@@ -154,7 +156,7 @@ export const CHATGPT_WORK_DESKTOP_HOST_STYLE: HostStyleDefinition = {
     label: "ChatGPT Work Desktop",
     shortLabel: "ChatGPT Work Desktop-style host",
     pickerDescription: "ChatGPT work mode in the desktop app",
-    logoSrc: openaiLogo,
+    logoSrc: chatgptDesktopLogo,
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: ChatGptDotIndicator,

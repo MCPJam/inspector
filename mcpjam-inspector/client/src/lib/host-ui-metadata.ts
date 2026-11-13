@@ -4,6 +4,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
@@ -35,12 +36,13 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   claude: claudeLogo,
   "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
-  "claude-code-desktop": claudeCodeLogo,
-  "claude-code-web": claudeCodeLogo,
+  // The desktop and web variants carry their app's mark, not the CLI's.
+  "claude-code-desktop": claudeDesktopLogo,
+  "claude-code-web": claudeLogo,
   chatgpt: openaiLogo,
-  "chatgpt-desktop": openaiLogo,
+  "chatgpt-desktop": chatgptDesktopLogo,
   "chatgpt-work": openaiLogo,
-  "chatgpt-work-desktop": openaiLogo,
+  "chatgpt-work-desktop": chatgptDesktopLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
   slack: slackLogo,
