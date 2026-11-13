@@ -1,11 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 import { PluginInvocationError } from "../invocation.js";
 import { ModelAppRegistry } from "../model-apps.js";
 import { PluginContextMemory } from "../context-memory.js";
 import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
 import { pluginInstances, type PluginFormOwner } from "../instances.js";
 import { RequestOwnedToolInvoker } from "../request-invoker.js";
-import { z } from "zod";
+import {
+  createPluginInstanceControlPort,
+  type PluginInstanceControlPort,
+} from "../instance-store.js";
+
+afterEach(() => vi.useRealTimers());
 const owner = {
   owner: {
     actorId: "a",
@@ -29,191 +35,221 @@ const actor = {
   subject: "subject",
 };
 const meta = { ui: { resourceUri: "ui://app" } };
-function publish(registry: ModelAppRegistry) {
-  return registry.publish(
-    { content: [] },
-    owner,
-    "pickFile",
-    "tool-rev",
-    meta,
-  ) as any;
+const signal = () => new AbortController().signal;
+const markerSchema = z.object({
+  content: z.array(z.unknown()),
+  _meta: z.object({
+    [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
+  }),
+});
+async function publish(registry: ModelAppRegistry, toolName = "pickFile") {
+  const result = markerSchema.parse(
+    await registry.publish(
+      { content: [] },
+      owner,
+      toolName,
+      "tool-rev",
+      meta,
+      signal(),
+    ),
+  );
+  return result._meta[PLUGIN_MODEL_APP_META].instanceToken;
 }
 function publication(registry: ModelAppRegistry) {
   const invoker = new RequestOwnedToolInvoker(owner.owner, () => {});
-  const resultSchema = z.object({
-    content: z.array(z.unknown()),
-    _meta: z.object({ [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }) }),
-  });
-  const invoke = async () => resultSchema.parse(await invoker.invoke({
-    authorize: async () => ({
-      owner: owner.owner, revision: "tool-rev", enabled: true,
-      tool: { name: "pickFile" }, allowedOrigins: ["model"], requiresApproval: false,
-    }),
-    approve: async () => false,
-    admit: async () => {},
-    execute: async () => publish(registry),
-    classifyFailure: () => "unknown",
-  }, "model", "original-call", { name: "pickFile" }));
+  const invoke = async () =>
+    markerSchema.parse(
+      await invoker.invoke(
+        {
+          authorize: async () => ({
+            owner: owner.owner,
+            revision: "tool-rev",
+            enabled: true,
+            tool: { name: "pickFile" },
+            allowedOrigins: ["model"],
+            requiresApproval: false,
+          }),
+          approve: async () => false,
+          admit: async () => {},
+          execute: async (_auth, _next, current) =>
+            registry.publish(
+              { content: [] },
+              owner,
+              "pickFile",
+              "tool-rev",
+              meta,
+              current,
+            ),
+          classifyFailure: () => "unknown",
+        },
+        "model",
+        "original-call",
+        { name: "pickFile" },
+      ),
+    );
   return { invoke, close: () => invoker.close() };
 }
+const update = (
+  registry: ModelAppRegistry,
+  token: string,
+  request: {
+    operationId: string;
+    sequence: number;
+    params: unknown;
+    attach?: "user";
+  },
+  limits?: { updateMaxBytes: number; maxBlocks: number },
+) =>
+  registry
+    .restore(token, actor, signal())
+    .then(() =>
+      registry.changeContext(
+        token,
+        actor,
+        { kind: "update", request: request as never, limits: limits as never },
+        signal(),
+      ),
+    )
+    .then((changed) => changed.result);
+const removeAll = (registry: ModelAppRegistry, token: string, basis = 0) =>
+  registry
+    .restore(token, actor, signal())
+    .then(() =>
+      registry.changeContext(
+        token,
+        actor,
+        { kind: "remove-all", request: { operationId: "remove", basis } },
+        signal(),
+      ),
+    );
+const text = (sequence: number, value: string, attach = sequence > 1) => ({
+  operationId: `op-${sequence}`,
+  sequence,
+  params: { content: [{ type: "text", text: value }] },
+  // After its context is removed, the person uses the App again.
+  ...(attach ? { attach: "user" as const } : {}),
+});
+
 describe("trusted completed model App ownership", () => {
-  it("counts an open model App's context against this process's memory", () => {
+  it("counts an open model App's context against this process's memory", async () => {
     const registry = new ModelAppRegistry(
       60_000,
       new PluginContextMemory(64 * 1024, 1024 * 1024),
     );
-    const open = (toolName: string) =>
-      (
-        registry.publish(
-          { content: [] },
-          owner,
-          toolName,
-          "tool-rev",
-          meta,
-        ) as any
-      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
-    const update = (token: string, sequence: number, text: string) =>
-      registry.updateContext(token, actor, {
-        operationId: `op-${sequence}`,
-        sequence,
-        params: { content: [{ type: "text", text }] },
-        // After its context is removed, the person uses the App again.
-        ...(sequence > 1 ? { attach: "user" as const } : {}),
-      });
-    const first = open("first");
-    const second = open("second");
-    update(first, 1, "x".repeat(40_000));
-    expect(() => update(second, 1, "y".repeat(30_000))).toThrow(
-      "PLUGIN_CONTEXT_MEMORY_LIMIT",
-    );
+    const first = await publish(registry, "first");
+    const second = await publish(registry, "second");
+    await update(registry, first, text(1, "x".repeat(40_000)));
+    await expect(
+      update(registry, second, text(1, "y".repeat(30_000))),
+    ).rejects.toThrow("PLUGIN_CONTEXT_MEMORY_LIMIT");
     // Removing the first App's context frees its bytes, and so does closing.
-    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
-    update(second, 1, "y".repeat(30_000));
-    expect(() => update(first, 2, "x".repeat(40_000))).toThrow(
-      "PLUGIN_CONTEXT_MEMORY_LIMIT",
-    );
-    registry.close(second, actor);
-    update(first, 2, "x".repeat(40_000));
+    await removeAll(registry, first);
+    await update(registry, second, text(1, "y".repeat(30_000)));
+    await expect(
+      update(registry, first, text(2, "x".repeat(40_000))),
+    ).rejects.toThrow("PLUGIN_CONTEXT_MEMORY_LIMIT");
+    await registry.close(second, actor, signal());
+    await update(registry, first, text(2, "x".repeat(40_000)));
   });
-  it("acknowledges a retried update after removal without checking or charging memory", () => {
+  it("acknowledges a retried update after removal without checking or charging memory", async () => {
     const registry = new ModelAppRegistry(
       60_000,
       new PluginContextMemory(64 * 1024, 1024 * 1024),
     );
-    const open = (toolName: string) =>
-      (
-        registry.publish(
-          { content: [] },
-          owner,
-          toolName,
-          "tool-rev",
-          meta,
-        ) as any
-      )._meta[PLUGIN_MODEL_APP_META].instanceToken as string;
-    const first = open("first");
-    const second = open("second");
-    const request = {
-      operationId: "op-1",
-      sequence: 1,
-      params: { content: [{ type: "text" as const, text: "x".repeat(40_000) }] },
-    };
-    const applied = registry.updateContext(first, actor, request);
-    registry.removeContext(first, actor, { operationId: "remove", basis: 0 });
+    const first = await publish(registry, "first");
+    const second = await publish(registry, "second");
+    const request = text(1, "x".repeat(40_000));
+    const applied = await update(registry, first, request);
+    await removeAll(registry, first);
     // The retry gets the original update back, and the context stays removed.
-    expect(registry.updateContext(first, actor, request)).toEqual(applied);
-    const { context, owner: source } = registry.get(first, actor);
-    expect(context.snapshot(source.owner.instanceId, 1).state).toBeNull();
+    expect(await update(registry, first, request)).toEqual(applied);
+    const app = registry.get(first, actor);
+    expect(
+      app.context.snapshot(app.owner.owner.instanceId, 1).state,
+    ).toBeNull();
     // It charged nothing, so the second App still has the whole budget...
-    registry.updateContext(second, actor, {
-      operationId: "second-1",
-      sequence: 1,
-      params: { content: [{ type: "text", text: "y".repeat(60_000) }] },
-    });
+    await update(registry, second, text(1, "y".repeat(60_000), false));
     // ...and with that budget spent, the retry is still not refused.
-    expect(registry.updateContext(first, actor, request)).toEqual(applied);
+    expect(await update(registry, first, request)).toEqual(applied);
   });
 
-  it("answers a retry under the client's policy, not the default limits", () => {
+  it("answers a retry under the client's policy, not the default limits", async () => {
     const registry = new ModelAppRegistry(60_000);
-    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    const token = await publish(registry);
     // 300 KiB: over the 256 KiB default, within this client's policy.
     const limits = { updateMaxBytes: 1024 * 1024, maxBlocks: 64 };
     const request = {
+      ...text(1, "x".repeat(300 * 1024)),
       operationId: "large",
-      sequence: 1,
-      params: {
-        content: [{ type: "text" as const, text: "x".repeat(300 * 1024) }],
-      },
     };
-    const applied = registry.updateContext(token, actor, request, limits);
-    registry.removeContext(token, actor, { operationId: "remove", basis: 0 });
-    expect(registry.updateContext(token, actor, request, limits)).toEqual(
-      applied,
-    );
+    const applied = await update(registry, token, request, limits);
+    await removeAll(registry, token);
+    expect(await update(registry, token, request, limits)).toEqual(applied);
   });
 
-  it("renews the same form owner with the App and withdraws it on close", () => {
-    vi.useFakeTimers();
+  it("keeps the App's form owner while it is restored, and withdraws it on close", async () => {
     const registry = new ModelAppRegistry();
-    const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
-    const source = registry.get(token, actor).owner.owner;
-    try {
-      vi.advanceTimersByTime(20 * 60_000);
-      registry.renew(token, actor);
-      vi.advanceTimersByTime(20 * 60_000);
-      expect(pluginInstances.getFormOwner(source, actor).owner).toEqual(source);
-      expect(() => pluginInstances.getFormOwner(source, { ...actor, subject: "other" })).toThrow();
-      registry.close(token, actor);
-      expect(() => pluginInstances.getFormOwner(source, actor)).toThrow();
-    } finally {
-      registry.close(token, actor);
-      vi.useRealTimers();
-    }
+    const token = await publish(registry);
+    const app = await registry.restore(token, actor, signal());
+    const source = app.owner.owner;
+    expect(pluginInstances.getFormOwner(source, actor).owner).toEqual(source);
+    expect(() =>
+      pluginInstances.getFormOwner(source, { ...actor, subject: "other" }),
+    ).toThrow();
+    await registry.close(token, actor, signal());
+    expect(() => pluginInstances.getFormOwner(source, actor)).toThrow();
   });
-  it("renews a retained model App past its original lifetime", () => {
+  it("renews a model App past its original lifetime, then lets it expire", async () => {
     vi.useFakeTimers();
-    try {
-      const registry = new ModelAppRegistry(100);
-      const token = publish(registry)._meta[PLUGIN_MODEL_APP_META]
-        .instanceToken;
-      const before = registry.get(token, actor).owner.owner.instanceId;
-      vi.advanceTimersByTime(80);
-      registry.renew(token, actor);
-      vi.advanceTimersByTime(80);
-      expect(registry.get(token, actor).owner.owner.instanceId).toBe(before);
-      for (let i = 0; i < 2100; i++)
-        registry.prepareMessage(token, actor, `m${i}`, "digest");
-      vi.advanceTimersByTime(101);
-      expect(() => registry.get(token, actor)).toThrow();
-      expect(() => registry.renew(token, actor)).toThrow();
-    } finally {
-      vi.useRealTimers();
-    }
+    const registry = new ModelAppRegistry(100_000);
+    const token = await publish(registry);
+    const before = (await registry.restore(token, actor, signal())).owner.owner
+      .instanceId;
+    vi.advanceTimersByTime(80_000);
+    expect(
+      await registry.renew(token, actor, signal(), async () => undefined),
+    ).toMatchObject({ renewed: true });
+    vi.advanceTimersByTime(80_000);
+    expect(
+      (await registry.restore(token, actor, signal())).owner.owner.instanceId,
+    ).toBe(before);
+    vi.advanceTimersByTime(100_001);
+    await expect(registry.restore(token, actor, signal())).rejects.toThrow(
+      "MODEL_APP_UNAVAILABLE",
+    );
+    await expect(
+      registry.renew(token, actor, signal(), async () => undefined),
+    ).rejects.toThrow("MODEL_APP_UNAVAILABLE");
   });
   it("preserves result and deduplicates original completion through its receipt", async () => {
     const registry = new ModelAppRegistry();
     const operation = publication(registry);
-    const first = await operation.invoke(), second = await operation.invoke();
+    const first = await operation.invoke(),
+      second = await operation.invoke();
     expect(first).toEqual(second);
     expect(first.content).toEqual([]);
     const handle = first._meta[PLUGIN_MODEL_APP_META];
-    const entry = registry.get(handle.instanceToken, actor);
+    const entry = await registry.restore(handle.instanceToken, actor, signal());
     expect(entry.owner.owner.serverId).toBe("saved-id");
     expect(entry.owner.owner.instanceId).not.toBe("original");
-    registry.close(handle.instanceToken, actor);
+    await registry.close(handle.instanceToken, actor, signal());
     operation.close();
   });
   it.each(["actorId", "projectId", "workspaceId", "subject"] as const)(
     "rejects changed %s",
-    (key) => {
+    async (key) => {
       const registry = new ModelAppRegistry();
-      const token =
-        publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
-      expect(() => registry.get(token, { ...actor, [key]: "other" })).toThrow();
-      expect(() =>
-        registry.close(token, { ...actor, [key]: "other" }),
-      ).toThrow();
-      registry.close(token, actor);
+      const token = await publish(registry);
+      await registry.restore(token, actor, signal());
+      const other = { ...actor, [key]: "other" };
+      await expect(registry.restore(token, other, signal())).rejects.toThrow(
+        "MODEL_APP_UNAVAILABLE",
+      );
+      expect(() => registry.get(token, other)).toThrow();
+      await expect(registry.close(token, other, signal())).rejects.toThrow();
+      // The owner's App is untouched by the refused requests.
+      await registry.restore(token, actor, signal());
+      await registry.close(token, actor, signal());
     },
   );
   it("replays a closed completion's receipt without reviving the App", async () => {
@@ -221,50 +257,84 @@ describe("trusted completed model App ownership", () => {
     const operation = publication(registry);
     const first = await operation.invoke();
     const token = first._meta[PLUGIN_MODEL_APP_META].instanceToken;
-    registry.close(token, actor);
+    await registry.close(token, actor, signal());
     expect(await operation.invoke()).toEqual(first);
-    expect(() => registry.get(token, actor)).toThrow();
+    await expect(registry.restore(token, actor, signal())).rejects.toThrow();
+    // Another process sees the same closed App.
+    await expect(
+      new ModelAppRegistry().restore(token, actor, signal()),
+    ).rejects.toThrow("MODEL_APP_UNAVAILABLE");
     operation.close();
   });
-  it("admits fresh Apps after more than 512 sequential closed publications", () => {
+  it("admits fresh Apps after more than 512 sequential closed publications", async () => {
     const registry = new ModelAppRegistry();
     const tokens = new Set<string>();
     for (let index = 0; index < 514; index++) {
-      const result = registry.publish({ content: [] }, owner, `tool-${index}`, "tool-rev", meta);
-      const token = z.object({ _meta: z.object({
-        [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
-      }) }).parse(result)._meta[PLUGIN_MODEL_APP_META].instanceToken;
-      expect(typeof token).toBe("string");
+      const token = await publish(registry, `tool-${index}`);
       expect(tokens.has(token)).toBe(false);
       tokens.add(token);
-      registry.close(token, actor);
+      await registry.restore(token, actor, signal());
+      await registry.close(token, actor, signal());
       expect(() => registry.get(token, actor)).toThrow();
     }
   });
-  it("retains a completed tool result when form-owner capacity refuses the App", () => {
-    const retain = vi.spyOn(pluginInstances, "retainModelOwner")
-      .mockImplementationOnce(() => { throw new PluginInvocationError("INSTANCE_LIMIT"); });
-    try {
-      const result = { content: [{ type: "text", text: "The operation completed" }], structuredContent: { saved: true } };
-      const registry = new ModelAppRegistry();
-      expect(registry.publish(result, owner, "tool", "rev", meta)).toEqual({
-        ...result, _meta: { [PLUGIN_MODEL_APP_META]: { unavailable: true } },
-      });
-    } finally { retain.mockRestore(); }
+  it.each([
+    ["the store is unavailable", () => undefined],
+    [
+      "the store refuses the App",
+      () =>
+        ({
+          issue: async () => {
+            throw new PluginInvocationError("INSTANCE_LIMIT");
+          },
+        }) as unknown as PluginInstanceControlPort,
+    ],
+  ])("retains a completed tool result when %s", async (_label, port) => {
+    const result = {
+      content: [{ type: "text", text: "The operation completed" }],
+      structuredContent: { saved: true },
+      _meta: { kept: true },
+    };
+    const registry = new ModelAppRegistry(60_000, undefined, undefined, port);
+    expect(
+      await registry.publish(result, owner, "tool", "rev", meta, signal()),
+    ).toEqual({
+      ...result,
+      _meta: { kept: true, [PLUGIN_MODEL_APP_META]: { unavailable: true } },
+    });
   });
-  it("does not publish errors or non-App output", () => {
+  it("does not publish errors or non-App output", async () => {
     const registry = new ModelAppRegistry();
     const result = { isError: true, content: [] };
-    expect(registry.publish(result, owner, "tool", "rev", meta)).toBe(result);
+    expect(
+      await registry.publish(result, owner, "tool", "rev", meta, signal()),
+    ).toBe(result);
     const ordinary = { content: [] };
-    expect(registry.publish(ordinary, owner, "tool", "rev", {})).toBe(ordinary);
+    expect(
+      await registry.publish(ordinary, owner, "tool", "rev", {}, signal()),
+    ).toBe(ordinary);
+  });
+  it("binds a current-chat message operation to one payload", async () => {
+    const registry = new ModelAppRegistry();
+    const token = await publish(registry);
+    const app = await registry.restore(token, actor, signal());
+    await registry.prepareMessage(app, actor, "m1", "digest", signal());
+    await registry.prepareMessage(app, actor, "m1", "digest", signal());
+    await expect(
+      registry.prepareMessage(app, actor, "m1", "changed", signal()),
+    ).rejects.toThrow("INSTANCE_MESSAGE_CHANGED");
+    await registry.close(token, actor, signal());
   });
 });
 
-it("removes all of a model App's context, including what the chip doesn't show, and acknowledges a retry", () => {
+it("removes all of a model App's context, including what the chip doesn't show, and acknowledges a retry", async () => {
   const registry = new ModelAppRegistry();
-  const token = publish(registry)._meta[PLUGIN_MODEL_APP_META].instanceToken;
-  const { context, owner: source } = registry.get(token, actor);
+  const token = await publish(registry);
+  const { context, owner: source } = await registry.restore(
+    token,
+    actor,
+    signal(),
+  );
   const id = source.owner.instanceId;
   context.update(id, 1, {
     operationId: "mixed",
@@ -316,5 +386,90 @@ it("removes all of a model App's context, including what the chip doesn't show, 
     attachedAt: 2,
   });
   expect(context.snapshot(id, 1)).not.toHaveProperty("held");
-  registry.close(token, actor);
+  await registry.close(token, actor, signal());
+});
+
+describe("this process's copy of a durable model App", () => {
+  it("keeps a renewed App when a reply from before the renewal arrives after its old deadline", async () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry(100_000);
+    const token = await publish(registry);
+    await registry.restore(token, actor, signal());
+    const stale = await createPluginInstanceControlPort(actor)!.read(
+      token,
+      signal(),
+    );
+    vi.advanceTimersByTime(80_000);
+    await registry.renew(token, actor, signal(), async () => undefined);
+    vi.advanceTimersByTime(30_000);
+    // The stale reply refuses nothing and closes nothing.
+    expect(
+      registry.restoreFrom(token, actor, stale, signal()).expiresAt,
+    ).toBeGreaterThan(Date.now());
+    await registry.restore(token, actor, signal());
+  });
+  it("releases an idle App's context memory once its lease ends, without closing it", async () => {
+    vi.useFakeTimers();
+    const registry = new ModelAppRegistry(
+      100_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const first = await publish(registry, "first");
+    await update(registry, first, text(1, "x".repeat(40_000)));
+    vi.advanceTimersByTime(100_001);
+    expect(registry.holds(first)).toBe(false);
+    const second = await publish(registry, "second");
+    await update(registry, second, text(1, "y".repeat(40_000)));
+  });
+  it("counts concurrent updates of one actor's Apps against the budget together", async () => {
+    const registry = new ModelAppRegistry(
+      60_000,
+      new PluginContextMemory(64 * 1024, 1024 * 1024),
+    );
+    const first = await publish(registry, "first");
+    const second = await publish(registry, "second");
+    const results = await Promise.allSettled([
+      update(registry, first, text(1, "x".repeat(40_000))),
+      update(registry, second, text(1, "y".repeat(40_000))),
+    ]);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          code: "PLUGIN_CONTEXT_MEMORY_LIMIT",
+        }),
+      }),
+    ]);
+  });
+});
+
+it("keeps one App's pending write reserved while a later write to it waits", async () => {
+  const registry = new ModelAppRegistry(
+    60_000,
+    new PluginContextMemory(64 * 1024, 1024 * 1024),
+  );
+  const first = await publish(registry, "first");
+  const second = await publish(registry, "second");
+  await Promise.all([
+    registry.restore(first, actor, signal()),
+    registry.restore(second, actor, signal()),
+  ]);
+  const change = (token: string, request: ReturnType<typeof text>) =>
+    registry.changeContext(
+      token,
+      actor,
+      { kind: "update", request: request as never },
+      signal(),
+    );
+  // A smaller second write to the same App must not replace the first
+  // write's reservation and free budget for another App.
+  const results = await Promise.allSettled([
+    change(first, text(1, "x".repeat(40_000))),
+    change(first, text(2, "x", false)),
+    change(second, text(1, "y".repeat(40_000))),
+  ]);
+  expect(results.map((result) => result.status)).toEqual([
+    "fulfilled",
+    "fulfilled",
+    "rejected",
+  ]);
 });
