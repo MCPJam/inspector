@@ -359,23 +359,21 @@ export class ModelAppRegistry {
     return app;
   }
 
-  /** One fence: the durable control and `query` (an admission read) run side
-   * by side, and both must pass. A close or expiry on any replica refuses it. */
+  /** One fence: `query` (an admission read), then the durable control. The
+   * control is read only after admission completes, so a close or expiry on
+   * any replica during the admission wait refuses what follows the fence,
+   * including the dispatch the invoker's last authorization leads to. */
   fence(
     token: string,
     actor: PluginInstanceIdentity,
     signal: AbortSignal,
   ): PluginInstanceAdmissionRead {
     return async (query) => {
-      const [durable, admitted] = await Promise.allSettled([
-        this.restore(token, actor, signal),
-        Promise.resolve().then(query),
-      ]);
+      const admitted = await query();
+      await this.restore(token, actor, signal);
       signal.throwIfAborted();
-      if (durable.status === "rejected") throw durable.reason;
-      if (admitted.status === "rejected") throw admitted.reason;
       this.get(token, actor);
-      return admitted.value;
+      return admitted;
     };
   }
 

@@ -130,3 +130,44 @@ it("replays an App call completed in one process from another, under the same re
   expect(execute).toHaveBeenCalledOnce();
   await first.close(token, actor, signal);
 });
+
+it("does not dispatch a call whose App closed on another process during its admission read", async () => {
+  const signal = new AbortController().signal;
+  const first = new ModelAppRegistry();
+  const token = tokenOf(await publication(first, receiptStore().port).invoke());
+  vi.resetModules();
+  const other = await import("../model-apps.js");
+  // The invoker in that graph recognizes only its own no-op admission.
+  const { createPluginAdmissionNoop: noop } = await import("../invocation.js");
+  const second = new other.ModelAppRegistry(undefined, undefined, undefined,
+    (identity) => createPluginInstanceControlPort(identity));
+  const app = await second.restore(token, actor, signal);
+  let admitted!: () => void;
+  const admission = new Promise<void>((resolve) => (admitted = resolve));
+  let waiting!: () => void;
+  const reached = new Promise<void>((resolve) => (waiting = resolve));
+  const execute = vi.fn(async () => ({ content: [] }));
+  const ports: PluginInvocationPorts = {
+    // The route's resolution: its admission read goes through the App's fence.
+    authorize: async (owner) => {
+      await second.fence(token, actor, signal)(async () => {
+        waiting();
+        await admission;
+      });
+      return { owner, revision: "revision", enabled: true,
+        tool: { name: "draw" }, allowedOrigins: ["app"], requiresApproval: false };
+    },
+    approve: async () => false, admit: noop(), execute,
+    classifyFailure: () => "unknown",
+  };
+  const call = app.invoker.invoke(ports, "app", "call-1", { name: "draw" });
+  // B is waiting on admission, with any read it started already answered.
+  await reached;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await first.close(token, actor, signal);
+  admitted();
+  const outcome = await call.then(() => "completed", (error: Error) => error.message);
+  // Refused before the tool ran, not after its effect.
+  expect(execute).not.toHaveBeenCalled();
+  expect(outcome).toMatch(/UNAVAILABLE/);
+});
