@@ -150,18 +150,26 @@ describe("AddProviderDialog", () => {
       origin: "backend",
       status: 404,
       message,
-      apis: { chatCompletions: { result: "ok", status: 200 } },
+      // A failed /models stops the probe: every API comes back untested.
+      apis: {
+        chatCompletions: { result: "untested" },
+        responses: { result: "untested" },
+        anthropicMessages: { result: "untested" },
+        embeddings: { result: "untested" },
+      },
       models: [],
     });
     renderDialog();
     type("gateway-base-url", "https://chat-only.acme.example/v1");
     submitTest();
     expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: /Chat Completions/ })).toBeChecked();
+    expect(screen.getByText("The provider test failed. Check the base URL and key, then test again.")).toBeInTheDocument();
     expect(addButton()).toBeDisabled();
 
     fireEvent.change(screen.getByRole("textbox", { name: "Add a model" }), { target: { value: "house-model" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(addButton()).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Chat Completions/ }));
     expect(addButton()).toBeEnabled();
     fireEvent.click(addButton());
     expect(onSave).toHaveBeenCalledWith(
