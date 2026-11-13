@@ -104,6 +104,39 @@ export type {
 } from "./portal-errors.js";
 
 export {
+  OPENAI_PORTAL_CODES,
+  OPENAI_PORTAL_CODES_BY_CODE,
+  isOpenAIPortalCode,
+} from "./portal-codes/table.js";
+export type {
+  OpenAIPortalCode,
+  OpenAIPortalCodeDefinition,
+} from "./portal-codes/table.js";
+export {
+  OPENAI_PORTAL_CODES_SOURCE,
+  OPENAI_PORTAL_CODE_TABLES,
+} from "./portal-codes/define.js";
+export type {
+  OpenAIPortalCodeSeverity,
+  OpenAIPortalCodeStage,
+  OpenAIPortalCodeTable,
+  OpenAIPortalDocument,
+  OpenAIPortalRule,
+  OpenAIPortalValueType,
+} from "./portal-codes/define.js";
+export { OPENAI_PORTAL_LISTING_CATEGORIES } from "./portal-codes/listing.js";
+export { validateOpenAIPortalDocument } from "./portal-codes/validate.js";
+export type {
+  OpenAIPortalCodeViolation,
+  ValidateOpenAIPortalDocumentOptions,
+} from "./portal-codes/validate.js";
+export {
+  OPENAI_CHECK_PORTAL_CODES,
+  OPENAI_ISSUE_PORTAL_CODES,
+  openaiIssuePortalCode,
+} from "./portal-codes/issue-codes.js";
+
+export {
   readImageDimensions,
   sniffImageMimeType,
 } from "./package/image-dimensions.js";
