@@ -130,6 +130,44 @@ describe("mid-session sign-in on resources and prompts", () => {
     expect(screen.queryByText(/HTTP 401 Unauthorized/)).toBeNull();
   });
 
+  it("does not leave the previous resource's content under the card", async () => {
+    mockListResources.mockResolvedValue({
+      resources: [
+        { name: "menu.json", uri: "menu://today" },
+        { name: "orders.json", uri: "orders://recent" },
+      ],
+    });
+    mockReadResource.mockImplementation((...args: unknown[]) =>
+      args[1] === "menu://today"
+        ? Promise.resolve({
+            content: { contents: [{ type: "text", text: "Today's menu" }] },
+          })
+        : challengedCall(...args),
+    );
+    render(
+      <ResourcesTab
+        serverConfig={serverConfig}
+        serverName="orders"
+        server={server}
+      />,
+    );
+    fireEvent.click(await screen.findByText("menu.json"));
+    expect(await screen.findByText(/Today's menu/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("orders.json"));
+    await screen.findByTestId("auth-challenge-card");
+    expect(screen.queryByText(/Today's menu/)).toBeNull();
+  });
+
+  it("keeps the raw error when there is no server to show a card for", async () => {
+    render(<ResourcesTab serverConfig={serverConfig} serverName="orders" />);
+    fireEvent.click(await screen.findByText("orders.json"));
+    expect(
+      await screen.findByText(
+        /Error reading resource: .*HTTP 401 Unauthorized/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     ["resource read", readResource],
     ["prompt", getPrompt],

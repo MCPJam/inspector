@@ -561,8 +561,12 @@ export function ResourcesTab({
       setResourceContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== resourceReadVersionRef.current) return;
-      // The Connect card or its notice replaces the raw 401.
-      if (isSignInChallengeError(err)) return;
+      // The Connect card or its notice replaces the raw 401, and the previous
+      // resource's content must not show under this one's card.
+      if (server && isSignInChallengeError(err)) {
+        setResourceContent(null);
+        return;
+      }
       setError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === resourceReadVersionRef.current) {
@@ -649,8 +653,12 @@ export function ResourcesTab({
       setTemplateContent(data?.content ?? null);
     } catch (err) {
       if (readVersion !== templateReadVersionRef.current) return;
-      // The Connect card or its notice replaces the raw 401.
-      if (isSignInChallengeError(err)) return;
+      // The Connect card or its notice replaces the raw 401, and the previous
+      // template result must not show under this read's card.
+      if (server && isSignInChallengeError(err)) {
+        setTemplateContent(null);
+        return;
+      }
       setTemplateError(`Error reading resource: ${err}`);
     } finally {
       if (readVersion === templateReadVersionRef.current) {

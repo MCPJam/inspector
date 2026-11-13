@@ -4,8 +4,9 @@ import type { AuthChallengePresentation } from "@/lib/auth-challenge-lifecycle";
 
 /**
  * Whether a caught error carries a sign-in challenge that the surface presents
- * as a Connect card or a notice. Those replace the raw error. A 403
- * `insufficient_scope` is a step-up, not a sign-in, and keeps its error.
+ * as a Connect card or a notice. Those replace the raw error, but only when
+ * the surface has a server to present them for. A 403 `insufficient_scope` is
+ * a step-up, not a sign-in, and keeps its error.
  */
 export function isSignInChallengeError(error: unknown): boolean {
   const signal = authChallengeFromError(error);

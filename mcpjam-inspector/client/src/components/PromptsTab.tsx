@@ -389,8 +389,12 @@ export function PromptsTab({
         setPromptContent(data.content);
       } catch (err) {
         if (getVersion !== promptGetVersionRef.current) return;
-        // The Connect card or its notice replaces the raw 401.
-        if (isSignInChallengeError(err)) return;
+        // The Connect card or its notice replaces the raw 401, and the previous
+        // render must not show under this one's card.
+        if (server && isSignInChallengeError(err)) {
+          setPromptContent(null);
+          return;
+        }
         const message =
           err instanceof Error ? err.message : `Error getting prompt: ${err}`;
         setError(message);
