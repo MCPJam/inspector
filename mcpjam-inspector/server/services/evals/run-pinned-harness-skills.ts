@@ -93,7 +93,9 @@ async function downloadPinnedFile(
   let response: Response;
   try {
     response = await fetch(file.url, {
-      signal: signal ?? AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS)])
+        : AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     throw new RunPluginSnapshotError(
