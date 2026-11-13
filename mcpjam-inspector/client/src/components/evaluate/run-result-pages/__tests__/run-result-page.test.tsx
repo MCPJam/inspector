@@ -195,10 +195,10 @@ describe("RunResultPage", () => {
     renderPage({ caseKey: "missing" }, { failedRunIds: new Set(["one"]) });
     expect(
       screen.getByRole("heading", {
-        name: "Couldn't load the results of Run #3. Try again.",
+        name: "Couldn't load the results of Run #3. Reload the page to try again.",
       }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open Run #3" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeVisible();
   });
 
   it("renders a test case page with column links and iteration links", async () => {

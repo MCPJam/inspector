@@ -2349,14 +2349,16 @@ export function SuiteIterationsView({
                 runs={runs}
                 allIterations={allIterations}
                 hostNamesById={hostNamesById}
-                // Every launch run's rows, so a sibling column resolves.
+                // This launch's rows only, so a sibling column resolves and
+                // a comparison run's read does not hold the page.
                 loading={
-                  (!selectedRunDetails && !selectedRunState.isUnavailable) ||
-                  detailRunIds.some(
-                    (id) =>
-                      !detailRows.byRun.has(id) &&
-                      !detailRows.failedRunIds.has(id),
-                  )
+                  !selectedRunDetails
+                    ? !selectedRunState.isUnavailable
+                    : launchRuns(selectedRunDetails, runs).some(
+                        ({ _id: id }) =>
+                          !detailRows.byRun.has(id) &&
+                          !detailRows.failedRunIds.has(id),
+                      )
                 }
                 failedRunIds={detailRows.failedRunIds}
                 projectId={projectId}
