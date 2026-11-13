@@ -32,14 +32,17 @@ const PASSTHROUGH = {
 
 describe("passthroughChallengeErrorText", () => {
   it.each([
-    [undefined, "The server asked for sign-in, so the call failed."],
+    [
+      undefined,
+      "The server asked for sign-in, so the call failed. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
+    ],
     [
       "Sign in",
-      "The server asked for sign-in, so the call failed. The server said: Sign in.",
+      "The server asked for sign-in, so the call failed. The server said: Sign in. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
     ],
     [
       "Sign in.",
-      "The server asked for sign-in, so the call failed. The server said: Sign in.",
+      "The server asked for sign-in, so the call failed. The server said: Sign in. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
     ],
   ])(
     "says the call failed for description %j",

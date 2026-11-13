@@ -327,7 +327,7 @@ describe("ToolsTab mid-session sign-in", () => {
       await screen.findByTestId("auth-challenge-notice");
       expect(
         await screen.findByText(
-          "The server asked for sign-in, so the call failed. The server said: Sign in to see orders.",
+          "The server asked for sign-in, so the call failed. The server said: Sign in to see orders. To change how this client responds, edit Mid-session sign-in in its Connect settings.",
         ),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("auth-challenge-card")).toBeNull();

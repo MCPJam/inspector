@@ -32,8 +32,11 @@ export function passthroughChallengeErrorText(
   if (signal.source !== "http_401") return null;
   const description = signal.errorDescription?.trim();
   const failed = "The server asked for sign-in, so the call failed.";
-  if (!description) return failed;
-  return /[.!?]$/.test(description)
-    ? `${failed} The server said: ${description}`
-    : `${failed} The server said: ${description}.`;
+  // The selected client is why there was no sign-in, so its settings are
+  // the step the user can take here.
+  const nextStep =
+    "To change how this client responds, edit Mid-session sign-in in its Connect settings.";
+  if (!description) return `${failed} ${nextStep}`;
+  const said = /[.!?]$/.test(description) ? description : `${description}.`;
+  return `${failed} The server said: ${said} ${nextStep}`;
 }
