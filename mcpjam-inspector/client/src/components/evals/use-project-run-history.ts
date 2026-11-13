@@ -74,6 +74,12 @@ function remember<V>(
   if (cache.size > limit && !oldest.done) cache.delete(oldest.value);
 }
 
+/** Empties the shared caches, so a test that mounts the hook starts cold. */
+export function clearProjectRunHistoryCache(): void {
+  SETTLED.clear();
+  LATEST.clear();
+}
+
 /** Read requested runs, with bounded concurrency and complete iteration pages. */
 export function useProjectRunHistory<TSnapshot extends boolean = true>(
   projectId: string,
