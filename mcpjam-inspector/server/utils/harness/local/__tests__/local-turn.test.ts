@@ -907,10 +907,13 @@ describe("a local Codex runtime kept between turns", () => {
   });
 
   /** A first turn that completed, committed state version 2, and kept its runtime. */
-  async function keptSession(overrides: Record<string, unknown> = {}) {
+  async function keptSession(
+    overrides: Record<string, unknown> = {},
+    toolCalls: readonly { toolName: string; serverId?: string }[] = [],
+  ) {
     const first = await prepareLocalHarnessTurn(codexArgs({ keptRuntime: CONFIG, ...overrides }));
     if (!first.ok) throw new Error(first.message);
-    const kept = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2 });
+    const kept = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls });
     return { prepared: first.prepared, kept };
   }
 
@@ -950,7 +953,7 @@ describe("a local Codex runtime kept between turns", () => {
     );
     expect(revalidateRuntime).toHaveBeenCalledWith(parked.plan.runtime);
     // Kept again at its end, for the state version the next commit produces.
-    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3 })).toBe(true);
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).toBe(true);
     expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
   });
 
@@ -1099,6 +1102,28 @@ describe("a local Codex runtime kept between turns", () => {
     await next.prepared.teardown();
     expect(describeParkedLocalSession("s_local_1")).toBeNull();
     expect(supervisorFixture.stopCalls).toBe(1);
+  });
+
+  it.each([
+    ["a command", [{ toolName: "bash" }]],
+    ["a patch, which runs through the shell", [{ toolName: "webSearch" }, { toolName: "fileChange" }]],
+  ])("is never kept after a turn that ran %s, approved or not", async (_label, toolCalls) => {
+    // Anything it started (a shell `exec_command` left running) would reach
+    // the next turn, which could drive it without asking.
+    const { kept } = await keptSession({}, toolCalls);
+    expect(kept).toBe(false);
+    expect(gatewayHold).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is kept after a turn that only searched, viewed images or called MCP tools", async () => {
+    const { kept } = await keptSession({}, [
+      { toolName: "webSearch" },
+      { toolName: "imageView" },
+      // An MCP server's own tool, whatever it is called, runs outside this runtime.
+      { toolName: "bash", serverId: "srv_terminal" },
+    ]);
+    expect(kept).toBe(true);
   });
 
   it("is never kept with materialized secrets in its environment", async () => {

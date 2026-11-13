@@ -6,6 +6,7 @@ const configuration = {
   reasoningEffort: "medium",
   skillsHash: "skills-1",
   systemPrompt: "You are Codex.",
+  requireToolApproval: true,
   env: {},
 };
 
@@ -37,7 +38,7 @@ describe("what a local turn asks for", () => {
   });
 
   it("is Codex in a member's own chat only, never an approval continuation", () => {
-    // Read from each runtime's definition (`keepsRuntimeBetweenTurns`).
+    // Read from each runtime's definition (`keptBetweenTurns`).
     expect(request({ harnessId: "claude-code" })).toBeUndefined();
     expect(request({ harnessId: "copilot-cli" })).toBeUndefined();
     expect(request({ harnessId: "cursor" })).toBeUndefined();
@@ -65,6 +66,7 @@ describe("the configuration a kept runtime must match", () => {
     ["the reasoning effort", { reasoningEffort: "high" }],
     ["the skills", { skillsHash: "skills-2" }],
     ["the system prompt", { systemPrompt: "You are a reviewer." }],
+    ["the Tool Approval setting", { requireToolApproval: false }],
     ["the environment", { env: { STRIPE_API_KEY: "sk_live_x" } }],
   ])("changes with %s", (_label, change) => {
     expect(keptRuntimeFingerprint({ ...configuration, ...change })).not.toBe(keptRuntimeFingerprint(configuration));

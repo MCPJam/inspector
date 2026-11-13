@@ -3,7 +3,7 @@
  * whether a turn keeps and adopts one, and the configuration it must match.
  * Behind `MCPJAM_LOCAL_KEEP_AGENT` (`localKeepAgentEnabled`), off by default.
  *
- * Codex only, as its definition declares (`keepsRuntimeBetweenTurns`). Its
+ * Codex only, as its definition declares (`keptBetweenTurns`). Its
  * bridge keeps one `app-server` while the runtime's configuration matches
  * (`codex-appserver/bridge/index.ts`), so the next turn attaches to it. Local
  * Claude Code has no warm query: its CLI exits at the end of every turn, so
@@ -13,9 +13,9 @@
  * fingerprint the lane already keys on (harness, model, MCP servers,
  * permission mode, plugins, secrets hash, runtime, workspace, policy,
  * profile, command sandbox and whose key) plus the reasoning effort, the
- * skills, the system prompt and the environment the process is started
- * with. A kept process holds all of them from its start, so any difference
- * starts a fresh one. Not the hosted warm hash, which drops the model, the
+ * skills, the system prompt, the Tool Approval setting and the environment
+ * the process is started with. A kept process holds all of them from its
+ * start, so any difference starts a fresh one. Not the hosted warm hash, which drops the model, the
  * servers and the permission mode because a hosted warm agent re-applies
  * them per message; a local runtime cannot. The organization key's revision
  * is compared when the adopting turn's fresh lease comes back.
@@ -37,6 +37,8 @@ export interface KeptRuntimeConfiguration {
   reasoningEffort?: string;
   skillsHash?: string;
   systemPrompt?: string;
+  /** Tool Approval: whether the runtime's requests are asked or answered. */
+  requireToolApproval?: boolean;
   /** The environment the process is started with. Hashed, never kept. */
   env?: Readonly<Record<string, string>>;
 }
@@ -52,6 +54,7 @@ export function keptRuntimeFingerprint(configuration: KeptRuntimeConfiguration):
         configuration.reasoningEffort ?? null,
         configuration.skillsHash ?? null,
         configuration.systemPrompt ?? null,
+        configuration.requireToolApproval ?? null,
         env,
       ]),
     )
@@ -76,7 +79,7 @@ export function keptLocalRuntimeTurn(args: {
 }): KeptRuntimeTurn | undefined {
   if (
     !localKeepAgentEnabled() ||
-    localRuntimeOf(args.harnessId)?.keepsRuntimeBetweenTurns !== true ||
+    !localRuntimeOf(args.harnessId)?.keptBetweenTurns ||
     args.ownerType !== "direct-chat" ||
     args.isApprovalResume
   ) {

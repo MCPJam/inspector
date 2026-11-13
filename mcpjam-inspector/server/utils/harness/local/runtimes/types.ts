@@ -101,10 +101,12 @@ export interface LocalRuntime<
   /** Runs shell commands through Git for Windows on Windows. */
   gitBashOnWindows: boolean;
   /**
-   * Its bridge keeps one live process that the conversation's next turn can
-   * attach to, so a completed turn may keep it (`kept-runtime.ts`). Codex's
-   * bridge keeps its `app-server` while the configuration matches; Claude
-   * Code's CLI exits at the end of every turn, leaving nothing to keep.
+   * Set when its bridge keeps one live process that the conversation's next
+   * turn can attach to, so a completed turn may keep it (`kept-runtime.ts`).
+   * `processTools` names every tool call of this runtime that can leave a
+   * process running in it; a turn that made one is never kept, approved or
+   * not. Codex's bridge keeps its `app-server` while the configuration
+   * matches; Claude Code's CLI exits at the end of every turn.
    */
-  keepsRuntimeBetweenTurns: boolean;
+  keptBetweenTurns: { processTools: readonly string[] } | null;
 }

@@ -2341,7 +2341,7 @@ export async function runHarnessTurn(
         // Adopt the runtime the lane's last turn kept, and keep this one.
         keptRuntime = keptLocalRuntimeTurn({
           harnessId: harnessAdapter.id, ownerType: continuity?.owner.ownerType, isApprovalResume, continuity,
-          configuration: { runtime: approvalConfiguration, reasoningEffort: turnReasoningEffort, skillsHash, systemPrompt, env: sessionSecretEnv },
+          configuration: { runtime: approvalConfiguration, reasoningEffort: turnReasoningEffort, skillsHash, systemPrompt, requireToolApproval, env: sessionSecretEnv },
         });
         const preparation = await org.prepareLocal({
           target: harnessExecutionTarget,
@@ -4593,7 +4593,7 @@ export async function runHarnessTurn(
               ...(executionScope ? { executionScope } : {}),
             };
             // Keep the local runtime for the next turn instead of stopping it.
-            if (keptRuntime && localPrepared && await localPrepared.parkTurn({ kept: keptRuntime, resumeState, stateVersion: continuity.stateVersion + 1 })) {
+            if (keptRuntime && localPrepared && await localPrepared.parkTurn({ kept: keptRuntime, resumeState, stateVersion: continuity.stateVersion + 1, toolCalls: observedHarnessToolCalls })) {
               localParked = true;
               localTeardown = null;
               keptSessionId = session.sessionId;

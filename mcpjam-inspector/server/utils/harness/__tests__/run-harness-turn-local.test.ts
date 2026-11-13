@@ -1352,10 +1352,32 @@ describe("runHarnessTurn local continuity", () => {
         keptRuntime: { fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/), committed: { generation: "gen-7", stateVersion: 4 } },
       }));
       const asked = vi.mocked(prepareLocalHarnessTurn).mock.calls[0]![0].keptRuntime!;
-      // Kept for the state version this turn's commit produces.
-      expect(harnessState.parkTurn).toHaveBeenCalledWith({ kept: asked, resumeState: BRIDGE, stateVersion: 5 });
+      // Kept for the state version this turn's commit produces, judged on the
+      // tool calls the turn made (none here).
+      expect(harnessState.parkTurn).toHaveBeenCalledWith({ kept: asked, resumeState: BRIDGE, stateVersion: 5, toolCalls: [] });
       expect(harnessState.teardown).not.toHaveBeenCalled();
       expect(parkRegistry.invalidate).not.toHaveBeenCalled();
+    });
+
+    it("hands the keep decision every tool call the turn made", async () => {
+      committed(4);
+      harnessState.streamParts = [
+        { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "sleep 600" } },
+        { type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "started" },
+        { type: "finish", finishReason: "stop" },
+      ];
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(harnessState.parkTurn).toHaveBeenCalledWith(expect.objectContaining({
+        toolCalls: [expect.objectContaining({ toolCallId: "call-1", toolName: "bash" })],
+      }));
+    });
+
+    it("asks to adopt only a runtime kept under the same Tool Approval setting", async () => {
+      committed(4);
+      await runHarnessTurn(codexTurn({ requireToolApproval: false }) as never, "none");
+      await runHarnessTurn(codexTurn({ requireToolApproval: true }) as never, "none");
+      const [off, on] = vi.mocked(prepareLocalHarnessTurn).mock.calls.map(([args]) => args.keptRuntime!.fingerprint);
+      expect(off).not.toBe(on);
     });
 
     it("resumes an adopted runtime from its live bridge, not from disk", async () => {
