@@ -30,7 +30,7 @@ describe("resultLinkRewrite", () => {
         enabled: false,
         resultPage: { caseKey: "refund", iterationId: "i1", tab: "trace" },
       }),
-    ).toBe("/evaluate/suite/s1/runs/r1?iteration=i1&case=refund");
+    ).toBe("/evaluate/suite/s1/runs/r2?iteration=i1&case=refund");
     expect(
       rewrite({ enabled: false, resultPage: { caseKey: "title:Ship it" } }),
     ).toBe("/evaluate/suite/s1/runs/r1");

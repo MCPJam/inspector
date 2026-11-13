@@ -126,6 +126,23 @@ describe("IterationDetails with a controlled tab", () => {
     expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
   });
 
+  it("falls back to the default, not the last clicked tab", () => {
+    const details = (activeTab: "steps" | "browser") => (
+      <IterationDetails
+        iteration={iteration}
+        testCase={testCase}
+        layoutMode="full"
+        scorecard={scorecard}
+        activeTab={activeTab}
+        onTabChange={vi.fn()}
+      />
+    );
+    const { rerender } = render(details("steps"));
+    expect(screen.queryByTestId("mock-scorecard")).not.toBeInTheDocument();
+    rerender(details("browser"));
+    expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
+  });
+
   it("still opens on its own default without one", () => {
     render(
       <IterationDetails

@@ -114,7 +114,13 @@ export function CombinedRunContent({
   const iterations = [...history.details.values()].flatMap(
     (detail) => detail.iterations,
   );
-  const scroll = useRunScrollMemory(memoryRunId, iterations.length > 0);
+  // Ready once the loading panel gives way to the grid, so a slow member
+  // run does not close the restore window before its rows exist.
+  const scroll = useRunScrollMemory(
+    memoryRunId,
+    iterations.length > 0 &&
+      !(history.loading && runs.some((run) => !history.details.has(run._id))),
+  );
   const matrix = buildRunResultsMatrix({
     run: routeRun,
     runs: hydratedRuns,

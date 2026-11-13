@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type UIEvent } from "react";
+import { useCallback, useLayoutEffect, useRef, type UIEvent } from "react";
 
 /**
  * What a run's grid shows, kept for the back button. In memory
@@ -45,7 +45,8 @@ export function useRunScrollMemory(
 ) {
   const ref = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
-  useEffect(() => {
+  // Before paint, so a returning grid does not flash at the top first.
+  useLayoutEffect(() => {
     const element = ref.current;
     if (!runId || !rowsReady || restored.current || !element) return;
     const top = readRunView(runId).scrollTop;

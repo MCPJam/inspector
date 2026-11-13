@@ -37,6 +37,8 @@ export function resultLinkRewrite({
     return buildEvaluatePath({
       type: "run-detail",
       ...run,
+      // The legacy view selects within one run, so open the one that owns it.
+      ...(owner?.suiteRunId ? { runId: owner.suiteRunId } : {}),
       ...(owner?.testCaseId ? { testCaseId: owner.testCaseId } : {}),
       ...(iterationId ? { iteration: iterationId } : {}),
     });

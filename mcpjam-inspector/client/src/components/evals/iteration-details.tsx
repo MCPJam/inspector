@@ -506,20 +506,19 @@ export function IterationDetails({
     getBlob,
   ]);
 
+  // Step-aligned cases (any interact/assert step) open on the Steps replay —
+  // the 1:1 mirror of the authored steps — matching the live preview default;
+  // pure prompt+grade cases keep Chat.
+  const defaultTraceMode: IterationReportMode = scorecard
+    ? "scorecard"
+    : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+    ? "steps"
+    : "chat";
   useEffect(() => {
     if (layoutMode !== "full") return;
     setToolCallsSectionOpen(iteration.result !== "passed");
     if (activeTab) return;
-    // Step-aligned cases (any interact/assert step) open on the Steps replay —
-    // the 1:1 mirror of the authored steps — matching the live preview default;
-    // pure prompt+grade cases keep Chat.
-    setOwnTraceMode(
-      scorecard
-        ? "scorecard"
-        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
-        ? "steps"
-        : "chat",
-    );
+    setOwnTraceMode(defaultTraceMode);
   }, [layoutMode, iteration._id, iteration.result, snapshotSteps]);
 
   useEffect(() => {
@@ -768,8 +767,11 @@ export function IterationDetails({
     steps: hasSteps && (Boolean(scorecard) || traceTabsReady),
     scorecard: Boolean(scorecard),
   };
-  const previewTraceMode =
-    activeTab && tabShown[activeTab] ? activeTab : ownTraceMode;
+  const previewTraceMode = !activeTab
+    ? ownTraceMode
+    : tabShown[activeTab]
+      ? activeTab
+      : defaultTraceMode;
   const previewTraceToolbar =
     layoutMode === "full" &&
     (scorecard || (hasTrace && !loading && !error)) ? (
