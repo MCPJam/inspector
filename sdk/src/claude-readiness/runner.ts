@@ -32,10 +32,12 @@ import {
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
 import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy-auth.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
 import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
 import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
 import { runClaudeCrossToolScan } from "./checks/cross-tool.js";
+import { runClaudeDecisionChecks } from "./checks/decisions.js";
 import { runClaudeDeclarationChecks } from "./checks/declarations.js";
 import {
   runClaudeEndpointChecks,
@@ -169,6 +171,8 @@ export interface ClaudeReadinessInput {
    * if it wanted to.
    */
   llmObservations?: ClaudeObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -306,6 +310,7 @@ export function gradeClaudeReadiness(
     ...auth.findings,
     ...runClaudeToolChecks(input.tools, stamp, listing),
     runClaudeCrossToolScan(input.tools, stamp, listing),
+    ...runClaudeDecisionChecks(input, stamp, listing),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
