@@ -1870,6 +1870,81 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it.each([true, false])(
+    "saves a case that stops failing on tool errors: workspace=%s",
+    async (simpleCaseEditor) => {
+      const user = userEvent.setup();
+      activeCaseDoc = goldenCaseDoc;
+      renderGoldenCase({ simpleCaseEditor });
+
+      const toggle = await screen.findByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      });
+      expect(toggle).toBeChecked();
+      await user.click(toggle);
+      await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+      await waitFor(() => {
+        expect(updateTestCaseMutationMock).toHaveBeenCalled();
+      });
+      expect(
+        updateTestCaseMutationMock.mock.calls.at(-1)?.[0].advancedConfig,
+      ).toEqual({ failOnToolError: false });
+    },
+  );
+
+  it("runs with the cleared tool error setting sent explicitly", async () => {
+    // A run's case override falls back to the stored case when it carries no
+    // `advancedConfig`, and a retry in the same session does not save first.
+    const user = userEvent.setup();
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      advancedConfig: { failOnToolError: false },
+    };
+    renderGoldenCase();
+
+    await user.click(
+      await screen.findByRole("switch", {
+        name: "Fail this case when a tool call returns an error",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await user.click(screen.getByRole("button", { name: "Run test case" }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalled();
+    });
+    expect(
+      streamEvalTestCaseMock.mock.calls.at(-1)?.[0].testCaseOverrides
+        .advancedConfig,
+    ).toEqual({});
+  });
+
+  it("clears the tool error setting when it is turned back on", async () => {
+    // The mutation keeps a field it is not sent, so the cleared setting has
+    // to arrive as an empty object or the case would stay switched off.
+    const user = userEvent.setup();
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      advancedConfig: { failOnToolError: false },
+    };
+    renderGoldenCase();
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Fail this case when a tool call returns an error",
+    });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(
+      updateTestCaseMutationMock.mock.calls.at(-1)?.[0].advancedConfig,
+    ).toEqual({});
+  });
+
   it("saves the per-case judge opt-out", async () => {
     // The only per-case judge control the backend admits.
     const user = userEvent.setup();
