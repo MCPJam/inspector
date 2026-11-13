@@ -1,11 +1,12 @@
 /**
  * /readiness: rehearse a directory submission for a saved server. MCPJam's
- * rehearsal bar sits above a copy of the Claude portal: its first screen
- * (what to submit, then the server's saved rehearsals), then the form.
+ * rehearsal bar sits above a copy of the chosen directory's portal: its first
+ * screen and the server's saved rehearsals, then Claude's form or ChatGPT's
+ * plugin page.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Blocks, Plug } from "lucide-react";
+import { Blocks, Plug, Upload } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -23,12 +24,21 @@ import {
 } from "@/lib/apis/directory-submissions-api";
 import type { ServerWithName } from "@/state/app-types";
 import { McpjamMark } from "./McpjamChecks";
+import { OpenAiPortal } from "./OpenAiPortal";
 import { PortalFrame } from "./PortalFrame";
+import { McpjamNote } from "./PortalWidgets";
 import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
 import "./portal-theme.css";
 
-/** The one flow with a rehearsal so far: Claude's MCP connector. */
-const FLOW_ID = "claude-connector";
+/** The flow each directory rehearses. */
+const DIRECTORIES = ["claude", "openai"] as const;
+type Directory = (typeof DIRECTORIES)[number];
+const FLOWS = { claude: "claude-connector", openai: "chatgpt-plugin" };
+const FLOW_NAMES: Record<string, string> = {
+  "claude-connector": "MCP connector",
+  "chatgpt-plugin": "ChatGPT plugin",
+};
+const SCOPES = { claude: "portal-claude", openai: "portal-openai" };
 const NO_SERVER = { name: "" };
 
 export interface SavedServer {
@@ -71,14 +81,129 @@ function runStatus(run: DirectoryReadinessState, flowVersion: string): string {
   return `Checked ${formatDistanceToNow(last.updatedAt, { addSuffix: true })}${rules}`;
 }
 
+/** MCPJam's choice of the directory whose portal the page copies. */
+function DirectoryChoice({
+  value,
+  onChange,
+}: {
+  value: Directory;
+  onChange: (directory: Directory) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Directory"
+      className="flex items-center justify-center gap-2 text-sm"
+    >
+      <McpjamMark />
+      <span className="text-muted-foreground">Rehearse a submission to</span>
+      {DIRECTORIES.map((entry) => (
+        <Button
+          key={entry}
+          type="button"
+          size="sm"
+          variant={entry === value ? "secondary" : "ghost"}
+          aria-pressed={entry === value}
+          onClick={() => onChange(entry)}
+        >
+          {DIRECTORY_NAMES[entry]}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** ChatGPT's plugins page: its upload stands for choosing a stored plugin. */
+function ChatGptStart({ busy, onStart }: { busy: boolean; onStart: () => void }) {
+  return (
+    <div className="space-y-4 text-left">
+      <h1 className="text-2xl font-semibold">Plugins</h1>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onStart}
+        className="flex w-full flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-8 py-10 outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="flex size-12 items-center justify-center rounded-full bg-accent">
+          <Upload aria-hidden="true" className="size-5" />
+        </span>
+        <span className="font-medium">Upload new or existing plugin</span>
+      </button>
+      <McpjamNote>
+        MCPJam rehearses a plugin stored in this project. Choose it on the next
+        screen.
+      </McpjamNote>
+    </div>
+  );
+}
+
+/** Claude's first screen: what to submit. */
+function ClaudeStart({ busy, onStart }: { busy: boolean; onStart: () => void }) {
+  const card =
+    "flex flex-1 flex-col items-center gap-3 rounded-2xl bg-card px-8 py-8 text-center";
+  const icon =
+    "flex size-12 items-center justify-center rounded-full bg-accent";
+  return (
+    <>
+      <div className="space-y-3">
+        <h1 className="font-serif text-3xl">
+          What would you like to submit?
+        </h1>
+        <p className="text-muted-foreground">
+          Everything in the Claude Directory is called a plugin, whether it’s
+          a full bundle or a single MCP connector.
+        </p>
+      </div>
+      <div className="flex gap-6">
+        <div className={cn(card, "opacity-60")}>
+          <span className={icon}>
+            <Plug aria-hidden="true" className="size-5" />
+          </span>
+          <span className="font-medium">Plugin bundle</span>
+          <span className="text-sm text-muted-foreground">
+            A hosted collection of files, served from a GitHub repository. It
+            can include skills, commands, agents, hooks, and MCP servers.
+          </span>
+          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-xs">
+            MCPJam: rehearsal not available yet
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onStart}
+          className={cn(
+            card,
+            "outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring",
+          )}
+        >
+          <span className={icon}>
+            <Blocks aria-hidden="true" className="size-5" />
+          </span>
+          <span className="font-medium">MCP connector</span>
+          <span className="text-sm text-muted-foreground">
+            One remote MCP server, which can be listed by itself with its own
+            controls and metrics. MCP connectors can also be linked to Plugin
+            bundles.
+          </span>
+        </button>
+      </div>
+    </>
+  );
+}
+
 /** The portal's first screen, then the server's saved rehearsals. */
 function PortalStart({
   projectId,
   serverId,
+  directory,
+  onDirectory,
   onOpen,
 }: {
   projectId: string;
   serverId: string;
+  directory: Directory;
+  onDirectory: (directory: Directory) => void;
   onOpen: (submissionId: string) => void;
 }) {
   const [saved, setSaved] = useState<SubmissionSummary[]>([]);
@@ -100,7 +225,7 @@ function PortalStart({
   const start = async () => {
     setBusy(true);
     try {
-      const scope = { projectId, serverId, flowId: FLOW_ID };
+      const scope = { projectId, serverId, flowId: FLOWS[directory] };
       const key = `ui-${serverId}-${Date.now()}`;
       onOpen((await createDirectorySubmission(scope, key)).id);
     } catch (failure) {
@@ -110,75 +235,35 @@ function PortalStart({
       setBusy(false);
     }
   };
-  const card =
-    "flex flex-1 flex-col items-center gap-3 rounded-2xl bg-card px-8 py-8 text-center";
-  const icon =
-    "flex size-12 items-center justify-center rounded-full bg-accent";
+  const ours = saved.filter((entry) => entry.directory === directory);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-4xl space-y-8 px-10 py-14 text-center">
-        <div className="space-y-3">
-          <h1 className="font-serif text-3xl">
-            What would you like to submit?
-          </h1>
-          <p className="text-muted-foreground">
-            Everything in the Claude Directory is called a plugin, whether it’s
-            a full bundle or a single MCP connector.
-          </p>
-        </div>
-        <div className="flex gap-6">
-          <div className={cn(card, "opacity-60")}>
-            <span className={icon}>
-              <Plug aria-hidden="true" className="size-5" />
-            </span>
-            <span className="font-medium">Plugin bundle</span>
-            <span className="text-sm text-muted-foreground">
-              A hosted collection of files, served from a GitHub repository. It
-              can include skills, commands, agents, hooks, and MCP servers.
-            </span>
-            <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-xs">
-              MCPJam: rehearsal not available yet
-            </span>
-          </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void start()}
-            className={cn(
-              card,
-              "outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring",
-            )}
-          >
-            <span className={icon}>
-              <Blocks aria-hidden="true" className="size-5" />
-            </span>
-            <span className="font-medium">MCP connector</span>
-            <span className="text-sm text-muted-foreground">
-              One remote MCP server, which can be listed by itself with its own
-              controls and metrics. MCP connectors can also be linked to Plugin
-              bundles.
-            </span>
-          </button>
-        </div>
+        <DirectoryChoice value={directory} onChange={onDirectory} />
+        {directory === "openai" ? (
+          <ChatGptStart busy={busy} onStart={() => void start()} />
+        ) : (
+          <ClaudeStart busy={busy} onStart={() => void start()} />
+        )}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         ) : null}
-        {saved.length > 0 ? (
+        {ours.length > 0 ? (
           <section className="space-y-2 text-left">
             <h2 className="flex items-center gap-2 text-sm font-medium">
               <McpjamMark />
               Saved rehearsals for this server
             </h2>
             <ul className="divide-y divide-border rounded-xl bg-card px-4">
-              {saved.map((entry) => (
+              {ours.map((entry) => (
                 <li
                   key={entry.id}
                   className="flex items-center gap-4 py-3 text-sm"
                 >
                   <span className="min-w-0 flex-1">
-                    {entry.title ?? "MCP connector"}
+                    {entry.title ?? FLOW_NAMES[entry.flowId]}
                     <span className="block text-muted-foreground">
                       Edited{" "}
                       {formatDistanceToNow(entry.updatedAt, {
@@ -223,12 +308,18 @@ export function ReadinessPage({
   );
   // A submission belongs to one server: choosing another closes it.
   const openId = open && open.serverId === chosen?.id ? open.id : null;
+  const [choice, setChoice] = useState<Directory>("claude");
   const session = useDirectorySubmission({
     projectId: projectId ?? "",
     submissionId: projectId ? openId : null,
     server: chosen?.server ?? NO_SERVER,
   });
   const { flow, view, run } = session;
+  // The flow outlives a closed submission: it names the directory only
+  // while one is open.
+  const directory = view && flow ? flow.directory : choice;
+  // A ChatGPT run grades a stored version of the plugin, so it needs one.
+  const needsVersion = flow?.directory === "openai" && !view?.pluginVersionId;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -260,7 +351,20 @@ export function ReadinessPage({
       <PortalStart
         projectId={projectId}
         serverId={chosen.id}
+        directory={choice}
+        onDirectory={setChoice}
         onOpen={(id) => setOpen({ serverId: chosen.id, id })}
+      />
+    );
+  } else if (flow && view && flow.directory === "openai") {
+    body = (
+      <OpenAiPortal
+        flow={flow}
+        view={view}
+        session={session}
+        projectId={projectId}
+        serverUrl={serverUrl}
+        onClose={() => setOpen(null)}
       />
     );
   } else if (flow && view) {
@@ -290,7 +394,7 @@ export function ReadinessPage({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <RehearsalBar
-        directory={DIRECTORY_NAMES[flow?.directory ?? "claude"]}
+        directory={DIRECTORY_NAMES[directory]}
         counts={counts}
         server={
           <ConformanceServerPicker
@@ -300,13 +404,24 @@ export function ReadinessPage({
             onSelect={onSelect}
           />
         }
-        status={view && flow ? runStatus(run, flow.version) : "Not checked yet"}
-        canRun={Boolean(view) && run.status !== "unavailable"}
+        status={
+          !view || !flow
+            ? "Not checked yet"
+            : needsVersion
+              ? "Choose a plugin version to run checks."
+              : runStatus(run, flow.version)
+        }
+        canRun={Boolean(view) && run.status !== "unavailable" && !needsVersion}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
         onRun={() => void session.startRun()}
       />
-      <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
+      <div
+        className={cn(
+          SCOPES[directory],
+          "flex min-h-0 flex-1 flex-col bg-background text-foreground",
+        )}
+      >
         {body}
       </div>
     </div>

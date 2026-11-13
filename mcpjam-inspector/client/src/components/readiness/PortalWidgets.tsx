@@ -39,7 +39,7 @@ export interface PortalWidgetProps {
 const textOf = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
 
-function McpjamNote({ children }: { children: ReactNode }) {
+export function McpjamNote({ children }: { children: ReactNode }) {
   return (
     <p className="flex items-center gap-2 text-xs text-muted-foreground">
       <McpjamMark />
