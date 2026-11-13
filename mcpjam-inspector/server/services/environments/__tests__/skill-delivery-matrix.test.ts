@@ -237,20 +237,12 @@ const swarm =
 
 const SWARM: Surface = { name: "swarm", plan: swarm(false), expected: PINNED };
 
-/** With approval on, MCPJam's agent gets none of the target's skills, since a
- *  headless visitor can't approve; a harness's box still gets them. */
+/** With approval on, every engine gets what it gets without: no skill tool
+ *  asks, so a headless visitor has nothing to answer. */
 const SWARM_APPROVAL: Surface = {
   name: "swarm with approval on",
   plan: swarm(true),
-  expected: {
-    ...PINNED,
-    "mcpjam-agent": {
-      delivered: [],
-      excluded: [],
-      serverSkillsVia: "none",
-      recorded: [],
-    },
-  },
+  expected: PINNED,
 };
 
 /**

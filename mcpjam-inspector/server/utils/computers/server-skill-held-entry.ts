@@ -15,7 +15,7 @@
  * In local mode nothing is marked: the browser is the user's own. A load that
  * is marked, or whose text cannot be read, does not set the held entry, and
  * a read of its skill is refused until the skill is loaded again: the entry
- * the user approved is then unknown, which must not read as "none".
+ * it was loaded with is then unknown, which must not read as "none".
  *
  * PIN: modelcontextprotocol/ext-skills @ c1aa87e (`specification/stable/skills.mdx`).
  */
@@ -192,7 +192,7 @@ async function callCouldNameEntry(
  * Finds the latest trusted load of this skill in the conversation and
  * compares the digest set it records with the current manifest. A server that
  * changed the skill in between is refused, and the model is told to reload,
- * which re-presents the changed manifest for approval. An unchanged manifest
+ * which verifies the changed manifest and holds it. An unchanged manifest
  * means the current entry IS the held entry. No load at all means the skill
  * is not being acted on in this conversation, and there is nothing to hold.
  *

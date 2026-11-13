@@ -180,6 +180,14 @@ export {
   USED_APPROVAL_RESULT,
 };
 
+/**
+ * The result an unattended turn (`approvalMode: "auto-deny"`) gives a call
+ * that needed approval. Shared with the swarm runner, so the model reads one
+ * answer whichever engine ran the turn.
+ */
+export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
+  "approval-denied (synthetic session)";
+
 let warnedLegacyUnsignedApproval = false;
 
 function isModelVisibleImageOutput(value: unknown): boolean {
@@ -4617,7 +4625,7 @@ async function processOneStep(ctx: StepContext): Promise<{
             toolName: part.toolName,
             output: {
               type: "error-text",
-              value: "approval-denied (synthetic session)",
+              value: SYNTHETIC_SESSION_APPROVAL_DENIAL,
             },
           };
           const bucket = deniedByAssistantIdx.get(i) ?? [];

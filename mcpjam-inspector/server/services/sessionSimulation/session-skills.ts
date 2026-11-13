@@ -70,14 +70,13 @@ export function sessionTurnSkills(args: {
   liveSkills?: readonly RuntimeStandaloneSkill[];
   /** The harness the session runs on; absent for MCPJam's agent. */
   harness?: string;
+  /** Whether the scenario requires tool approval. A session keeps its skills
+   *  either way: no skill tool asks, so a headless visitor has nothing to
+   *  answer (`effective-skill-tools.ts`). */
   requireToolApproval: boolean;
   modelContextTokens?: number;
 }): { skills: TurnSkills; skillsAtTurn?: Array<Record<string, unknown>> } {
   const runtime = turnRuntime({ harness: args.harness });
-  // With approval on, MCPJam's agent gets none of the session's skills: a
-  // headless visitor can't approve, and the local-runtime path refuses any
-  // tool at all while approval is on. A harness's box is not gated by it.
-  const withheld = args.requireToolApproval && runtime.kind === "agent";
   // An older target's live skills are for MCPJam's agent alone: a harness's
   // box fetches the project's skills itself, which this plan does not see.
   const live: LiveSkillSource | undefined =
@@ -85,9 +84,7 @@ export function sessionTurnSkills(args: {
       ? { kind: "live", projectSkills: args.liveSkills }
       : undefined;
   const skills = resolveTurnSkills({
-    source: withheld
-      ? { kind: "none" }
-      : (args.pinnedSkillSource ?? live ?? { kind: "none" }),
+    source: args.pinnedSkillSource ?? live ?? { kind: "none" },
     runtime,
     ...(args.modelContextTokens !== undefined
       ? { modelContextTokens: args.modelContextTokens }

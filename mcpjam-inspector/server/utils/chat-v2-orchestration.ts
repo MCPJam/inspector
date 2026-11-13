@@ -1160,59 +1160,22 @@ function approvalGuidance(
   // both are halves the model gets wrong in the expensive direction.
   //
   // `free` is why a read it expected to be gated simply happened. `alwaysAsks`
-  // is the opposite mistake and the worse one: loading a skill a connected MCP
-  // server provides pauses whatever this setting says (`effective-skill-tools`
-  // binds the digest and asks), so a model told "nothing will stop you" plans
-  // straight past a checkpoint that will stop it. Stated conditionally — "a
-  // skill a connected MCP server provides" — so a turn with no such skill is
-  // not promised a gate it will never meet.
+  // is the opposite mistake and the worse one: while a skill a connected MCP
+  // server provides is loaded, a command pauses whatever this setting says
+  // (`server-skill-acting-gate.ts`), so a model told "nothing will stop you"
+  // plans straight past a checkpoint that will stop it. Stated conditionally,
+  // so a turn with no such skill is not promised a gate it will never meet.
   const free =
     "Read-only lookups of the user's own project, the discovery meta-tools, " +
-    "read-only `ui_*` actions and an open app's own `app_*` tools never pause, " +
-    "in either setting.";
+    "loading a skill or reading its files, read-only `ui_*` actions and an " +
+    "open app's own `app_*` tools never pause, in either setting.";
   const alwaysAsks =
-    "Loading a skill that a connected MCP server provides always asks for " +
-    "confirmation, in either setting — it brings that server's instructions " +
-    "into this conversation. While such a skill is loaded, running a shell " +
-    "command or reading a resource from a saved server also asks, in either " +
-    "setting.";
+    "While a skill that a connected MCP server provides is loaded, running a " +
+    "shell command or reading a resource from a saved server asks for " +
+    "approval, in either setting.";
   return requireToolApproval
     ? `Tool approval is ON for this conversation: every tool call that ACTS pauses for the user's explicit approval before it runs — MCP server tools, anything driving a browser or a third-party web page, anything running on the user's own machine, and mutating \`ui_*\` actions. ${free} ${alwaysAsks} A denial is final — explain what you wanted to do instead of retrying the call.`
     : `Tool approval is OFF for this conversation: tool calls apply immediately, including anything driving a browser or a third-party web page and anything running on the user's own machine. Be deliberate about mutating actions — describe what you're about to do when it isn't obviously what the user asked for. ${free} ${alwaysAsks}`;
-}
-
-/**
- * The turn's approval declaration for its SKILL tools.
- *
- * Pinned skill tools NEVER require approval — pure reads of frozen content
- * under an auto-deny eval run, where a prompt is a hang rather than a
- * question. Every other skill tool follows the host's switch.
- *
- * Extracted from `prepareChatV2` as the one addressable declaration site for
- * this family, so the approval matrix can drive it the way the engines see it.
- *
- * Raises only: a tool that already declared its own approval keeps it when the
- * switch is off, which is what leaves a function-form declaration (the
- * server-origin skill refs in `effective-skill-tools.ts`) intact.
- */
-export function applySkillToolApproval(
-  skillTools: Record<string, unknown>,
-  opts: { pinned: boolean; requireToolApproval: boolean },
-): Record<string, unknown> {
-  const raised = needsApprovalFor(
-    opts.pinned ? "never" : "setting",
-    opts.requireToolApproval,
-  );
-  if (!raised) return skillTools;
-  return Object.fromEntries(
-    Object.entries(skillTools).map(([name, tool]) => [
-      name,
-      {
-        ...(tool && typeof tool === "object" ? tool : {}),
-        needsApproval: true,
-      },
-    ]),
-  );
 }
 
 export interface PrepareChatV2Result {
@@ -1457,8 +1420,8 @@ export async function prepareChatV2(
   // FROM (the project, a plugin, a connected server, this machine) is a
   // property of the skill inside the plan's set, not a mode the orchestrator
   // picks between. Every surface inlines its catalog in the prompt; there is no
-  // `listSkills` discovery tool on any of them.
-  const skillsArePinned = skills?.agent?.kind === "frozen";
+  // `listSkills` discovery tool on any of them. No plan's skill tools ask for
+  // approval (`effective-skill-tools.ts`).
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
   // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
@@ -1531,21 +1494,11 @@ export async function prepareChatV2(
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     skillPrep;
 
-  const approvalWrappedSkillTools = applySkillToolApproval(
-    skillTools as Record<string, unknown>,
-    {
-      pinned: skillsArePinned,
-      requireToolApproval: requireToolApproval === true,
-    },
-  );
-
   // COPIED, not aliased. The reserved-namespace sweep below deletes from this
-  // map, and with the switch off it is the skill builder's own object — a
-  // function that quietly removed an entry from an object it was handed would
-  // be a surprise waiting for whoever hands it the same one twice.
-  const finalSkillTools: Record<string, unknown> = {
-    ...approvalWrappedSkillTools,
-  };
+  // map, which is the skill builder's own object — a function that quietly
+  // removed an entry from an object it was handed would be a surprise waiting
+  // for whoever hands it the same one twice.
+  const finalSkillTools: Record<string, unknown> = { ...skillTools };
 
   // SEP-1865 App-Provided Tools (Host → App direction). Client supplies
   // the snapshot per chat POST; we register them as no-execute entries so
