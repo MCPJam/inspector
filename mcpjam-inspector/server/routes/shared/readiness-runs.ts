@@ -95,6 +95,11 @@ export interface StartHostedReadinessRunInput {
    * run; the worker grades that frozen copy.
    */
   submissionId?: string;
+  /**
+   * The submission's saved test plan revision the run executes. The backend
+   * refuses one that is not the current revision, then freezes it.
+   */
+  testPlanRevision?: number;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -195,6 +200,9 @@ export async function startHostedReadinessRun(
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        ...(input.testPlanRevision !== undefined
+          ? { testPlanRevision: input.testPlanRevision }
+          : {}),
       },
     );
   } catch (error) {

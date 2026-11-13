@@ -89,6 +89,8 @@ export interface PlatformDirectorySubmissionUpdateBody {
 export interface PlatformDirectorySubmissionRunBody {
   idempotencyKey?: string;
   includeLlmObservations?: boolean;
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision?: number;
 }
 
 export interface PlatformDirectorySubmissionDeleted {

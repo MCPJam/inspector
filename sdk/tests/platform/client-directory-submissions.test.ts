@@ -63,6 +63,7 @@ describe("directory submission client methods", () => {
     await client.startDirectorySubmissionRun({
       ...SCOPE,
       includeLlmObservations: true,
+      testPlanRevision: 2,
     });
     await client.getDirectorySubmissionResults({ ...SCOPE, runId: "run-1" });
 
@@ -88,7 +89,10 @@ describe("directory submission client methods", () => {
       answers: { "listing.name": "Acme", "listing.retired": null },
       confirm: ["useCases.access"],
     });
-    expect(requests[7]!.body).toEqual({ includeLlmObservations: true });
+    expect(requests[7]!.body).toEqual({
+      includeLlmObservations: true,
+      testPlanRevision: 2,
+    });
     expect(requests[8]!.query).toEqual({ runId: "run-1" });
   });
 
