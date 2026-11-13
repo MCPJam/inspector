@@ -244,6 +244,32 @@ describe("acquirePlaygroundHarnessBox", () => {
     await result.box.release();
   });
 
+  it("hands the harness the ceiling of a box that pauses, and none from an older backend", async () => {
+    const retainUntil = Date.now() + 4 * 60 * 60_000;
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        sandboxRowId: "row",
+        sandboxId: "sbx",
+        idleMs: 5 * 60_000,
+        retainUntil,
+      },
+    });
+    const kept = await acquirePlaygroundHarnessBox(args);
+    if (!kept.ok) throw new Error("expected a box");
+    expect(kept.box.binding).toMatchObject({ idleMs: 5 * 60_000, retainUntil });
+    await kept.box.release();
+
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
+    });
+    const older = await acquirePlaygroundHarnessBox(args);
+    if (!older.ok) throw new Error("expected a box");
+    expect(older.box.binding).not.toHaveProperty("retainUntil");
+    await older.box.release();
+  });
+
   it("keeps the box alive across a turn longer than its idle window, then leaves it for the next turn", async () => {
     provisionMock.mockResolvedValue({
       ok: true,

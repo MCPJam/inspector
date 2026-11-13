@@ -33,3 +33,11 @@ export function hostedWarmAgentEnabled(organizationId: string | undefined): bool
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
 }
+
+/**
+ * Keep a warm hosted agent running through its box's pause, up to the box's
+ * ceiling. Off by default; read per call so operators can turn it off.
+ */
+export function harnessKeepAgentThroughPause(): boolean {
+  return process.env.MCPJAM_HARNESS_KEEP_THROUGH_PAUSE === "true";
+}

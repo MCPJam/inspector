@@ -733,6 +733,12 @@ export interface PlaygroundTerminalSandbox {
    * keeps no copy, so changing it needs no Inspector release.
    */
   idleMs?: number;
+  /**
+   * Epoch milliseconds the box keeps its running processes until: its
+   * lifetime ceiling. Sent only for a box its idle deadline pauses rather than
+   * deletes; an older backend sends none.
+   */
+  retainUntil?: number;
 }
 
 /**
@@ -1066,16 +1072,33 @@ export function readIdleMs(value: unknown): number | undefined {
     : undefined;
 }
 
-/** Drops a reply's idle window unless it is a sane one. */
-function keepSaneIdleWindow<T extends { idleMs?: number }>(
-  result: ControlPlaneResult<T>,
-): ControlPlaneResult<T> {
-  if (
-    result.ok &&
-    result.value &&
-    readIdleMs(result.value.idleMs) === undefined
-  ) {
-    delete result.value.idleMs;
+/**
+ * A backend retention deadline, if `value` is a sane one: whole epoch
+ * milliseconds still ahead, and no further out than the longest idle window.
+ * It sets how long a warm bridge outlives its turn, so a malformed one is
+ * dropped rather than keeping a bridge longer.
+ */
+export function readRetainUntil(
+  value: unknown,
+  now = Date.now(),
+): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > now &&
+    value - now <= MAX_IDLE_WINDOW_MS
+    ? value
+    : undefined;
+}
+
+/** Drops a reply's idle window and retention deadline unless each is sane. */
+function keepSaneIdleWindow<
+  T extends { idleMs?: number; retainUntil?: number },
+>(result: ControlPlaneResult<T>): ControlPlaneResult<T> {
+  if (result.ok && result.value) {
+    if (readIdleMs(result.value.idleMs) === undefined)
+      delete result.value.idleMs;
+    if (readRetainUntil(result.value.retainUntil) === undefined)
+      delete result.value.retainUntil;
   }
   return result;
 }

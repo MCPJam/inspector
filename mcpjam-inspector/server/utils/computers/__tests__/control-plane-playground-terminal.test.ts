@@ -58,6 +58,32 @@ describe("provisionPlaygroundTerminalSandbox", () => {
     });
   });
 
+  it("carries the box's retention deadline, and drops one that is not sane", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    const provision = () =>
+      provisionPlaygroundTerminalSandbox({
+        bearer: "token",
+        projectId: "p1",
+        chatSessionId: "c1",
+      });
+    const retainUntil = Date.now() + 4 * 60 * 60_000;
+    respond = () => json(200, { ...box, retainUntil });
+    expect(await provision()).toEqual({
+      ok: true,
+      value: { ...box, retainUntil },
+    });
+    for (const malformed of [
+      Date.now() - 1,
+      Date.now() + 2 * 24 * 60 * 60_000,
+      Date.now() + 60_000.5,
+      "soon",
+      null,
+    ]) {
+      respond = () => json(200, { ...box, retainUntil: malformed });
+      expect(await provision()).toEqual({ ok: true, value: box });
+    }
+  });
+
   it("omits the environment when none is chosen", async () => {
     respond = () => json(200, { sandboxRowId: "row", sandboxId: "sbx" });
     await provisionPlaygroundTerminalSandbox({
