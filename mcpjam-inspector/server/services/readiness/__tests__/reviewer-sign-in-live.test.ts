@@ -19,12 +19,16 @@ vi.mock("../../browserd/hosted-recording.js", () => ({
   collectHostedRecordingThenRelease: (...args: unknown[]) =>
     collectHostedRecordingThenRelease(...args),
 }));
+// The polls wait for nothing here; what they ask for is what is tested.
+vi.mock("node:timers/promises", () => ({ setTimeout: async () => undefined }));
 vi.mock("../../server-connection-authorize.js", () => ({
   prepareAuthorization: (...args: unknown[]) => prepareAuthorization(...args),
 }));
 
-const { liveReviewerSignInDeps } = await import("../reviewer-sign-in-live.js");
+const { liveReviewerSignInDeps, rehearseReviewerSignInLive } =
+  await import("../reviewer-sign-in-live.js");
 const { ReadinessLeaseLostError } = await import("../runner.js");
+const { logger } = await import("../../../utils/logger.js");
 
 const LEASE = { runId: "run_1", jobId: "job_1" };
 const ATTEMPT = {
@@ -146,13 +150,11 @@ describe("the desktop", () => {
   });
 
   it("reserves a blank browser, boots the reservation's own box and records the boot", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     const live = handle();
     ensureLiveBrowserSession.mockResolvedValue(live);
-    const reserving = deps().desktop.reserve(new AbortController().signal);
-    await vi.runAllTimersAsync();
-    const { browser, recordingArtifactId } = await reserving;
-    vi.useRealTimers();
+    const { browser, recordingArtifactId } = await deps().desktop.reserve(
+      new AbortController().signal,
+    );
 
     expect(posted[0]).toEqual({
       path: `${RUNS}/browser-session`,
@@ -355,11 +357,7 @@ describe("the connection", () => {
   });
 
   it("claims once discovery is done, prepares here, and sends the verifier only to the backend", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
-    const preparing = deps().connect.prepare(new AbortController().signal);
-    await vi.runAllTimersAsync();
-    const link = await preparing;
-    vi.useRealTimers();
+    const link = await deps().connect.prepare(new AbortController().signal);
 
     expect(prepareAuthorization).toHaveBeenCalledWith({
       serverUrl: "https://connector.example.com/mcp",
@@ -533,5 +531,192 @@ describe("the credentials", () => {
       unavailable:
         "No project secret named MCPJAM_REVIEWER_ACME_EMAIL is available to you.",
     });
+  });
+});
+
+describe("the stop at MCPJam's callback", () => {
+  const CALLBACK = "https://app.mcpjam.com/oauth/callback";
+  const CODE = "code-sample-123";
+  const STATE = "state-sample-456";
+  const AUTHKIT = "https://acme.authkit.app";
+  const PAGES = [
+    {
+      url: `${AUTHKIT}/sign-in`,
+      text: "Sign in",
+      refs: { e1: { role: "textbox", name: "Email" } },
+    },
+    {
+      url: `${AUTHKIT}/password`,
+      text: "Enter your password",
+      refs: { e2: { role: "textbox", name: "Password" } },
+    },
+    {
+      url: `${AUTHKIT}/consent`,
+      text: "MCPJam wants to access your account",
+      refs: {
+        e3: { role: "button", name: "Allow access" },
+        e4: { role: "button", name: "Deny" },
+      },
+    },
+  ];
+
+  /** A daemon that walks the pages; the consent click is stopped at the callback. */
+  function daemon() {
+    let index = 0;
+    const commands: Array<
+      Record<string, unknown> & { action: Record<string, unknown> }
+    > = [];
+    const sendCommand = vi.fn(async (command: (typeof commands)[number]) => {
+      commands.push(command);
+      const page = PAGES[index]!;
+      const { action } = command;
+      if (action.kind === "act" && action.verb === "click") {
+        return {
+          status: "ok",
+          bootId: "boot_1",
+          result: {
+            ok: true,
+            stoppedAt: `${CALLBACK}?code=${CODE}&state=${STATE}`,
+          },
+        };
+      }
+      if (action.kind === "act" && action.submit) index += 1;
+      const output =
+        action.mode === "a11y"
+          ? { url: page.url, refs: page.refs }
+          : action.mode === "text"
+            ? { url: page.url, text: page.text }
+            : {};
+      return { status: "ok", bootId: "boot_1", result: { ok: true, output } };
+    });
+    const handle = {
+      bootId: "boot_1",
+      client: {
+        status: vi.fn(async () => ({
+          kind: "ok",
+          bootId: "boot_1",
+          features: ["secret-origins", "navigation-stop"],
+        })),
+        sendCommand,
+      },
+    };
+    return { handle, commands };
+  }
+
+  beforeEach(() => {
+    routes = {
+      [`${RUNS}/reviewer-attempt/secrets`]: () => [
+        200,
+        {
+          ok: true,
+          secrets: [
+            { name: ATTEMPT.usernameSecretName, value: "review@example.com" },
+            {
+              name: ATTEMPT.passwordSecretName,
+              value: "correct-horse-battery-staple",
+            },
+          ],
+        },
+      ],
+      [`${RUNS}/reviewer-attempt`]: () => [200, { ok: true, attempt: {} }],
+      [`${RUNS}/browser-session`]: () => [
+        200,
+        { ok: true, reservation: { id: "res_1" } },
+      ],
+      [`${RUNS}/browser-session/desktop`]: () => [
+        200,
+        { ok: true, sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      ],
+      [`${RUNS}/browser-session/bind`]: () => [200, { ok: true }],
+      [`${RUNS}/browser-session/boot`]: () => [200, { ok: true }],
+      [`${RUNS}/browser-session/close`]: () => [200, { ok: true, released: 1 }],
+      [CONNECTIONS]: () => [200, { ok: true, requestId: "req_1" }],
+      [`${CONNECTIONS}/claim`]: () => [
+        200,
+        {
+          ok: true,
+          serverUrl: "https://connector.example.com/mcp",
+          authorizationServerUrl: AUTHKIT,
+        },
+      ],
+      [`${CONNECTIONS}/start`]: () => [200, { ok: true }],
+      [`${CONNECTIONS}/complete`]: () => [200, { ok: true }],
+      [`${CONNECTIONS}/status`]: () => [
+        200,
+        { ok: true, stage: "completed", account: { id: "acct_1" } },
+      ],
+    };
+    prepareAuthorization.mockResolvedValue({
+      authorizationUrl: `${AUTHKIT}/oauth2/authorize?state=${STATE}`,
+      codeVerifier: "verifier-1",
+      state: STATE,
+      clientId: "client_1",
+    });
+    collectHostedRecordingThenRelease.mockImplementation(
+      async ({ release }: { release: () => Promise<unknown> }) => {
+        await release();
+        return null;
+      },
+    );
+  });
+
+  it("asks every command that can navigate to stop there, and reads the stopped URL as the page", async () => {
+    const { handle, commands } = daemon();
+    ensureLiveBrowserSession.mockResolvedValue(handle);
+    const { browser } = await deps().desktop.reserve(
+      new AbortController().signal,
+    );
+
+    await browser.open(`${AUTHKIT}/oauth2/authorize`);
+    await browser.read();
+    await browser.click("e3");
+    const daemonReads = commands.length;
+    const page = await browser.read();
+
+    expect(page.url).toBe(`${CALLBACK}?code=${CODE}&state=${STATE}`);
+    expect(commands).toHaveLength(daemonReads);
+    for (const command of commands) {
+      const navigates =
+        command.action.kind === "navigate" || command.action.kind === "act";
+      expect(command.stopAt).toBe(navigates ? CALLBACK : undefined);
+    }
+  });
+
+  it("completes with the captured code and state, and records and logs neither", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    const info = vi.spyOn(logger, "info");
+    const { handle } = daemon();
+    ensureLiveBrowserSession.mockResolvedValue(handle);
+
+    const outcome = await rehearseReviewerSignInLive({
+      lease: LEASE,
+      attemptId: "att_1",
+      attempt: ATTEMPT,
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome).toEqual({ kind: "connected", reviewerAccountId: "acct_1" });
+    expect(
+      posted.find((call) => call.path === `${CONNECTIONS}/complete`)!.body,
+    ).toEqual({
+      ...LEASE,
+      requestId: "req_1",
+      state: STATE,
+      code: CODE,
+    });
+    const writes = posted.filter(
+      (call) => call.path === `${RUNS}/reviewer-attempt`,
+    );
+    expect(
+      writes.map((call) => (call.body.stage as { stage: string }).stage),
+    ).toEqual(["connect-link", "sign-in", "consent", "connected"]);
+    const kept = JSON.stringify({
+      writes,
+      logs: [...warn.mock.calls, ...info.mock.calls],
+    });
+    expect(kept).not.toContain(CODE);
+    expect(kept).not.toContain(STATE);
+    warn.mockRestore();
+    info.mockRestore();
   });
 });

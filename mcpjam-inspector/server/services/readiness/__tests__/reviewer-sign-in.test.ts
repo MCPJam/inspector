@@ -78,7 +78,7 @@ function makeDeps(
   let index = 0;
   const writes: ReviewerAttemptWrite[] = [];
   const browser = {
-    features: options.features ?? ["secret-origins"],
+    features: options.features ?? ["secret-origins", "navigation-stop"],
     open: vi.fn(async (_url: string) => {}),
     read: vi.fn(async () => pages[Math.min(index, pages.length - 1)]!),
     type: vi.fn(
@@ -363,6 +363,30 @@ describe("rehearseReviewerSignIn", () => {
     });
     expect(writes[0]!.detail).toContain(
       "cannot limit the reviewer's credentials",
+    );
+    expect(deps.desktop.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the connection before signing in on a daemon that cannot stop at the callback", async () => {
+    const { deps, browser, writes } = makeDeps([emailPage()], {
+      features: ["secret-origins"],
+    });
+
+    expect((await run(deps)).kind).toBe("failed");
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(browser.type).not.toHaveBeenCalled();
+    expect(deps.connect.prepare).not.toHaveBeenCalled();
+    expect(writes).toEqual([
+      expect.objectContaining({
+        stage: expect.objectContaining({
+          stage: "connected",
+          status: "failed",
+        }),
+        outcome: "failed",
+      }),
+    ]);
+    expect(writes[0]!.detail).toBe(
+      "This hosted browser cannot stop at MCPJam's callback page, so MCPJam could not finish the reviewer's connection and did not sign in. Start a new attempt after MCPJam updates its hosted browser.",
     );
     expect(deps.desktop.release).toHaveBeenCalledTimes(1);
   });

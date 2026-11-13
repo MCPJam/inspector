@@ -19,6 +19,7 @@
  * run proves these routes and the hosted browser meet.
  */
 import { randomUUID } from "node:crypto";
+import { setTimeout as pause } from "node:timers/promises";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import { logger } from "../../utils/logger.js";
@@ -114,20 +115,6 @@ async function leasePost(
   }
 }
 
-function pause(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
-  });
-}
-
 /** Ask again while the route says `code`, until `waitMs` has passed. */
 async function retrying<T>(
   call: () => Promise<T>,
@@ -141,48 +128,60 @@ async function retrying<T>(
       const again =
         error instanceof LeaseRouteRefusal && error.code === options.code;
       if (!again || Date.now() > deadline) throw error;
-      await pause(POLL_MS, options.signal);
+      await pause(POLL_MS, undefined, { signal: options.signal });
     }
   }
 }
 
 function controlsOf(refs: unknown): SignInControl[] {
-  if (typeof refs !== "object" || refs === null) return [];
-  return Object.entries(
-    refs as Record<string, { role?: unknown; name?: unknown }>,
-  ).flatMap(([ref, entry]) =>
-    typeof entry?.role === "string"
-      ? [
-          {
-            ref,
-            role: entry.role,
-            name: typeof entry.name === "string" ? entry.name : "",
-          },
-        ]
-      : [],
+  type Ref = { role?: unknown; name?: unknown } | null;
+  return Object.entries((refs ?? {}) as Record<string, Ref>).flatMap(
+    ([ref, entry]) => {
+      const name = typeof entry?.name === "string" ? entry.name : "";
+      return typeof entry?.role === "string"
+        ? [{ ref, role: entry.role, name }]
+        : [];
+    },
   );
 }
 
-/** The page, driven over the daemon's own command route. */
+/**
+ * The page, driven over the daemon's own command route. Every command that can
+ * navigate stops at MCPJam's callback (`stopAt`), so its app never loads; the
+ * URL the redirect carried is then read back as the page, and only the
+ * driver's `complete` call takes its `code` and `state` from there.
+ */
 function browserOn(
   handle: SandboxHostedBrowserSessionHandle,
   features: readonly string[],
   frame: (atMs: number) => string,
-  signal: AbortSignal,
+  options: { callbackUrl: string; signal: AbortSignal },
 ): SignInBrowser {
+  let stoppedAt: string | undefined;
   const send = async (
     action: BrowserAction,
     secrets: BrowserCommandSecret[] = [],
   ) => {
+    const navigates = action.kind === "navigate" || action.kind === "act";
     const answer = await handle.client.sendCommand(
-      { commandId: randomUUID(), source: "inspector", action },
+      {
+        commandId: randomUUID(),
+        source: "inspector",
+        action,
+        ...(navigates ? { stopAt: options.callbackUrl } : {}),
+      },
       handle.bootId,
-      { signal, secrets },
+      { signal: options.signal, secrets },
     );
     if (answer.status !== "ok") {
       throw new Error(
         `The hosted browser did not run the command (${answer.status}).`,
       );
+    }
+    // Checked before `ok`: a stopped navigation can end the command unloaded.
+    if (answer.result.stoppedAt) {
+      stoppedAt = answer.result.stoppedAt;
+      return {};
     }
     if (!answer.result.ok) {
       throw new Error(
@@ -200,6 +199,7 @@ function browserOn(
       await send({ kind: "navigate", url });
     },
     read: async () => {
+      if (stoppedAt) return { url: stoppedAt, text: "", controls: [] };
       // The tree first: its refs stay valid through the text read after it.
       const tree = await send({
         kind: "observe",
@@ -317,8 +317,7 @@ export function liveReviewerSignInDeps(input: {
       reserve: async (signal) => {
         const reserved = await leasePost(lease, SESSION, { profile: "blank" });
         const reservation = reserved.reservation as
-          | { id?: unknown }
-          | undefined;
+          { id?: unknown } | undefined;
         if (typeof reservation?.id !== "string") {
           throw new Error("No browser was reserved for this run.");
         }
@@ -366,7 +365,7 @@ export function liveReviewerSignInDeps(input: {
             // A frame of the run's recording: no lease route keeps a screenshot.
             (atMs) =>
               `${id}#t=${Math.max(0, (atMs - recordingFrom) / 1000).toFixed(1)}`,
-            signal,
+            { callbackUrl: redirectUri, signal },
           ),
           recordingArtifactId: id,
         };
@@ -459,7 +458,7 @@ export function liveReviewerSignInDeps(input: {
                 failed: "The connection did not finish within a minute.",
               };
             }
-            await pause(POLL_MS, signal);
+            await pause(POLL_MS, undefined, { signal });
           }
         } catch (error) {
           if (!(error instanceof LeaseRouteRefusal)) throw error;
