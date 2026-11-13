@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Four platform operations work on a directory submission's test plan, the calls its runs may make on the submission's server. `getDirectorySubmissionTestPlanOperation` reads the saved plan or a kept revision, with what keeps it from running; `draftDirectorySubmissionTestPlanOperation` drafts a plan that calls every tool the server lists and saves nothing; `saveDirectorySubmissionTestPlanOperation` saves a plan at the revision you read, which it requires, so a plan saved since is never overwritten; and `getDirectorySubmissionToolTestsOperation` reads what a run's calls showed, tool by tool, valid input apart from expected refusals, with the calls that may have changed data named. By default it lists the tools that need attention, without call records; `status` and `tool` narrow it. `startDirectorySubmissionRunOperation` takes `testPlanRevision`, which starts a run that makes the plan's calls and is never filled in for the caller. The `directory-readiness` feature gates the save; the reads stay open. They follow the submission operations in `ALL_OPERATIONS`.

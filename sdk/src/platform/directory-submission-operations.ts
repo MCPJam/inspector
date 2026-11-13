@@ -17,45 +17,35 @@ import type {
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
-import type { PlatformOperation, PlatformOperationContext } from "./operations.js";
 import {
-  PROJECT_SELECTOR_DESCRIPTION,
+  GATED_BETA,
+  OPEN_BETA,
+  SUBMISSION_PERMALINK,
+  id,
+  project,
+  resolveScope,
+  submissionInput,
+  type Op,
+  type ProjectResult,
+} from "./directory-submission-operation-support.js";
+import {
   resolveLiveServer,
-  resolveProjectOrThrow,
   resolveSavedServer,
   serverScopedInput,
-  toSelectedProjectInfo,
   toServerInfo,
   type ServerResult,
 } from "./operation-support.js";
 import { noPermalink } from "./permalinks.js";
 import { operationInputError, resolutionError } from "./resource-selectors.js";
-import type { SelectedProjectInfo } from "./show-servers.js";
 import type { PlatformReadinessRunReceipt } from "./types.js";
-
-/** Writes and runs are gated on the beta; reads and the delete stay open. */
-const GATED_BETA =
-  "In beta: an organization outside the directory readiness beta is refused, and the error names the feature.";
-const OPEN_BETA = "Directory readiness is in beta; this stays open to every organization.";
 
 const FLOW_PERMALINK = noPermalink(
   "no-addressable-resource",
   "A flow is a directory's submission form as product data, not a resource in anyone's project."
 );
-const SUBMISSION_PERMALINK = noPermalink(
-  "route-not-addressable",
-  "No app route opens one submission yet: the Readiness page is behind a client flag and does not select a submission from its URL. Owed: `readiness?submission=:submissionId`."
-);
 
-const id = () => z.string().trim().min(1);
-const project = id().optional().describe(PROJECT_SELECTOR_DESCRIPTION);
 const flowId = id().max(100);
 const idempotencyKey = id().max(200).optional();
-
-const submissionInput = z.object({
-  project,
-  submission: id().describe("The submission's id, from list_directory_submissions."),
-});
 
 const flowInput = z.object({
   flow: flowId.describe("The flow's id, such as `claude-connector`, from list_directory_flows."),
@@ -127,6 +117,9 @@ const startInput = submissionInput.extend({
   pluginVersionId: id().optional().describe(
     "Required for a ChatGPT plugin submission, refused for any other: the stored plugin version whose package the run grades with the saved server, such as the submission's `pluginVersionId`. Never read from the submission."
   ),
+  testPlanRevision: z.number().int().min(1).optional().describe(
+    "Make the calls of the submission's saved test plan at this `revision`, from get_directory_submission_test_plan. Naming it authorizes every call in the plan, so it must be the current revision: a stale one is refused with 409 naming the current one, never replaced. Omit it and the run makes no test plan calls."
+  ),
 });
 
 const resultsInput = submissionInput.extend({
@@ -141,8 +134,6 @@ export type UpdateDirectorySubmissionInput = z.infer<typeof updateInput>;
 export type StartDirectorySubmissionRunInput = z.infer<typeof startInput>;
 export type GetDirectorySubmissionResultsInput = z.infer<typeof resultsInput>;
 
-type Op<TInput, TOutput> = PlatformOperation<TInput, TOutput>;
-type ProjectResult = { project: SelectedProjectInfo };
 export type ListDirectoryFlowsResult = { flows: PlatformDirectoryFlowSummary[] };
 export type CreateDirectorySubmissionResult = ServerResult & {
   submission: PlatformDirectorySubmissionView;
@@ -179,16 +170,6 @@ function withoutFindingDetails<T extends { steps: PlacedStep[] }>(value: T): T {
     }),
   }));
   return { ...value, steps };
-}
-
-/** The project the input names, and the submission in it when there is one. */
-async function resolveScope(
-  input: { project?: string; submission?: string },
-  { client, signal, onScopeResolved }: PlatformOperationContext
-) {
-  const { project } = await resolveProjectOrThrow({ client, signal, onScopeResolved }, input.project);
-  const scope = { projectId: project.id, submissionId: input.submission ?? "" };
-  return { client, signal, project, scope, info: toSelectedProjectInfo(project) };
 }
 
 export const listDirectoryFlowsOperation: Op<Record<string, never>, ListDirectoryFlowsResult> = {
@@ -343,16 +324,16 @@ export const deleteDirectorySubmissionOperation: Op<DirectorySubmissionScopedInp
 export const startDirectorySubmissionRunOperation: Op<StartDirectorySubmissionRunInput, StartDirectorySubmissionRunResult> = {
   name: "start_directory_submission_run",
   title: "Run a directory submission's checks",
-  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
+  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. With \`testPlanRevision\`, the run also makes the calls of that saved test plan; read what they showed with get_directory_submission_tool_tests. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: startInput,
   async execute(input, context) {
     const { client, signal, scope, info } = await resolveScope(input, context);
-    const { includeLlmObservations, idempotencyKey, pluginVersionId } = input;
+    const { includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision } = input;
     const run = await client.startDirectorySubmissionRun(
-      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId },
+      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision },
       { signal }
     );
     return { project: info, submissionId: input.submission, run };
