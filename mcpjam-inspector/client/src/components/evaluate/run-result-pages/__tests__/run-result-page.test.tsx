@@ -181,6 +181,26 @@ describe("RunResultPage", () => {
     expect(mocks.track).not.toHaveBeenCalled();
   });
 
+  it("sends a page link to the run when the flag is off", () => {
+    mocks.flag.value = false;
+    renderPage({ caseKey: "refund", iterationId: "it1" });
+    expect(mocks.navigateApp).toHaveBeenCalledWith(
+      "/evaluate/suite/suite/runs/one",
+      { replace: true },
+    );
+    expect(mocks.track).not.toHaveBeenCalled();
+  });
+
+  it("says a launch run failed to load instead of claiming no result", () => {
+    renderPage({ caseKey: "missing" }, { readFailed: true });
+    expect(
+      screen.getByRole("heading", {
+        name: "Couldn't load the results of Run #3",
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open Run #3" })).toBeVisible();
+  });
+
   it("renders a test case page with column links and iteration links", async () => {
     const { onEditCase, onCrumbsChange } = renderPage({ caseKey: "refund" });
     expect(screen.getByRole("heading", { name: "Refund order" })).toBeVisible();

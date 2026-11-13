@@ -54,26 +54,34 @@ export function IterationResultBadge({ result }: { result: string }) {
   );
 }
 
+/** `readFailed`: a launch run's results did not load, so "no result" is unknown. */
 export function ResultNotFound({
   runLabel,
   onOpenRun,
+  readFailed = false,
 }: {
   runLabel: string;
   onOpenRun: () => void;
+  readFailed?: boolean;
 }) {
+  const midSentence = runLabel.replace(/^This run$/, "this run");
   return (
     <div
       className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center"
       data-testid="run-result-not-found"
     >
       <h1 className="text-lg font-semibold text-foreground">
-        {runLabel} has no result at this link
+        {readFailed
+          ? `Couldn't load the results of ${midSentence}`
+          : `${runLabel} has no result at this link`}
       </h1>
       <p className="text-sm text-muted-foreground">
-        Open {runLabel} to pick another result.
+        {readFailed
+          ? `Open ${midSentence} to load them again.`
+          : `Open ${midSentence} to pick another result.`}
       </p>
       <Button variant="outline" onClick={onOpenRun}>
-        Open {runLabel}
+        Open {midSentence}
       </Button>
     </div>
   );

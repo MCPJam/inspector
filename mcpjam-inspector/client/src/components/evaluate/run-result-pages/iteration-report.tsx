@@ -14,6 +14,7 @@ import { useSelectedRun } from "../../evals/use-selected-run";
 import { IterationReportScorecard } from "../case-scorecard/iteration-report-subscriber";
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
+import type { TrialChainDisplay } from "../case-scorecard/trial-chain-state";
 import { outcomeLabel } from "./outcome";
 
 /**
@@ -25,6 +26,8 @@ export function IterationReport({
   target,
   diagnostic,
   chain,
+  chainDisplay = "settled",
+  onRetryChain,
   onEditEvaluator,
   traceDetailPlacement,
 }: {
@@ -32,6 +35,9 @@ export function IterationReport({
   target: RunResultsMatrixData["targets"][number];
   diagnostic?: EvalRunDecisionDiagnostic;
   chain?: EvalRunDecisionChain;
+  /** The chain read's state, so a failed read shows its retry, not a blank. */
+  chainDisplay?: TrialChainDisplay;
+  onRetryChain?: () => void;
   onEditEvaluator?: () => void;
   traceDetailPlacement?: TraceDetailPlacement;
 }) {
@@ -71,6 +77,8 @@ export function IterationReport({
                   iteration={iteration}
                   steps={authored.steps}
                   chain={decisionChain}
+                  chainDisplay={diagnostic?.chain ? "settled" : chainDisplay}
+                  onRetryChain={onRetryChain}
                   envelope={context.envelope}
                   trace={context.trace}
                   scoresSection={context.scoresSection}

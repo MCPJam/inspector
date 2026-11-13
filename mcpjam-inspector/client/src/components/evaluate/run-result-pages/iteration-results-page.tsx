@@ -6,6 +6,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { formatRelativeTime, formatRunId } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration } from "../../evals/types";
+import type { TrialChainDisplay } from "../case-scorecard/trial-chain-state";
 import { IterationReport } from "./iteration-report";
 import { IterationResultBadge, ResultPageTitle } from "./result-page-parts";
 import type { MatrixTarget } from "./result-page-links";
@@ -16,6 +17,8 @@ export function IterationResultsPage({
   target,
   diagnostic,
   chain,
+  chainDisplay,
+  onRetryChain,
   onEditCase,
 }: {
   iteration: EvalIteration;
@@ -23,6 +26,8 @@ export function IterationResultsPage({
   target: MatrixTarget;
   diagnostic?: EvalRunDecisionDiagnostic;
   chain?: EvalRunDecisionChain;
+  chainDisplay?: TrialChainDisplay;
+  onRetryChain?: () => void;
   onEditCase?: () => void;
 }) {
   return (
@@ -60,6 +65,8 @@ export function IterationResultsPage({
           target={target}
           diagnostic={diagnostic}
           chain={chain}
+          chainDisplay={chainDisplay}
+          onRetryChain={onRetryChain}
           traceDetailPlacement="auto"
         />
       </div>

@@ -2338,7 +2338,8 @@ export function SuiteIterationsView({
               })()
             ) : route.type === "run-detail" &&
               route.resultPage &&
-              suiteDetailOverview ? (
+              suiteDetailOverview &&
+              !selectedRunState.isUnavailable ? (
               <RunResultPage
                 key={`${contentKey}-result`}
                 suiteId={suite._id}
@@ -2357,6 +2358,9 @@ export function SuiteIterationsView({
                       !detailRows.failedRunIds.has(id),
                   )
                 }
+                readFailed={detailRunIds.some((id) =>
+                  detailRows.failedRunIds.has(id),
+                )}
                 projectId={projectId}
                 decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
                 onEditCase={
