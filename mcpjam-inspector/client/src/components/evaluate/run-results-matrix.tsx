@@ -558,7 +558,11 @@ export function RunResultsMatrix({
                               caseKey: row.key,
                               targetKey: target.key,
                             });
-                            trackCaseResultViewed(viewedRun, "drawer");
+                            trackCaseResultViewed(
+                              viewedRun,
+                              target.run._id,
+                              "drawer",
+                            );
                           }}
                           aria-label={`Inspect ${row.title} on ${target.client} · ${target.model}`}
                           className={cellClass}
@@ -673,7 +677,12 @@ export function RunResultsMatrix({
                   caseKey={selectedRow.key}
                   onSelectIteration={(iterationId) => {
                     setSelectedIterationId(iterationId);
-                    trackIterationViewed(viewedRun, "drawer", "grid");
+                    trackIterationViewed(
+                      viewedRun,
+                      selectedTarget.run._id,
+                      "drawer",
+                      "grid",
+                    );
                   }}
                 />
                 {onEditCase && selectedRow.testCaseId && (
