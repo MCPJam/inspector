@@ -259,12 +259,27 @@ export function getCaniuseSupportLevel(
       field.id === "toolResultAuthChallenge" ||
       // A client with no saved Event delivery has only MCPJam's default for
       // its style, which is not a measurement.
-      field.id === "eventsDeliveryModes") &&
+      field.id === "eventsDeliveryModes" ||
+      // A catalog row reads `undefined` for an app or image value its probe
+      // did not measure (see `untestedCatalogAppValue`), rather than the
+      // client style's default. The CSP subtype rows keep their own reading.
+      (field.id.startsWith("appsCap.") &&
+        !field.id.startsWith("appsCap.cspConnectDomains.") &&
+        !field.id.startsWith("appsCap.cspResourceDomains.")) ||
+      field.id.startsWith("modelVisibleMcpToolResults.") ||
+      field.id.startsWith("mcpToolResultImageRendering")) &&
     field.read(config) === undefined
   ) {
     return "unknown";
   }
-  return getSupportLevel(field, config) ?? "unknown";
+  const level = getSupportLevel(field, config);
+  if (level !== null) return level;
+  // The other boolean rows keep their established reading: absent is not
+  // supported.
+  if (field.kind.kind === "boolean" && field.read(config) === undefined) {
+    return "neutral";
+  }
+  return "unknown";
 }
 
 // Rows that describe a sandboxing choice rather than a feature a client can

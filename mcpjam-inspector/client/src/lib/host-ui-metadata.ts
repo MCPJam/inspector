@@ -21,6 +21,8 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import geminiLogo from "/google_logo.png";
+import grokbotLogo from "/grokbot_logo.png";
+import museLogo from "/muse_logo.png";
 
 export const DEFAULT_CATALOG_HOST_ID = "mcpjam";
 
@@ -31,7 +33,12 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   claude: claudeLogo,
   "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
+  "claude-code-desktop": claudeCodeLogo,
+  "claude-code-web": claudeCodeLogo,
   chatgpt: openaiLogo,
+  "chatgpt-desktop": openaiLogo,
+  "chatgpt-work": openaiLogo,
+  "chatgpt-work-desktop": openaiLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
   slack: slackLogo,
@@ -40,6 +47,7 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   // because an id absent from this record falls back to the anonymous MCP mark.
   "cursor-cli": cursorLogo,
   codex: codexLogo,
+  "codex-cli": codexLogo,
   opencode: openCodeLogoLight,
   "copilot-cli": copilotLogo,
   copilot: copilotLogo,
@@ -51,6 +59,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   perplexity: perplexityLogo,
   cline: clineLogoLight,
   notion: notionLogo,
+  grokbot: grokbotLogo,
+  muse: museLogo,
 };
 
 const LOGO_BY_HOST_ID_AND_THEME: Record<
@@ -116,8 +126,14 @@ const TINT_BY_HOST_ID: Record<string, string> = {
   claude: "#D97757",
   "claude-desktop": "#D97757",
   "claude-code": "#D97757",
+  "claude-code-desktop": "#D97757",
+  "claude-code-web": "#D97757",
   chatgpt: NEUTRAL_HOST_TINT,
+  "chatgpt-desktop": NEUTRAL_HOST_TINT,
+  "chatgpt-work": NEUTRAL_HOST_TINT,
+  "chatgpt-work-desktop": NEUTRAL_HOST_TINT,
   codex: NEUTRAL_HOST_TINT,
+  "codex-cli": NEUTRAL_HOST_TINT,
   mistral: "#FA520F",
   goose: NEUTRAL_HOST_TINT,
   slack: "#611F69",
@@ -131,6 +147,8 @@ const TINT_BY_HOST_ID: Record<string, string> = {
   perplexity: "#20808D",
   cline: NEUTRAL_HOST_TINT,
   notion: NEUTRAL_HOST_TINT,
+  grokbot: NEUTRAL_HOST_TINT,
+  muse: NEUTRAL_HOST_TINT,
 };
 
 /**
