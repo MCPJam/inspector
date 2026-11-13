@@ -378,6 +378,22 @@ describe("pack release boundaries", () => {
     expect(preflight.run).toContain("local-harness-release-packs.mjs");
   });
 
+  it("translates the pack's x64 Node before a darwin-x64 session starts the bridge's clock", () => {
+    const { jobs } = workflow("local-harness-conformance");
+    for (const [name, harness] of [["scenarios", "claude-code"], ["codex-scenarios", "codex"]] as const) {
+      const steps: any[] = jobs[name].steps;
+      const translate = steps.findIndex((step) => step.name === "Translate the pack's x64 Node");
+      expect(steps[translate]?.if, name).toBe("matrix.node_arch == 'x64' && runner.os == 'macOS'");
+      expect(steps[translate].run, name).toBe(`arch -x86_64 "$RUNNER_TEMP/conformance/runtime/${harness}/bin/node" --version`);
+      const packSteps = steps.flatMap((step, index) =>
+        /scripts\/(prepare-published-harness-conformance|build-local-harness-pack)\.mjs/.test(step.run ?? "") ? [index] : [],
+      );
+      expect(packSteps, name).toHaveLength(2);
+      expect(translate, name).toBeGreaterThan(Math.max(...packSteps));
+      expect(translate, name).toBeLessThan(steps.findIndex((step) => /conformance\/run-[a-z-]+\.m?ts/.test(step.run ?? "")));
+    }
+  });
+
   it("builds the adapter once and hands it to every platform leg", () => {
     const { jobs } = workflow("local-harness-conformance");
     const unit = jobs.unit.steps.map((step: any) => step.run ?? "").join("\n");

@@ -355,6 +355,17 @@ jobs:
           cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
             "$RUNNER_TEMP/conformance/runtime/claude-code"
 
+      # Rosetta translates an x86_64 binary on its first launch and keeps the
+      # translation for that file only. The pack's `bin/node` is a new file in
+      # every leg, and the bridge it runs has 30 s to start listening
+      # (bridge-endpoint.ts). In the first session, translation took about 20 s
+      # of that: 22.8 to 25.6 s to a listening bridge, against 2.5 s in later
+      # sessions, and a slower runner missed the deadline. Launching it here
+      # pays for the translation before any session starts the clock.
+      - name: Translate the pack's x64 Node
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: arch -x86_64 "$RUNNER_TEMP/conformance/runtime/claude-code/bin/node" --version
+
       # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
       # Windows path for a remote host.
       - name: Download the adapter build
@@ -880,6 +891,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/conformance/runtime"
           cp -R "$RUNNER_TEMP/conformance/runtime-src/codex" \
             "$RUNNER_TEMP/conformance/runtime/codex"
+
+      # As in `scenarios`: the bridge's first start must not pay for Rosetta
+      # translating the pack's `bin/node` inside its 30 s window.
+      - name: Translate the pack's x64 Node
+        if: matrix.node_arch == 'x64' && runner.os == 'macOS'
+        run: arch -x86_64 "$RUNNER_TEMP/conformance/runtime/codex/bin/node" --version
 
       # Built once, by `unit`. Read from stdin: GNU tar takes the `D:` of a
       # Windows path for a remote host.
