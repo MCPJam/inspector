@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 
 const logged = vi.hoisted(() => ({ warn: vi.fn(), info: vi.fn() }));
@@ -16,11 +16,14 @@ import {
   harnessBootstrapObservation,
   logHarnessBootstrapOnFailure,
   observeHarnessBootstrap,
+  resetHarnessBakeStaleWarningsForTests,
+  watchNewBoxForStaleBake,
 } from "../harness-bake-observer.js";
 import {
   HARNESS_BAKE_MANIFEST_PATH,
   HARNESS_BAKED_MARKER_AUTHOR,
 } from "../harness-bake.js";
+import { buildLegacyLogRow } from "@/shared/strict-log";
 
 // The observer is what turns "did this turn hit the baked template?" into a
 // log field the bake-miss monitor can read. It must classify every way a turn
@@ -77,6 +80,7 @@ async function frameworkBootstrap(
     bootstrapDir?: string;
     resume?: boolean;
     installFails?: boolean;
+    identity?: string;
   } = {},
 ) {
   const bootstrapDir = options.bootstrapDir ?? ".harness-bootstrap/claude-code";
@@ -85,7 +89,7 @@ async function frameworkBootstrap(
     : await provider.createSession();
   const restricted = session.restricted();
   const home = "/home/user";
-  const marker = `${home}/.ai-sdk-harness/${bootstrapDir}/.bootstrap-${ID}.ok`;
+  const marker = `${home}/.ai-sdk-harness/${bootstrapDir}/.bootstrap-${options.identity ?? ID}.ok`;
   const existing = await restricted.readTextFile({ path: marker });
   if (existing !== null) return;
   await restricted.writeTextFile({
@@ -150,7 +154,8 @@ describe("observeHarnessBootstrap", () => {
       harnessBakeOnBox: "present",
       harnessRecipeIdentity: ID,
     });
-    // Drift is a field the monitor groups by, not a log line of its own.
+    // Drift is a field the monitor groups by, not a log line of its own,
+    // unless the caller marked the box new (watchNewBoxForStaleBake below).
     expect(logged.warn).not.toHaveBeenCalled();
   });
 
@@ -271,6 +276,141 @@ describe("observeHarnessBootstrap", () => {
     await frameworkBootstrap(observed);
     const o = await harnessBootstrapObservation(observed, 10);
     expect(o?.bakeOnBox).toBe("unknown");
+  });
+});
+
+describe("watchNewBoxForStaleBake", () => {
+  // The alert for a deployment whose template lacks this inspector's recipes.
+  // A box from the computer template carries its bake manifest; one from a
+  // custom environment image does not.
+  const STALE = "[harness][bake] harness_bake_stale";
+  const templateBox = () =>
+    fakeProvider({ files: { [HARNESS_BAKE_MANIFEST_PATH]: "{}" } });
+
+  beforeEach(() => resetHarnessBakeStaleWarningsForTests());
+
+  async function newBoxTurn(
+    fake: ReturnType<typeof fakeProvider>,
+    options: Parameters<typeof frameworkBootstrap>[1] = {},
+    harnessId = "claude-code",
+  ) {
+    const observed = observeHarnessBootstrap(fake.provider);
+    watchNewBoxForStaleBake(observed, harnessId);
+    await frameworkBootstrap(observed, options);
+    // Settles the manifest probe the warning waits on.
+    return harnessBootstrapObservation(observed);
+  }
+
+  it("warns once per identity when a new box from the default template misses the bake", async () => {
+    expect(await newBoxTurn(templateBox())).toMatchObject({
+      outcome: "installed",
+      bakeOnBox: "present",
+    });
+    await newBoxTurn(templateBox());
+    expect(logged.warn).toHaveBeenCalledTimes(1);
+    // The harness and the identity it expected, nothing else.
+    expect(logged.warn).toHaveBeenCalledWith(STALE, {
+      harnessId: "claude-code",
+      harnessRecipeIdentity: ID,
+    });
+
+    const codex = "fedcba9876543210";
+    await newBoxTurn(
+      templateBox(),
+      { bootstrapDir: ".harness-bootstrap/codex-appserver", identity: codex },
+      "codex",
+    );
+    expect(logged.warn).toHaveBeenCalledTimes(2);
+    expect(logged.warn).toHaveBeenLastCalledWith(STALE, {
+      harnessId: "codex",
+      harnessRecipeIdentity: codex,
+    });
+  });
+
+  it("leaves a log row an alert can match after the strict log boundary", async () => {
+    await newBoxTurn(templateBox());
+    // The row `logger.warn` ingests: only catalogued messages and enumerated
+    // fields survive it, so a message built at runtime would read log.unknown.
+    const [message, context] = logged.warn.mock.lastCall ?? [];
+    const row = buildLegacyLogRow(message, { ...context, level: "warn" });
+    expect(row).toMatchObject({
+      event: expect.stringMatching(/^log\.[0-9a-f]{16}$/),
+      message: STALE,
+      level: "warn",
+      harnessId: "claude-code",
+    });
+  });
+
+  it("warns when the new box's install then fails too: the miss is the evidence", async () => {
+    const observed = observeHarnessBootstrap(templateBox().provider);
+    watchNewBoxForStaleBake(observed, "claude-code");
+    await expect(
+      frameworkBootstrap(observed, { installFails: true }),
+    ).rejects.toThrow(/pnpm install/);
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "install-failed",
+      bakeOnBox: "present",
+    });
+    expect(logged.warn).toHaveBeenCalledWith(STALE, expect.anything());
+  });
+
+  it("stays silent on a new box from a custom environment image, which carries no bake", async () => {
+    expect(await newBoxTurn(fakeProvider({ files: {} }))).toMatchObject({
+      outcome: "installed",
+      bakeOnBox: "absent",
+    });
+    expect(logged.warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on a new box the template baked for this inspector", async () => {
+    const fake = fakeProvider({ files: { [MARKER]: bakedMarker } });
+    expect(await newBoxTurn(fake)).toMatchObject({ outcome: "baked" });
+    expect(logged.warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on a box not marked new, which can predate the template", async () => {
+    // A follow-up turn's box, or a persistent computer.
+    const observed = observeHarnessBootstrap(templateBox().provider);
+    await frameworkBootstrap(observed, { resume: true });
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      outcome: "installed",
+      bakeOnBox: "present",
+    });
+    expect(logged.warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on intentional fallbacks and when the box cannot say it carries a bake", async () => {
+    await newBoxTurn(templateBox(), {
+      bootstrapDir: ".harness-bootstrap/not-baked",
+    });
+    const otherHome = templateBox();
+    const observed = observeHarnessBootstrap(otherHome.provider);
+    watchNewBoxForStaleBake(observed, "claude-code");
+    const session = await observed.createSession();
+    await session.restricted().readTextFile({
+      path: `/home/user/project/.ai-sdk-harness/.harness-bootstrap/claude-code/.bootstrap-${ID}.ok`,
+    });
+    expect(await harnessBootstrapObservation(observed)).toMatchObject({
+      expectation: "custom-workdir",
+      bakeOnBox: "present",
+    });
+    const unreachable = templateBox();
+    unreachable.session.readTextFile.mockImplementation(
+      async ({ path }: { path: string }) => {
+        if (path === HARNESS_BAKE_MANIFEST_PATH) throw new Error("box gone");
+        return null;
+      },
+    );
+    expect(await newBoxTurn(unreachable)).toMatchObject({
+      bakeOnBox: "unknown",
+    });
+    expect(logged.warn).not.toHaveBeenCalled();
+  });
+
+  it("ignores a provider it did not observe", () => {
+    expect(() =>
+      watchNewBoxForStaleBake(fakeProvider({ files: {} }).provider, "codex"),
+    ).not.toThrow();
   });
 });
 
