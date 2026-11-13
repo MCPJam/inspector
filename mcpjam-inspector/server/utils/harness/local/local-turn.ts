@@ -69,6 +69,7 @@ import {
   type ParkInvalidationReason,
 } from "./approval-park.js";
 import { localRuntime } from "./runtimes/index.js";
+import { revalidateRuntime } from "./runtime-identity.js";
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -864,7 +865,8 @@ async function adoptParkedLocalTurn(
     installedAdapterVersion:
       args.installedAdapterVersion ??
       localRuntime(harnessId).installedAdapterVersion(),
-    // Verified when it spawned; an adopted provider can start no other.
+    // The parked process's own pack is re-verified below, once it is known
+    // to be the runtime this turn names.
     runtimeVerifiedAtSpawn: true,
   });
   if (!availability.available) {
@@ -881,6 +883,16 @@ async function adoptParkedLocalTurn(
       "authorization-revoked",
       "approval-runtime-changed",
       "The runtime or workspace changed while this approval was waiting; " +
+        "the pending action will not run.",
+    );
+  }
+  // Not "verified once at spawn": the bridge starts a new vendor process from
+  // this pack when its runtime configuration changes or the app-server dies.
+  if (!(await revalidateRuntime(live.prepared.plan.runtime)).ok) {
+    return fail(
+      "authorization-revoked",
+      "runtime-changed",
+      "The local runtime changed on disk while this approval was waiting; " +
         "the pending action will not run.",
     );
   }
