@@ -1,11 +1,5 @@
 # `@mcpjam/sdk` changelog
 
-## 10.6.1
-
-### Patch Changes
-
-- [#7448](https://github.com/MCPJam/inspector/pull/7448) [`3842255`](https://github.com/MCPJam/inspector/commit/38422550fcbec2a3a3e26718168d5fad5b007191) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The chat sessions API now refuses a client that runs a vendor's agent loop instead of answering on MCPJam's emulated engine under that client's name. Use the client in the Playground, or choose a different client.
-
 ## 10.6.0
 
 ### Minor Changes

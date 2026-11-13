@@ -78,21 +78,38 @@ export async function processEnvironment(pid: number): Promise<string | null> {
   }
 }
 
-/** TCP listeners as `<address> (LISTEN)`, the shape `lsof` gives. */
-export async function listeners(pid: number): Promise<string[]> {
-  try {
-    if (WIN) {
+/**
+ * The TCP sockets a process listens on, as `<address> (LISTEN)` (the shape
+ * `lsof` gives), or `null` when they could not be read, so a loopback check
+ * that could not look fails instead of passing. `lsof` exits 1 with nothing on
+ * stdout for a process with no listening socket, the clean case; it may still
+ * warn on stderr, so stdout alone decides.
+ */
+export async function listeners(pid: number): Promise<string[] | null> {
+  if (WIN) {
+    try {
       return (await execFileP("netstat", ["-ano"])).stdout
         .split(/\r?\n/)
         .map((line) => line.trim().split(/\s+/))
         .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
         .map((f) => `${f[1]} (LISTEN)`);
+    } catch {
+      return null;
     }
+  }
+  try {
     return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
       .split("\n").slice(1).filter(Boolean).map((line) => line.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
+  } catch (error) {
+    const failed = error as { code?: unknown; stdout?: unknown };
+    return failed.code === 1 && failed.stdout === "" ? [] : null;
   }
+}
+
+/** Every listener in a process tree, or `null` when any process's could not be read. */
+export async function treeListeners(pids: number[]): Promise<string[] | null> {
+  const found = await Promise.all(pids.map(listeners));
+  return found.every((entry): entry is string[] => entry !== null) ? found.flat() : null;
 }
 
 export const isLoopbackListener = (listener: string) => /^(127\.|\[?::1\]?:)/.test(listener);
