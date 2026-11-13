@@ -474,12 +474,12 @@ export function ConformanceContent({
   // recovers a run still in flight when it mounts, so it shows before the
   // suites have run, too.
   //
-  // Behind `mcpjam-directory-readiness` again while directory submissions are
-  // a later phase: the page ships protocol conformance first. `=== true`, so
-  // a missing flag (or one PostHog has not hydrated yet) keeps them hidden
-  // rather than flashing them for users the flag excludes.
+  // Behind their own flag, off: the Readiness page's flag must not reveal
+  // them, and the page replaces them. `=== true`, so a missing flag (or one
+  // PostHog has not hydrated yet) keeps them hidden rather than flashing them
+  // for users the flag excludes.
   const directoryReadinessEnabled =
-    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+    useFeatureFlagEnabled("mcpjam-directory-readiness-cards") === true;
   const tasksUpdateCheck = useTasksUpdateCheckEnabled();
   const readiness = directoryReadinessEnabled ? (
     <div className="space-y-4">

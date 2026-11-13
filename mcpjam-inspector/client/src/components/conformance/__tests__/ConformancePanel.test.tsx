@@ -3752,9 +3752,10 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
-    // Directory submissions are a later phase than protocol conformance, so
-    // the sections stay out of the page until the flag says otherwise.
+  it("hides the readiness sections unless mcpjam-directory-readiness-cards is on", () => {
+    // The Readiness page replaces these cards, so they have their own flag,
+    // off: turning on the page's flag must not bring them back.
+    enabledFlags.add("mcpjam-directory-readiness");
     render(<ConformanceTab server={createHttpServer()} />);
     expect(
       screen.getByText("Run your first conformance check"),
@@ -3764,8 +3765,8 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
   });
 
-  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness");
+  it("shows the readiness sections when mcpjam-directory-readiness-cards is on", () => {
+    enabledFlags.add("mcpjam-directory-readiness-cards");
     render(<ConformanceTab server={createHttpServer()} />);
 
     // Before any run, too: readiness has its own run control and recovers an
@@ -3779,7 +3780,7 @@ describe("ConformanceTab", () => {
   });
 
   it("keeps the readiness sections mounted when the first run starts", async () => {
-    enabledFlags.add("mcpjam-directory-readiness");
+    enabledFlags.add("mcpjam-directory-readiness-cards");
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
     const before = screen.getByText("OpenAI Directory Readiness");
