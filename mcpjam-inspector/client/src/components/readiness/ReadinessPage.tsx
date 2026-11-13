@@ -13,6 +13,7 @@ import { ConformanceServerPicker } from "@/components/conformance/ConformancePag
 import { ScopedNavigate } from "@/components/routing/scoped-navigate";
 import type { DirectoryReadinessState } from "@/hooks/use-directory-readiness-run";
 import { useDirectorySubmission } from "@/hooks/use-directory-submission";
+import { useDirectoryTestPlan } from "@/hooks/use-directory-test-plan";
 import { useProjectServers } from "@/hooks/useViews";
 import { routePaths } from "@/lib/app-navigation";
 import { useAppRouteContext } from "@/lib/app-route-context";
@@ -229,6 +230,15 @@ export function ReadinessPage({
     server: chosen?.server ?? NO_SERVER,
   });
   const { flow, view, run } = session;
+  // A run starts with the saved plan revision the run button names.
+  const plan = useDirectoryTestPlan({
+    projectId: projectId ?? "",
+    submissionId: projectId ? openId : null,
+    runKey: view
+      ? `${view.lastRunId ?? ""}:${view.resultsRunId ?? ""}:${run.status}`
+      : "",
+  });
+  const planRevision = plan.saved?.revision;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -304,7 +314,8 @@ export function ReadinessPage({
         canRun={Boolean(view) && run.status !== "unavailable"}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
-        onRun={() => void session.startRun()}
+        planRevision={planRevision}
+        onRun={() => void session.startRun(planRevision)}
       />
       <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
         {body}

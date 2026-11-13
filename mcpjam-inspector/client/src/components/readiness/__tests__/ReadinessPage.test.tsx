@@ -3,11 +3,12 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CLAUDE_CONNECTOR_FLOW,
+  draftDirectoryTestPlan,
   placeDirectoryResults,
   type DirectoryAnswer,
   type PlacedFinding,
@@ -58,6 +59,14 @@ const api = vi.hoisted(() => ({
   startDirectorySubmissionRun: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
+
+const plans = vi.hoisted(() => ({
+  getTestPlan: vi.fn(),
+  draftTestPlan: vi.fn(),
+  saveTestPlan: vi.fn(),
+  getToolTests: vi.fn(),
+}));
+vi.mock("@/lib/apis/directory-test-plan-api", () => plans);
 
 function finding(
   id: string,
@@ -119,6 +128,9 @@ function submission(): SubmissionView {
 describe("ReadinessRoute", () => {
   beforeEach(() => {
     for (const mock of Object.values(api)) mock.mockReset();
+    for (const mock of Object.values(plans)) mock.mockReset();
+    plans.getTestPlan.mockResolvedValue(null);
+    plans.getToolTests.mockResolvedValue({ run: null, tools: [], inDoubt: [] });
     api.getDirectoryFlow.mockResolvedValue(CLAUDE_CONNECTOR_FLOW);
     api.listServerSubmissions.mockResolvedValue([]);
     api.createDirectorySubmission.mockResolvedValue(submission());
@@ -167,6 +179,34 @@ describe("ReadinessRoute", () => {
       "proj_1",
       "srv_1",
       expect.any(AbortSignal),
+    );
+  });
+
+  it("names the saved test plan revision on the run button, and starts the run with it", async () => {
+    plans.getTestPlan.mockResolvedValue({
+      submissionId: "sub_1",
+      revision: 3,
+      plan: draftDirectoryTestPlan([]),
+      issues: [],
+      catalog: null,
+    });
+    api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Run checks with test plan revision 3",
+      }),
+    );
+    await waitFor(() =>
+      expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
+        { projectId: "proj_1", submissionId: "sub_1" },
+        expect.any(String),
+        undefined,
+        3,
+      ),
     );
   });
 

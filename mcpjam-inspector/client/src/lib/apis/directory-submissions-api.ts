@@ -46,7 +46,20 @@ export const updateDirectorySubmission = (
   body: PlatformDirectorySubmissionUpdateBody,
 ) => client().updateDirectorySubmission({ ...scope, ...body });
 
+/**
+ * A ChatGPT plugin's run also names the stored version it grades. Naming a
+ * saved test plan revision authorizes that plan's calls; without one, the
+ * run calls none of the server's tools.
+ */
 export const startDirectorySubmissionRun = (
   scope: SubmissionScope,
   idempotencyKey: string,
-) => client().startDirectorySubmissionRun({ ...scope, idempotencyKey });
+  pluginVersionId?: string,
+  testPlanRevision?: number,
+) =>
+  client().startDirectorySubmissionRun({
+    ...scope,
+    idempotencyKey,
+    pluginVersionId,
+    testPlanRevision,
+  });
