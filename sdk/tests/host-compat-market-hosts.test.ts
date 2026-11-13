@@ -74,7 +74,8 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      downloadFile: false,
+      // Advertised in ChatGPT's `hostCapabilities`.
+      downloadFile: true,
     });
   });
 
