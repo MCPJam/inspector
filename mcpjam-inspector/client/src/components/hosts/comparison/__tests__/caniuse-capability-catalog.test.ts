@@ -32,6 +32,10 @@ describe("caniuse capability catalog", () => {
     expect(getCaniuseCapabilityBySlug("roots")?.field.id).toBe(
       "capabilities.roots"
     );
+    // The MCP Apps (UI extension) row, next to Skills over MCP.
+    expect(getCaniuseCapabilityBySlug("ui-extension")?.field.id).toBe(
+      "capabilities.uiExtension"
+    );
     expect(
       getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id
     ).toBe("appsCap.availableDisplayModes");

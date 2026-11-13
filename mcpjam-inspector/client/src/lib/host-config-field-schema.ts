@@ -43,6 +43,7 @@ import {
   MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
+  MCP_UI_EXTENSION_ID,
   readEventsHostSetting,
   readTasksPolicy,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
@@ -1193,6 +1194,26 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
           | Record<string, unknown>
           | undefined
       )?.[MCP_SKILLS_EXTENSION_ID],
+  },
+  {
+    // MCP Apps (the UI extension). MCPJam renders a View only for a client
+    // that declares it, and the catalog declares it exactly where the client
+    // renders widgets — even for Gemini, which renders without sending it —
+    // so this row answers "does this client show MCP Apps".
+    id: "capabilities.uiExtension",
+    section: "protocol",
+    subsection: "Client capabilities supported",
+    label: "MCP Apps",
+    path: `clientCapabilities.extensions.${MCP_UI_EXTENSION_ID}`,
+    description:
+      "Shows MCP Apps widgets, through the MCP Apps UI extension (io.modelcontextprotocol/ui).",
+    kind: { kind: "capability" },
+    read: (cfg) =>
+      (
+        cfg.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.[MCP_UI_EXTENSION_ID],
   },
 
   // ============================================================

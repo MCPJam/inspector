@@ -6423,30 +6423,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "grokbot",
     "mcpProfile": {
       "apps": {
-        "mcpAppsOverrides": {
-          "availableDisplayModes": [
-            "inline",
-          ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
-          "downloadFile": false,
-          "hostContextChanged": false,
-          "logging": false,
-          "message": false,
-          "openLinks": false,
-          "requestTeardown": false,
-          "resourcePrefersBorder": false,
-          "resourceTeardown": false,
-          "safeAreaInsets": false,
-          "sandboxPermissions": false,
-          "serverResources": false,
-          "serverTools": false,
-          "toolCancelled": false,
-          "toolInfo": false,
-          "toolInputPartial": false,
-          "updateModelContext": false,
-          "widgetDisplayModeRequests": "accept",
-        },
+        "mcpAppsOverrides": {},
       },
       "initialize": {
         "clientInfo": {
@@ -6499,30 +6476,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "grokbot",
     "mcpProfile": {
       "apps": {
-        "mcpAppsOverrides": {
-          "availableDisplayModes": [
-            "inline",
-          ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
-          "downloadFile": false,
-          "hostContextChanged": false,
-          "logging": false,
-          "message": false,
-          "openLinks": false,
-          "requestTeardown": false,
-          "resourcePrefersBorder": false,
-          "resourceTeardown": false,
-          "safeAreaInsets": false,
-          "sandboxPermissions": false,
-          "serverResources": false,
-          "serverTools": false,
-          "toolCancelled": false,
-          "toolInfo": false,
-          "toolInputPartial": false,
-          "updateModelContext": false,
-          "widgetDisplayModeRequests": "accept",
-        },
+        "mcpAppsOverrides": {},
       },
       "initialize": {
         "clientInfo": {
@@ -6559,6 +6513,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "extensions": {
         "io.modelcontextprotocol/enterprise-managed-authorization": {},
+        "io.modelcontextprotocol/skills": {},
         "io.modelcontextprotocol/ui": {
           "mimeTypes": [
             "text/html;profile=mcp-app",
@@ -6750,6 +6705,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       },
       "extensions": {
         "io.modelcontextprotocol/enterprise-managed-authorization": {},
+        "io.modelcontextprotocol/skills": {},
         "io.modelcontextprotocol/ui": {
           "mimeTypes": [
             "text/html;profile=mcp-app",
