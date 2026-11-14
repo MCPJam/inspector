@@ -142,6 +142,32 @@ describe("PortalField", () => {
     expect(onChange).toHaveBeenCalledWith(["alpha", "beta"]);
   });
 
+  it("multi-select with options: at the limit, only ticked options can change", async () => {
+    const field = {
+      key: "listing.tags",
+      label: "Tags",
+      control: "multi-select",
+      options: [...options, { value: "gamma", label: "Gamma" }],
+      maxItems: 2,
+      errors: {},
+    } satisfies DirectoryFlowField;
+    const { onChange, rerender } = draw(field, ["alpha"]);
+    // One below the limit: every option can be ticked.
+    expect(screen.getByRole("checkbox", { name: "Gamma" })).toBeEnabled();
+
+    rerender(
+      <PortalField
+        field={field}
+        value={["alpha", "beta"]}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "Gamma" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Alpha" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Alpha" }));
+    expect(onChange).toHaveBeenLastCalledWith(["beta"]);
+  });
+
   it("radio: shows the default and answers with an option value", async () => {
     const { onChange } = draw(claudeField("useCases.access"), "read-only");
     expect(screen.getByRole("radio", { name: /Read only/ })).toBeChecked();
@@ -227,6 +253,9 @@ describe("PortalField", () => {
       },
     });
     expect(screen.getByText("Error: This field is required")).toBeVisible();
+    const input = screen.getByLabelText(/^Name/);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAccessibleDescription("Error: This field is required");
     draw(claudeField("listing.authorName"), "");
     expect(screen.getByText("Author name")).not.toHaveTextContent("required");
   });

@@ -42,7 +42,12 @@ export interface PortalFieldProps {
   onChange: (value: DirectoryAnswerValue) => void;
 }
 
-type ControlProps = PortalFieldProps & { id: string; invalid: boolean };
+type ControlProps = PortalFieldProps & {
+  id: string;
+  invalid: boolean;
+  /** The error line's id, while there is one. */
+  describedBy?: string;
+};
 
 const listOf = (value: DirectoryAnswerValue | undefined): readonly unknown[] =>
   Array.isArray(value) ? value : [];
@@ -65,12 +70,16 @@ const REQUIRED = (
 );
 
 /** Several of a field's options, ticked: acknowledgments, or a multi-select. */
-function OptionList({ field, id, value, onChange }: ControlProps) {
+function OptionList(props: ControlProps) {
+  const { field, id, value, describedBy, onChange } = props;
   const chosen = stringsOf(value);
+  // At the limit, only a ticked option can change: unticking it.
+  const full = chosen.length >= (field.maxItems ?? Infinity);
   return (
     <div
       role="group"
       aria-labelledby={`${id}-label`}
+      aria-describedby={describedBy}
       className="rounded-xl bg-card px-4"
     >
       {field.options?.map((option) => (
@@ -80,6 +89,7 @@ function OptionList({ field, id, value, onChange }: ControlProps) {
         >
           <Checkbox
             checked={chosen.includes(option.value)}
+            disabled={full && !chosen.includes(option.value)}
             onCheckedChange={(checked) =>
               onChange(
                 checked === true
@@ -97,7 +107,8 @@ function OptionList({ field, id, value, onChange }: ControlProps) {
 }
 
 /** A multi-select with no options takes what the person types: the portal's list was never captured. */
-function FreeEntry({ field, id, value, invalid, onChange }: ControlProps) {
+function FreeEntry(props: ControlProps) {
+  const { field, id, value, invalid, describedBy, onChange } = props;
   const [entry, setEntry] = useState("");
   const chosen = stringsOf(value);
   const full = chosen.length >= (field.maxItems ?? Infinity);
@@ -129,6 +140,7 @@ function FreeEntry({ field, id, value, invalid, onChange }: ControlProps) {
         disabled={full}
         placeholder={field.placeholder}
         aria-invalid={invalid}
+        aria-describedby={describedBy}
         onChange={(event) => setEntry(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
@@ -142,7 +154,7 @@ function FreeEntry({ field, id, value, invalid, onChange }: ControlProps) {
   );
 }
 
-function Pairs({ field, id, value, onChange }: ControlProps) {
+function Pairs({ field, id, value, describedBy, onChange }: ControlProps) {
   const spec = field.pairs;
   if (!spec) return null;
   const rows = rowsOf(value);
@@ -163,6 +175,7 @@ function Pairs({ field, id, value, onChange }: ControlProps) {
     <div
       role="group"
       aria-labelledby={`${id}-label`}
+      aria-describedby={describedBy}
       className="grid grid-cols-[2fr_3fr] gap-x-3 gap-y-2"
     >
       {spec.columns.map((column) => (
@@ -187,7 +200,7 @@ function Pairs({ field, id, value, onChange }: ControlProps) {
 }
 
 function Control(props: ControlProps) {
-  const { field, id, value, invalid, serverUrl, onChange } = props;
+  const { field, id, value, invalid, describedBy, serverUrl, onChange } = props;
   const text = typeof value === "string" ? value : "";
   const options = field.options ?? [];
   switch (field.control) {
@@ -199,6 +212,7 @@ function Control(props: ControlProps) {
           value={text}
           placeholder={field.placeholder}
           aria-invalid={invalid}
+          aria-describedby={describedBy}
           onChange={(event) => onChange(event.target.value)}
           className={INPUT}
         />
@@ -209,6 +223,7 @@ function Control(props: ControlProps) {
           <SelectTrigger
             id={id}
             aria-invalid={invalid}
+            aria-describedby={describedBy}
             className={cn("w-full", INPUT)}
           >
             <SelectValue placeholder={field.placeholder} />
@@ -240,6 +255,7 @@ function Control(props: ControlProps) {
           value={text}
           onValueChange={onChange}
           aria-labelledby={`${id}-label`}
+          aria-describedby={describedBy}
           className="gap-2.5"
         >
           {options.map((option) => (
@@ -274,6 +290,7 @@ function Control(props: ControlProps) {
           <Checkbox
             id={id}
             checked={value === true}
+            aria-describedby={describedBy}
             onCheckedChange={(checked) => onChange(checked === true)}
             className="mt-0.5"
           />
@@ -310,6 +327,7 @@ function Control(props: ControlProps) {
           value={text}
           placeholder={field.placeholder}
           aria-invalid={invalid}
+          aria-describedby={describedBy}
           onChange={(event) => onChange(event.target.value)}
           className={INPUT}
         />
@@ -320,6 +338,7 @@ function Control(props: ControlProps) {
 export function PortalField(props: PortalFieldProps) {
   const { field, value, issue, findings = [] } = props;
   const id = `portal-${field.key}`;
+  const errorId = `${id}-error`;
   const length = typeof value === "string" ? value.length : 0;
   const over = field.maxLength !== undefined && length > field.maxLength;
   // The review page alone asks for these, so the form shows no mark.
@@ -336,9 +355,16 @@ export function PortalField(props: PortalFieldProps) {
           {required ? REQUIRED : null}
         </label>
       )}
-      <Control {...props} id={id} invalid={Boolean(issue) || over} />
+      <Control
+        {...props}
+        id={id}
+        invalid={Boolean(issue) || over}
+        describedBy={issue ? errorId : undefined}
+      />
       {issue ? (
-        <p className="text-sm text-destructive">Error: {issue.message}</p>
+        <p id={errorId} className="text-sm text-destructive">
+          Error: {issue.message}
+        </p>
       ) : null}
       {field.maxLength !== undefined ? (
         <p

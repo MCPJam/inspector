@@ -75,7 +75,9 @@ function CheckResult({ entry }: { entry: PlacedFinding }) {
   const detail =
     finding.status === "violated"
       ? finding.remediation
-      : finding.notEvaluatedReason;
+      : finding.status === "informational"
+        ? (finding.remediation ?? finding.notEvaluatedReason)
+        : finding.notEvaluatedReason;
   return (
     <li className={cn("rounded-md text-sm", TONE[severity.tone])}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
