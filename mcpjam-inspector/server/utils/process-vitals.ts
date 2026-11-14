@@ -36,6 +36,10 @@ const SAMPLE_INTERVAL_MS = 60_000;
  */
 const HEAP_STEP_BYTES = 64 * 1024 * 1024;
 
+/** The fd twin of HEAP_STEP_BYTES: a socket or file leak holds fds, not heap,
+ *  so a flat-heap ramp would otherwise show only on the heartbeat. */
+const FD_STEP = 64;
+
 /** A quiet session still checks in this often, so silence stays distinguishable
  *  from a process that died or never started sampling. */
 const HEARTBEAT_MS = 10 * 60_000;
@@ -54,6 +58,8 @@ export type ProcessVitals = Omit<ProcessVitalsEvent, "reason">;
 let peakHeapUsedBytes = 0;
 let peakRpcLogBufferBytes = 0;
 let lastEmittedHeapBytes: number | null = null;
+let lastEmittedFdCount: ProcessVitals["openFdCount"] = null;
+let lastEmittedFdError: ProcessVitals["openFdError"] = null;
 let lastEmittedAtMs = 0;
 const heapTrendMb: number[] = [];
 let sampler: ReturnType<typeof setInterval> | null = null;
@@ -131,15 +137,24 @@ export function collectProcessVitals(): ProcessVitals {
 function emitReason(
   vitals: ProcessVitals,
   nowMs: number,
-): "startup" | "heap_step" | "heartbeat" | null {
+): ProcessVitalsEvent["reason"] | null {
   if (lastEmittedHeapBytes === null) return "startup";
   if (
     Math.abs(vitals.heapUsedBytes - lastEmittedHeapBytes) >= HEAP_STEP_BYTES
   ) {
     return "heap_step";
   }
+  if (fdStepped(vitals)) return "fd_step";
   if (nowMs - lastEmittedAtMs >= HEARTBEAT_MS) return "heartbeat";
   return null;
+}
+
+/** A listing that starts or stops failing is a step too: EMFILE arriving is
+ *  the moment this gauge exists for, and it has no count to step from. */
+function fdStepped({ openFdCount, openFdError }: ProcessVitals): boolean {
+  if (openFdError !== lastEmittedFdError) return true;
+  // Same error, so both counts are numbers or both are null.
+  return Math.abs((openFdCount ?? 0) - (lastEmittedFdCount ?? 0)) >= FD_STEP;
 }
 
 /**
@@ -214,6 +229,8 @@ export function flushProcessVitals(nowMs: number = Date.now()): void {
     if (!reason) return;
 
     lastEmittedHeapBytes = vitals.heapUsedBytes;
+    lastEmittedFdCount = vitals.openFdCount;
+    lastEmittedFdError = vitals.openFdError;
     lastEmittedAtMs = nowMs;
     vitalsLogger.event("process.vitals", { reason, ...vitals });
   } catch (error) {
