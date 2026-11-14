@@ -4,7 +4,7 @@
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
   "type": "module",
   "main": "dist/index.js",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "files": [
     "dist",
     "LICENSE"
