@@ -1,5 +1,6 @@
+import { PLUGIN_FILE_MAX_BYTES } from "../../../shared/plugin-file-transfer.js";
 import { attachRunningSandbox } from "../../utils/computers/attach-sandbox.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { confineToHome } from "../../utils/computers/path-confine.js";
 import {
@@ -18,6 +19,7 @@ import {
   type LocalFileTarget,
 } from "./local-file-target.js";
 import { PluginFileTargetRefusal } from "./file-target-refusal.js";
+import { qualifiedComputerFileCas, type ComputerCompareAndReplace } from "./computer-file-cas.js";
 
 /**
  * File targets on the project's Computer (hosted MCPJam, with the MCP server
@@ -33,6 +35,8 @@ import { PluginFileTargetRefusal } from "./file-target-refusal.js";
 /** Narrow structural view of the E2B sandbox filesystem (`Sandbox.files`
  * satisfies it), so tests inject a fake without the vendor SDK. */
 export interface ComputerFileSystem {
+  compareAndReplace?: ComputerCompareAndReplace;
+  supportsCompareAndReplace?(signal?: AbortSignal): Promise<boolean>;
   read(
     path: string,
     opts: { format: "bytes"; signal?: AbortSignal },
@@ -95,8 +99,24 @@ export function createProjectComputerConnector(
   const info = deps.info ?? getComputerSandboxInfo;
   const connect =
     deps.connect ??
-    (async (sandboxId: string) =>
-      (await attachRunningSandbox(sandboxId)).files as unknown as ComputerFileSystem);
+    (async (sandboxId: string): Promise<ComputerFileSystem> => {
+      const sandbox = await attachRunningSandbox(sandboxId);
+      const cas = qualifiedComputerFileCas(sandboxId, {
+        write: (path, data, options) => sandbox.files.write(path, data, options),
+        run: (command, options) => sandbox.commands.run(command, options),
+      });
+      return {
+        read: (path, options) => sandbox.files.read(path, options),
+        write: (path, data, options) => sandbox.files.write(path, data, options),
+        getInfo: (path, options) => sandbox.files.getInfo(path, options),
+        rename: (from, to, options) => sandbox.files.rename(from, to, options),
+        remove: (path, options) => sandbox.files.remove(path, options),
+        makeDir: (path, options) => sandbox.files.makeDir(path, options),
+        list: (path, options) => sandbox.files.list(path, options),
+        compareAndReplace: cas.compareAndReplace,
+        supportsCompareAndReplace: cas.supports,
+      };
+    });
   const configured = deps.configured ?? isComputersDataPlaneConfigured;
   return async (input) => {
     const unavailable = () => new PluginComputerUnavailableError(serverId);
@@ -184,25 +204,6 @@ export function resolveComputerFilePath(
 const digest = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** One writer per VM path in this process; the etag is rechecked right
- * before the replace, which narrows (but cannot close) the window against
- * writers outside this process. */
-const pathLocks = new Map<string, Promise<unknown>>();
-async function withPathLock<T>(key: string, run: () => Promise<T>): Promise<T> {
-  const previous = pathLocks.get(key) ?? Promise.resolve();
-  const current = previous.then(run, run);
-  const settled = current.then(
-    () => {},
-    () => {},
-  );
-  pathLocks.set(key, settled);
-  try {
-    return await current;
-  } finally {
-    if (pathLocks.get(key) === settled) pathLocks.delete(key);
-  }
-}
-
 const isNotFound = (error: unknown) =>
   !!error &&
   typeof error === "object" &&
@@ -215,13 +216,14 @@ export function computerFilePath(target: LocalFileTarget) {
 }
 
 /**
- * Read and compare-then-write one admitted file on the Computer. `files`
- * returns this request's sandbox connection; the adapter retains none.
+ * Read and atomically replace one exclusive target among MCPJam writers on
+ * this VM. Arbitrary shell writers do not obey the helper's advisory lock.
+ * `files` returns this request's sandbox connection; the adapter retains none.
  */
 export function createComputerFileTargetAdapter(
   target: LocalFileTarget,
   files: (signal: AbortSignal) => Promise<ComputerFileSystem>,
-  maxBytes = 1024 * 1024,
+  maxBytes = PLUGIN_FILE_MAX_BYTES,
 ): BoundResourceAdapter & {
   check(signal: AbortSignal): Promise<void>;
 } {
@@ -257,7 +259,12 @@ export function createComputerFileTargetAdapter(
     signal.throwIfAborted();
     return { bytes, etag: digest(bytes) };
   };
+  const supported = async (fs: ComputerFileSystem, signal: AbortSignal) =>
+    !!fs.compareAndReplace && (await fs.supportsCompareAndReplace?.(signal) ?? true);
   return {
+    async supportsConditionalWrite(signal) {
+      return supported(await files(signal), signal);
+    },
     async check(signal) {
       await validate(await files(signal), signal);
     },
@@ -267,31 +274,19 @@ export function createComputerFileTargetAdapter(
       return readWith(await files(signal), signal);
     },
     async conditionalWrite(key, bytes, ifMatch, signal) {
-      if (key !== target.uri || bytes.byteLength > maxBytes)
+      if (key !== target.uri)
         throw new ResourceGrantError("RESOURCE_DENIED");
+      if (bytes.byteLength > maxBytes)
+        throw new ResourceGrantError("RESOURCE_TOO_LARGE");
       const fs = await files(signal);
-      return withPathLock(absolute, async () => {
-        const previous = await readWith(fs, signal);
-        if (ifMatch !== undefined && ifMatch !== previous.etag)
-          return { outcome: "conflict" as const, etag: previous.etag };
-        const temporary = posix.join(
-          posix.dirname(absolute),
-          `.mcpjam-save-${randomUUID()}`,
-        );
-        try {
-          const data = new ArrayBuffer(bytes.byteLength);
-          new Uint8Array(data).set(bytes);
-          await vm(() => fs.write(temporary, data, { signal }));
-          signal.throwIfAborted();
-          const last = await readWith(fs, signal);
-          if (last.etag !== previous.etag)
-            return { outcome: "conflict" as const, etag: last.etag };
-          await vm(() => fs.rename(temporary, absolute, { signal }));
-          return { outcome: "saved" as const, etag: digest(bytes) };
-        } finally {
-          await fs.remove(temporary).catch(() => {});
-        }
-      });
+      if (!(await supported(fs, signal)))
+        throw new ResourceGrantError("RESOURCE_WRITE_UNAVAILABLE");
+      const previous = await readWith(fs, signal);
+      if (ifMatch !== undefined && ifMatch !== previous.etag)
+        return { outcome: "conflict" as const, etag: previous.etag };
+      signal.throwIfAborted();
+      return vm(() => fs.compareAndReplace!({ root: target.root, path: absolute, bytes,
+        expectedEtag: previous.etag, maxBytes }, { signal }));
     },
   };
 }

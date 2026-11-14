@@ -31,6 +31,9 @@ import { anthropicNativeModelId } from "./model-native-ids.js";
 
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
   type NativeModelIdMapping,
 } from "./model-native-ids.js";
@@ -668,9 +671,18 @@ function resolveOrgModelId(
  */
 export function buildOrgModelFromResolvedConfig(
   config: OrgProviderResolvedConfig,
-  modelId: string
+  modelId: string,
+  options: {
+    /**
+     * Sent with every request to a base URL the organization typed (Azure,
+     * Bedrock, Ollama, custom). A hosted caller passes its egress guard here,
+     * so a redirect from that URL is judged before it is followed.
+     */
+    fetch?: typeof fetch;
+  } = {}
 ): LanguageModel {
   const { providerKey } = config;
+  const endpointFetch = options.fetch ? { fetch: options.fetch } : {};
   // Strip the "providerKey/" prefix that UI model IDs include for built-in
   // providers (e.g. "openai/gpt-5-mini" → "gpt-5-mini" for the OpenAI SDK).
   const builtinPfx = `${providerKey}/`;
@@ -710,12 +722,23 @@ export function buildOrgModelFromResolvedConfig(
   if (providerKey === "azure") {
     const apiKey = requireOrgSecret(config, "Azure OpenAI");
     const baseUrl = requireOrgBaseUrl(config, "Azure OpenAI");
-    const resourceMatch = baseUrl.match(
-      /https?:\/\/([^.]+)\.(openai|cognitiveservices)\.azure\.com/i
-    );
-    const resourceName = resourceMatch?.[1];
+    // The resource comes from the parsed hostname only: a resource-shaped
+    // string in a query or path would otherwise become the resource
+    // (`localhost/x`) and send the key to a host the admission check never
+    // judged.
+    let host = "";
+    try {
+      host = new URL(baseUrl).hostname;
+    } catch {
+      // Not a URL: no resource; the SDK reports the base URL itself.
+    }
+    const resourceName =
+      /^([a-z0-9-]+)\.(?:openai|cognitiveservices)\.azure\.com$/i.exec(
+        host
+      )?.[1];
     return createAzure({
       apiKey,
+      ...endpointFetch,
       ...(resourceName ? { resourceName } : { baseURL: baseUrl }),
     })(m) as unknown as LanguageModel;
   }
@@ -732,6 +755,7 @@ export function buildOrgModelFromResolvedConfig(
     return createAmazonBedrock({
       apiKey: requireOrgSecret(config, "Amazon Bedrock"),
       baseURL: requireOrgBaseUrl(config, "Amazon Bedrock"),
+      ...endpointFetch,
     })(m) as unknown as LanguageModel;
   }
   if (providerKey === "ollama") {
@@ -741,6 +765,7 @@ export function buildOrgModelFromResolvedConfig(
       : `${raw.replace(/\/+$/, "")}/api`;
     return createOllama({
       baseURL: normalized,
+      ...endpointFetch,
     })(m) as unknown as LanguageModel;
   }
   if (providerKey.startsWith("custom:")) {
@@ -751,9 +776,10 @@ export function buildOrgModelFromResolvedConfig(
       return createAnthropic({
         apiKey,
         baseURL: baseUrl,
+        ...endpointFetch,
       })(resolvedModelId) as unknown as LanguageModel;
     }
-    const openai = createOpenAI({ apiKey, baseURL: baseUrl });
+    const openai = createOpenAI({ apiKey, baseURL: baseUrl, ...endpointFetch });
     return openai.chat(resolvedModelId);
   }
 

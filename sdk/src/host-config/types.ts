@@ -31,8 +31,10 @@ import type {
   ToolResultAuthChallengeTrigger,
   UnauthorizedChallengeTrigger,
 } from "../mcp-client-manager/auth-challenge.js";
+import type { VersionNegotiationPreference } from "../mcp-client-manager/version-negotiation.js";
 
 import type { ModelSelection } from "./model-selection.js";
+import type { HostConfigPluginExtensionBehaviorV1 } from "./plugin-extension-behavior.js";
 
 export type { McpProtocolVersion };
 
@@ -71,14 +73,22 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
+export const HARNESS_IDS = [
+  "claude-code",
+  "codex",
+  "cursor",
+  "copilot-cli",
+  "opencode",
+] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
+ * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
+ * host-executed tools and a platform-brokered Anthropic lease.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */
@@ -320,6 +330,7 @@ export const CONFORMANCE_PROFILE_KEYS = [
   "unauthorizedChallengeTrigger",
   "toolResultAuthChallenge",
   "toolResultAuthChallengeTrigger",
+  "versionNegotiation",
 ] as const;
 
 /**
@@ -347,14 +358,15 @@ export type PluginExtensionCapabilityKey =
 
 /**
  * Per-client "OpenAI plugin extensions" setting. `enabled` is the master
- * switch. `capabilities` is sparse: an absent key means "on whenever the
- * master switch is on", so only switched-off extensions need to be stored.
- * The whole object absent means "use the client style's default" (on for
- * ChatGPT and Codex, off for everything else).
+ * switch. `capabilities` and `behavior` are sparse: an absent key means the
+ * client style's default (`PLUGIN_EXTENSION_STYLE_DEFAULTS`), so only choices
+ * that differ from it need to be stored. The whole object absent means "use
+ * the client style's default" for the master switch too.
  */
 export type HostConfigPluginExtensionsV1 = {
-  enabled: boolean;
+  behavior?: HostConfigPluginExtensionBehaviorV1;
   capabilities?: Partial<Record<PluginExtensionCapabilityKey, boolean>>;
+  enabled: boolean;
 };
 
 /**
@@ -390,6 +402,11 @@ export type HostConfigMcpProfileV1 = {
   // concrete revisions pin that exact wire era. Per-server pins live on
   // serverConnectionOverrides and win over this default.
   mcpProtocolVersion?: McpProtocolVersion | "auto";
+  // How the client negotiates while `mcpProtocolVersion` is absent, in place
+  // of Auto: `"legacy-first"` is Cursor CLI's measured handshake (see
+  // `version-negotiation.ts`). Inert beside any `mcpProtocolVersion`, an
+  // explicit `"auto"` included. Absent = Auto, omitted from canonical output.
+  versionNegotiation?: VersionNegotiationPreference;
   // Whether the simulated client mirrors `x-mcp-header` tool arguments into
   // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
   // spec-conforming default; `"omit"` simulates a non-conforming client so a
@@ -574,6 +591,9 @@ export type HostConfigMcpProfileV1 = {
     // Budgets for plugin App context. Absent → MCPJam's defaults.
     modelContextPolicy?: HostConfigModelContextPolicyV1;
   };
+  // MCPJam host policy keyed by id, never advertised to a server:
+  // `com.mcpjam/tasks` (tasks-policy.ts) and `com.mcpjam/events`, the
+  // delivery modes the host receives MCP Events by (events-support.ts).
   extensions?: Record<string, unknown>;
 };
 
@@ -835,8 +855,7 @@ export type OAuthSpecVersionClaim =
  * Discriminated so "pinned" cannot be recorded without the pinned value.
  */
 export type OAuthProtocolVersionPinning =
-  | { mode: "pinned"; version: OAuthSpecRevision }
-  | { mode: "negotiated" };
+  { mode: "pinned"; version: OAuthSpecRevision } | { mode: "negotiated" };
 
 /**
  * The exact identity a client asserts at Dynamic Client Registration.
@@ -977,8 +996,7 @@ export type HostConfigOAuthProfileV2 = {
 
 /** Either profile version. V1 rows stay V1 — there is no auto-upgrade. */
 export type HostConfigOAuthProfile =
-  | HostConfigOAuthProfileV1
-  | HostConfigOAuthProfileV2;
+  HostConfigOAuthProfileV1 | HostConfigOAuthProfileV2;
 
 // Personal cloud workstation attached to a host: one machine per
 // (project, user), surfaced through computer-backed built-in tools (e.g.
@@ -1046,8 +1064,7 @@ export type HostConfigComputerInput = {
  *                                     and hashes distinctly from absent.
  */
 export type HostConfigSkillSelection =
-  | { mode: "all-visible" }
-  | { mode: "explicit"; skillIds: string[] };
+  { mode: "all-visible" } | { mode: "explicit"; skillIds: string[] };
 
 /**
  * Canonical-side skill selection. Only the explicit variant survives
@@ -1098,9 +1115,7 @@ export type ModelVisibleMcpToolResults = {
  * `toolAllowlist` names individual tools (and page-tool names) it may call.
  */
 export type HostConfigBrowserToolPolicyMode =
-  | "allow_all"
-  | "read_only"
-  | "allowlist";
+  "allow_all" | "read_only" | "allowlist";
 
 export type HostConfigBrowserToolPolicy = {
   mode: HostConfigBrowserToolPolicyMode;
@@ -1299,5 +1314,10 @@ export type CanonicalHostConfigV2 = {
 
 /** Saved automatic eligibility and the source of the applied text. */
 export type SystemPromptDefault = {
-  source?: { catalogEntryId: string; revision: string; sourceUrl: string; publisher?: string };
+  source?: {
+    catalogEntryId: string;
+    revision: string;
+    sourceUrl: string;
+    publisher?: string;
+  };
 };

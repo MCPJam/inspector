@@ -382,15 +382,17 @@ export function summarizeProbeCheck(
       // sign-in mid-session. Saying only "succeeded" would read as "this
       // server has no auth", which sends a developer looking for a problem
       // that is a design choice — or hides the sign-in a protected tool needs.
-      return probe.oauth.optional
-        ? okCheck(
-            `${succeeded} Anonymous access is allowed; OAuth is available${
-              probe.oauth.resourceMetadataUrl
-                ? ` (Protected Resource Metadata at ${probe.oauth.resourceMetadataUrl})`
-                : ""
-            }. This is the lazy-authentication shape: protected tools may ask for sign-in when they are called.`
-          )
-        : okCheck(succeeded);
+      if (!probe.oauth.optional) return okCheck(succeeded);
+      const metadata = probe.oauth.resourceMetadataUrl
+        ? ` (Protected Resource Metadata at ${probe.oauth.resourceMetadataUrl})`
+        : "";
+      // With credentials in the run, a served probe proves nothing about
+      // anonymous access.
+      return hasCredentials
+        ? okCheck(`${succeeded} OAuth metadata was found${metadata}.`)
+        : okCheck(
+            `${succeeded} Anonymous access is allowed; OAuth is available${metadata}. This is the lazy-authentication shape: protected tools may ask for sign-in when they are called.`
+          );
     }
     case "oauth_required": {
       // The probe accepts a 403 that still carries a Bearer challenge, so the

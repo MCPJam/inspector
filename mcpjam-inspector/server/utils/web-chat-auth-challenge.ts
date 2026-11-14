@@ -90,6 +90,12 @@ export function buildWebChatAuthChallenge(input: {
               toolInput,
               toolCallId,
             )?.connectionId,
+          connectionIsImplicit: (toolName, toolInput, toolCallId) =>
+            toolConnectionAttribution(
+              preparedTools[toolName],
+              toolInput,
+              toolCallId,
+            )?.implicit === true,
           ...(localRuntime
             ? {
                 hasRecentSignIn: ({ serverId, toolName, toolCallId }) =>
@@ -188,6 +194,12 @@ export function buildWebChatAuthChallenge(input: {
             preparedTools[toolName] as { _serverId?: unknown } | undefined
           )?._serverId;
           if (splicedScopeStepUpCancel?.toolCallId === toolCallId) {
+            // A server that is not connected on this turn has no tools here,
+            // so its name is unknown; the copy then names no server.
+            const serverName =
+              typeof serverId === "string"
+                ? (scopeStepUpServerNamesById[serverId] ?? serverId)
+                : undefined;
             // Answered whether or not the store still holds it waiting.
             const { cancelled, isSignIn, mayHaveRun } =
               await cancelHostedContinuationForNewMessage({
@@ -195,12 +207,7 @@ export function buildWebChatAuthChallenge(input: {
                 continuationId: splicedScopeStepUpCancel.continuationId,
               });
             if (mayHaveRun)
-              return authChallengeMayHaveRunText(
-                typeof serverId === "string"
-                  ? (scopeStepUpServerNamesById[serverId] ?? serverId)
-                  : "unknown",
-                toolName,
-              );
+              return authChallengeMayHaveRunText(serverName, toolName);
             if (!cancelled)
               return "Sign-in recovery could not be completed. This call was not retried.";
             if (typeof serverId === "string") {
@@ -225,12 +232,7 @@ export function buildWebChatAuthChallenge(input: {
               }
             }
             return isSignIn
-              ? authChallengeCancelledText(
-                  typeof serverId === "string"
-                    ? (scopeStepUpServerNamesById[serverId] ?? serverId)
-                    : "unknown",
-                  toolName,
-                )
+              ? authChallengeCancelledText(serverName, toolName)
               : "Authorization was not completed, so the tool was not retried.";
           }
           // Only an MCP tool can have been suspended for sign-in.

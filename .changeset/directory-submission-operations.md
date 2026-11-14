@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Nine platform operations rehearse a directory submission: `listDirectoryFlowsOperation` and `getDirectoryFlowOperation` read a directory's form (or one step of it), `createDirectorySubmissionOperation`, `listDirectorySubmissionsOperation`, `getDirectorySubmissionOperation`, `updateDirectorySubmissionOperation` and `deleteDirectorySubmissionOperation` keep the answers for a saved server, and `startDirectorySubmissionRunOperation` and `getDirectorySubmissionResultsOperation` grade them and read the findings by the portal's steps. They are in `ALL_OPERATIONS`, after the readiness run operations. `update_directory_submission` reads the current revision when `expectedRevision` is omitted, and derives an idempotency key from the change and the revision when none is given, so retrying the same change at the same revision is answered from the first write instead of refused. The new `directory-readiness` platform feature gates creating, editing and running a submission; reads and the delete stay open. The readiness run operations now say in their descriptions that the feature is in beta.

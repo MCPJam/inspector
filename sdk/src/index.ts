@@ -131,6 +131,44 @@ export {
   withSkillsExtensionCapability,
 } from "./mcp-client-manager/index.js";
 
+// MCP Events (triggers), draft@28ec35e. The full surface — coordinator,
+// identities, profiles, Standard Webhooks, the in-memory inbox — is the
+// `@mcpjam/sdk/events` subpath; the root re-exports what a manager caller
+// needs to branch on.
+export {
+  MCPEventsWireError,
+  isMCPEventsWireError,
+  InvalidEventsPayloadError,
+  isInvalidEventsPayloadError,
+  classifyEventsRpcError,
+  EVENTS_ERROR_CODES,
+} from "./mcp-client-manager/events-ext-guards.js";
+export type {
+  EventsSupport,
+  CapturedEventsCapability,
+} from "./mcp-client-manager/events-capability-capture.js";
+export type {
+  EventDescriptorWire,
+  EventOccurrenceWire,
+  EventsListResultWire,
+  EventsPollResultWire,
+  EventsSubscribeResultWire,
+} from "./mcp-client-manager/events-ext-schemas.js";
+
+// MCP Events conformance (profile-aware; Node-only receiver).
+export {
+  runEventsConformance,
+  startEventsConformanceReceiver,
+  EVENTS_CHECK_IDS,
+} from "./events-conformance/index.js";
+export type {
+  EventsConformanceConfig,
+  EventsConformanceReceiver,
+  EventsConformanceResult,
+  EventsCheckResult,
+  EventsCheckId,
+} from "./events-conformance/index.js";
+
 // io.modelcontextprotocol/skills (SEP-2640).
 export {
   MCP_SKILLS_EXTENSION_ID,
@@ -741,6 +779,12 @@ export type {
 } from "./directory-readiness/lazy-auth.js";
 export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
 export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
+// Directory submission forms as data: flows, answer validation, placement.
+export * from "./directory-readiness/flows/index.js";
+// Directory test plans: drafting, validation, call outcomes per tool.
+export * from "./directory-readiness/test-plan/index.js";
+// The decision scan: question ids, rule candidates, the request, grading.
+export * from "./directory-readiness/decisions/index.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -880,9 +924,11 @@ export type {
   ConformanceSuiteKind,
 } from "./conformance-run-types.js";
 export { runConformance } from "./conformance-run.js";
+export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,
+  RunConformanceOAuthConfig,
 } from "./conformance-run.js";
 export {
   detectCiMetadata,
@@ -1176,6 +1222,9 @@ export type {
 // native one). Also on `@mcpjam/sdk/model-factory`.
 export {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
 } from "./model-native-ids.js";
 export type { NativeModelIdMapping } from "./model-native-ids.js";
@@ -1185,6 +1234,47 @@ export type { NativeModelIdMapping } from "./model-native-ids.js";
 // pulling the Node graph in; exported here so a Node consumer building its own
 // request doesn't re-derive the version thresholds locally.
 export { modelRejectsTemperature } from "./model-sampling-support.js";
+
+// MCP tool names a provider rejects (`cart.add`), aliased on the wire only.
+export {
+  createToolNameAliases,
+  renameToolNamePart,
+  renameToolNamesInMessages,
+  withProviderSafeToolNames,
+} from "./provider-tool-names.js";
+export type { ToolNameAliases } from "./provider-tool-names.js";
+
+// Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
+// meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
+// gating. `HostRunner` and the Inspector's hosted turns run the same code.
+export {
+  DEFAULT_TOOL_DISCOVERY_POLICY,
+  META_TOOL_LOAD,
+  META_TOOL_NAMES,
+  META_TOOL_SEARCH,
+  buildToolCatalog,
+  commitNewlyLoaded,
+  createDiscoveryState,
+  decideProgressivePlan,
+  gateToolsToActiveSubset,
+  hydrateDiscoveryStateFromHistory,
+  lookupToolIdByModelName,
+  parseProgressiveToolsEnv,
+  resolveActiveToolNames,
+  shouldForceInitialToolSearch,
+} from "./progressive-discovery/discovery.js";
+export type {
+  ProgressiveDiscoveryOptions,
+  ProgressiveToolPlan,
+  ToolCatalogEntry,
+  ToolDiscoveryState,
+} from "./progressive-discovery/discovery.js";
+export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
+export type {
+  LoadMcpToolsResult,
+  ProgressiveMetaToolsConfig,
+  SearchMcpToolsResult,
+} from "./progressive-discovery/meta-tools.js";
 
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
@@ -1233,8 +1323,11 @@ export {
 export type { OAuthProxyRequest, OAuthProxyResponse } from "./oauth-proxy.js";
 export {
   isTlsTrustFailure,
+  isUnreachableTargetFailure,
   TLS_TRUST_FAILURE,
   tlsTrustFailure,
+  UNREACHABLE_TARGET_FAILURE,
+  unreachableTargetFailure,
 } from "./oauth-proxy-error.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
@@ -1483,6 +1576,18 @@ export {
   CONFORMANCE_CHECK_METADATA,
   MCP_OAUTH_READINESS_IDS,
 } from "./oauth-conformance/index.js";
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {
@@ -1916,6 +2021,32 @@ export type {
   TasksPolicy,
   TaskMode,
   TaskSurface,
+} from "./host-config/index.js";
+
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the delivery modes a subscription may use.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./host-config/index.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
 } from "./host-config/index.js";
 
 // Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.

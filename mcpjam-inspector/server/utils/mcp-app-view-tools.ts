@@ -37,6 +37,7 @@ export class McpAppViewTools {
     private readonly io: {
       enabled: boolean;
       onCall?: (call: ViewToolCallRecord) => void;
+      recordCall?: (viewId: string) => (success: boolean) => void;
       page: () => Page | null;
       mount: () => ViewMount | null;
       dismiss: (viewId: string) => Promise<void>;
@@ -124,6 +125,7 @@ export class McpAppViewTools {
         innerSignal.throwIfAborted();
         this.records.push(record);
         this.io.onCall?.(record);
+        const completeRecording = this.io.recordCall?.(viewId);
         try {
           const result = await callViewWebmcpTool(
             {
@@ -136,6 +138,7 @@ export class McpAppViewTools {
           record.ok = result.isError !== true;
           return result;
         } finally {
+          completeRecording?.(record.ok);
           Object.assign(record, await this.io.drain());
         }
       },

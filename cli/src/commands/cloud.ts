@@ -6,6 +6,7 @@ import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerFeedbackCommand } from "./feedback.js";
 import { registerClientsCommands } from "./clients.js";
+import { registerCloudConformanceCommands } from "./conformance-cloud.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
@@ -13,6 +14,7 @@ import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
 import { registerStudiesCommands } from "./studies.js";
 import { registerSecretsCommands } from "./secrets.js";
+import { registerServerAccountsCommands } from "./server-accounts.js";
 import { registerSessionsCommands } from "./sessions.js";
 import { registerSwarmAuthoringCommands } from "./swarms.js";
 import { registerTraceDestinationsCommands } from "./trace-destinations.js";
@@ -49,8 +51,14 @@ export function registerCloudCommands(program: Command): Command {
   // Project secrets sit with environments because an environment is what grants
   // one to a run — you create a secret here and then select it there.
   registerSecretsCommands(cloud);
+  // Server accounts sit beside secrets: each stores a credential runs use, and
+  // no command prints one.
+  registerServerAccountsCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
+
+  cloud.commandsGroup("Conformance:");
+  registerCloudConformanceCommands(cloud);
 
   cloud.commandsGroup("Observability:");
   // Organization-scoped, not project-scoped: a destination is a vendor binding

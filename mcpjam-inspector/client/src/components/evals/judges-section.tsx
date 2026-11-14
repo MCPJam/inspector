@@ -215,6 +215,7 @@ export function judgeModelPatch(
  */
 export function JudgeModelControl({
   id,
+  inModal = false,
   value,
   onChange,
   availableModels,
@@ -224,6 +225,7 @@ export function JudgeModelControl({
   onAddProvider,
 }: {
   id: string;
+  inModal?: boolean;
   value: EvalJudgeConfig | undefined;
   onChange: (next: EvalJudgeConfig | undefined) => void;
   availableModels: ModelDefinition[];
@@ -242,6 +244,7 @@ export function JudgeModelControl({
   return (
     <JudgeModelPicker
       id={id}
+      inModal={inModal}
       variant="pill"
       className="w-fit max-w-full"
       value={gc?.judgeModel ?? MANAGED_DEFAULT_JUDGE_MODEL}

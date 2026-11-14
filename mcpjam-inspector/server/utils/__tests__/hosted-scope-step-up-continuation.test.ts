@@ -98,6 +98,32 @@ describe("hosted scope step-up continuation", () => {
     );
   });
 
+  it.each([
+    [false, "acct-b"],
+    [true, undefined],
+  ])("an implicit login (%s) stays in the saved state, never on the event", async (implicit, onEvent) => {
+    const event = await createHostedScopeStepUpContinuation({
+      bearer: "bearer",
+      authPrincipal: "user-1",
+      projectId: "project-1",
+      chatSessionId: "chat-1",
+      manager: manager(),
+      connectionId: "acct-b",
+      ...(implicit ? { connectionImplicit: true } : {}),
+      info: {
+        serverId: "server-1",
+        toolCallId: "call-1",
+        requiredScope: "bench:write",
+      },
+      toolName: "bench_write",
+      toolInput: { value: 7 },
+    });
+    expect(event.connectionId).toBe(onEvent);
+    const saved = store.create.mock.calls[0][1];
+    const state = JSON.parse(saved.resumeState);
+    expect(state.connectionId).toBe("acct-b");
+  });
+
   it("claims once, fences the wire, executes the saved call, and completes", async () => {
     await createHostedScopeStepUpContinuation({
       bearer: "bearer",

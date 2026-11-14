@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { provisionMock, touchMock, releaseMock, dataPlaneMock } = vi.hoisted(
-  () => ({
+const { provisionMock, touchMock, releaseMock, dataPlaneMock, readinessMock } =
+  vi.hoisted(() => ({
     provisionMock: vi.fn(),
-    touchMock: vi.fn(async () => "touched" as const),
+    touchMock: vi.fn(async () => ({ outcome: "touched" as const })),
     releaseMock: vi.fn(async () => {}),
     dataPlaneMock: vi.fn(() => true),
-  }),
-);
+    readinessMock: vi.fn(),
+  }));
 
 vi.mock("../../computers/control-plane-client.js", () => ({
   provisionPlaygroundTerminalSandbox: provisionMock,
   touchSandbox: touchMock,
   releaseSandbox: releaseMock,
   isComputersDataPlaneConfigured: dataPlaneMock,
+  getHarnessCredentialReadiness: readinessMock,
 }));
 
 vi.mock("../../logger.js", () => ({
@@ -24,7 +25,6 @@ import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
-  resolvePlaygroundCredentialEnvironment,
   playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
   releaseBoxWhenStreamEnds,
@@ -46,7 +46,7 @@ describe("playgroundHarnessBoxReason", () => {
     );
   });
 
-  it("sends a harness that signs in with the member's own account to a box", () => {
+  it("sends a harness on the organization's vendor key to a box", () => {
     expect(playgroundHarnessBoxReason(turn({ harnessId: "cursor" }))).toBe(
       "credential",
     );
@@ -80,100 +80,33 @@ describe("playgroundHarnessBoxReason", () => {
 });
 
 describe("playgroundCredentialRefusal", () => {
-  it("refuses a Cursor turn with no usable key, in the harness's own words", async () => {
-    const refusal = await playgroundCredentialRefusal({
-      harnessId: "cursor",
-      secretEnv: undefined,
+  const ask = { harnessId: "cursor", bearer: "Bearer tok", projectId: "p1" };
+
+  it("refuses a Cursor turn whose org has no key, before any box", async () => {
+    readinessMock.mockResolvedValueOnce({
+      ok: true,
+      value: { readiness: "missing" },
     });
-    expect(refusal).toMatch(/CURSOR_API_KEY/);
+    expect(await playgroundCredentialRefusal(ask)).toBe(
+      "Ask an org admin to add a Cursor key in Organization → AI providers.",
+    );
+    expect(provisionMock).not.toHaveBeenCalled();
   });
 
-  it("passes a turn whose key is delivered, and a harness that needs none", async () => {
+  it("passes a turn whose org key is ready, and a harness that needs none", async () => {
+    readinessMock.mockResolvedValueOnce({
+      ok: true,
+      value: { readiness: "ready" },
+    });
+    expect(await playgroundCredentialRefusal(ask)).toBeNull();
+    expect(readinessMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectId: "p1", harnessId: "cursor" }),
+    );
+    readinessMock.mockClear();
     expect(
-      await playgroundCredentialRefusal({
-        harnessId: "cursor",
-        secretEnv: { CURSOR_API_KEY: "key_live" },
-      }),
+      await playgroundCredentialRefusal({ ...ask, harnessId: "claude-code" }),
     ).toBeNull();
-    expect(
-      await playgroundCredentialRefusal({
-        harnessId: "claude-code",
-        secretEnv: undefined,
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("resolvePlaygroundCredentialEnvironment", () => {
-  const key = (overrides: Record<string, unknown> = {}) => ({
-    secretId: "sec_mine",
-    name: "CURSOR_API_KEY",
-    delivery: "brokered" as const,
-    sharing: "user" as const,
-    brokerHosts: ["api2.cursor.sh"],
-    brokerHeader: "authorization",
-    brokerTemplate: "Bearer {}",
-    ...overrides,
-  });
-  const base = {
-    bearer: "Bearer tok",
-    projectId: "p1",
-    hostId: "host_cursor",
-    harnessId: "cursor",
-  };
-
-  it("finds or mints the hidden environment selecting the member's own key, and nothing else", async () => {
-    const ensure = vi.fn(async () => ({ environmentId: "env_hidden" }));
-    const listSecrets = vi.fn(async () => [key()]);
-    const result = await resolvePlaygroundCredentialEnvironment({
-      ...base,
-      listSecrets: listSecrets as never,
-      ensureAdhocEnvironment: ensure,
-    });
-    expect(result).toEqual({ ok: true, environmentId: "env_hidden" });
-    expect(listSecrets).toHaveBeenCalledWith("tok", { projectId: "p1" });
-    expect(ensure).toHaveBeenCalledWith({
-      projectId: "p1",
-      hostId: "host_cursor",
-      secretSelection: { mode: "explicit", secretIds: ["sec_mine"] },
-    });
-  });
-
-  it("with no usable key, says where to add it in the UI there is — never 'use an environment' — and mints nothing", async () => {
-    for (const secrets of [[], [key({ sharing: "project" })]]) {
-      const ensure = vi.fn(async () => ({ environmentId: "env_hidden" }));
-      const result = await resolvePlaygroundCredentialEnvironment({
-        ...base,
-        listSecrets: (async () => secrets) as never,
-        ensureAdhocEnvironment: ensure,
-      });
-      expect(result.ok).toBe(false);
-      if (result.ok) continue;
-      expect(result.status).toBe(409);
-      expect(result.message).toMatch(/Project Settings → Secrets/);
-      expect(result.message).not.toMatch(/environment/i);
-      expect(ensure).not.toHaveBeenCalled();
-    }
-  });
-
-  it("a failed read or mint is a retryable refusal, not a box without a key", async () => {
-    expect(
-      await resolvePlaygroundCredentialEnvironment({
-        ...base,
-        listSecrets: (async () => {
-          throw new Error("down");
-        }) as never,
-      }),
-    ).toMatchObject({ ok: false, status: 502 });
-    expect(
-      await resolvePlaygroundCredentialEnvironment({
-        ...base,
-        listSecrets: (async () => [key()]) as never,
-        ensureAdhocEnvironment: async () => {
-          throw new Error("down");
-        },
-      }),
-    ).toMatchObject({ ok: false, status: 502 });
+    expect(readinessMock).not.toHaveBeenCalled();
   });
 });
 
@@ -281,7 +214,12 @@ describe("acquirePlaygroundHarnessBox", () => {
   it("provisions through the control plane and hands back a binding", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx", workdir: "/home/user" },
+      value: {
+        sandboxRowId: "row",
+        sandboxId: "sbx",
+        workdir: "/home/user",
+        idleMs: 5 * 60_000,
+      },
     });
     const result = await acquirePlaygroundHarnessBox({
       ...args,
@@ -301,20 +239,21 @@ describe("acquirePlaygroundHarnessBox", () => {
       sandboxId: "sbx",
       runtimeKind: "terminal",
       workdir: "/home/user",
+      idleMs: 5 * 60_000,
     });
     await result.box.release();
   });
 
-  it("keeps the box alive across a turn longer than its idle TTL, then leaves it for the next turn", async () => {
+  it("keeps the box alive across a turn longer than its idle window, then leaves it for the next turn", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx" },
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
     });
     const result = await acquirePlaygroundHarnessBox(args);
     if (!result.ok) throw new Error("expected a box");
-    // A playground box idles out at 30 minutes; the heartbeat is a quarter.
-    await vi.advanceTimersByTimeAsync(45 * 60_000);
-    expect(touchMock.mock.calls.length).toBeGreaterThanOrEqual(5);
+    // The backend's 5-minute window: the heartbeat is a quarter of it.
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(touchMock.mock.calls.length).toBe(12);
     expect(touchMock).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row", sandboxId: "sbx" }),
     );
@@ -340,7 +279,7 @@ describe("acquirePlaygroundHarnessBox", () => {
   it("stops beating when the turn's signal aborts, and leaves the box", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
-      value: { sandboxRowId: "row", sandboxId: "sbx" },
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
     });
     const turnAbort = new AbortController();
     const result = await acquirePlaygroundHarnessBox({
@@ -348,7 +287,7 @@ describe("acquirePlaygroundHarnessBox", () => {
       signal: turnAbort.signal,
     });
     if (!result.ok) throw new Error("expected a box");
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
     const beats = touchMock.mock.calls.length;
     expect(beats).toBeGreaterThan(0);
     turnAbort.abort();

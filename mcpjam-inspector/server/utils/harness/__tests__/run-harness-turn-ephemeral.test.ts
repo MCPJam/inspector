@@ -11,6 +11,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 // pass regardless of what the turn actually did.
 
 const harnessState = vi.hoisted(() => ({
+  started: vi.fn(),
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -20,7 +21,7 @@ const harnessState = vi.hoisted(() => ({
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
-    createSession = vi.fn(async () => harnessState.session);
+    createSession = vi.fn(async () => { harnessState.started(); return harnessState.session; });
     stream = vi.fn(async () => ({
       fullStream: (async function* () {
         yield { type: "finish", finishReason: "stop" };
@@ -66,7 +67,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -119,6 +119,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../harness-bake-observer.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../harness-bake-observer.js")>()),
+  watchNewBoxForStaleBake: vi.fn(),
+}));
+
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
@@ -130,6 +135,8 @@ import {
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
+import { claimHarnessSessionState } from "../harness-session-state.js";
+import { watchNewBoxForStaleBake } from "../harness-bake-observer.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -177,9 +184,11 @@ afterEach(() => {
   vi.mocked(revokeHarnessModelBroker).mockClear();
   vi.mocked(resolveHarnessSandbox).mockClear();
   vi.mocked(createE2BHarnessSandboxProvider).mockClear();
+  harnessState.started.mockClear();
   vi.mocked(reserveHarnessBox).mockClear();
   vi.mocked(renewHarnessBoxReservation).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
+  vi.mocked(watchNewBoxForStaleBake).mockClear();
 });
 
 describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
@@ -287,6 +296,53 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
   });
 });
 
+describe("runHarnessTurn — a new conversation's box is watched for a stale bake", () => {
+  // Only a conversation's first turn is sure to run on a box booted just now,
+  // from the template the deployment boots today.
+  const chat = { sourceType: "direct", chatSessionId: "chat-1" };
+  const firstTurnClaim = () =>
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      stateVersion: 0,
+      state: null,
+      fingerprintChanged: false,
+    });
+
+  it("watches the box on the conversation's first turn", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledTimes(1);
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledWith(
+      expect.any(Object),
+      "claude-code",
+    );
+  });
+
+  it("does not watch a later turn's box, which may predate the template", async () => {
+    // The default claim has a commit behind it (stateVersion 1).
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
+  });
+
+  it("does not watch a persistent computer, or a box with no conversation lane", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(baseOptions(chat) as never, "none");
+    expect(resolveHarnessSandbox).toHaveBeenCalledTimes(1);
+    // An eval box: no lane, and its run may have frozen an older default.
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
+  });
+});
+
 describe("runHarnessTurn — a scenario harness never takes a persistent computer (5c)", () => {
   it("throws a typed 409 before reserving anything when a scenario scope has no box", async () => {
     const thrown = await runHarnessTurn(
@@ -312,109 +368,36 @@ describe("runHarnessTurn — a scenario harness never takes a persistent compute
   });
 });
 
-describe("runHarnessTurn — reserve, then start the baseline-preserving broker lease", () => {
-  it("claims the box and only then asks for a credential", async () => {
-    // Reserve → broker start → in-stream bootstrap. The lease keeps the box's
-    // own egress baseline, so the bootstrap can reach the registry after start.
-    // The claim still comes first so a second turn cannot interleave.
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    const reserveOrder = vi.mocked(reserveHarnessBox).mock
-      .invocationCallOrder[0]!;
-    const providerOrder = vi.mocked(createE2BHarnessSandboxProvider).mock
-      .invocationCallOrder[0]!;
-    const brokerOrder = vi.mocked(startHarnessModelBroker).mock
-      .invocationCallOrder[0]!;
-    expect(reserveOrder).toBeLessThan(providerOrder);
-    expect(providerOrder).toBeLessThan(brokerOrder);
-  });
-
-  it("builds one provider for the turn before broker start", async () => {
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
+describe("runHarnessTurn — broker lease owns preparation", () => {
+  it("starts the broker before bootstrapping without a separate reservation", async () => {
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING }) as never, "none");
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
     expect(createE2BHarnessSandboxProvider).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(startHarnessModelBroker).mock.invocationCallOrder[0])
+      .toBeLessThan(harnessState.started.mock.invocationCallOrder[0]!);
   });
-
-  it("shares one runId between the claim and the lease that consumes it", async () => {
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    const reservedRunId = vi.mocked(reserveHarnessBox).mock.calls[0]![0].runId;
-    const leasedRunId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0]
-      .runId;
-    expect(reservedRunId).toBe(leasedRunId);
-    expect(reservedRunId).toBeTruthy();
-  });
-
-  it("hands the box back when broker start fails", async () => {
+  it("revokes the attempted lease when its start response is lost", async () => {
     vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
-      ok: false,
-      status: 502,
-      error: "Failed to provision the harness network.",
+      ok: false, status: 502, error: "Failed to provision the harness network.",
     });
-
-    const result = await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
-      "none"
-    );
-
-    // The run id was recorded before the POST, so teardown still revokes in
-    // case the backend installed before a lost response — and the reservation
-    // is ours to give back so the next turn does not wait out its TTL.
-    expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
-    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    const result = await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING }) as never, "none");
+    const runId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0].runId;
+    expect(runId).toBeTruthy();
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId }));
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
+    expect(harnessState.started).not.toHaveBeenCalled();
     expect(result.aborted).toBe(false);
   });
-
-  it("refuses to prepare a box another run is already preparing", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
-      ok: false,
-      status: 409,
-      error: "A harness run is already active on this computer.",
+  it.each([409, 404])("does not start the runtime when broker admission returns %s", async (status) => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false, status, error: "The computer cannot admit this turn.",
     });
     const onEngineError = vi.fn();
-
-    await runHarnessTurn(
-      baseOptions({
-        harnessSandboxBinding: BINDING,
-        onEngineError,
-      }) as never,
-      "none"
-    );
-
-    // The caller is told the box is busy, in the same words a lease conflict
-    // would have produced.
+    await runHarnessTurn(baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never, "none");
     expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(onEngineError.mock.calls[0]![0].message).toMatch(
-      /already active on this computer/i
-    );
-    // Refused before ANY work on the box — that is the point of claiming first.
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when the backend has no reservation endpoint", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-      error: "Harness model-broker returned 404",
-    });
-    const onEngineError = vi.fn();
-
-    await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never,
-      "none"
-    );
-
-    expect(onEngineError).toHaveBeenCalledTimes(1);
-    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    expect(harnessState.started).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 });

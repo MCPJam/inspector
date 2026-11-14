@@ -9,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Context, ContextVariableMap } from "hono";
+import { createServer } from "node:http";
+import { getRequestListener } from "@hono/node-server";
 
 vi.mock("../../config.js", () => ({ HOSTED_MODE: true }));
 
@@ -28,6 +30,65 @@ const {
 const FAMILIES = ["tools", "resources", "prompts", "tasks"] as const;
 /** The families `/api/v1` has routes for. */
 const V1_FAMILIES = ["tools", "resources", "prompts"] as const;
+
+describe("binary request bodies", () => {
+  it.each(["multipart", "binary"] as const)(
+    "preserves every byte in %s while charging the shared bucket",
+    async (format) => {
+      const app = new Hono();
+      app.use("*", async (c, next) => {
+        c.set("authMethod", "authkit_jwt");
+        c.set("workosUserId", "binary-fixture");
+        await next();
+      });
+      app.use("*", mcpOperationRateLimit("apps/plugin-instances"));
+      app.post("/upload", async (c) => {
+        let bytes: Uint8Array;
+        if (format === "multipart") {
+          const file = (await c.req.formData()).get("file");
+          if (!file || typeof file === "string")
+            throw new Error("Missing file");
+          bytes = new Uint8Array(await file.arrayBuffer());
+        } else {
+          bytes = new Uint8Array(await c.req.arrayBuffer());
+        }
+        return c.json({ hex: Buffer.from(bytes).toString("hex") });
+      });
+      const server = createServer(getRequestListener(app.fetch));
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("No listener");
+        const bytes = Uint8Array.from({ length: 256 }, (_, index) => index);
+        const send = () => {
+          const body = new FormData();
+          body.append("file", new Blob([bytes]), "all-bytes.bin");
+          return fetch(`http://127.0.0.1:${address.port}/upload`, {
+            method: "POST",
+            ...(format === "binary"
+              ? { headers: { "content-type": "application/octet-stream" } }
+              : {}),
+            body: format === "multipart" ? body : bytes,
+          });
+        };
+        const response = await send();
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+          hex: Buffer.from(bytes).toString("hex"),
+        });
+        for (let index = 1; index < BURST; index++)
+          expect((await send()).status).toBe(200);
+        expect((await send()).status).toBe(429);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+});
 
 /** The identity `bearerAuthMiddleware` would have resolved upstream. */
 type Identity = {

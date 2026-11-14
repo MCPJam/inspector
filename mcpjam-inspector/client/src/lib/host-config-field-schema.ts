@@ -29,14 +29,22 @@ import type {
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 import {
+  untestedCatalogAppValue,
+  untestedCatalogImagePolicy,
+} from "@/lib/catalog-row-values";
+import {
   ALL_DISPLAY_MODES,
   MCP_APPS_DIMENSIONS,
   OPENAI_APPS_METHOD_LABELS,
 } from "@/lib/apps-capability-dimensions";
 import {
   AUTH_CHALLENGE_ACTIONS,
+  EVENT_DELIVERY_MODES,
+  MCPJAM_EVENTS_EXTENSION_ID,
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   MCP_SKILLS_EXTENSION_ID,
+  MCP_UI_EXTENSION_ID,
+  readEventsHostSetting,
   readTasksPolicy,
   TOOL_RESULT_AUTH_CHALLENGE_TRIGGERS,
   UNAUTHORIZED_CHALLENGE_TRIGGERS,
@@ -53,15 +61,17 @@ export interface HostConfigSection {
 }
 
 export const HOST_CONFIG_SECTIONS: ReadonlyArray<HostConfigSection> = [
-  {
-    id: "agent",
-    label: "Agent",
-    subtitle: "model · sampling · system prompt",
-  },
+  // MCP Protocol leads: the client version row at its top says which build
+  // every other row was captured from.
   {
     id: "protocol",
     label: "MCP Protocol",
     subtitle: "version · clientInfo · capabilities · connection",
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    subtitle: "model · sampling · system prompt",
   },
   {
     id: "apps",
@@ -99,7 +109,16 @@ export type HostConfigFieldKind =
       support?: Readonly<Record<string, SupportLevel>>;
     }
   /** Set of modes (e.g. display modes); each candidate renders present/absent. */
-  | { kind: "mode-set"; modes: ReadonlyArray<string> }
+  | {
+      kind: "mode-set";
+      modes: ReadonlyArray<string>;
+      /**
+       * How many modes every client has anyway, so having only that many is
+       * no support (default 1: every host renders `inline`). 0 when any mode
+       * counts, as for Event delivery.
+       */
+      baseline?: number;
+    }
   /** Short string rendered inline. */
   | { kind: "string" }
   /**
@@ -491,6 +510,28 @@ function rendersNoMcpApps(cfg: HostConfigDtoV2): boolean {
 
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
+    // The MCP Apps (UI) extension, declared in `initialize`. It leads the MCP
+    // Apps section because it gates every row below it: MCPJam renders a View
+    // only for a client that declares it. The catalog declares it exactly
+    // where the client renders widgets — even for Gemini, which renders
+    // without sending it — so this row answers "does this client show MCP
+    // Apps". The id keeps its `capabilities.` prefix so the caniuse slug
+    // stays `ui-extension`.
+    id: "capabilities.uiExtension",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: MCP_UI_EXTENSION_ID,
+    path: `clientCapabilities.extensions.${MCP_UI_EXTENSION_ID}`,
+    description: "Shows MCP Apps widgets.",
+    kind: { kind: "capability" },
+    read: (cfg) =>
+      (
+        cfg.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.[MCP_UI_EXTENSION_ID],
+  },
+  {
     id: "appsCap.availableDisplayModes",
     section: "apps",
     subsection: "MCP Apps capabilities",
@@ -502,7 +543,9 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) =>
       rendersNoMcpApps(cfg)
         ? NOT_SUPPORTED
-        : effMcpApps(cfg).availableDisplayModes,
+        : untestedCatalogAppValue(cfg, ["availableDisplayModes"])
+          ? undefined
+          : effMcpApps(cfg).availableDisplayModes,
   },
   {
     id: "appsCap.widgetDisplayModeRequests",
@@ -515,7 +558,9 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) =>
       rendersNoMcpApps(cfg)
         ? NOT_SUPPORTED
-        : effMcpApps(cfg).widgetDisplayModeRequests,
+        : untestedCatalogAppValue(cfg, ["widgetDisplayModeRequests"])
+          ? undefined
+          : effMcpApps(cfg).widgetDisplayModeRequests,
   },
   ...MCP_APPS_DIMENSIONS.map(
     ({ key, description }): HostConfigFieldDef => ({
@@ -526,7 +571,8 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       path: `mcpProfile.apps.mcpAppsOverrides.${key} (effective)`,
       description,
       kind: { kind: "boolean" },
-      read: (cfg) => effMcpApps(cfg)[key],
+      read: (cfg) =>
+        untestedCatalogAppValue(cfg, [key]) ? undefined : effMcpApps(cfg)[key],
     })
   ),
   // Read the RESOLVED matrix, not the raw override, exactly like every
@@ -913,6 +959,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // so the matrix shows the resolved value, not "—".
     read: (cfg) => cfg.respectToolVisibility ?? true,
   },
+  // The image rows below read `undefined` for a catalog row that stores no
+  // image policy: its probe did not measure it, and the helpers' defaults
+  // would show a guess as a fact. A host a user built keeps the defaults.
   {
     id: "modelVisibleMcpToolResults.directContent.image",
     section: "agent",
@@ -922,7 +971,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Pass MCP image content from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
+        ? undefined
+        : isMcpDirectContentImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "modelVisibleMcpToolResults.embeddedResources.blob.image",
@@ -934,7 +985,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Pass MCP embedded resource images from tool results to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
+        ? undefined
+        : isMcpEmbeddedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "modelVisibleMcpToolResults.linkedResources.blob.image",
@@ -945,7 +998,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and pass them to the model.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
+      untestedCatalogImagePolicy(cfg, cfg.modelVisibleMcpToolResults)
+        ? undefined
+        : isMcpLinkedResourceBlobImageVisible(cfg.modelVisibleMcpToolResults),
   },
   {
     id: "mcpToolResultImageRendering",
@@ -959,7 +1014,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       options: ["none", "collapsed", "inline"],
     },
     read: (cfg) =>
-      getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
+        ? undefined
+        : getMcpToolResultImageRenderPlacement(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.directContent.image",
@@ -970,7 +1027,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Render direct MCP image content from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
+        ? undefined
+        : isMcpDirectContentImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.embeddedResources.blob.image",
@@ -982,7 +1041,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       "Render MCP embedded resource images from tool results in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
+        ? undefined
+        : isMcpEmbeddedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "mcpToolResultImageRendering.linkedResources.blob.image",
@@ -993,7 +1054,9 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Resolve MCP resource link images and render them in the UI.",
     kind: { kind: "boolean" },
     read: (cfg) =>
-      isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
+      untestedCatalogImagePolicy(cfg, cfg.mcpToolResultImageRendering)
+        ? undefined
+        : isMcpLinkedResourceBlobImageRendered(cfg.mcpToolResultImageRendering),
   },
   {
     id: "progressiveToolDiscovery",
@@ -1034,11 +1097,17 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "clientInfo",
     label: "Client version",
     path: "mcpProfile.initialize.clientInfo.version",
-    description: "`initialize.clientInfo.version` sent to the server.",
+    description: "Client name and version sent to the server.",
     kind: { kind: "string" },
+    // The name the client actually sends, then its version (`Sydney 1.0.0`):
+    // a bare `1.0.0` says nothing about which client build it is.
     read: (cfg) => {
       const info = mcpProfile(cfg)?.initialize?.clientInfo;
-      return typeof info?.version === "string" ? info.version : undefined;
+      const name = typeof info?.name === "string" ? info.name.trim() : "";
+      const version =
+        typeof info?.version === "string" ? info.version.trim() : "";
+      const value = [name, version].filter(Boolean).join(" ");
+      return value || undefined;
     },
   },
   {
@@ -1140,7 +1209,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     // MCPJam-only tasks policy below: this key goes on the initialize
     // envelope, and declaring it commits the host to fetching, digest-
     // verifying, and refusing unlisted files. It is therefore under "Client
-    // capabilities supported" rather than "Host policy".
+    // capabilities supported" rather than "Client policy".
     id: "capabilities.skillsExtension",
     section: "protocol",
     subsection: "Client capabilities supported",
@@ -1158,7 +1227,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
-  // Protocol · Host policy
+  // Protocol · Client policy
   //
   // MCPJam's own product policy, NOT an MCP wire capability. It is stored
   // under `mcpProfile.extensions["com.mcpjam/tasks"]` and is never advertised
@@ -1169,7 +1238,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "tasksPolicy",
     section: "protocol",
-    subsection: "Host policy",
+    subsection: "Client policy",
     label: "Task execution",
     path: `mcpProfile.extensions.${MCPJAM_TASKS_POLICY_EXTENSION_ID}.enabled`,
     description:
@@ -1181,6 +1250,25 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => {
       const policy = readTasksPolicy(cfg);
       return policy === "unset" ? undefined : policy;
+    },
+  },
+  {
+    id: "eventsDeliveryModes",
+    section: "protocol",
+    subsection: "Client policy",
+    label: "Event delivery",
+    path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
+    description:
+      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES, baseline: 0 },
+    // The saved setting only, like Task execution above: this row is public
+    // on caniuse.dev, where a style default is not a measurement, so a client
+    // with nothing saved reads as "Not yet tested". Subscriptions still use
+    // the default (`resolveHostEventDeliveryModes`).
+    read: (cfg) => {
+      const setting = readEventsHostSetting(cfg);
+      if (setting.kind === "unset") return undefined;
+      return setting.kind === "valid" ? setting.modes : [];
     },
   },
 

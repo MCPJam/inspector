@@ -19,6 +19,8 @@ const POSTHOG_KEY = "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 const POSTHOG_HOST = "https://us.i.posthog.com";
 const TELEMETRY_STATE_FILE = "telemetry.json";
 const TELEMETRY_EVENT_NAME = "cli_command";
+/** One per conformance run, the same name the SDK and the Inspector send. */
+const CONFORMANCE_EVENT_NAME = "conformance_run_triggered";
 const TELEMETRY_STATE_VERSION = 1;
 const DEFAULT_FLUSH_TIMEOUT_MS = 3_000;
 
@@ -100,6 +102,7 @@ interface ActiveTelemetryRun {
   transport?: TelemetryTransport;
   shouldCapture: boolean;
   captured: boolean;
+  conformanceCaptured: boolean;
   pendingCaptures: Promise<void>[];
   client?: TelemetryClient;
   fallbackInstallId?: string;
@@ -189,6 +192,7 @@ export function initTelemetry(
     commandOptOut: false,
     shouldCapture: false,
     captured: false,
+    conformanceCaptured: false,
     pendingCaptures: [],
   };
   activeRun = run;
@@ -205,6 +209,7 @@ export function initTelemetry(
     run.transport = detectTransport(actionCommand);
     run.shouldCapture = commandPath[0] !== "telemetry";
     run.captured = false;
+    run.conformanceCaptured = false;
   });
 
   return {
@@ -296,22 +301,64 @@ export function captureCommandEvent(
       properties.error_code = safeErrorCode;
     }
 
-    if (decision.debugMode) {
-      writeDebugPayload(run.options, distinctId, properties);
+    sendEvent(run, decision, distinctId, TELEMETRY_EVENT_NAME, properties);
+  } catch {
+    // Telemetry is best-effort and must never affect CLI behavior.
+  }
+}
+
+/**
+ * Count one conformance run as `conformance_run_triggered`. Each conformance
+ * command calls this right before the SDK runs, and tells the SDK to send
+ * nothing itself, so the ping follows the CLI's own opt-outs and install id.
+ * At most once per command. Always `run_source: "cli"`, also in CI.
+ */
+export function captureConformanceRunEvent(): void {
+  const run = activeRun;
+  if (!run || !run.shouldCapture || run.conformanceCaptured || !run.command) {
+    return;
+  }
+
+  run.conformanceCaptured = true;
+
+  try {
+    const decision = resolveTelemetryDecision({
+      ...run.options,
+      commandOptOut: run.commandOptOut,
+    });
+
+    if (!decision.enabled) {
       return;
     }
 
-    const client = getOrCreateClient(run);
-    const pendingCapture = client.capture({
-      distinctId,
-      event: TELEMETRY_EVENT_NAME,
-      properties,
-    });
-    if (pendingCapture) {
-      run.pendingCaptures.push(pendingCapture.catch(() => {}));
-    }
+    sendEvent(
+      run,
+      decision,
+      resolveInstallId(run, decision.state),
+      CONFORMANCE_EVENT_NAME,
+      { run_source: "cli" },
+    );
   } catch {
     // Telemetry is best-effort and must never affect CLI behavior.
+  }
+}
+
+function sendEvent(
+  run: ActiveTelemetryRun,
+  decision: TelemetryDecision,
+  distinctId: string,
+  event: string,
+  properties: Record<string, unknown>,
+): void {
+  if (decision.debugMode) {
+    writeDebugPayload(run.options, event, distinctId, properties);
+    return;
+  }
+
+  const client = getOrCreateClient(run);
+  const pendingCapture = client.capture({ distinctId, event, properties });
+  if (pendingCapture) {
+    run.pendingCaptures.push(pendingCapture.catch(() => {}));
   }
 }
 
@@ -400,13 +447,14 @@ class PostHogTelemetryClient implements TelemetryClient {
 
 function writeDebugPayload(
   options: TelemetryOptions,
+  event: string,
   distinctId: string,
   properties: Record<string, unknown>,
 ): void {
   const stderr = options.stderr ?? process.stderr;
   stderr.write(
     `MCPJam telemetry debug: ${JSON.stringify({
-      event: TELEMETRY_EVENT_NAME,
+      event,
       distinct_id: distinctId,
       properties,
     })}\n`,

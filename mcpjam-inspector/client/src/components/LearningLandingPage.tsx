@@ -14,6 +14,7 @@ import {
   type LearningGroup,
   type LearningModule,
 } from "@/components/lifecycle/learning-concepts";
+import { isPlatformAgentEnabled } from "@/lib/runtime-config";
 
 interface LearningLandingPageProps {
   onSelect: (conceptId: string) => void;
@@ -22,31 +23,31 @@ interface LearningLandingPageProps {
   completionCount: number;
 }
 
-const TOTAL_MODULES = LEARNING_GROUPS.reduce(
-  (sum: number, g: LearningGroup) => sum + g.modules.length,
-  0,
-);
-
-const TOTAL_TRACKS = LEARNING_GROUPS.length;
-
-const TOTAL_ESTIMATED_MINUTES = LEARNING_GROUPS.reduce(
-  (sum, g: LearningGroup) =>
-    sum + g.modules.reduce((s, m) => s + m.estimatedMinutes, 0),
-  0,
-);
-
-const FIRST_GROUP = LEARNING_GROUPS[0];
-const FIRST_LESSON = FIRST_GROUP.modules[0];
+/**
+ * The groups this page lists. A guided tour runs in the MCPJam agent's side
+ * panel, which `MCPJAM_PLATFORM_AGENT=off` removes, so tours are left out then
+ * rather than listed as rows that open nothing.
+ */
+function visibleGroups(): LearningGroup[] {
+  if (isPlatformAgentEnabled()) return LEARNING_GROUPS;
+  return LEARNING_GROUPS.map((group) => ({
+    ...group,
+    modules: group.modules.filter((m) => !isGuidedTour(m)),
+  })).filter((group) => group.modules.length > 0);
+}
 
 /** Keeps syllabus readable on ultrawide / full-screen layouts */
 const LEARNING_LANDING_MAX =
   "mx-auto w-full max-w-2xl px-4 sm:max-w-3xl sm:px-6";
 
-/** Running module number across all groups */
-function getModuleNumber(groupIndex: number, moduleIndex: number): number {
-  let n = moduleIndex + 1;
+/** The running number of a group's first module, across the listed groups */
+function firstModuleNumber(
+  groups: LearningGroup[],
+  groupIndex: number,
+): number {
+  let n = 1;
   for (let i = 0; i < groupIndex; i++) {
-    n += LEARNING_GROUPS[i].modules.length;
+    n += groups[i].modules.length;
   }
   return n;
 }
@@ -112,14 +113,14 @@ function ModuleRow({
 
 function GroupSection({
   group,
-  groupIndex,
+  firstNumber,
   defaultOpen,
   isCompleted,
   onSelect,
   onToggleComplete,
 }: {
   group: LearningGroup;
-  groupIndex: number;
+  firstNumber: number;
   defaultOpen?: boolean;
   isCompleted: (id: string) => boolean;
   onSelect: (id: string) => void;
@@ -162,7 +163,7 @@ function GroupSection({
             <ModuleRow
               key={concept.id}
               concept={concept}
-              number={getModuleNumber(groupIndex, mi)}
+              number={firstNumber + mi}
               completed={isCompleted(concept.id)}
               onSelect={onSelect}
               onToggleComplete={onToggleComplete}
@@ -180,7 +181,23 @@ export function LearningLandingPage({
   onToggleComplete,
   completionCount,
 }: LearningLandingPageProps) {
-  const progressPercent = Math.round((completionCount / TOTAL_MODULES) * 100);
+  const groups = visibleGroups();
+  const totalModules = groups.reduce((sum, g) => sum + g.modules.length, 0);
+  const totalMinutes = groups.reduce(
+    (sum, g) => sum + g.modules.reduce((s, m) => s + m.estimatedMinutes, 0),
+    0,
+  );
+  const firstGroup = groups[0];
+  const firstLesson = firstGroup.modules[0];
+  // Tours finished before the agent was turned off stay in progress storage.
+  const hiddenCompleted =
+    groups === LEARNING_GROUPS
+      ? 0
+      : LEARNING_GROUPS.flatMap((g) => g.modules).filter(
+          (m) => isGuidedTour(m) && isCompleted(m.id),
+        ).length;
+  const shownCompleted = completionCount - hiddenCompleted;
+  const progressPercent = Math.round((shownCompleted / totalModules) * 100);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -192,23 +209,23 @@ export function LearningLandingPage({
             Learn MCP step by step
           </p>
           <p className="mt-1.5 text-xs text-muted-foreground/90">
-            {TOTAL_TRACKS} tracks · {TOTAL_MODULES} lessons · ~
-            {TOTAL_ESTIMATED_MINUTES} min total
+            {groups.length} tracks · {totalModules} lessons · ~{totalMinutes}{" "}
+            min total
           </p>
 
           {/* Overall progress */}
           <div className="mt-3 flex items-center gap-3">
             <Progress value={progressPercent} className="h-1.5 flex-1" />
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {completionCount} of {TOTAL_MODULES} completed
+              {shownCompleted} of {totalModules} completed
             </span>
           </div>
-          {completionCount === 0 ? (
+          {shownCompleted === 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
               <p className="m-0 w-fit max-w-full text-xs leading-relaxed text-muted-foreground">
                 New here? Start with{" "}
                 <span className="font-medium text-foreground/90">
-                  {FIRST_GROUP.title}
+                  {firstGroup.title}
                 </span>{" "}
                 and open the first lesson below.
               </p>
@@ -217,9 +234,9 @@ export function LearningLandingPage({
                 variant="secondary"
                 size="sm"
                 className="h-8 shrink-0"
-                onClick={() => onSelect(FIRST_LESSON.id)}
+                onClick={() => onSelect(firstLesson.id)}
               >
-                Open “{FIRST_LESSON.title}”
+                Open “{firstLesson.title}”
               </Button>
             </div>
           ) : null}
@@ -229,12 +246,12 @@ export function LearningLandingPage({
       {/* Grouped checklist */}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className={`pb-10 pt-2 ${LEARNING_LANDING_MAX}`}>
-          {LEARNING_GROUPS.map((group: LearningGroup, gi: number) => (
+          {groups.map((group: LearningGroup, gi: number) => (
             <GroupSection
               key={group.title}
               group={group}
-              groupIndex={gi}
-              defaultOpen={completionCount === 0 && gi === 0}
+              firstNumber={firstModuleNumber(groups, gi)}
+              defaultOpen={shownCompleted === 0 && gi === 0}
               isCompleted={isCompleted}
               onSelect={onSelect}
               onToggleComplete={onToggleComplete}

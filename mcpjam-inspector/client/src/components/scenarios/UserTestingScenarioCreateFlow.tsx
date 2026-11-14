@@ -348,10 +348,9 @@ export function UserTestingScenarioCreateFlow({
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environments = useProjectEnvironments(projectId);
-  // Testers are not the person composing, so a Cursor client's key has to be
-  // project-shared to reach them: a personal key reaches only its owner.
+  // A Cursor client can't run in User Testing; it is refused as it's composed.
   const resolveComposerTargets = useComposerResolver(projectId, {
-    requireSharedExternalCredential: true,
+    refuseOrgKeyClients: true,
   });
   // Also what the default client pick reads. `useConvexAuth` rather than a
   // prop, like `ClientsPill` right below in the same strip.

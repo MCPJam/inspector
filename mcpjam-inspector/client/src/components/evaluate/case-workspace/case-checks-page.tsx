@@ -82,7 +82,7 @@ export function CaseChecksPage({
           headerActions={
             onConfigureSuite ? (
               <Button variant="outline" size="sm" onClick={onConfigureSuite}>
-                Configure suite assertions
+                Default evaluators
               </Button>
             ) : null
           }

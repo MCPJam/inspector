@@ -1,5 +1,6 @@
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
+import type { LocalHarnessId } from "@/shared/harness-descriptors";
 import { useHostedBrowserAvailable } from "./useHostedBrowserAvailability";
 
 /**
@@ -80,6 +81,24 @@ export const LOCAL_HARNESS_FEATURE_FLAG = "local-harness-enabled";
 
 export function useLocalHarnessEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_HARNESS_FEATURE_FLAG) === true;
+}
+
+/**
+ * Whether each local runtime is rolled out to this member, each on its own
+ * flag. Off while flags load (`=== true`).
+ *
+ * Typed against every local runtime, so a runtime that becomes local does not
+ * compile here until its flag is read. The keys are literals because the
+ * server evaluates only the keys in `shared/client-feature-flags.ts`, which a
+ * ratchet reads from these calls; `localHarnessRolloutFlag` is what each one
+ * must be, and a test holds them to it.
+ */
+export function useLocalHarnessRollouts(): Readonly<Record<LocalHarnessId, boolean>> {
+  return {
+    "claude-code": useFeatureFlagEnabled("local-harness-enabled") === true,
+    codex: useFeatureFlagEnabled("local-codex-enabled") === true,
+    "copilot-cli": useFeatureFlagEnabled("local-copilot-cli-enabled") === true,
+  };
 }
 
 /**

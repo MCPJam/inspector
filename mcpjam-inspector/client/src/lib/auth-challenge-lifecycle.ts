@@ -18,6 +18,7 @@ import type { ServerWithName } from "@/state/app-types";
 import { type DirectScopeStepUpReplayDescriptor } from "@/lib/scope-step-up-replay";
 import { SCOPE_STEP_UP_LIVE_TTL_MS } from "@/shared/scope-step-up";
 import { track } from "@/lib/analytics";
+import { reportCaught } from "@/lib/error-reporting";
 import {
   isAuthChallengeDismissed,
   rememberDismissed,
@@ -103,7 +104,7 @@ export type AuthChallengePresentation =
   | { kind: "card"; card: AuthChallengeCard }
   | {
       kind: "notice";
-      reason: "passthrough" | "blocked" | "permanent" | "dismissed";
+      reason: "passthrough" | "blocked" | "permanent" | "dismissed" | "failed";
       /** The text to show beside the failed call. */
       message: string;
       /** Developer-only explanation, when there is one. */
@@ -222,6 +223,9 @@ export const AUTH_CHALLENGE_DISMISSED_MESSAGE =
 export const AUTH_CHALLENGE_PERMANENT_MESSAGE =
   "This server asked for sign-in again after you signed in. Check that your account has access to it, then try again.";
 
+export const AUTH_CHALLENGE_PRESENT_FAILED_MESSAGE =
+  "This server asked you to sign in, but the Connect card could not be shown. Run the call again, or reconnect the server with OAuth to sign in.";
+
 /** The attempt a challenge on one call belongs to. */
 export function callAttempt(
   server: ServerWithName,
@@ -242,11 +246,7 @@ export function callAttempt(
   };
 }
 
-/**
- * Decide what a sign-in challenge on one call becomes. No side effects beyond
- * showing a card: nothing is saved and nothing navigates.
- */
-export async function presentAuthChallenge(input: {
+type PresentAuthChallengeInput = {
   server: ServerWithName | undefined;
   signal: AuthChallengeSignal | undefined;
   surface: AuthChallengeSurface;
@@ -259,7 +259,33 @@ export async function presentAuthChallenge(input: {
   connectionId?: string;
   onConnect?: () => PendingWriteResult;
   continuationId?: string;
-}): Promise<AuthChallengePresentation> {
+};
+
+/**
+ * Decide what a sign-in challenge on one call becomes. No side effects beyond
+ * showing a card: nothing is saved and nothing navigates.
+ *
+ * Never rejects: every surface shows the notice beside the failed call, so an
+ * unexpected error becomes one instead of an unhandled rejection.
+ */
+export async function presentAuthChallenge(
+  input: PresentAuthChallengeInput,
+): Promise<AuthChallengePresentation> {
+  try {
+    return await decideAuthChallengePresentation(input);
+  } catch (error) {
+    reportCaught(error, { source: "auth_challenge_present" });
+    return {
+      kind: "notice",
+      reason: "failed",
+      message: AUTH_CHALLENGE_PRESENT_FAILED_MESSAGE,
+    };
+  }
+}
+
+async function decideAuthChallengePresentation(
+  input: PresentAuthChallengeInput,
+): Promise<AuthChallengePresentation> {
   const { server, signal } = input;
   if (!server || !signal || signal.source === "http_403_insufficient_scope") {
     return { kind: "ignored" };

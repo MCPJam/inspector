@@ -39,6 +39,7 @@ const tomlString = (value: string): string => JSON.stringify(value);
  */
 
 export type CodexHomeInput = {
+  closeModelConnections?: boolean;
   nativeMcpServers?: HarnessMcpJson["mcpServers"];
   /** Where to write. Created if absent. */
   codexHome: string;
@@ -129,6 +130,7 @@ export function renderCodexConfigToml(input: CodexHomeInput): string {
     'name = "MCPJam model proxy"',
     `base_url = ${tomlString(input.baseUrl)}`,
     `env_key = ${tomlString(input.apiKeyEnvVar)}`,
+    ...(input.closeModelConnections ? ['http_headers = { Connection = "close" }'] : []),
     // The proxy allowlists exactly `POST /v1/responses` and `GET /v1/models`;
     // the responses wire API is what stays inside it.
     'wire_api = "responses"',

@@ -305,7 +305,6 @@ async function executeSuiteFile(
   let executed: Awaited<ReturnType<typeof executeCases>> | undefined;
   let failure: unknown;
   let snapshot: ToolPolicySnapshot | undefined;
-  let toolServers: ReadonlyMap<string, string> = new Map();
   try {
     // ── 4. credentials, then connect and discover ────────────────────────────
     progress({ type: "setup", stage: "credentials" });
@@ -461,7 +460,7 @@ async function executeSuiteFile(
     }
     const frozenTools = Object.freeze({ ...merged }) as ToolSet;
     const toolNames = Object.keys(frozenTools);
-    toolServers = new Map(ownerOf);
+    const toolServers: ReadonlyMap<string, string> = new Map(ownerOf);
 
     if (plan.toolPolicy) {
       try {
@@ -895,7 +894,10 @@ async function executeCase(args: {
   const baseFactory = args.runtime.createLanguageModel ?? createModelFromString;
   const connection = args.credentials.mcpjam;
   const root = new HostRunner({
-    ...(plan.host ? { host: plan.host.json } : {}),
+    // A template that leaves Progressive tools unset means Auto by it.
+    ...(plan.host
+      ? { host: plan.host.json, progressiveToolDiscoveryWhenUnset: "auto" }
+      : {}),
     model: model.effectiveModel,
     tools: args.tools,
     apiKey:

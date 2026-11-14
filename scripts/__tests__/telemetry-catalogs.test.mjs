@@ -184,6 +184,21 @@ test("a LogConvexId field gets the context-only convexId rule, a plain string no
   }
 });
 
+test("a payload declared in log-events/ gets field rules; one elsewhere does not", () => {
+  const root = fixture();
+  try {
+    edit(root, "mcpjam-inspector/shared/log-events/probe.ts", "export type ProbeEvent = { drained: boolean; waitedMs: number };");
+    edit(root, "mcpjam-inspector/shared/probe-event.ts", "export type Elsewhere = { elsewhereMs: number };");
+    edit(root, "mcpjam-inspector/shared/log-events.ts",
+      'export type SystemEventMap = { "probe.system": import("./log-events/probe.js").ProbeEvent };');
+    const catalog = inspector(buildTelemetryCatalogs({ root }));
+    assert.deepEqual(catalog.fields, { drained: { kind: "boolean" }, waitedMs: { kind: "number" } });
+    assert.deepEqual(catalog.events, ["probe.system"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 /** Milliseconds until `condition` holds, or Infinity past the budget. */
 async function within(condition) {
   const started = performance.now();

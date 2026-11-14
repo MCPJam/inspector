@@ -10,6 +10,8 @@ export interface AppPaneTool extends AppToolCatalogEntry {
   availability: "offered" | AppToolDropReason;
 }
 export interface AppPaneGroup {
+  sourceLabel?: string;
+  visibility?: "visible" | "hidden";
   key: string;
   appName: string;
   serverId: string;
@@ -40,6 +42,8 @@ export function deriveAppPaneTools(catalog: AppToolCatalog): AppPaneGroup[] {
       group = {
         key: groupKey,
         appName: instance.appName,
+        sourceLabel: instance.presentation?.label,
+        visibility: instance.presentation?.visibility,
         serverId: instance.serverId,
         tools: [],
       };

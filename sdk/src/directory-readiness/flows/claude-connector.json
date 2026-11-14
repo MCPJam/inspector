@@ -1,0 +1,897 @@
+{
+  "title": "Submit an MCP connector",
+  "steps": {
+    "connection": {
+      "title": "Connection",
+      "intro": "Connect the server you want listed. We read its tools, resources, and auth from the live connection.",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "connector-picker",
+            "fields": ["connection.serverUrl"],
+            "text": {
+              "notice": "This form is for remote MCP servers only.",
+              "noticeDetail": "Local MCP servers can be distributed inside plugins, but may not be supported in every Claude product.",
+              "add": "Add custom connector",
+              "addHelper": "A connector you add here stays in Settings → Connectors until you remove it.",
+              "choose": "Or choose a connector you’ve already added:",
+              "notConnected": "Not connected"
+            }
+          },
+          {
+            "heading": "URL configuration",
+            "note": "Optional",
+            "fields": ["connection.differentUrls"]
+          }
+        ]
+      }
+    },
+    "tools": {
+      "title": "Tools",
+      "intro": "Review the tools we found and their annotations. Fix anything flagged on your server, then reconnect.",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "tool-list",
+            "text": {
+              "empty": "No server selected. Go back to the Connection step and pick a server."
+            }
+          }
+        ]
+      }
+    },
+    "listing": {
+      "title": "Listing",
+      "intro": "How your MCP server appears in the directory. You can edit this after you submit.",
+      "layout": {
+        "blocks": [
+          {
+            "fields": ["listing.name", "listing.slug"]
+          },
+          {
+            "fields": ["listing.oneLiner"]
+          },
+          {
+            "fields": ["listing.description"]
+          },
+          {
+            "fields": ["listing.categories"]
+          },
+          {
+            "fields": ["listing.authorName", "listing.authorUrl"]
+          },
+          {
+            "widget": "icon",
+            "fields": ["listing.iconUrl"],
+            "text": {
+              "add": "Add custom icon URL"
+            }
+          },
+          {
+            "widget": "listing-preview",
+            "text": {
+              "title": "How it reads in the directory",
+              "name": "Your server’s name",
+              "oneLiner": "One-liner appears here"
+            }
+          },
+          {
+            "heading": "Links",
+            "note": "Help users learn more and get support.",
+            "fields": [
+              "listing.documentationUrl",
+              "listing.enterpriseAuthDocsUrl"
+            ]
+          },
+          {
+            "fields": ["listing.support", "listing.privacyPolicyUrl"]
+          }
+        ]
+      }
+    },
+    "useCases": {
+      "title": "Use cases",
+      "intro": "Up to three things people can do with your MCP server, what they need before connecting, and whether it reads or writes. Shown to reviewers, not on your listing."
+    },
+    "company": {
+      "title": "Company",
+      "intro": "Tell us about the company or organization behind this MCP server.",
+      "layout": {
+        "blocks": [
+          {
+            "fields": ["company.name"]
+          },
+          {
+            "fields": ["company.website"]
+          },
+          {
+            "heading": "Primary contact",
+            "note": "We’ll use this contact for any questions about your submission.",
+            "fields": ["company.contactName"]
+          },
+          {
+            "fields": ["company.contactEmail"]
+          },
+          {
+            "fields": ["company.role"]
+          },
+          {
+            "fields": ["company.anthropicContact"]
+          }
+        ]
+      }
+    },
+    "authentication": {
+      "title": "Authentication",
+      "intro": "Configure how users authenticate with your server. What you set here is applied to connections exactly as entered.",
+      "layout": {
+        "blocks": [
+          {
+            "fields": ["authentication.requirement"]
+          },
+          {
+            "heading": "Authentication methods",
+            "widget": "oauth-sign-in",
+            "fields": ["authentication.oauthClient"],
+            "text": {
+              "title": "OAuth sign-in",
+              "headers": "Additional request headers",
+              "addHeader": "Add header",
+              "headersHelper": "Sent on every MCP request alongside the OAuth bearer token. Installers provide the values when they connect, unless you mark a header as held by Anthropic.",
+              "addStaticHeaders": "Add static headers"
+            }
+          }
+        ]
+      }
+    },
+    "dataHandling": {
+      "title": "Data handling",
+      "intro": "Tell reviewers what the MCP server reads, writes, and sends off-platform."
+    },
+    "testLaunch": {
+      "title": "Test & launch",
+      "intro": "Give reviewers a way in, and confirm you’ve tested every tool.",
+      "layout": {
+        "blocks": [
+          {
+            "fields": ["testLaunch.instructions"]
+          },
+          {
+            "heading": "Self-tested",
+            "fields": ["testLaunch.selfTested"]
+          }
+        ]
+      }
+    },
+    "compliance": {
+      "title": "Compliance",
+      "intro": "Confirm that your MCP server meets Anthropic’s directory policies. All items are required."
+    },
+    "review": {
+      "title": "Review and submit",
+      "intro": "Confirm the details, then submit. Review can take a few weeks, and approval isn’t guaranteed.",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "submit",
+            "text": {
+              "submit": "Submit for review",
+              "missing": "Some steps are missing required fields — submit to highlight them."
+            }
+          }
+        ],
+        "review": [
+          {
+            "id": "connection",
+            "title": "Connection",
+            "edit": "connection",
+            "rows": [
+              "connection.serverUrl",
+              {
+                "label": "Captured tool list",
+                "error": "A captured tool list is required to submit. Connect your server on the Connection step, or reconnect it in Settings → Connectors, to capture it.",
+                "blank": "connection.serverUrl"
+              }
+            ]
+          },
+          {
+            "id": "connection-auth",
+            "title": "Connection & authentication",
+            "edit": "authentication",
+            "rows": ["authentication.requirement", "authentication.oauthClient"]
+          },
+          {
+            "id": "listing",
+            "title": "Listing",
+            "edit": "listing",
+            "rows": [
+              "listing.name",
+              "listing.slug",
+              "listing.oneLiner",
+              "listing.description",
+              "listing.authorName",
+              "listing.categories",
+              "listing.documentationUrl",
+              "listing.support",
+              "listing.privacyPolicyUrl"
+            ]
+          },
+          {
+            "id": "useCases",
+            "title": "Use cases",
+            "edit": "useCases",
+            "rows": [
+              "useCases.pairs",
+              "useCases.prerequisites",
+              "useCases.access"
+            ]
+          },
+          {
+            "id": "company",
+            "title": "Company",
+            "edit": "company",
+            "rows": [
+              "company.name",
+              "company.website",
+              "company.contactName",
+              "company.contactEmail"
+            ]
+          },
+          {
+            "id": "authentication",
+            "title": "Authentication",
+            "edit": "authentication",
+            "rows": [],
+            "flat": true
+          },
+          {
+            "id": "dataHandling",
+            "title": "Data handling",
+            "edit": "dataHandling",
+            "rows": [
+              "dataHandling.apiOwnership",
+              "dataHandling.healthData",
+              "dataHandling.sponsored"
+            ]
+          },
+          {
+            "id": "testLaunch",
+            "title": "Test & launch",
+            "edit": "testLaunch",
+            "rows": ["testLaunch.instructions", "testLaunch.selfTested"]
+          },
+          {
+            "id": "compliance",
+            "title": "Compliance",
+            "edit": "compliance",
+            "rows": ["compliance.acknowledgments", "compliance.additionalNotes"]
+          }
+        ]
+      }
+    }
+  },
+  "fields": {
+    "connection.serverUrl": {
+      "label": "Server URL",
+      "helper": "Servers already in the directory aren’t shown.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "connection.differentUrls": {
+      "label": "Users connect to different URLs",
+      "helper": "Leave this unchecked if every user connects to the same server URL."
+    },
+    "listing.name": {
+      "label": "Name",
+      "placeholder": "My MCP server",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.slug": {
+      "label": "Slug",
+      "placeholder": "my-mcp-server",
+      "helper": "Permanent after submission. Lowercase letters, numbers, and hyphens.",
+      "errors": {
+        "required": "Slug is required"
+      }
+    },
+    "listing.oneLiner": {
+      "label": "One-liner",
+      "placeholder": "A short tagline for your MCP server",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.description": {
+      "label": "Description",
+      "placeholder": "Describe what your MCP server does and its key features…",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.categories": {
+      "label": "Categories",
+      "placeholder": "Select categories",
+      "helper": "Categories are used to filter MCP servers in the directory. Select up to 5.",
+      "errors": {
+        "required": "Select at least one category"
+      }
+    },
+    "listing.authorName": {
+      "label": "Author name",
+      "reviewLabel": "Author",
+      "placeholder": "Acme Inc.",
+      "helper": "Shown as “by …” on the listing.",
+      "errors": {
+        "required": "An author is required to submit — add one on the Listing step, or fill in your company name and an https:// website to use those"
+      }
+    },
+    "listing.authorUrl": {
+      "label": "Author URL",
+      "placeholder": "https://example.com",
+      "helper": "If left blank, these default to your company name and website."
+    },
+    "listing.iconUrl": {
+      "label": "Icon",
+      "helper": "The directory and Claude show the favicon from your server’s URL; we recommend leaving it at that. A custom icon replaces it in the directory listing only."
+    },
+    "listing.documentationUrl": {
+      "label": "Documentation",
+      "placeholder": "https://docs.example.com",
+      "helper": "Public-facing docs shown to users. IT admins often review these when deciding whether to approve an MCP server.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.enterpriseAuthDocsUrl": {
+      "label": "Enterprise managed auth documentation",
+      "placeholder": "https://docs.example.com/setup",
+      "helper": "Setup instructions for admins configuring enterprise managed auth for this connector. Linked from the admin setup flow."
+    },
+    "listing.support": {
+      "label": "Support",
+      "reviewLabel": "Support URL",
+      "placeholder": "support@example.com or https://support.example.com",
+      "helper": "A support URL or email address.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "listing.privacyPolicyUrl": {
+      "label": "Privacy policy",
+      "placeholder": "https://example.com/privacy",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "useCases.pairs": {
+      "label": "Use cases",
+      "helper": "Shown to reviewers, not on your public listing.",
+      "errors": {
+        "required": "Add at least one use case with an example prompt"
+      }
+    },
+    "useCases.prerequisites": {
+      "label": "Prerequisites",
+      "placeholder": "A paid Acme account with admin permissions",
+      "helper": "The accounts, permissions or setup a user needs before connecting. Shown to reviewers.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "useCases.access": {
+      "label": "Read/write capabilities",
+      "helper": "Based on what your tools do; we check it against their annotations.",
+      "options": [
+        {
+          "value": "read-only",
+          "label": "Read only",
+          "help": "Retrieves data but never modifies it"
+        },
+        {
+          "value": "write-only",
+          "label": "Write only",
+          "help": "Creates or modifies data but does not read it"
+        },
+        {
+          "value": "read-write",
+          "label": "Read and write",
+          "help": "Both retrieves and modifies data"
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.name": {
+      "label": "Company name",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.website": {
+      "label": "Company website",
+      "placeholder": "https://example.com",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.contactName": {
+      "label": "Full name",
+      "reviewLabel": "Primary contact",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.contactEmail": {
+      "label": "Email",
+      "reviewLabel": "Contact email",
+      "helper": "Prefilled from your Claude account.",
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "company.role": {
+      "label": "Role",
+      "placeholder": "Software Engineer"
+    },
+    "company.anthropicContact": {
+      "label": "Anthropic contact",
+      "placeholder": "Name or email (optional)",
+      "helper": "If you’ve been working with someone at Anthropic, let us know who."
+    },
+    "authentication.requirement": {
+      "label": "Authentication requirement",
+      "options": [
+        {
+          "value": "always",
+          "label": "Always required",
+          "help": "Users connect and sign in before any tools or resources are available."
+        },
+        {
+          "value": "when-asked",
+          "label": "Required when the server asks",
+          "help": "Claude connects without credentials first, then prompts to sign in if the server requires it."
+        },
+        {
+          "value": "none",
+          "label": "None",
+          "help": "Anyone can use this server without signing in or providing credentials."
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "authentication.oauthClient": {
+      "label": "OAuth client",
+      "options": [
+        {
+          "value": "dcr",
+          "label": "Dynamic Client Registration",
+          "help": "Clients register themselves with the server (RFC 7591)"
+        },
+        {
+          "value": "cimd",
+          "label": "Client ID Metadata Document",
+          "help": "The server accepts a published client metadata URL"
+        },
+        {
+          "value": "anthropic-held",
+          "label": "Anthropic-held client credentials",
+          "help": "Anthropic stores one client ID used for every connection"
+        },
+        {
+          "value": "bring-your-own",
+          "label": "Installers bring their own OAuth client",
+          "help": "Each organization supplies a client ID it registered with the server"
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.apiOwnership": {
+      "label": "API ownership",
+      "options": [
+        {
+          "value": "own",
+          "label": "We own the API",
+          "help": "The MCP server calls our own production APIs"
+        },
+        {
+          "value": "partner-proxy",
+          "label": "We proxy a partner’s API with permission",
+          "help": "Calls go to a third-party API we’re authorized to integrate (e.g. Zapier-style)"
+        },
+        {
+          "value": "third-party",
+          "label": "Calls a third-party API we don’t control",
+          "help": "Typically blocks listing — explain in Additional notes"
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.healthData": {
+      "label": "Personal health data",
+      "helper": "Does this MCP server access, process, or store personal health information?",
+      "options": [
+        {
+          "value": "no",
+          "label": "No"
+        },
+        {
+          "value": "yes",
+          "label": "Yes"
+        },
+        {
+          "value": "depends",
+          "label": "Other / depends on configuration"
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "dataHandling.sponsored": {
+      "label": "Sponsored or promoted content",
+      "reviewLabel": "Sponsored content",
+      "helper": "Sponsored, promoted, and advertising content is prohibited in the directory. Does this MCP server surface any?",
+      "options": [
+        {
+          "value": "no",
+          "label": "No"
+        },
+        {
+          "value": "yes",
+          "label": "Yes"
+        },
+        {
+          "value": "other",
+          "label": "Other"
+        }
+      ],
+      "errors": {
+        "required": "This field is required"
+      }
+    },
+    "testLaunch.instructions": {
+      "label": "Test setup instructions",
+      "placeholder": "Sign up at example.com/signup with email reviewer@anthropic.com, then connect via OAuth using client_id=...",
+      "helper": "We reserve the right to manually review all servers. Provide clear test-account setup and access instructions. We’re working to automate this process to reduce the time it takes to get your server into the directory — write these instructions so they contain every link, credential, and step needed to autonomously access the MCP server. For enterprise accounts or servers that require a fully populated account, provide test credentials that grant access to a fully populated account for review."
+    },
+    "testLaunch.selfTested": {
+      "label": "I have run every tool via MCP Inspector or as a custom connector in Claude",
+      "reviewLabel": "Self-tested"
+    },
+    "compliance.acknowledgments": {
+      "label": "Policy acknowledgements",
+      "reviewLabel": "Policies acknowledged",
+      "options": [
+        {
+          "value": "developer-guidelines",
+          "label": "I have read and understand the MCP Directory developer guidelines."
+        },
+        {
+          "value": "first-party-apis",
+          "label": "My server calls our own first-party APIs (or APIs we legitimately proxy with permission)."
+        },
+        {
+          "value": "no-financial-transfers",
+          "label": "My MCP server does not transfer money, cryptocurrency, or other financial assets on a user’s behalf."
+        },
+        {
+          "value": "no-generated-media",
+          "label": "My MCP server does not use AI models to generate images, video, or audio."
+        },
+        {
+          "value": "clean-tool-descriptions",
+          "label": "Tool descriptions contain no instructions about model behavior, other tools, or external instruction sources, and no hidden or encoded text."
+        },
+        {
+          "value": "minimal-conversation-data",
+          "label": "My MCP server does not collect conversation data beyond what is needed for its function."
+        },
+        {
+          "value": "public-docs-by-launch",
+          "label": "Public documentation for this MCP server will be live by the publish date."
+        }
+      ],
+      "errors": {
+        "required": "All policy items must be acknowledged",
+        "tooFew": "All policy items must be acknowledged"
+      }
+    },
+    "compliance.additionalNotes": {
+      "label": "Additional notes",
+      "reviewLabel": "Additional information",
+      "helper": "Optional. Anything else the review team should know about your MCP server."
+    }
+  },
+  "placements": [
+    {
+      "step": "connection",
+      "field": "connection.serverUrl",
+      "needs": [],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.endpoint.https"]
+    },
+    {
+      "step": "connection",
+      "field": "connection.serverUrl",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.endpoint.redirects-stay-https",
+        "claude.endpoint.redirects-terminate"
+      ]
+    },
+    {
+      "step": "tools",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.tools.name-length",
+        "claude.tools.title-present",
+        "claude.tools.behavior-hints-present",
+        "claude.tools.behavior-hints-consistent",
+        "claude.tools.no-catch-all-read-write",
+        "claude.tools.free-string-operation-parameter",
+        "claude.apps.resource-uri-modern",
+        "claude.apps.html-mime-profile",
+        "claude.apps.openai-only-widget",
+        "claude.apps.ui-domain-derivation",
+        "claude.apps.ui-domain-recommended-for-app-oauth",
+        "claude.apps.csp-shape",
+        "claude.apps.result-size-budget",
+        "claude.apps.instance-supersession",
+        "claude.apps.design.doctype",
+        "claude.apps.design.responsive-320",
+        "claude.apps.design.touch-targets",
+        "claude.apps.design.safe-area",
+        "claude.apps.design.theming",
+        "claude.apps.design.transparent-background",
+        "claude.apps.design.nested-scrolling",
+        "claude.apps.design.accessibility",
+        "claude.apps.design.display-mode"
+      ]
+    },
+    {
+      "step": "tools",
+      "needs": ["server", "model"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.experience.tool-descriptions-uninformative",
+        "claude.experience.tool-overlap",
+        "claude.experience.connector-purpose-unclear",
+        "claude.experience.destructive-tool-underexplained",
+        "claude.experience.app-copy-mismatched",
+        "both.decision.annotation-matches-behaviour"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": ["server", "model"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.experience.listing-copy-placeholder"]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [
+        "listing.name",
+        "listing.slug",
+        "listing.oneLiner",
+        "listing.description",
+        "listing.categories",
+        "listing.authorName",
+        "company.name",
+        "company.website"
+      ],
+      "checks": ["claude.submission.listing-fields"]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [
+        "listing.documentationUrl",
+        "listing.privacyPolicyUrl",
+        "listing.support",
+        "listing.authorUrl",
+        "listing.iconUrl",
+        "listing.enterpriseAuthDocsUrl"
+      ],
+      "checks": ["claude.submission.urls"]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [],
+      "checks": [
+        "claude.submission.screenshots",
+        "claude.submission.screenshot-prompts"
+      ]
+    },
+    {
+      "step": "useCases",
+      "field": "useCases.access",
+      "needs": ["server"],
+      "reads": ["useCases.access", "connection.serverUrl"],
+      "checks": ["claude.submission.access-matches-annotations"]
+    },
+    {
+      "step": "useCases",
+      "field": "useCases.pairs",
+      "needs": [],
+      "reads": ["useCases.pairs", "useCases.prerequisites"],
+      "checks": ["claude.submission.use-cases"]
+    },
+    {
+      "step": "company",
+      "needs": [],
+      "reads": [
+        "company.name",
+        "company.website",
+        "company.contactName",
+        "company.contactEmail"
+      ],
+      "checks": ["claude.submission.company"]
+    },
+    {
+      "step": "authentication",
+      "field": "authentication.requirement",
+      "needs": [],
+      "reads": ["authentication.requirement", "authentication.oauthClient"],
+      "checks": ["claude.submission.authentication"]
+    },
+    {
+      "step": "authentication",
+      "field": "authentication.requirement",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.auth.unauthenticated-challenge",
+        "claude.features.lazy-authentication"
+      ]
+    },
+    {
+      "step": "authentication",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.auth.challenge-names-resource-metadata",
+        "claude.auth.no-challenge-on-successful-operation",
+        "claude.auth.prm-discoverable",
+        "claude.auth.prm-resource-matches-entered-url",
+        "claude.auth.first-authorization-server-usable",
+        "claude.auth.pkce-s256-advertised",
+        "claude.auth.cimd-flag-consistent",
+        "claude.features.enterprise-managed-auth"
+      ]
+    },
+    {
+      "step": "authentication",
+      "field": "authentication.oauthClient",
+      "needs": ["server"],
+      "reads": [
+        "connection.serverUrl",
+        "authentication.requirement",
+        "authentication.oauthClient"
+      ],
+      "checks": [
+        "claude.auth.client-acquisition-path",
+        "claude.submission.declared-auth-mode"
+      ]
+    },
+    {
+      "step": "authentication",
+      "needs": ["server", "reviewer"],
+      "reads": ["connection.serverUrl"],
+      "checks": [
+        "claude.auth.rfc8707-resource-canonical",
+        "claude.auth.insufficient-scope-challenge-shape",
+        "claude.auth.access-token-audience",
+        "claude.intrusive.dynamic-registration",
+        "claude.intrusive.refresh-rotation",
+        "claude.intrusive.step-up-challenge"
+      ]
+    },
+    {
+      "step": "authentication",
+      "needs": ["server", "model"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.experience.consent-scope-unclear"]
+    },
+    {
+      "step": "dataHandling",
+      "needs": [],
+      "reads": [
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored"
+      ],
+      "readsConfirmation": true,
+      "checks": ["claude.submission.data-handling"]
+    },
+    {
+      "step": "testLaunch",
+      "field": "testLaunch.instructions",
+      "needs": [],
+      "reads": ["testLaunch.instructions", "authentication.requirement"],
+      "checks": ["claude.submission.test-instructions"]
+    },
+    {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": [],
+      "reads": ["compliance.acknowledgments"],
+      "readsConfirmation": true,
+      "checks": ["claude.submission.attestations"]
+    },
+    {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.scan.cross-tool-direction-candidates"]
+    },
+    {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": ["server", "model"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.decision.cross-tool-direction"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored"
+      ],
+      "checks": ["claude.submission.artifact-quality"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "useCases.access",
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored",
+        "testLaunch.selfTested",
+        "compliance.acknowledgments"
+      ],
+      "readsConfirmation": true,
+      "checks": ["claude.submission.declarations-confirmed"]
+    },
+    {
+      "step": "review",
+      "needs": [],
+      "reads": [
+        "connection.serverUrl",
+        "connection.differentUrls",
+        "useCases.access",
+        "company.role",
+        "company.anthropicContact",
+        "testLaunch.instructions",
+        "testLaunch.selfTested",
+        "compliance.additionalNotes"
+      ],
+      "readsConfirmation": true,
+      "checks": ["claude.submission.other-answers"]
+    }
+  ],
+  "laneSteps": {
+    "runtime-compatibility": "connection",
+    "directory-policy": "tools",
+    "optional-features": "authentication",
+    "submission-artifacts": "listing",
+    "experience-insights": "tools"
+  }
+}

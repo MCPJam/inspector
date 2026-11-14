@@ -146,6 +146,7 @@ export type OrgAiModelEntry = {
 export type OrgAiModelTestResult = OrgAiModelCheck & { selectionKey?: string };
 
 export type OrgAiConfig = {
+  contractKeysRequired?: boolean;
   organizationId: string;
   aiKeyPolicy: {
     requireOrgKeys: boolean;

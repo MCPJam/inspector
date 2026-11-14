@@ -63,6 +63,7 @@ import {
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
+import type { RunResultCrumbs } from "./evaluate/run-result-pages/run-result-page";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -92,6 +93,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { cancelEvalRunForAgent } from "./evals/agent-cancel-eval-run";
 import type {
   CancelEvalRunInspectorCommand,
   DeleteEvalSuiteInspectorCommand,
@@ -1049,22 +1051,10 @@ function EvaluateTabContent({
       cancelEvalRun: async (command) => {
         requireAgentOperable();
         const { payload } = command as CancelEvalRunInspectorCommand;
-        const run = resolveRun(payload.runId);
-        if (run.status !== "pending" && run.status !== "running") {
-          return {
-            status: "already_finished",
-            runId: run._id,
-            runStatus: run.status,
-          };
-        }
-        if (latestHandlersRef.current.cancellingRunId) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "Another run cancellation is already in progress.",
-          );
-        }
-        await latestHandlersRef.current.handleCancelRun(run._id);
-        return { status: "cancel_requested", runId: run._id };
+        return cancelEvalRunForAgent(
+          resolveRun(payload.runId),
+          latestHandlersRef.current,
+        );
       },
       generateEvalTests: async (command) => {
         requireAgentOperable();
@@ -1325,7 +1315,7 @@ function EvaluateTabContent({
           ? (suiteDetails?.testCases.find(
               (testCase) => testCase._id === route.fromCaseChecks,
             )?.title ?? "Test case")
-          : "Test Suite Evaluators"
+          : "Suite settings"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1341,6 +1331,11 @@ function EvaluateTabContent({
      * "Generate test cases". */
     label?: string;
   } | null>(null);
+
+  // Reported by an open run result page; cleared when it unmounts.
+  const [resultCrumbs, setResultCrumbs] = useState<RunResultCrumbs | null>(
+    null,
+  );
 
   const renderPlaygroundBreadcrumb = () => {
     if (generatingCases) return generatingCases.label ?? "Generate test cases";
@@ -1624,6 +1619,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           onGeneratingChange={setGeneratingCases}
+          onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1691,11 +1687,11 @@ function EvaluateTabContent({
                           { checks: true },
                         ),
                     },
-                    { label: "Test Suite Evaluators" },
+                    { label: "Suite settings" },
                   ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
-                  : undefined
+                  : resultCrumbs?.crumbs
             }
             onCurrentCrumbClick={
               route.type === "suite-edit" && route.fromCaseChecks
@@ -1710,7 +1706,7 @@ function EvaluateTabContent({
                         route.suiteId,
                         route.testId,
                       )
-                  : undefined
+                  : resultCrumbs?.onOpenRun
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}

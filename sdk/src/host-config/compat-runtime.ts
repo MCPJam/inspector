@@ -17,8 +17,9 @@
  * via `Host.toJSON()`).
  *
  * Style presets:
- *   - "chatgpt" | "copilot" | "mcpjam" → true
- *   - "claude" | "claude-desktop" | "cursor" | "codex" | "goose" → false
+ *   - "chatgpt" and its desktop and work variants | "copilot" | "mcpjam" → true
+ *   - "claude" | "claude-desktop" | the Claude Code app styles | "cursor" |
+ *     "codex" | "codex-cli" | "goose" → false
  *   - anything else → undefined (falls through; ultimate default is false)
  */
 
@@ -60,12 +61,18 @@ export function readOpenAiCompatOverride(value: unknown): boolean | undefined {
 export const OPENAI_COMPAT_PRESET_BY_STYLE: Readonly<Record<string, boolean>> =
   Object.freeze({
     chatgpt: true,
+    "chatgpt-desktop": true,
+    "chatgpt-work": true,
+    "chatgpt-work-desktop": true,
     copilot: true,
     mcpjam: true,
     claude: false,
     "claude-desktop": false,
+    "claude-code-desktop": false,
+    "claude-code-web": false,
     cursor: false,
     codex: false,
+    "codex-cli": false,
     goose: false,
     slack: false,
     vscode: false,

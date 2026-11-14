@@ -6,7 +6,7 @@ import {
   META_TOOL_SEARCH,
   type ProgressiveToolPlan,
   type ToolCatalogEntry,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 
 // D7 P1 fix: `prepared.allTools` is always the FULL tool registry —
 // prepareChatV2 builds it before any step runs. When progressive discovery

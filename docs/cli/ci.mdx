@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: OAuth login (headless)
         run: |
@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: |
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --access-token ${{ secrets.MCP_API_KEY }} --format json
@@ -162,7 +162,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Run doctor
         run: npx -y @mcpjam/cli@latest server doctor --url ${{ secrets.MCP_SERVER_URL }} --format json
@@ -258,7 +258,7 @@ The same CLI commands work in GitLab CI. The examples below use GitLab CI/CD var
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
   script:
@@ -286,7 +286,7 @@ mcp-health-check:
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_REFRESH_TOKEN: $MCP_REFRESH_TOKEN
@@ -309,7 +309,7 @@ mcp-health-check:
 
 ```yaml
 mcp-health-check:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_API_KEY: $MCP_API_KEY
@@ -326,7 +326,7 @@ Snapshot your tool surface before and after a deploy to catch breaking changes.
 
 ```yaml
 mcp-tool-diff:
-  image: node:20
+  image: node:22
   variables:
     MCP_SERVER_URL: $MCP_SERVER_URL
     MCP_TOKEN: $MCP_TOKEN
@@ -344,7 +344,7 @@ mcp-tool-diff:
 
 ```yaml
 mcp-oauth-conformance:
-  image: node:20
+  image: node:22
   script:
     - |
       npx -y @mcpjam/cli@latest oauth conformance-suite \

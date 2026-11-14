@@ -60,6 +60,26 @@ function fixture() {
 }
 
 describe("owned file resource session", () => {
+  it("updates runtime write capabilities without blocking reads when a helper fails", async () => {
+    const f = fixture(); f.session.close();
+    const managed = managedResourceFixture();
+    const supports = vi.fn(async () => true);
+    const session = createPluginFileResourceSession({ ...f.options, resource: {
+      ...f.options.resource, authorizeWrite: async () => {},
+      adapter: { ...managed.adapter, supportsConditionalWrite: supports },
+    } });
+    try {
+      expect(session.capabilities.write).toBe(false);
+      const uri = session.input.file.resourceUri;
+      await session.read({ uri });
+      expect(session.capabilities.write).toBe(true);
+      supports.mockRejectedValue(new Error("helper unavailable"));
+      const read = await session.read({ uri });
+      expect(read.contents[0]._meta["openai/resource"].writable).toBe(false);
+      expect(session.capabilities.write).toBe(false);
+    } finally { session.close(); }
+  });
+
   it("reconstructs only a read-only host-derived original grant with fresh authorization", async () => {
     const f = fixture();
     f.session.close();

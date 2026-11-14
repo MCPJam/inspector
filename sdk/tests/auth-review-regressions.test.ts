@@ -48,6 +48,24 @@ describe("auth boundary review regressions", () => {
     ).toBe("https://example.com/.well-known/oauth-protected-resource");
     expect(calls).toHaveLength(2);
   });
+  it("does not accept protected resource metadata with a blank resource", async () => {
+    const request: TrackedRequestFn = async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        resource: "   ",
+        authorization_servers: ["https://auth.example.com"],
+      },
+    });
+    expect(
+      await findPublishedResourceMetadata(
+        { serverUrl: "https://example.com/mcp" },
+        request
+      )
+    ).toBeUndefined();
+  });
   it("recognizes OpenAI's single-quoted meta example", () => {
     expect(
       parseToolResultAuthChallenge({

@@ -70,14 +70,14 @@ export async function dialToolCall(
   toolName: string,
   sessionId?: string,
   id = 900,
-  args: Record<string, unknown> = {},
+  args: Record<string, unknown> = {}
 ): Promise<DirectoryToolCallEvidence> {
   const call = await callJsonRpc(
     options,
     id,
     "tools/call",
     { name: toolName, arguments: args },
-    sessionId ? { "mcp-session-id": sessionId } : undefined,
+    sessionId ? { "mcp-session-id": sessionId } : undefined
   );
   const wwwAuthenticate = readChallengeHeader(call.headers);
   const base: DirectoryToolCallEvidence = {

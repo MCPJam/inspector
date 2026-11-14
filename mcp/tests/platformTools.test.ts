@@ -28,6 +28,7 @@ import {
   PLATFORM_WIDGET_RESOURCE_URIS,
 } from "../src/shared/platform-widgets.js";
 import type { PlatformToolContext } from "../src/server.js";
+import type { GuestMintFailure } from "../src/guestMint.js";
 import type { SessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 type ToolResult = {
@@ -95,6 +96,7 @@ function jsonBodyOf(result: ToolResult): Record<string, unknown> {
 function fakeToolContext(
   overrides: {
     bearerToken?: string;
+    bearerFailure?: GuestMintFailure;
     platformApiUrl?: string;
     appOrigin?: string;
     callerUserAgent?: string;
@@ -104,7 +106,13 @@ function fakeToolContext(
   return {
     // runPlatformOperation resolves the bearer via getBearerToken() (async, so
     // anonymous requests can mint lazily). The stub just returns the override.
-    getBearerToken: async () => overrides.bearerToken,
+    getBearerToken: async () =>
+      overrides.bearerToken
+        ? { ok: true, token: overrides.bearerToken }
+        : {
+            ok: false,
+            failure: overrides.bearerFailure ?? { reason: "not_configured" },
+          },
     runtimeEnv: {
       PLATFORM_API_URL:
         overrides.platformApiUrl ?? "https://staging.example.com/api/v1",
@@ -147,6 +155,13 @@ const PLAIN_TOOLS = [
   "cancel_project_server_connection",
   "diagnose_server",
   "list_server_tools",
+  "list_server_revisions",
+  "get_server_revision",
+  "diff_server_revisions",
+  // Server accounts: metadata reads and the delete, no widget view.
+  "list_server_accounts",
+  "get_server_account",
+  "delete_server_account",
   "call_server_tool",
   // The render verdict is structured evidence (tree, console errors, blocked
   // requests). A widget PANEL here would be a second, drifting copy of the
@@ -172,11 +187,24 @@ const PLAIN_TOOLS = [
   "get_readiness_run",
   "list_readiness_runs",
   "cancel_readiness_run",
+  "resume_readiness_run",
   "get_readiness_report",
+  // Directory submissions: a form, answers and results by step are
+  // agent-oriented payloads; the Readiness page is their visual form.
+  "list_directory_flows",
+  "get_directory_flow",
+  "create_directory_submission",
+  "list_directory_submissions",
+  "get_directory_submission",
+  "update_directory_submission",
+  "delete_directory_submission",
+  "start_directory_submission_run",
+  "get_directory_submission_results",
   "start_conformance_run",
   "get_conformance_run",
   "list_conformance_runs",
   "get_conformance_report",
+  "get_conformance_check",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -448,6 +476,12 @@ describe("platform tool registration", () => {
       "cancel_project_server_connection",
       "diagnose_server",
       "list_server_tools",
+      "list_server_revisions",
+      "get_server_revision",
+      "diff_server_revisions",
+      "list_server_accounts",
+      "get_server_account",
+      "delete_server_account",
       "call_server_tool",
       "render_server_widget",
       "list_server_prompts",
@@ -458,6 +492,28 @@ describe("platform tool registration", () => {
       "get_server_skill",
       "read_server_skill_file",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "start_muse_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "resume_readiness_run",
+      "get_readiness_report",
+      "list_directory_flows",
+      "get_directory_flow",
+      "create_directory_submission",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "update_directory_submission",
+      "delete_directory_submission",
+      "start_directory_submission_run",
+      "get_directory_submission_results",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -639,6 +695,7 @@ describe("platform tool registration", () => {
       "publish_study",
       "create_client",
       "duplicate_client",
+      "create_directory_submission",
       "send_feedback",
     ]);
     // Writes whose identical repeat answers success on the state the first
@@ -711,6 +768,48 @@ describe("platform tool registration", () => {
     }
     for (const name of ["list_server_tools", "call_server_tool", "run_eval_case", "publish_study", "send_feedback"]) {
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
+    }
+
+    // Server accounts: the reads stay inside MCPJam; the delete asks the
+    // token's issuer to revoke it, and a second delete answers not found.
+    for (const name of ["list_server_accounts", "get_server_account"]) {
+      expect(annotationsOf(name), name).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
+    }
+    expect(annotationsOf("delete_server_account")).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    for (const name of [
+      "upload_server_account_tokens",
+      "update_server_account",
+    ]) {
+      expect(names.has(name), name).toBe(false);
+      expect(EXCLUDED_FROM_CATALOG[name], name).toMatch(/REST, the SDK and the CLI/);
+    }
+
+    // A conformance start costs no MCPJam credits, but the server's saved
+    // settings can name a tool that writes, so it is not an additive write.
+    expect(annotationsOf("start_conformance_run")).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    for (const name of [
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
+      "get_conformance_check",
+    ]) {
+      expect(annotationsOf(name), name).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
     }
 
     for (const registration of registrations) {
@@ -866,15 +965,28 @@ describe("plugin read tools", () => {
 });
 
 describe("runPlatformOperation", () => {
-  it("returns a tool error when the request has no bearer token", async () => {
+  it("names the guest mint failure instead of a missing bearer", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const result = (await runPlatformOperation(
-      fakeToolContext(),
+      fakeToolContext({ bearerFailure: { reason: "rejected", status: 401 } }),
       listProjectsOperation,
       {}
     )) as ToolResult;
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("bearer token");
+    expect(result.content[0]?.text).toContain(
+      "rejected this server's guest credentials"
+    );
+    expect(result.content[0]?.text).not.toContain("bearer token");
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "GUEST_SESSION_UNAVAILABLE",
+        reason: "rejected",
+        status: 401,
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("caps the model-visible text while keeping structuredContent complete", async () => {
@@ -960,6 +1072,69 @@ describe("runPlatformOperation", () => {
     expect(result.structuredContent?.error).toEqual({
       code: "FORBIDDEN",
       message: "Denied",
+    });
+  });
+
+  it("keeps a refusal's code and gated feature, and nothing else of its details", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "Conformance is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              feature: "conformance",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "Conformance is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE", feature: "conformance" },
+    });
+  });
+
+  it("keeps a feature-gate code even when the refusal names no feature", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "This feature is not available for your organization.",
+            details: {
+              code: "FEATURE_UNAVAILABLE",
+              internal: "not for agents",
+            },
+          },
+          { status: 403 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "FORBIDDEN",
+      message: "This feature is not available for your organization.",
+      details: { code: "FEATURE_UNAVAILABLE" },
     });
   });
 

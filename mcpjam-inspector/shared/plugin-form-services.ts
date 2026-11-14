@@ -22,6 +22,10 @@ export const pluginFormServiceRequestSchema = z.strictObject({
   sourceToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   parent: pluginFormParentSchema,
 });
+export const pluginFormFileServiceRequestSchema =
+  pluginFormServiceRequestSchema.extend({
+    includeOperation: z.literal(true).optional(),
+  });
 export const pluginFormPreviewRequestSchema =
   pluginFormServiceRequestSchema.extend({
     target: pluginFormPreviewSchema,
@@ -40,7 +44,19 @@ export const pluginFormFileUploadRequestSchema =
 export const PLUGIN_FORM_FILE_MAX_BYTES = 256 * 1024;
 export const PLUGIN_FORM_FILE_BATCH_MAX_BYTES = 768 * 1024;
 export const PLUGIN_FORM_FILE_MAX_COUNT = 16;
+export const pluginFormOperationSchema = z.strictObject({
+  projectId: z.string().min(1).max(256),
+  workspaceId: z.string().min(1).max(4096),
+  instanceId: z.string().min(1).max(256),
+  generation: z.number().int().positive(),
+  serverId: z.string().min(1).max(256),
+  invocationId: z.string().min(1).max(128),
+  expiresAt: z.number().finite().positive(),
+});
+export type PluginFormOperation = z.infer<typeof pluginFormOperationSchema>;
+
 export const pluginFormFileServicesSchema = z.strictObject({
+  operation: pluginFormOperationSchema.optional(),
   userResources: z.boolean(),
   userResourceKinds: z
     .array(z.enum(["file", "directory"]))

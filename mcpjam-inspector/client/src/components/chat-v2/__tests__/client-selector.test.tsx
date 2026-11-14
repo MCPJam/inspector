@@ -206,9 +206,9 @@ describe("ClientSelector", () => {
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
   });
 
-  // BB-135: switching clients used to mean "tick the one you want, then untick
-  // the one you had" — the row body only ever multi-selected.
-  it("switches the lead client on a row click and leaves compare", async () => {
+  // Switching out of a comparison is the row's "Only" button; the row body
+  // toggles there, like the checkbox.
+  it("switches the lead client from Only and leaves compare", async () => {
     const user = userEvent.setup();
     const onHostChange = vi.fn();
     const onSelectedHostIdsChange = vi.fn();
@@ -228,7 +228,7 @@ describe("ClientSelector", () => {
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
-    await user.click(screen.getByTestId("client-row-host-1"));
+    await user.click(screen.getByTestId("client-row-only-host-1"));
 
     expect(onHostChange).toHaveBeenCalledWith("host-1");
     // Clearing the lineup is not cosmetic: `usePersistedHost` preserves the
@@ -238,6 +238,67 @@ describe("ClientSelector", () => {
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
     // Switching is a terminal gesture — the list goes away with the choice.
     expect(screen.queryByTestId("client-row-host-1")).not.toBeInTheDocument();
+  });
+
+  it("switches the lead client on a row click when not comparing", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.queryByTestId("client-row-only-host-1")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("client-row-host-1"));
+
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+    expect(onSelectedHostIdsChange).not.toHaveBeenCalled();
+  });
+
+  it("toggles a client on a row click while comparing, keeping the lineup", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    const onMultiHostEnabledChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={onMultiHostEnabledChange}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-host-2"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenLastCalledWith([
+      "host-0",
+      "host-1",
+      "host-2",
+    ]);
+    expect(onHostChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("client-row-host-2")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-host-1"));
+    expect(onSelectedHostIdsChange).toHaveBeenLastCalledWith(["host-0"]);
+    expect(onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);
   });
 
   // cmdk's root keydown claims Enter for the highlighted row, so without the
@@ -317,7 +378,10 @@ describe("ClientSelector", () => {
     await user.click(screen.getByTestId("client-selector-trigger"));
     expect(screen.getByTestId("client-row-compare-host-3")).toBeDisabled();
 
+    // The row body cannot add a fourth pane; Only still switches.
     await user.click(screen.getByTestId("client-row-host-3"));
+    expect(onHostChange).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("client-row-only-host-3"));
 
     expect(onHostChange).toHaveBeenCalledWith("host-3");
   });
@@ -442,4 +506,104 @@ it("sends Add clients to Connect when the picker has no creation project", async
   await user.click(screen.getByTestId("client-selector-trigger"));
   await user.click(screen.getByRole("button", { name: "Add clients" }));
   expect(navigateMock).toHaveBeenCalledWith("/clients");
+});
+
+describe("ClientSelector with environment panes", () => {
+  const environments = [
+    { paneId: "env_1", label: "E1" },
+    { paneId: "env_2", label: "E2" },
+  ];
+
+  function renderLineup({
+    selectedHostIds = [] as string[],
+    maxSelectedHosts = 1,
+  } = {}) {
+    const calls = {
+      onHostChange: vi.fn(),
+      onSelectedHostIdsChange: vi.fn(),
+      onMultiHostEnabledChange: vi.fn(),
+      onRemovePane: vi.fn(),
+      onPickSingleClient: vi.fn(),
+    };
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        cloudProjectId={null}
+        // The previewed client, which runs no pane in this lineup.
+        currentHostId="host-0"
+        selectedHostIds={selectedHostIds}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+        maxSelectedHosts={maxSelectedHosts}
+        environmentPanes={environments}
+        environmentLeads
+        {...calls}
+      />,
+    );
+    return calls;
+  }
+
+  beforeEach(() => {
+    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
+  });
+
+  it("shows two environment panes and no client that has no pane", async () => {
+    const user = userEvent.setup();
+    renderLineup();
+    const trigger = screen.getByTestId("client-selector-trigger");
+    expect(trigger).toHaveAccessibleName("Compare panes: E1, E2");
+    expect(trigger).not.toHaveTextContent("MCPJam");
+
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: "Remove E1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove E2" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove MCPJam" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Compare with MCPJam" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("adds a client beside them and removes an environment pane", async () => {
+    const user = userEvent.setup();
+    const calls = renderLineup();
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByRole("button", { name: "Compare with VS Code" }));
+    expect(calls.onSelectedHostIdsChange).toHaveBeenLastCalledWith(["host-1"]);
+    expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole("button", { name: "Remove E2" }));
+    expect(calls.onRemovePane).toHaveBeenCalledWith("env_2");
+  });
+
+  it("lets the last client go while environment panes stay, and counts them toward the cap", async () => {
+    const user = userEvent.setup();
+    const calls = renderLineup({ selectedHostIds: ["host-1"] });
+    expect(screen.getByTestId("client-selector-trigger")).toHaveAccessibleName(
+      "Compare panes: E1, E2, VS Code",
+    );
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(
+      screen.getByText("Remove a pane to add another client."),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Compare with MCPJam" }),
+    ).toBeDisabled();
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove VS Code from comparison" }),
+    );
+    expect(calls.onSelectedHostIdsChange).toHaveBeenLastCalledWith([]);
+    expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("leaves Compare for one client when its Only is picked", async () => {
+    const user = userEvent.setup();
+    const calls = renderLineup();
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    await user.click(screen.getByTestId("client-row-only-host-2"));
+    expect(calls.onPickSingleClient).toHaveBeenCalledWith("host-2");
+    expect(calls.onSelectedHostIdsChange).not.toHaveBeenCalled();
+    expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);
+  });
 });

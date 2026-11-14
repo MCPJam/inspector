@@ -34,17 +34,6 @@ const RESOURCE_METADATA_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mc
  * from the hold fails here instead of passing by construction.
  */
 const HELD_TOOLS = [
-  "start_claude_readiness_run",
-  "start_openai_readiness_run",
-  "start_muse_readiness_run",
-  "get_readiness_run",
-  "list_readiness_runs",
-  "cancel_readiness_run",
-  "get_readiness_report",
-  "start_conformance_run",
-  "get_conformance_run",
-  "list_conformance_runs",
-  "get_conformance_report",
   "search_sessions",
   "search_registry_directory",
   "get_registry_directory_server",
@@ -414,6 +403,63 @@ describe("held beta tools", () => {
         )
     );
     expect(named).toEqual([]);
+  });
+});
+
+describe("directory readiness over MCP alone", () => {
+  it("lists the readiness tools and reads a flow through the catalog", async () => {
+    // An agent with only connected tools: no CLI, no app, one JSON-RPC
+    // endpoint. The tools are listed for every caller while in beta.
+    const flowUrl =
+      "https://app.example.test/api/v1/directory-flows/claude-connector";
+    stubOutboundFetch({
+      [flowUrl]: {
+        id: "claude-connector",
+        steps: [
+          { id: "connection", title: "Connection", fields: [] },
+          { id: "listing", title: "Listing", fields: [{ key: "listing.name" }] },
+        ],
+        placements: [],
+      },
+    });
+    const env = makeEnv({ guestAccess: "off" });
+    const token = await authkitToken();
+    const listed = await jsonRpcResult(
+      await worker.fetch(mcpRequest("tools/list", {}, token), env)
+    );
+    const names: string[] = listed.tools.map(
+      (tool: { name: string }) => tool.name
+    );
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "start_claude_readiness_run",
+        "get_readiness_run",
+        "get_directory_flow",
+        "create_directory_submission",
+        "update_directory_submission",
+        "start_directory_submission_run",
+        "get_directory_submission_results",
+      ])
+    );
+
+    const called = await jsonRpcResult(
+      await worker.fetch(
+        mcpRequest(
+          "tools/call",
+          {
+            name: "get_directory_flow",
+            arguments: { flow: "claude-connector", step: "listing" },
+          },
+          token
+        ),
+        env
+      )
+    );
+    expect(called.isError).toBeFalsy();
+    expect(
+      called.structuredContent.steps.map((step: { id: string }) => step.id)
+    ).toEqual(["listing"]);
+    expect(fetched).toContain(flowUrl);
   });
 });
 

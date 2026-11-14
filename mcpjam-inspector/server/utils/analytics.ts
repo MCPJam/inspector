@@ -4,6 +4,7 @@ import { analyticsTransport } from "./analytics-transport.js";
 import type { Context } from "hono";
 import { randomUUID } from "crypto";
 import type { ServerAnalyticsEventName } from "@/shared/analytics-events";
+import type { LocalHarnessRolloutFlag } from "../../shared/harness-descriptors.js";
 import {
   rolloutActorId,
   rolloutPersonProperties,
@@ -16,6 +17,10 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import {
+  resolveFeatureFlagSource,
+  rolloutAnswerWithoutPostHog,
+} from "./feature-flag-source.js";
 
 /**
  * Server-side PostHog capture for business-critical events.
@@ -47,7 +52,7 @@ const POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Same opt-outs the client honors, plus the conventional DO_NOT_TRACK for
 // npm/local installs where the server runs on the user's machine.
-function isAnalyticsDisabled(): boolean {
+export function isAnalyticsDisabled(): boolean {
   const dnt = process.env.DO_NOT_TRACK;
   return (
     process.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
@@ -67,8 +72,11 @@ function serverPlatform(): string {
 
 let client: PostHog | null = null;
 
-// Feature evaluation controls product availability, independently of tracking.
-// Callers using this exception must suppress feature-flag exposure events.
+// Feature evaluation controls product availability, so it bypasses
+// `isAnalyticsDisabled()`. DO_NOT_TRACK still stops it: callers reach this
+// client only when `resolveFeatureFlagSource` names PostHog, which it never
+// does under DO_NOT_TRACK or when a flag file answers instead. Callers must
+// also suppress feature-flag exposure events.
 function getClient(forFeatureFlags = false): PostHog | null {
   if (!forFeatureFlags && isAnalyticsDisabled()) return null;
   if (!client) {
@@ -179,6 +187,8 @@ export async function evaluateBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(key);
+  if (answer !== undefined) return answer;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
@@ -193,18 +203,6 @@ export async function evaluateBrowserRollout(
   }
 }
 
-/**
- * The server-side rollout flag for each local harness. Codex rolls out on its
- * own flag (D3), whose cohort must be a subset of `codex-host-enabled` — the
- * backend refuses a Codex host config outside that cohort, so a user enabled
- * here but not there could pick Codex and then fail to create the host.
- */
-export const LOCAL_HARNESS_ROLLOUT_FLAG = {
-  "claude-code": "local-harness-enabled",
-  codex: "local-codex-enabled",
-} as const;
-export type LocalHarnessRolloutFlag =
-  (typeof LOCAL_HARNESS_ROLLOUT_FLAG)[keyof typeof LOCAL_HARNESS_ROLLOUT_FLAG];
 
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(
@@ -213,6 +211,8 @@ export async function evaluateLocalHarnessRollout(
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
   if (!rolloutActorId(distinctId)) return false;
+  const answer = rolloutAnswerWithoutPostHog(flagKey);
+  if (answer !== undefined) return answer;
   try {
     return (
       (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
@@ -229,7 +229,8 @@ export async function evaluateLocalHarnessRollout(
  * Values for the flags the web client reads, for `GET /api/web/flags`
  * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
  * events are sent, and any failure yields `{}` so the client keeps its own
- * fallback instead of failing the page.
+ * fallback instead of failing the page. A flag file's answers are the same for
+ * every visitor; under DO_NOT_TRACK without one, every flag is off.
  */
 export async function evaluateClientFeatureFlags(
   distinctId: string,
@@ -237,6 +238,9 @@ export async function evaluateClientFeatureFlags(
   trustedEmail?: string,
 ): Promise<ClientFeatureFlagValues> {
   if (!rolloutActorId(distinctId)) return {};
+  const source = resolveFeatureFlagSource();
+  if (source.kind === "file") return pickClientFeatureFlags(source.answers);
+  if (source.kind === "off") return {};
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],

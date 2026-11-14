@@ -767,8 +767,11 @@ export function ModelSelector({
   ]);
 
   const requestSelectionChange = (nextChange: PendingSelectionChange) => {
+    // A disallowed current row shares its id with the org row that replaces
+    // it, so picking that row is a repair, not a no-op.
     const isSingleNoOp =
       nextChange.type === "single" &&
+      !isOrgKeysDisallowedRow(currentModel) &&
       sameModelSelection(nextChange.nextModel, currentModel);
     const isMultiNoOp =
       nextChange.type === "multi" &&

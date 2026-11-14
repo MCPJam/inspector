@@ -3,6 +3,7 @@ import {
   isMissingInputCheck,
   missingInputForCheck,
   missingInputMessage,
+  needsSetupDetails,
   noTaskCreatedMessage,
 } from "../src/conformance-input.js";
 
@@ -13,7 +14,13 @@ describe("missing conformance inputs", () => {
     skipReason: "could-not-run",
   };
 
-  it.each(["tasksProbe", "logProbe", "inputRequiredProbe", "toolCallProbe"])(
+  it.each([
+    "tasksProbe",
+    "logProbe",
+    "inputRequiredProbe",
+    "toolCallProbe",
+    "login",
+  ])(
     "recognizes a structured %s gap in raw and saved checks",
     (missingInput) => {
       expect(
@@ -27,6 +34,26 @@ describe("missing conformance inputs", () => {
       ).toBe(missingInput);
     }
   );
+
+  it("shows a gap's own fix ahead of the generic copy, raw or saved", () => {
+    const own =
+      "Your arguments don't match. Fix them in setup, then run again.";
+    expect(
+      missingInputMessage({
+        ...skipped,
+        details: needsSetupDetails("tasksProbe", own),
+      })
+    ).toBe(own);
+    expect(
+      missingInputMessage({
+        ...skipped,
+        details: { details: needsSetupDetails("logProbe", own) },
+      })
+    ).toBe(own);
+    expect(
+      missingInputMessage({ ...skipped, details: needsSetupDetails("login") })
+    ).toBe("This server needs a login. Log in, then run again.");
+  });
 
   it("recognizes an older Tasks report and replaces its raw diagnostic", () => {
     const saved = {

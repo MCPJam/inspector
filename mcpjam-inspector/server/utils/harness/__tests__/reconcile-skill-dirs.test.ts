@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   appendManagedSkills,
   reconcileSkillDirs,
   type ReconcileSession,
 } from "../reconcile-skill-dirs";
 
-const MANIFEST = "/home/user/.claude/skills/.mcpjam-skills.json";
+const BASE = "/home/user/.claude/skills";
+const MANIFEST = `${BASE}/.mcpjam-skills.json`;
 
 /** In-memory session: tracks files + the `rm -rf` commands issued. */
 function makeSession(initialFiles: Record<string, string> = {}) {
@@ -42,12 +43,41 @@ function manifest(skills: Record<string, string>, skillsHash = "h") {
 }
 
 describe("reconcileSkillDirs (cleanup-only)", () => {
+  it("keeps an identical manifest without another remote write", async () => {
+    const { session } = makeSession({
+      [MANIFEST]: manifest({ s2: "two", s1: "one" }),
+    });
+    const write = vi.spyOn(session, "writeTextFile");
+    await reconcileSkillDirs({
+      session,
+      skillsBase: BASE,
+      skills: [{ skillId: "s1", name: "one" }, { skillId: "s2", name: "two" }],
+      skillsHash: "h",
+    });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("still removes a renamed skill even if the supplied hash is unchanged", async () => {
+    const { session, removed, files } = makeSession({
+      [MANIFEST]: manifest({ s1: "old" }),
+    });
+    await reconcileSkillDirs({
+      session,
+      skillsBase: BASE,
+      skills: [{ skillId: "s1", name: "new" }],
+      skillsHash: "h",
+    });
+    expect(removed).toEqual(["/home/user/.claude/skills/old"]);
+    expect(JSON.parse(files.get(MANIFEST)!).skills.s1.name).toBe("new");
+  });
+
   it("removes a managed dir whose skill is gone from Convex (orphan)", async () => {
     const { session, removed } = makeSession({
       [MANIFEST]: manifest({ s1: "pdf", s2: "old" }),
     });
     const res = await reconcileSkillDirs({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s1", name: "pdf" }],
       skillsHash: "h2",
     });
@@ -88,6 +118,7 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     });
     await reconcileSkillDirs({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s1", name: "pdf-tools" }],
       skillsHash: "h2",
     });
@@ -101,6 +132,7 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     // "handmade" is not in the manifest, so it must be preserved.
     await reconcileSkillDirs({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s1", name: "pdf" }],
       skillsHash: "h",
     });
@@ -111,6 +143,7 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     const { session, files } = makeSession();
     await reconcileSkillDirs({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s1", name: "pdf" }],
       skillsHash: "newhash",
     });
@@ -127,10 +160,39 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
     const { session, removed } = makeSession({ [MANIFEST]: legacy });
     await reconcileSkillDirs({
       session,
+      skillsBase: BASE,
       skills: [], // all gone now
       skillsHash: "",
     });
     expect(removed).toEqual(["/home/user/.claude/skills/pdf"]);
+  });
+
+  it("leaves a folder it never managed untouched, manifest included", async () => {
+    // A turn clears every folder its runtime reads; one MCPJam never wrote to
+    // must not gain a manifest from that.
+    const { session, files, removed } = makeSession();
+    await reconcileSkillDirs({
+      session,
+      skills: [],
+      skillsHash: "",
+      skillsBase: BASE,
+    });
+    expect(files.size).toBe(0);
+    expect(removed).toEqual([]);
+  });
+
+  it("removes every managed folder when the turn delivers none", async () => {
+    const { session, files, removed } = makeSession({
+      [MANIFEST]: manifest({ s1: "one", s2: "two" }),
+    });
+    await reconcileSkillDirs({
+      session,
+      skills: [],
+      skillsHash: "",
+      skillsBase: BASE,
+    });
+    expect(removed.sort()).toEqual([`${BASE}/one`, `${BASE}/two`]);
+    expect(JSON.parse(files.get(MANIFEST)!).skills).toEqual({});
   });
 
   it("is fail-soft — a session error never throws", async () => {
@@ -144,7 +206,12 @@ describe("reconcileSkillDirs (cleanup-only)", () => {
       run: async () => undefined,
     };
     await expect(
-      reconcileSkillDirs({ session, skills: [], skillsHash: "" }),
+      reconcileSkillDirs({
+        session,
+        skills: [],
+        skillsHash: "",
+        skillsBase: BASE,
+      }),
     ).resolves.toBeDefined();
   });
 });
@@ -156,6 +223,7 @@ describe("appendManagedSkills", () => {
     });
     const res = await appendManagedSkills({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s2", name: "adopted-one" }],
     });
     expect(res.appended).toBe(1);
@@ -168,7 +236,11 @@ describe("appendManagedSkills", () => {
 
   it("is a no-op for an empty list (no manifest write)", async () => {
     const { session, files } = makeSession();
-    const res = await appendManagedSkills({ session, skills: [] });
+    const res = await appendManagedSkills({
+      session,
+      skills: [],
+      skillsBase: BASE,
+    });
     expect(res.appended).toBe(0);
     expect(files.get(MANIFEST)).toBeUndefined();
   });
@@ -177,6 +249,7 @@ describe("appendManagedSkills", () => {
     const { session, files } = makeSession();
     await appendManagedSkills({
       session,
+      skillsBase: BASE,
       skills: [{ skillId: "s1", name: "from-box" }],
     });
     const written = JSON.parse(files.get(MANIFEST)!);

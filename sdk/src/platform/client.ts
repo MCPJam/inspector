@@ -1,4 +1,18 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
+import { widgetSessionPath } from "./widget-session-types.js";
+import { DirectorySubmissionClient } from "./directory-submission-client.js";
+import type {
+  PlatformWidgetSessionTarget,
+  PlatformWidgetSessionCreateBody,
+  PlatformWidgetSessionCreated,
+  PlatformWidgetAction,
+  PlatformWidgetSessionActionResult,
+  PlatformWidgetSessionSnapshot,
+  PlatformWidgetSessionStepBody,
+  PlatformWidgetSessionStepResult,
+  PlatformWidgetSessionClosed,
+  PlatformWidgetRenderBody,
+} from "./widget-session-types.js";
 import type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
@@ -168,10 +182,14 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceCheck,
   PlatformConformanceReport,
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceSuiteKind,
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSummary,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
   PlatformDirectorySearchPage,
@@ -588,6 +606,11 @@ type ServerScope = {
   serverId: string;
 };
 
+function serverRevisionsPath(scope: ServerScope): string {
+  const { projectId, serverId } = scope;
+  return `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/revisions`;
+}
+
 /**
  * Minimal fetch-based client for the MCPJam Platform API. Runtime-agnostic
  * by construction (Workers/browser/Node): native fetch only, no Node
@@ -691,7 +714,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient {
+export class PlatformApiClient extends DirectorySubmissionClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -718,6 +741,7 @@ export class PlatformApiClient {
   private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    super();
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
     this.apiVocabulary = options.apiVocabulary ?? 1;
@@ -3291,6 +3315,25 @@ export class PlatformApiClient {
   }
 
   /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
+      {},
+      options
+    );
+  }
+
+  /**
    * The full report: every finding, with its class, provenance, citation and
    * remediation.
    *
@@ -3329,6 +3372,8 @@ export class PlatformApiClient {
       idempotencyKey?: string;
       protocolVersion?: string;
       engineVersion?: string;
+      /** `saved`, the default, runs the server's saved conformance settings. */
+      settings?: "saved" | "none";
     },
     options?: RequestOptions
   ): Promise<PlatformConformanceRunReceipt> {
@@ -3339,18 +3384,21 @@ export class PlatformApiClient {
       idempotencyKey,
       protocolVersion,
       engineVersion,
+      settings,
     } = params;
     const body: Record<string, unknown> = {};
     if (suites !== undefined) body.suites = suites;
     if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
     if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
     if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    if (settings !== undefined) body.settings = settings;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId
       )}/conformance-runs`,
-      { body },
+      // The launch headers say which client started the run, as for evals.
+      { body, declareLaunch: true },
       options
     );
   }
@@ -3388,7 +3436,7 @@ export class PlatformApiClient {
   }
 
   getConformanceReport(
-    params: { projectId: string; runId: string },
+    params: { projectId: string; runId: string; cursor?: string },
     options?: RequestOptions
   ): Promise<PlatformConformanceReport> {
     return this.request(
@@ -3396,7 +3444,29 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
-      {},
+      params.cursor ? { query: { cursor: params.cursor } } : {},
+      options
+    );
+  }
+
+  /** One check of a stored run in full; `suite` only when an id is in two. */
+  getConformanceCheck(
+    params: {
+      projectId: string;
+      runId: string;
+      checkId: string;
+      suite?: string;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformConformanceCheck> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/conformance-runs/${encodeURIComponent(
+        params.runId
+      )}/checks/${encodeURIComponent(params.checkId)}`,
+      params.suite ? { query: { suite: params.suite } } : {},
       options
     );
   }
@@ -3801,6 +3871,36 @@ export class PlatformApiClient {
     return this.serverOp(params, "export", options);
   }
 
+  /** A saved server's stored revisions, newest first. */
+  listServerRevisions(
+    params: ServerScope & { limit?: number; cursor?: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformServerRevisionSummary>> {
+    const query = pageQuery(params);
+    return this.request("GET", serverRevisionsPath(params), { query }, options);
+  }
+
+  getServerRevision(
+    params: ServerScope & { revisionNumber: number },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevision> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Compares `fromRevisionNumber` (default: the one before) with `revisionNumber`. */
+  diffServerRevisions(
+    params: ServerScope & {
+      revisionNumber: number;
+      fromRevisionNumber?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformServerRevisionDiff> {
+    const path = `${serverRevisionsPath(params)}/${params.revisionNumber}/diff`;
+    const query = { from: params.fromRevisionNumber };
+    return this.request("GET", path, { query }, options);
+  }
+
   listServerTools(
     params: ServerScope & { body?: Record<string, unknown> },
     options?: RequestOptions
@@ -3858,14 +3958,7 @@ export class PlatformApiClient {
    */
   renderServerWidget(
     params: ServerScope & {
-      body: {
-        toolName: string;
-        parameters?: Record<string, unknown>;
-        includeSnapshot?: boolean;
-        includeScreenshot?: boolean;
-        injectOpenAiCompat?: boolean;
-        viewport?: { width: number; height: number };
-      };
+      body: PlatformWidgetRenderBody;
     },
     options?: RequestOptions
   ): Promise<PlatformWidgetRender> {
@@ -3874,6 +3967,53 @@ export class PlatformApiClient {
       "widgets/render",
       options
     ) as Promise<PlatformWidgetRender>;
+  }
+
+  /** Retain a widget on a local Inspector; hosted deployments return 404. */
+  createServerWidgetSession(
+    params: ServerScope & { body: PlatformWidgetSessionCreateBody },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionCreated> {
+    return this.serverOp(params, "widget-sessions", options);
+  }
+
+  /** Read the retained widget's current accessibility tree. */
+  getServerWidgetSessionSnapshot(
+    params: PlatformWidgetSessionTarget,
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionSnapshot> {
+    const path = `${widgetSessionPath(params)}/snapshot`;
+    return this.request("GET", path, {}, options);
+  }
+
+  /** Apply one coordinate action to the original local widget session. */
+  executeServerWidgetSessionAction(
+    params: PlatformWidgetSessionTarget & {
+      body: { action: PlatformWidgetAction };
+    },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionActionResult> {
+    const path = `${widgetSessionPath(params)}/action`;
+    return this.request("POST", path, { body: params.body }, options);
+  }
+
+  /** Apply a semantic action or assertion to the original local session. */
+  executeServerWidgetSessionStep(
+    params: PlatformWidgetSessionTarget & {
+      body: PlatformWidgetSessionStepBody;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionStepResult> {
+    const path = `${widgetSessionPath(params)}/scripted-step`;
+    return this.request("POST", path, { body: params.body }, options);
+  }
+
+  /** Dispose the original owner's retained browser; closing is idempotent. */
+  closeServerWidgetSession(
+    params: PlatformWidgetSessionTarget,
+    options?: RequestOptions
+  ): Promise<PlatformWidgetSessionClosed> {
+    return this.request("DELETE", widgetSessionPath(params), {}, options);
   }
 
   /** `POST /projects/{p}/servers/{s}/prompts/get` — render one prompt. */
@@ -6424,7 +6564,7 @@ export class PlatformApiClient {
   }
 
   private serverOp<T>(
-    params: ServerScope & { body?: Record<string, unknown> },
+    params: ServerScope & { body?: object },
     op: string,
     options?: RequestOptions
   ): Promise<T> {
@@ -6434,7 +6574,7 @@ export class PlatformApiClient {
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
 
-  private async request<T>(
+  protected async request<T>(
     // PUT is here for idempotent creates — `publishScenario` is the first:
     // publishing an environment that is already published returns the existing
     // scenario rather than minting a second, which is PUT's semantics and not
@@ -6455,6 +6595,8 @@ export class PlatformApiClient {
        * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
+      /** Told a successful answer's status, for a route where it is the answer. */
+      onStatus?: (status: number) => void;
     },
     options?: RequestOptions
   ): Promise<T> {
@@ -6622,6 +6764,7 @@ export class PlatformApiClient {
       );
     }
 
+    init.onStatus?.(response.status);
     // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }

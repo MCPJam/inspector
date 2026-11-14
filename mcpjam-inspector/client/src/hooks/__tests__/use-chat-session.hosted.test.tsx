@@ -201,6 +201,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
+  renewSessionBearer: vi.fn(async () => {}),
   buildServerRequest: mockState.buildServerRequest,
   buildResolvedServerBatchRequest: vi.fn(
     ({
@@ -412,6 +413,48 @@ describe("useChatSession hosted mode", () => {
     await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
     expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
     unmount();
+  });
+
+  it("shows the environment's exact connection without sending a pick, then edits that same choice", () => {
+    const base = selectionOptions();
+    const { result, rerender } = renderHook(({ environmentId }) => useChatSession({
+      ...base, pickedModelSelection: undefined, executionConfig: undefined,
+      selectionIntent: "inherit", inheritedEnvironmentModel: {
+        modelId: savedOrgChoice.modelId, modelSelection: savedOrgChoice,
+      },
+      hostedContext: { ...base.hostedContext, executionTarget: { kind: "environment", environmentId } },
+    }), { initialProps: { environmentId: "env-a" } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body().modelSelection).toMatchObject({
+      source: "org", connectionRef: savedOrgChoice.connectionRef, settings: { temperature: 0.9 },
+    });
+    rerender({ environmentId: "env-b" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+  });
+
+  it("keeps a remembered pick after a remount, for that target only", () => {
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const, rememberPickedTarget: true };
+    const first = renderHook(() => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId: "host-1" },
+    }));
+    expect(first.result.current.hasPickedModel).toBe(false);
+    act(() => first.result.current.setTemperature(0.9, true));
+    expect(first.result.current.hasPickedModel).toBe(true);
+    first.unmount();
+
+    const again = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(again.result.current.hasPickedModel).toBe(true);
+    expect(lastTransportOptions.body()).toHaveProperty("modelSelection");
+    again.rerender({ hostId: "host-other" });
+    expect(again.result.current.hasPickedModel).toBe(false);
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    again.unmount();
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
   });
 
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
@@ -929,9 +972,17 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.availableModels.length).toBeGreaterThan(0);
     });
-    const offered = result.current.availableModels.map((model) => String(model.id));
+    const offered = result.current.availableModels
+      .filter((model) => !model.disabled)
+      .map((model) => String(model.id));
     expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
     expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    // Listed, but not pickable, with the reason Codex refuses it.
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({ disabled: true, disabledReason: expect.stringMatching(/Codex/) });
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);
@@ -2235,6 +2286,29 @@ describe("useChatSession — environment execution target", () => {
     unmount();
   });
 
+  it("says a restored session kept the conversation but not the files", () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-reset",
+        data: { reason: "sandbox-restored" },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
+    );
+    info.mockRestore();
+    unmount();
+  });
+
   it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
     // The preflight is async and the transport body is built from the LATEST
     // props when the request finally goes out. A message composed against a
@@ -2889,6 +2963,7 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
         selectedServerIds: ["server-id-1"],
         executionTarget: { kind: "environment", environmentId: "env_new" },
         environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        autoContributedPluginServerIds: ["srv_new"],
         includeProjectSkills: true,
         messages: [{ role: "user", content: "hi" }],
       });

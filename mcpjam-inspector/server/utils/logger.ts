@@ -38,6 +38,16 @@ const isDev = () => process.env.NODE_ENV !== "production";
 const shouldLog = () => isVerbose() || isDev();
 
 /**
+ * Print a misconfiguration the operator has to fix on stderr when the logger
+ * would not print it: in production it prints only with `VERBOSE_LOGS=true`,
+ * and under DO_NOT_TRACK a self-hosted install has no Sentry or Axiom either.
+ * Call it next to the logger call it backs up.
+ */
+export function printForOperator(message: string): void {
+  if (!shouldLog()) process.stderr.write(`${message}\n`);
+}
+
+/**
  * The same opt-out `server/sentry.ts` and `server/utils/analytics.ts` honor.
  * Checked here too: `DO_NOT_TRACK` means no telemetry, and log shipping is
  * telemetry. Without this the startup notice ("error reporting disabled")

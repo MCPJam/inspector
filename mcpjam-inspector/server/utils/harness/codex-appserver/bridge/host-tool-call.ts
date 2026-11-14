@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { BridgeTurn } from "@ai-sdk/harness/bridge";
+import { isCallToolResult } from "@modelcontextprotocol/client";
+import { toMcpToolResult } from "./host-tool-result.js";
 
 /** A retained call keeps one identity through approval, result and App history. */
 export async function callHostTool(
@@ -24,12 +26,17 @@ export async function callHostTool(
     input: JSON.stringify(request.input ?? {}),
     providerExecuted: false,
   });
-  const result = await active.turn.requestToolResult(toolCallId);
+  const { output, isError } = await active.turn.requestToolResult(toolCallId);
+  const mcpResult = toMcpToolResult(output);
+  const failed =
+    isError === true || (isCallToolResult(output) && output.isError === true);
   active.turn.emit({
     type: "tool-result",
     toolCallId,
     toolName: canonical,
-    result,
+    // Undefined has no JSON wire representation; a valueless result is null.
+    result: output ?? null,
+    ...(isError !== undefined || failed ? { isError: failed } : {}),
   });
-  return result;
+  return failed ? { ...mcpResult, isError: true } : output;
 }

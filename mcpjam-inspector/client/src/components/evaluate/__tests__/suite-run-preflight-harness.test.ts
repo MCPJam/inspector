@@ -4,8 +4,8 @@ import type { EvalSuite } from "../../evals/types";
 
 // Claude Code and Codex run on the organization's own key for their vendor,
 // so under the policy a harness client is a problem only when its model
-// isn't an organization model on that vendor. Cursor runs on no organization
-// connection, so it is always one.
+// isn't an organization model on that vendor. Cursor runs on the
+// organization's Cursor key, so it is one only while that key isn't ready.
 describe("a harness client under the policy", () => {
   const fallback = { provider: "none", model: "none" } as const;
   const strict = {
@@ -88,7 +88,7 @@ describe("a harness client under the policy", () => {
     expect(
       problemsFor("claude", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
     ).toEqual([
-      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider.",
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
     ]);
   });
 
@@ -99,8 +99,63 @@ describe("a harness client under the policy", () => {
       fallback,
     });
     expect(problems).toEqual([
-      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider.",
+      "openai/gpt-5 can't run on Codex. This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a gateway that serves Responses.",
     ]);
+  });
+
+  describe("on an organization gateway", () => {
+    const gateway = (apis: ("anthropicMessages" | "responses")[]) => ({
+      ...strict,
+      providers: [
+        ...strict.providers,
+        {
+          id: "conn_gateway",
+          providerKey: "custom:litellm",
+          enabled: true,
+          hasSecret: true,
+          policyEligibility: { eligible: true },
+          runtimeLocation: "cloud" as const,
+          apis,
+          models: [
+            { nativeModelId: "gpt-5.5", modelId: "openai/gpt-5.5" },
+            { nativeModelId: "claude-sonnet-4-5", modelId: "anthropic/claude-sonnet-4.5" },
+            { nativeModelId: "house-model" },
+          ],
+        },
+      ],
+    });
+    const onGateway = (name: string) =>
+      org(`custom:litellm/${name}`, "conn_gateway");
+
+    it("runs Claude Code on a Messages gateway and refuses Codex the API it needs", () => {
+      const messages = gateway(["anthropicMessages"]);
+      expect(
+        problemsFor("claude", "custom:litellm/claude-sonnet-4-5", onGateway("claude-sonnet-4-5"), messages),
+      ).toBeUndefined();
+      expect(
+        problemsFor("codex", "custom:litellm/gpt-5.5", onGateway("gpt-5.5"), messages),
+      ).toEqual([
+        "custom:litellm/gpt-5.5 can't run on Codex. This gateway doesn't serve Responses, which Codex needs. Turn on Responses for it in Organization models, or choose another connection.",
+      ]);
+    });
+
+    it("runs Codex on a Responses gateway and refuses Claude Code", () => {
+      const responses = gateway(["responses"]);
+      expect(
+        problemsFor("codex", "custom:litellm/gpt-5.5", onGateway("gpt-5.5"), responses),
+      ).toBeUndefined();
+      expect(
+        problemsFor("claude", "custom:litellm/claude-sonnet-4-5", onGateway("claude-sonnet-4-5"), responses)?.[0],
+      ).toMatch(/doesn't serve Anthropic Messages, which Claude Code needs/);
+    });
+
+    it("refuses an unmapped gateway model with the mapping it needs", () => {
+      expect(
+        problemsFor("claude", "custom:litellm/house-model", onGateway("house-model"), gateway(["anthropicMessages"])),
+      ).toEqual([
+        "custom:litellm/house-model can't run on Claude Code. Map this gateway model to a model in Organization models to use it with Claude Code.",
+      ]);
+    });
   });
 
   it("leaves an emulated client to the model check", () => {
@@ -124,23 +179,63 @@ describe("a harness client under the policy", () => {
     expect(problems?.[0]).not.toMatch(/can't run on Codex/);
   });
 
-  it("refuses a Cursor client whatever its model, as the backend does", () => {
-    // The backend refuses every Cursor runtime (`org_runtime_unsupported`).
-    const cursor = [
-      "Cursor CLI can't run on an organization's providers, so it is unavailable while the organization requires its own keys. Choose another client for this run.",
-    ];
-    expect(
-      problemsFor("cursor", "openai/gpt-5", {
-        modelId: "openai/gpt-5",
-        source: "hosted",
-        fallback,
-      }),
-    ).toEqual(cursor);
-    expect(
-      problemsFor("cursor", "openai/gpt-5", org("openai/gpt-5", "conn_openai")),
-    ).toEqual(cursor);
+  // The org's Cursor key is its own key for Cursor: the key alone decides a
+  // Cursor client, whatever its model, as the backend's launch does.
+  const withKey = (readiness: "ready" | "missing" | "invalid") => ({
+    ...strict,
+    harnessKeys: { cursor: readiness },
+  });
+  const cursorModels = [
+    ["openai/gpt-5", { modelId: "openai/gpt-5", source: "hosted", fallback }],
+    ["openai/gpt-5", org("openai/gpt-5", "conn_openai")],
     // Cursor Auto names no model: Cursor picks one on its own account.
-    expect(problemsFor("cursor", "cursor/auto")).toEqual(cursor);
+    ["cursor/auto", undefined],
+  ] as const;
+
+  it("lets a Cursor client through on a ready org Cursor key, whatever its model", () => {
+    for (const [modelId, selection] of cursorModels) {
+      expect(
+        problemsFor("cursor", modelId, selection, withKey("ready")),
+      ).toBeUndefined();
+    }
+  });
+
+  it.each(["missing", "invalid"] as const)(
+    "asks for an org Cursor key when the key is %s, in the launch's words",
+    (readiness) => {
+      for (const [modelId, selection] of cursorModels) {
+        expect(
+          problemsFor("cursor", modelId, selection, withKey(readiness)),
+        ).toEqual([
+          "Ask an org admin to add a Cursor key in Organization → AI providers.",
+        ]);
+      }
+    },
+  );
+
+  it("leaves a Cursor client to the launch until its key is read", () => {
+    expect(problemsFor("cursor", "cursor/auto")).toBeUndefined();
+  });
+
+  it("keeps the Claude Code and Codex rules when a Cursor key is ready", () => {
+    expect(
+      problemsFor(
+        "claude",
+        "openai/gpt-5",
+        org("openai/gpt-5", "conn_openai"),
+        withKey("ready"),
+      ),
+    ).toEqual([
+      "openai/gpt-5 can't run on Claude Code. This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
+    ]);
+    expect(
+      problemsFor(
+        "codex",
+        "openai/gpt-5",
+        org("openai/gpt-5", "conn_openai"),
+        withKey("ready"),
+      ),
+    ).toBeUndefined();
   });
 
   it("raises nothing with the policy off", () => {
@@ -184,8 +279,8 @@ describe("a harness client under the policy", () => {
     },
   );
 
-  it("still refuses a runtime with no organization-key path while its selection is unknown", () => {
-    expect(
+  it("decides a Cursor client on its key while its selection is unknown", () => {
+    const cursorProblems = (readiness: "ready" | "missing") =>
       runPreflight({
         serverRefs: [],
         servers: {},
@@ -197,8 +292,11 @@ describe("a harness client under the policy", () => {
             selectionKnown: false,
           },
         ],
-        orgConfig: strict,
-      }).orgKeyProblems?.[0],
-    ).toMatch(/Cursor CLI can't run/);
+        orgConfig: withKey(readiness),
+      }).orgKeyProblems;
+    expect(cursorProblems("ready")).toBeUndefined();
+    expect(cursorProblems("missing")).toEqual([
+      "Ask an org admin to add a Cursor key in Organization → AI providers.",
+    ]);
   });
 });

@@ -70,6 +70,7 @@ export const SPEND_REFUSAL_REASONS = [
   "allowance_exhausted",
   "admission_invalid",
   "insufficient_for_request",
+  "auto_topup_declined",
 ] as const;
 
 /**
@@ -98,6 +99,13 @@ export function withoutHeldCreditsSentence(text: string): string {
   return text.replace(HOLDS_COMMITTED_SENTENCE_TEXT, " ");
 }
 
+/** An exhaustion in MCPJam's own words, which no vendor's limit uses. */
+const MCPJAM_EXHAUSTION_PHRASES: readonly RegExp[] = [
+  /mcpjam[\w\s-]{0,40}model limit/i,
+  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
+  /\bThis request needs about \d+ MCPJam credits\b/i,
+];
+
 /**
  * What an exhaustion SAYS, in words. Kept apart from the codes because the
  * codes also ride a hold (`user_rate_limit` is the generic code for both), so
@@ -105,10 +113,18 @@ export function withoutHeldCreditsSentence(text: string): string {
  * that is only a hold.
  */
 export const EXHAUSTION_PHRASES: readonly RegExp[] = [
-  /mcpjam[\w\s-]{0,40}model limit/i,
-  /\b(?:daily|monthly) (?:MCPJam )?credit limit reached\b/i,
-  /\bThis request needs about \d+ MCPJam credits\b/i,
+  ...MCPJAM_EXHAUSTION_PHRASES,
   /\b(?:out of (?:MCPJam )?credits|insufficient credits|credits? (?:balance )?(?:exhausted|depleted)|credit limit (?:was )?(?:reached|exceeded))\b/i,
+];
+
+/**
+ * MCPJam's own credit and spend refusals in its own words, codes aside: what
+ * tells MCPJam's limit from a vendor's that words its own limits alike.
+ */
+export const MCPJAM_LIMIT_PHRASES: readonly RegExp[] = [
+  ...MCPJAM_EXHAUSTION_PHRASES,
+  /\bout of MCPJam credits\b/i,
+  /\bspend budget (?:is )?reached\b/i,
 ];
 
 /**
@@ -193,6 +209,33 @@ export function isHeldCreditsRefusal(
     HOLDS_COMMITTED_SENTENCE.test(message) &&
     !statesExhaustion(message)
   );
+}
+
+/**
+ * The backend's sentence when a declined card paused auto-reload
+ * (`buildSpendRefusalBody`). A stored attempt row keeps it and loses the
+ * `refusalReason`, as with a hold.
+ */
+const DECLINED_CARD_SENTENCE =
+  /\bcard was declined, so auto-reload is paused\b/i;
+
+/**
+ * The backend's sentence as a text's own opening, not quoted later in it: how
+ * a plain-text error that is only the refusal's words is told apart from
+ * another error that cites one.
+ */
+export function opensWithDeclinedCardSentence(text: string): boolean {
+  const match = DECLINED_CARD_SENTENCE.exec(text);
+  return !!match && /^\s*(?:your\s+)?$/i.test(text.slice(0, match.index));
+}
+
+/** `auto_topup_declined`: the card that refills the credits was declined. */
+export function isDeclinedCardRefusal(
+  refusalReason?: string | null,
+  message?: string | null,
+): boolean {
+  if (refusalReason) return refusalReason === "auto_topup_declined";
+  return !!message && DECLINED_CARD_SENTENCE.test(message);
 }
 
 /**

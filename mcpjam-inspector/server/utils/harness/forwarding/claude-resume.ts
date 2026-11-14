@@ -49,6 +49,18 @@ ${control}`,
     for (const key of keys) {
       const entry = servers[key];
       const prior = start.mcpServers[key];
+      if (prior.headers?.["X-MCPJam-Proxy-Token"]?.startsWith("mcpjps3.")) {
+        const header = "X-MCPJam-Scope-Step-Up-Correlation";
+        const query = "mcpjam-scope-step-up-correlation";
+        const withoutCorrelation = (url) => { const parsed = new URL(url); parsed.searchParams.delete(query); return parsed.href; };
+        const credential = entry?.headers?.["X-MCPJam-Proxy-Token"];
+        if (entry?.type !== "http" || typeof credential !== "string" || !credential.startsWith("mcpjps3.") ||
+            credential.length > ${2 * MAX_SEALED_PLAINTEXT_BYTES} || withoutCorrelation(entry.url) !== withoutCorrelation(prior.url) ||
+            Object.keys(entry.headers).some(name => name !== header && name !== "X-MCPJam-Proxy-Token") ||
+            (entry.headers[header] ?? null) !== new URL(entry.url).searchParams.get(query)) throw new Error("Invalid proxy configuration");
+        refreshed[key] = { ...prior, url: entry.url, headers: entry.headers };
+        continue;
+      }
       if (entry?.type !== "http" || entry.url !== prior.url ||
           !entry.headers || Object.keys(entry.headers).length !== 2 ||
           entry.headers.Connection !== "close" ||
@@ -56,9 +68,32 @@ ${control}`,
           entry.headers["X-MCPJam-Forwarding-Context"].length > ${2 * MAX_SEALED_PLAINTEXT_BYTES}) throw new Error("Invalid forwarding configuration");
       refreshed[key] = { ...prior, headers: entry.headers };
     }
-    const result = await q.setMcpServers(refreshed);
-    if (Object.keys(result.errors ?? {}).length) throw new Error("MCP refresh failed");
-    Object.assign(mcpServers, refreshed);
+    let expired = false;
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        reject(new Error("MCP refresh timed out"));
+      }, 30_000);
+    });
+    const connect = async () => {
+      const result = await q.setMcpServers(refreshed);
+      if (Object.keys(result.errors ?? {}).length) throw new Error("MCP refresh failed");
+      while (!expired && keys.length) {
+        const statuses = await q.mcpServerStatus();
+        const expected = keys.map(key => statuses.find(server => server.name === key)?.status);
+        if (expected.every(status => status === "connected")) return;
+        if (expected.some(status => status !== undefined && status !== "pending" && status !== "connected"))
+          throw new Error("MCP refresh failed");
+        if (!expired) await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    };
+    try {
+      await Promise.race([connect(), deadline]);
+      Object.assign(mcpServers, refreshed);
+    } finally {
+      clearTimeout(timer);
+    }
   };
   ${marker} = refreshNativeMcp;
 ${queryEnd}`,

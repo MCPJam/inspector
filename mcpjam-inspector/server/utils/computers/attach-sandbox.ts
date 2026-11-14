@@ -62,7 +62,7 @@ async function readRunningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts,
   preparedByBroker: boolean,
-): Promise<ConstructorParameters<typeof Sandbox>[0]> {
+) {
   const deadline = Date.now() + 60_000;
   const timeout = AbortSignal.timeout(60_000);
   const signal = options.signal
@@ -125,22 +125,33 @@ async function readRunningSandboxConnection(
     sandboxDomain: data.domain ?? undefined,
     envdVersion: data.envdVersion,
     envdAccessToken: data.envdAccessToken,
+    privateAppPorts: data.network?.allowPublicTraffic === false,
   };
 }
 
-export async function attachRunningSandbox(
+export function attachRunningSandbox(
   sandboxId: string,
   options?: SandboxApiOpts,
-): Promise<Sandbox> {
-  return new Sandbox(await runningSandboxConnection(sandboxId, options));
+) {
+  return attach(sandboxId, options ?? {}, false);
 }
 
-/** Ordinary callers retain the wake/renewal and both readiness barriers. */
-export function runningSandboxConnection(
+/** Desktop streaming uses stored origins that cannot authenticate private ports. */
+export async function runningSandboxConnection(
   sandboxId: string,
   options: SandboxApiOpts = {},
 ): Promise<ConstructorParameters<typeof Sandbox>[0]> {
-  return readRunningSandboxConnection(sandboxId, options, false);
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    false,
+  );
+  if (privateAppPorts)
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Hosted Browser cannot connect to this private desktop.",
+    );
+  return connection;
 }
 
 /**
@@ -148,11 +159,22 @@ export function runningSandboxConnection(
  * this box. GET still verifies lifecycle state, and the final live readiness
  * barrier refuses quarantine or waits for a concurrent policy writer.
  */
-export async function attachBrokerPreparedSandbox(
+export function attachBrokerPreparedSandbox(
   sandboxId: string,
   options: SandboxApiOpts = {},
-): Promise<Sandbox> {
-  return new Sandbox(
-    await readRunningSandboxConnection(sandboxId, options, true),
+) {
+  return attach(sandboxId, options, true);
+}
+
+async function attach(
+  sandboxId: string,
+  options: SandboxApiOpts,
+  brokerPrepared: boolean,
+) {
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    brokerPrepared,
   );
+  return Object.assign(new Sandbox(connection), { privateAppPorts });
 }

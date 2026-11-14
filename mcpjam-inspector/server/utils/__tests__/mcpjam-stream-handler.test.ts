@@ -401,6 +401,81 @@ describe("mcpjam-stream-handler", () => {
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
   });
 
+  it("sends the backend provider-safe tool names and restores them in its reply", async () => {
+    const toolDef = {
+      description: "Add",
+      inputSchema: { type: "object" } as any,
+    };
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "cart.add", inputSchema: { type: "object" } },
+      { name: "cart_add", inputSchema: { type: "object" } },
+    ]);
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "tool-input-start", toolCallId: "c2", toolName: "cart_add_2" },
+        {
+          type: "tool-input-available",
+          toolCallId: "c2",
+          toolName: "cart_add_2",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [
+        { role: "user", content: "add it" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              output: { type: "text", value: "added" },
+            },
+          ],
+        },
+      ] as any,
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "",
+      tools: { "cart.add": toolDef, cart_add: toolDef },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      String(vi.mocked(global.fetch).mock.calls[0]![1]!.body),
+    );
+    expect(
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
+    ).toEqual(["cart_add_2", "cart_add"]);
+    expect(fetchBody.messages).toContain('"toolName":"cart_add_2"');
+    expect(fetchBody.messages).not.toContain("cart.add");
+    const forwardedNames = writtenChunks
+      .filter((chunk) => chunk?.type === "tool-input-available")
+      .map((chunk) => chunk.toolName);
+    expect(forwardedNames).toEqual(["cart.add"]);
+  });
+
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {
     const onConversationComplete = vi.fn();
     const messages = [

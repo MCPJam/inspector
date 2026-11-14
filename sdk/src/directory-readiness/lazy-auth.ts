@@ -64,7 +64,7 @@ export const LAZY_AUTH_PROBE_LIMITS = Object.freeze({
 });
 
 export function isDirectoryFeatureClaim(
-  value: unknown,
+  value: unknown
 ): value is DirectoryFeatureClaim {
   return (
     typeof value === "string" &&
@@ -85,7 +85,10 @@ export function normalizeFeatureClaims(value: unknown): {
   const claims = new Set<DirectoryFeatureClaim>();
   const unknown: string[] = [];
   if (Array.isArray(value)) {
-    for (const entry of value.slice(0, LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims)) {
+    for (const entry of value.slice(
+      0,
+      LAZY_AUTH_PROBE_LIMITS.maxFeatureClaims
+    )) {
       const trimmed = typeof entry === "string" ? entry.trim() : entry;
       if (isDirectoryFeatureClaim(trimmed)) claims.add(trimmed);
       else unknown.push(String(entry).slice(0, 64));
@@ -119,7 +122,7 @@ export type DirectoryLazyAuthProbeMode =
 
 function readToolName(
   value: unknown,
-  label: string,
+  label: string
 ): { ok: true; name?: string } | { ok: false; reason: string } {
   if (value === undefined) return { ok: true };
   if (typeof value !== "string" || value.trim() === "") {
@@ -140,13 +143,16 @@ function readToolName(
  * a complete, explicit opt-in. `undefined` is the ordinary case and means off.
  */
 export function resolveLazyAuthProbeMode(
-  config: unknown,
+  config: unknown
 ): DirectoryLazyAuthProbeMode {
   if (config === undefined || config === null) {
     return { enabled: false, reason: "the lazy-auth probe was not requested" };
   }
   if (typeof config !== "object" || Array.isArray(config)) {
-    return { enabled: false, reason: "the lazy-auth probe config is not an object" };
+    return {
+      enabled: false,
+      reason: "the lazy-auth probe config is not an object",
+    };
   }
   const record = config as Record<string, unknown>;
   // A literal boolean, not a truthy value: `"false"` from a query string must
@@ -277,7 +283,7 @@ export function lazyAuthEraNote(protocolVersion: string): string {
 /** Evidence for a probe the gate refused. */
 export function refusedLazyAuthProbe(
   reason: string,
-  protocolVersion: string,
+  protocolVersion: string
 ): DirectoryLazyAuthProbeEvidence {
   return {
     attempted: false,
@@ -321,7 +327,7 @@ function schemesOf(tool: LazyAuthCandidateTool): ToolSecuritySchemeResolution {
 
 function hasScheme(
   resolution: ToolSecuritySchemeResolution,
-  type: string,
+  type: string
 ): boolean {
   return resolution.schemes.some((scheme) => scheme.type === type);
 }
@@ -352,13 +358,13 @@ export function acceptsEmptyArguments(tool: LazyAuthCandidateTool): boolean {
  */
 export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
   mode: Extract<DirectoryLazyAuthProbeMode, { enabled: true }>,
-  tools: readonly Tool[],
+  tools: readonly Tool[]
 ): LazyAuthToolSelection<Tool> {
   const selection: LazyAuthToolSelection<Tool> = {};
 
   const named = (
     name: string,
-    role: "public" | "protected",
+    role: "public" | "protected"
   ): { tool?: Tool; skipped?: string } => {
     const tool = tools.find((candidate) => candidate.name === name);
     if (!tool) {
@@ -395,7 +401,7 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
     // The public call must be SERVED to count, and the probe sends `{}`: a
     // tool with required inputs would fail validation and look refused.
     const candidates = declared.filter(({ tool }) =>
-      acceptsEmptyArguments(tool),
+      acceptsEmptyArguments(tool)
     );
     // A tool that is ONLY public is the cleaner witness; one that offers both
     // still runs anonymously, so it is the fallback rather than excluded.
@@ -431,7 +437,7 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
       .map((tool) => ({ tool, schemes: schemesOf(tool) }))
       .filter(
         ({ schemes }) =>
-          hasOAuth2Scheme(schemes) && !hasScheme(schemes, "noauth"),
+          hasOAuth2Scheme(schemes) && !hasScheme(schemes, "noauth")
       );
     // An HTTP 401 usually comes before input validation, but a `_meta`
     // refusal is the tool's own answer, so a tool `{}` can satisfy is the
@@ -462,7 +468,7 @@ export function selectLazyAuthProbeTools<Tool extends LazyAuthCandidateTool>(
  */
 export function lazyAuthRediscoveryTrigger(
   call: DirectoryLazyAuthToolCall | undefined,
-  accept: readonly AuthChallengeSource[],
+  accept: readonly AuthChallengeSource[]
 ):
   | {
       source: AuthChallengeSource;

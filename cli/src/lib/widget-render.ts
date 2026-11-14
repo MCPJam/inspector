@@ -1,6 +1,11 @@
+import type { InspectorProjectTarget } from "./inspector-project-target.js";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 import { InspectorApiClient } from "./inspector-api.js";
 import { operationalError, usageError } from "./output.js";
+import {
+  requireLocalWidgetEndpoint,
+  savedWidgetPath,
+} from "./widget-session-binding.js";
 
 /**
  * widget-render.ts — CLI client for the local Inspector's headless widget-render
@@ -46,7 +51,9 @@ export type WidgetRenderClient = Pick<
 
 export interface RunWidgetRenderOptions {
   baseUrl?: string;
-  config: MCPServerConfig;
+  config?: MCPServerConfig;
+  target?: InspectorProjectTarget;
+  clientCapabilities?: Record<string, unknown>;
   serverName: string;
   toolName: string;
   parameters: Record<string, unknown>;
@@ -90,8 +97,34 @@ export async function runWidgetRender(
     timeoutMs: options.timeoutMs,
   });
 
+  if (options.target) {
+    requireLocalWidgetEndpoint(options.baseUrl);
+    const result = await client.request(
+      `${savedWidgetPath(options.target)}/widgets/render`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${options.target.accessToken}` },
+        retrySessionAuth: false,
+        body: {
+          toolName: options.toolName,
+          parameters: options.parameters,
+          ...(options.clientCapabilities
+            ? { clientCapabilities: options.clientCapabilities }
+            : {}),
+          includeScreenshot: true,
+          includeSnapshot: false,
+          ...(options.injectOpenAiCompat ? { injectOpenAiCompat: true } : {}),
+          ...(options.viewport ? { viewport: options.viewport } : {}),
+        },
+        timeoutMs: resolveRenderRequestTimeoutMs(options.timeoutMs),
+      },
+    );
+    return normalizeWidgetRenderResponse(result);
+  }
+
   await client.connectServer(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
+    ...(options.target ? { target: options.target } : {}),
   });
 
   const response = await client.request("/api/mcp/widget-render", {
@@ -129,6 +162,14 @@ function normalizeWidgetRenderResponse(value: unknown): WidgetRenderResponse {
   }
 
   const record = value as Record<string, unknown>;
+  const screenshot =
+    record.screenshot && typeof record.screenshot === "object"
+      ? (record.screenshot as Record<string, unknown>)
+      : undefined;
+  const timings =
+    record.timings && typeof record.timings === "object"
+      ? (record.timings as Record<string, unknown>)
+      : undefined;
   if (
     typeof record.status !== "string" ||
     !WIDGET_RENDER_STATUSES.has(record.status)
@@ -147,8 +188,12 @@ function normalizeWidgetRenderResponse(value: unknown): WidgetRenderResponse {
     ...(typeof record.bridgeInitialized === "boolean"
       ? { bridgeInitialized: record.bridgeInitialized }
       : {}),
-    ...(typeof record.screenshotBase64 === "string"
-      ? { screenshotBase64: record.screenshotBase64 }
+    ...(typeof (record.screenshotBase64 ?? screenshot?.base64) === "string"
+      ? {
+          screenshotBase64: String(
+            record.screenshotBase64 ?? screenshot?.base64,
+          ),
+        }
       : {}),
     ...(Array.isArray(record.consoleErrors)
       ? { consoleErrors: record.consoleErrors.map(String) }
@@ -156,8 +201,8 @@ function normalizeWidgetRenderResponse(value: unknown): WidgetRenderResponse {
     ...(Array.isArray(record.blockedRequests)
       ? { blockedRequests: record.blockedRequests.map(String) }
       : {}),
-    ...(typeof record.elapsedMs === "number"
-      ? { elapsedMs: record.elapsedMs }
+    ...(typeof (record.elapsedMs ?? timings?.totalMs) === "number"
+      ? { elapsedMs: Number(record.elapsedMs ?? timings?.totalMs) }
       : {}),
     ...(typeof record.hint === "string" ? { hint: record.hint } : {}),
   };

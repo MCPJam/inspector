@@ -37,12 +37,44 @@ function fieldById(id: string): HostConfigFieldDef {
 }
 
 describe("HOST_CONFIG_SECTIONS", () => {
-  it("mirrors the three focus-dialog tabs in order", () => {
+  it("leads with MCP Protocol, then Agent, then Apps", () => {
     expect(HOST_CONFIG_SECTIONS.map((s) => s.id)).toEqual([
-      "agent",
       "protocol",
+      "agent",
       "apps",
     ]);
+  });
+});
+
+describe("client version row", () => {
+  const field = hostConfigField("clientInfo.version");
+  const withClientInfo = (clientInfo: Record<string, unknown>) =>
+    makeConfig({
+      mcpProfile: { profileVersion: 1, initialize: { clientInfo } },
+    } as Partial<HostConfigDtoV2>);
+
+  it("shows the name the client sends with its version", () => {
+    expect(field.read(withClientInfo({ name: "Sydney", version: "1.0.0" }))).toBe(
+      "Sydney 1.0.0"
+    );
+  });
+
+  it("shows whichever half the client sends, and nothing when neither", () => {
+    expect(field.read(withClientInfo({ name: "github/cli", version: "" }))).toBe(
+      "github/cli"
+    );
+    expect(field.read(withClientInfo({ version: "2.1.312" }))).toBe("2.1.312");
+    expect(field.read(makeConfig())).toBeUndefined();
+  });
+});
+
+describe("MCP Apps UI extension row", () => {
+  it("leads the MCP Apps section under its extension key", () => {
+    const apps = groupHostConfigFields().find((g) => g.section.id === "apps")!;
+    const first = apps.subsections[0]!;
+    expect(first.label).toBe("MCP Apps capabilities");
+    expect(first.fields[0]!.id).toBe("capabilities.uiExtension");
+    expect(first.fields[0]!.label).toBe("io.modelcontextprotocol/ui");
   });
 });
 
@@ -258,6 +290,29 @@ describe("MCP image policy fields", () => {
   });
 });
 
+describe("Event delivery field", () => {
+  const field = () => fieldById("eventsDeliveryModes");
+  const withEvents = (events: unknown) =>
+    makeConfig({
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        extensions: { "com.mcpjam/events": events },
+      },
+    } as Partial<HostConfigDtoV2>);
+
+  it("reads only a saved setting, so an unmeasured client is not yet tested", () => {
+    // ChatGPT's style default is webhook, but nothing saved is no reading.
+    expect(field().read(makeConfig({ hostStyle: "chatgpt" }))).toBeUndefined();
+    expect(field().read(withEvents({ webhook: true }))).toEqual(["webhook"]);
+    expect(field().read(withEvents({}))).toEqual([]);
+  });
+
+  it("reads a malformed setting as no modes, never wider", () => {
+    expect(field().read(withEvents({ webhook: "yes" }))).toEqual([]);
+  });
+});
+
 describe("fieldDiverges", () => {
   it("returns false for a single host (nothing to compare)", () => {
     expect(fieldDiverges(fieldById("modelId"), [makeConfig()])).toBe(false);
@@ -365,6 +420,15 @@ describe("display-mode rows on a host that renders no MCP Apps", () => {
     const cfg = makeConfig({
       hostStyle: "claude",
       rendersMcpApps: true,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      },
     } as Partial<HostConfigDtoV2>);
     for (const id of DISPLAY_MODE_FIELDS) {
       expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
@@ -379,6 +443,59 @@ describe("display-mode rows on a host that renders no MCP Apps", () => {
     for (const id of DISPLAY_MODE_FIELDS) {
       expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
     }
+  });
+});
+
+describe("values a catalog row left out", () => {
+  // A catalog row stores only what its probe measured. Filling a blank from
+  // the client style's default would publish a guess as a fact.
+  const catalogRow = (overrides: Record<string, unknown>) =>
+    makeConfig({
+      hostStyle: "chatgpt",
+      rendersMcpApps: true,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: overrides },
+      },
+    } as Partial<HostConfigDtoV2>);
+
+  it("reads a measured app value and leaves a blank one undefined", () => {
+    const cfg = catalogRow({ toolInputPartial: true, downloadFile: false });
+    expect(fieldById("appsCap.toolInputPartial").read(cfg)).toBe(true);
+    expect(fieldById("appsCap.downloadFile").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.toolCancelled").read(cfg)).toBeUndefined();
+    expect(fieldById("appsCap.availableDisplayModes").read(cfg)).toBeUndefined();
+    expect(
+      fieldById("appsCap.widgetDisplayModeRequests").read(cfg)
+    ).toBeUndefined();
+  });
+
+  it("leaves the image rows undefined when the catalog row stores none", () => {
+    const cfg = catalogRow({});
+    for (const id of [
+      "modelVisibleMcpToolResults.directContent.image",
+      "modelVisibleMcpToolResults.linkedResources.blob.image",
+      "mcpToolResultImageRendering",
+      "mcpToolResultImageRendering.directContent.image",
+    ]) {
+      expect(fieldById(id).read(cfg), id).toBeUndefined();
+    }
+    const measured = makeConfig({
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: { directContent: { image: false } },
+    } as Partial<HostConfigDtoV2>);
+    expect(
+      fieldById("modelVisibleMcpToolResults.directContent.image").read(measured)
+    ).toBe(false);
+  });
+
+  it("keeps the effective value on a host the user built", () => {
+    // No catalog facts: the resolver's answer is the host's real setting.
+    const cfg = makeConfig({ hostStyle: "chatgpt" });
+    expect(fieldById("appsCap.toolCancelled").read(cfg)).toBeTypeOf("boolean");
+    expect(
+      fieldById("modelVisibleMcpToolResults.directContent.image").read(cfg)
+    ).toBeTypeOf("boolean");
   });
 });
 

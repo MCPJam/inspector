@@ -230,6 +230,13 @@ export async function createHostedScopeStepUpContinuation(input: {
   manager: MCPClientManager;
   serverName?: string;
   connectionId?: string;
+  /**
+   * The server's only login, grouped by the host (`implicit` attribution).
+   * Its ID still binds the resume, but the browser is not told: naming it
+   * would send the sign-in down the per-account path, which keeps the
+   * server disconnected after a hosted redirect.
+   */
+  connectionImplicit?: boolean;
   info: InsufficientScopeInfo & { toolCallId: string };
   toolName: string;
   toolInput: unknown;
@@ -288,7 +295,9 @@ export async function createHostedScopeStepUpContinuation(input: {
   return {
     version: SCOPE_STEP_UP_VERSION,
     kind: "scope_step_up_required",
-    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+    ...(input.connectionId && !input.connectionImplicit
+      ? { connectionId: input.connectionId }
+      : {}),
     continuationId,
     serverId: input.info.serverId,
     ...(input.serverName ? { serverName: input.serverName } : {}),

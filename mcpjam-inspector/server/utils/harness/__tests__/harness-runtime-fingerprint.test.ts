@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   harnessRuntimeFingerprint,
+  warmHarnessRuntimeFingerprint,
   toToolResultOutput,
 } from "../run-harness-turn";
+import { harnessToolOutputError } from "../tool-result-output";
 import {
   LOCAL_UNATTENDED_SANDBOX_POLICY,
   sandboxPolicyFingerprint,
@@ -21,11 +23,28 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("retains the warm session across per-turn approval and sandbox changes", () => {
+    const codex = { ...base, harnessId: "codex" };
+    const approved = { ...codex, permissionMode: "allow-reads", commandSandbox: "read-only" };
+    expect(warmHarnessRuntimeFingerprint(codex)).toBe(warmHarnessRuntimeFingerprint(approved));
+    // The full policy still invalidates approval decisions made under other settings.
+    expect(harnessRuntimeFingerprint(codex)).not.toBe(harnessRuntimeFingerprint(approved));
+    expect(warmHarnessRuntimeFingerprint({ ...codex, secretsHash: "rotated" }))
+      .not.toBe(warmHarnessRuntimeFingerprint(codex));
+  });
+
   it("forks forwarded processes when their launch configuration changes", () => {
     const forwarded = { ...base, nativeForwarding: "v2" };
     expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: "tool-search-auto-v1" })).not.toBe(harnessRuntimeFingerprint(forwarded));
     expect(harnessRuntimeFingerprint({ ...forwarded, forwardingConfigurationVersion: undefined })).toBe(harnessRuntimeFingerprint(forwarded));
     expect(harnessRuntimeFingerprint({ ...base, forwardingConfigurationVersion: "unused" })).toBe(harnessRuntimeFingerprint(base));
+  });
+
+  it("keeps profiled and pass-through forwarding in separate lanes", () => {
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint({ ...base, nativeForwarding: "v2" }));
+    expect(harnessRuntimeFingerprint({ ...base, nativeForwarding: "bridge-v1" }))
+      .not.toBe(harnessRuntimeFingerprint(base));
   });
 
   it("versions required discovery on a retained client without changing eager clients", () => {
@@ -125,6 +144,22 @@ describe("harnessRuntimeFingerprint", () => {
         }),
       }),
     );
+  });
+
+  it("forks only OpenCode lanes for the harness-opencode 1.0.160 bridge", () => {
+    const lane = (harnessId: string) =>
+      harnessRuntimeFingerprint({
+        harnessId,
+        modelId: "anthropic/claude-haiku-4.5",
+        selectedServers: ["srv-a"],
+        permissionMode: "allow-all",
+      });
+    // The values these lanes had before the bump: they keep resuming.
+    expect(lane("claude-code")).toBe("claude-code|anthropic/claude-haiku-4.5|418da67");
+    expect(lane("codex")).toBe("codex|anthropic/claude-haiku-4.5|a62170c3");
+    expect(lane("cursor")).toBe("cursor|anthropic/claude-haiku-4.5|a62170c3");
+    // An OpenCode lane saved against a 1.0.119 bridge does not.
+    expect(lane("opencode")).not.toBe("opencode|anthropic/claude-haiku-4.5|a62170c3");
   });
 
   it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {
@@ -271,6 +306,26 @@ describe("toToolResultOutput", () => {
       type: "error-text",
       value: JSON.stringify({ msg: "boom" }),
     });
+  });
+
+  it("renders an ACP runtime's `{ error }` result as that error's text", () => {
+    const timeout = "MCP error -32001: Request timed out";
+    expect(toToolResultOutput({ error: timeout }, true)).toEqual({
+      type: "error-text",
+      value: timeout,
+    });
+    expect(harnessToolOutputError({ error: timeout })).toBe(timeout);
+    // Only that exact shape: a result that merely carries an `error` field is
+    // not a failure report.
+    for (const output of [
+      { error: "" },
+      { error: { message: timeout } },
+      { error: timeout, content: [] },
+      [timeout],
+      timeout,
+      { success: true },
+    ])
+      expect(harnessToolOutputError(output)).toBeUndefined();
   });
 
   it("does not treat a bare {type} (no value) as already-typed", () => {

@@ -86,3 +86,12 @@ describe("plugin server unavailable data part", () => {
      isPluginServerUnavailableDataPart(data("unreachable", scopeChallenge)),
    ).toBe(false);
  });
+
+it("accepts command approval separately from authentication without secret terms", () => {
+  expect(isPluginServerUnavailableDataPart({
+    type: "data-plugin-server-unavailable", data: { servers: [{ serverId: "server", reason: "needs_approval" }] },
+  })).toBe(true);
+  expect(isPluginServerUnavailableDataPart({
+    type: "data-plugin-server-unavailable", data: { servers: [{ serverId: "server", reason: "needs_approval", scopeChallenge: { requiredScope: "scope" } }] },
+  })).toBe(false);
+});

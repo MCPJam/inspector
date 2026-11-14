@@ -3,9 +3,10 @@
  * (`org-model-config.ts`) and the runtime resolver
  * (`org-runtime-admission.ts`), kept apart so neither imports the other.
  */
-import dns from "node:dns/promises";
-import { logger } from "./logger.js";
-import { isUnsafeHostedOutboundUrl as isUnsafeHostedOutboundUrlLiteral } from "@/shared/local-only-mcp";
+import {
+  assertAllowedHostedTargetUrl,
+  isBlockedEgressHost,
+} from "./hosted-egress-guard.js";
 import type {
   ResolveOrgModelConfigAuth,
   ResolveOrgModelConfigTarget,
@@ -55,62 +56,41 @@ export function formatTargetForCache(
 // an SSRF proxy against itself. Reject those baseUrls here, before the URL
 // is cached or handed to the AI SDK provider builder.
 //
+// The verdict is the hosted egress guard's (`hosted-egress-guard.ts`), the
+// same one MCP server URLs get, so the private destinations an operator lists
+// in MCPJAM_PRIVATE_EGRESS_ALLOWLIST reach model endpoints too, and nothing
+// else does.
+//
 // In local-inspector mode (CLI/desktop) localhost and private IPs are the
-// whole point of e.g. Ollama, so this check is gated by HOSTED_MODE.
+// whole point of e.g. Ollama, so callers gate these checks on HOSTED_MODE.
 // ---------------------------------------------------------------------------
 
+/** The guard's literal verdict, for a check that cannot wait on DNS. */
 export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
-  return isUnsafeHostedOutboundUrlLiteral(rawUrl);
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return true;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return true;
+  }
+  return isBlockedEgressHost(parsed.hostname, true);
 }
 
 /**
- * Async SSRF guard that also checks DNS resolution.
- *
- * `isUnsafeHostedOutboundUrl` only inspects the literal hostname; a public
- * hostname that resolves to a private/loopback/metadata IP bypasses it.
- * This function adds a DNS preflight so that any resolved IP is also checked.
- *
- * For IP-literal hosts the sync check is sufficient; DNS lookup is only
- * performed for hostnames, accepting a small TOCTOU window that would require
- * an attacker to control both the DNS record and its TTL.
+ * The guard's full verdict: the literal host, then every address a hostname
+ * resolves to, so a public name answering with a private address is refused
+ * unless the operator listed it. For IP-literal hosts the literal check is the
+ * whole answer; for names a small TOCTOU window remains between this lookup
+ * and the provider client's own, which would need an attacker to control both
+ * the DNS record and its TTL.
  */
 export async function assertSafeHostedOutboundUrl(
   rawUrl: string,
 ): Promise<void> {
-  if (isUnsafeHostedOutboundUrl(rawUrl)) {
-    throw new Error(
-      `Provider base URL is blocked: points to a private or internal address`,
-    );
-  }
-  // For non-IP-literal hostnames, also validate the DNS-resolved IPs.
-  const parsed = new URL(rawUrl);
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const isIpLiteral = /^[\d.]+$/.test(host) || /^[0-9a-f:]+$/i.test(host);
-  if (isIpLiteral) return;
-
-  const resolvedIps: string[] = [];
-  for (const resolve of [dns.resolve4, dns.resolve6]) {
-    try {
-      resolvedIps.push(...(await resolve(host)));
-    } catch (error) {
-      // One address family may be absent; the empty-address guard fails closed.
-      logger.debug("Provider DNS lookup failed", {
-        errorType: error instanceof Error ? error.name : "unknown",
-      });
-    }
-  }
-  if (resolvedIps.length === 0) {
-    throw new Error(
-      `Provider base URL is blocked: hostname "${host}" could not be resolved`,
-    );
-  }
-  for (const ip of resolvedIps) {
-    // IPv6 addresses need brackets in URLs: http://[::1] not http://::1
-    const testUrl = ip.includes(":") ? `http://[${ip}]` : `http://${ip}`;
-    if (isUnsafeHostedOutboundUrl(testUrl)) {
-      throw new Error(
-        `Provider base URL is blocked: hostname "${host}" resolves to a private or internal address`,
-      );
-    }
-  }
+  await assertAllowedHostedTargetUrl(rawUrl, "Provider base URL", {
+    hosted: true,
+  });
 }

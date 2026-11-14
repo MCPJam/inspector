@@ -1,5 +1,37 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
+
+// Pass-through spies: they record which box each tool was built against.
+const { buildBrowserToolsSpy, buildSandboxBashToolSpy } = vi.hoisted(() => ({
+  buildBrowserToolsSpy: vi.fn(),
+  buildSandboxBashToolSpy: vi.fn(),
+}));
+vi.mock("../built-in-tools/browser", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../built-in-tools/browser")>();
+  return {
+    ...actual,
+    buildBrowserTools: (
+      ...args: Parameters<typeof actual.buildBrowserTools>
+    ) => {
+      buildBrowserToolsSpy(...args);
+      return actual.buildBrowserTools(...args);
+    },
+  };
+});
+vi.mock("../built-in-tools/sandbox-bash", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../built-in-tools/sandbox-bash")>();
+  return {
+    ...actual,
+    buildSandboxBashTool: (
+      ...args: Parameters<typeof actual.buildSandboxBashTool>
+    ) => {
+      buildSandboxBashToolSpy(...args);
+      return actual.buildSandboxBashTool(...args);
+    },
+  };
+});
 import {
   resolveHostTools,
   narrowHostComputer,
@@ -620,14 +652,18 @@ describe("resolveHostTools — browser", () => {
     );
     await initComputersRuntimeConfigBootstrap();
     try {
-      const suppressed: Array<{ id: string; reason: string }> = [];
+      const suppressed: Array<{ id: string; reason: string; code?: string }> =
+        [];
       expect(
         resolveHostTools(
           { builtInToolIds: ["browser"], computer },
           { ...browserCtx, onToolSuppressed: (i) => suppressed.push(i) },
         ),
       ).toBeUndefined();
-      expect(suppressed[0]).toMatchObject({ id: "browser" });
+      expect(suppressed[0]).toMatchObject({
+        id: "browser",
+        code: "hosted_not_configured",
+      });
       expect(suppressed[0].reason).toContain("not fully configured");
     } finally {
       resetComputersRuntimeConfigBootstrapForTests();
@@ -783,7 +819,8 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
   it("suppresses it on a TERMINAL box, and says why", () => {
     // A browser on a terminal image fails with nothing saying why — there is
     // no X server for Chromium to draw on.
-    const suppressed: Array<{ id: string; reason: string }> = [];
+    const suppressed: Array<{ id: string; reason: string; code?: string }> =
+      [];
     const tools = resolveHostTools(
       { builtInToolIds: ["browser"] },
       {
@@ -798,6 +835,42 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
     expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
       "not a desktop",
     );
+    expect(suppressed.find((s) => s.id === "browser")?.code).toBe(
+      "terminal_only",
+    );
+  });
+
+  it("keeps a watched conversation's own browser beside its terminal box", () => {
+    // The shell's box has no display, but a watched conversation has a browser
+    // box of its own; the shell's apps open there through the preview tunnel.
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        sandboxBinding: { sandboxId: "sbx_1", lifetime: "conversation" },
+        onToolSuppressed: (info) => suppressed.push(info),
+      },
+    );
+    expect(suppressed).toEqual([]);
+    expect(tools?.browser_navigate?.description).toContain(
+      "Apps running on the shell's computer open at http://localhost:<port>.",
+    );
+  });
+
+  it("tells a browser attached before its workspace where the apps open", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: ["browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: { kind: "attested" },
+        browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+        browserPreviewWorkspace: () => undefined,
+      },
+    );
+    expect(tools?.browser_navigate?.description).toContain("http://localhost:<port>");
   });
 
   it("suppresses it for ANY unattended hosted run with no binding at all", () => {
@@ -857,6 +930,119 @@ describe("resolveHostTools — browser on a per-run sandbox", () => {
       },
     );
     expect(tools).toBeUndefined();
+  });
+});
+
+/**
+ * A run that pins an image AND declares a browser gets two boxes: the pinned
+ * terminal for the shell, and a desktop beside it for Browser alone. What
+ * these pin is which tool lands on which box, and that the shell's apps are
+ * what `http://localhost:<port>` opens.
+ */
+describe("resolveHostTools — browser on a desktop paired with a pinned box", () => {
+  const unattended = {
+    kind: "unattended" as const,
+    policy: { mode: "allow_all" as const },
+  };
+  const PINNED_BINDING = {
+    sandboxId: "sbx_pinned_1",
+    sandboxRowId: "row_pinned_1",
+    runtimeKind: "terminal" as const,
+    workdir: "/workspace",
+  };
+
+  function resolvePaired(over: Record<string, unknown> = {}) {
+    buildBrowserToolsSpy.mockClear();
+    buildSandboxBashToolSpy.mockClear();
+    const suppressed: Array<{ id: string; reason: string; code?: string }> =
+      [];
+    const tools = resolveHostTools(
+      { builtInToolIds: ["bash", "browser"] },
+      {
+        ...ctx,
+        browserApprovalDelivery: unattended,
+        runKey: "iteration-7",
+        sandboxBinding: PINNED_BINDING,
+        browserSandboxBinding: DESKTOP_BINDING,
+        onToolSuppressed: (info) => suppressed.push(info),
+        ...over,
+      },
+    );
+    return {
+      tools,
+      suppressed,
+      browserOptions: buildBrowserToolsSpy.mock.calls[0]?.[0],
+      bashOptions: buildSandboxBashToolSpy.mock.calls[0]?.[0],
+    };
+  }
+
+  it.each([
+    ["an eval iteration", {}],
+    ["a journey session", { isJourneySession: true }],
+  ])(
+    "puts Browser on the desktop and Bash on the pinned box for %s",
+    (_label, over) => {
+      const { tools, suppressed, browserOptions, bashOptions } =
+        resolvePaired(over);
+      expect(suppressed).toEqual([]);
+      expect(Object.keys(tools ?? {})).toEqual(
+        expect.arrayContaining([BASH_TOOL_NAME, "browser_navigate"]),
+      );
+      // Browser is recorded against, and torn down with, the desktop's row.
+      expect(browserOptions?.sandboxTarget).toEqual({
+        sandboxRowId: "row_desktop_1",
+        sandboxId: "sbx_desktop_1",
+        record: true,
+      });
+      // ...and opens the pinned box's apps at localhost.
+      expect(browserOptions?.previewWorkspace).toEqual({
+        sandboxId: "sbx_pinned_1",
+      });
+      expect(bashOptions).toMatchObject({
+        sandboxId: "sbx_pinned_1",
+        workdir: "/workspace",
+      });
+      expect(tools?.browser_navigate?.description).toContain(
+        "Apps running on the shell's computer open at http://localhost:<port>.",
+      );
+    },
+  );
+
+  it("ignores a paired binding that is not a desktop", () => {
+    // Fail closed: the pinned terminal cannot host Browser either, so the tool
+    // is suppressed with the reason rather than sent to a box with no display.
+    const { tools, suppressed, browserOptions } = resolvePaired({
+      browserSandboxBinding: { ...DESKTOP_BINDING, runtimeKind: "terminal" },
+    });
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    expect(browserOptions).toBeUndefined();
+    expect(suppressed.find((s) => s.id === "browser")?.code).toBe(
+      "terminal_only",
+    );
+  });
+
+  it("leaves a single desktop box exactly as it was", () => {
+    const { browserOptions } = resolvePaired({
+      sandboxBinding: DESKTOP_BINDING,
+      browserSandboxBinding: undefined,
+    });
+    expect(browserOptions?.sandboxTarget).toEqual({
+      sandboxRowId: "row_desktop_1",
+      sandboxId: "sbx_desktop_1",
+      record: true,
+    });
+    expect(browserOptions?.previewWorkspace).toBeUndefined();
+  });
+
+  it("leaves a watched conversation's preview on its own shell box", () => {
+    const { browserOptions } = resolvePaired({
+      browserApprovalDelivery: { kind: "attested" },
+      browserSessionScope: { kind: "conversation", sessionId: "chat-1" },
+      sandboxBinding: { sandboxId: "sbx_1", lifetime: "conversation" },
+      browserSandboxBinding: undefined,
+    });
+    expect(browserOptions?.previewWorkspace).toEqual({ sandboxId: "sbx_1" });
+    expect(browserOptions?.sandboxTarget).toBeUndefined();
   });
 });
 

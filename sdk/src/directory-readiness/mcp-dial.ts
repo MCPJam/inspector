@@ -179,7 +179,9 @@ const MAX_INSTRUCTIONS_CHARS = 4_000;
 /** Cap on a server-controlled `WWW-Authenticate` value kept as evidence. */
 const MAX_CHALLENGE_CHARS = 2_048;
 
-export function readChallengeHeader(headers: Headers | undefined): string | undefined {
+export function readChallengeHeader(
+  headers: Headers | undefined
+): string | undefined {
   const value = headers?.get("www-authenticate") ?? undefined;
   if (value === undefined) return undefined;
   return value.length > MAX_CHALLENGE_CHARS
@@ -314,8 +316,7 @@ export async function dialInitialize(
       status: call.status,
       ...(wwwAuthenticate !== undefined ? { wwwAuthenticate } : {}),
       error:
-        asString(bodyError?.message) ??
-        `initialize answered ${call.status}`,
+        asString(bodyError?.message) ?? `initialize answered ${call.status}`,
     };
   }
 

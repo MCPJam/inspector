@@ -225,6 +225,31 @@ describe("disabledOperations", () => {
     );
   });
 
+  it("gates only a submission's writes and runs on directory readiness", () => {
+    // The readiness starts keep `conformance`; reads and the delete stay open
+    // so an organization that lost the beta can still find and remove its own.
+    expect(
+      disabledOperations({ ...allOn, "directory-readiness": false }).sort()
+    ).toEqual(
+      [
+        "create_directory_submission",
+        "start_directory_submission_run",
+        "update_directory_submission",
+      ].sort()
+    );
+    expect(operationFeature("start_claude_readiness_run")).toBe("conformance");
+    for (const name of [
+      "list_directory_flows",
+      "get_directory_flow",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "get_directory_submission_results",
+      "delete_directory_submission",
+    ]) {
+      expect(isOperationAvailable(name, {}), name).toBe(true);
+    }
+  });
+
   it("keeps sandbox images apart from the computer itself", () => {
     expect(
       disabledOperations({ ...allOn, "sandbox-images": false }).sort()

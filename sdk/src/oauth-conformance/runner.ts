@@ -1,4 +1,5 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -276,10 +277,7 @@ function buildStepResult(
  * a violation.
  */
 type AuthorizationRequirement =
-  | "required"
-  | "optional"
-  | "not-required"
-  | "inconclusive";
+  "required" | "optional" | "not-required" | "inconclusive";
 
 async function probeAuthorizationRequirement(
   config: NormalizedOAuthConformanceConfig,
@@ -300,7 +298,7 @@ async function probeAuthorizationRequirement(
       // discovery is graded rather than reported not-applicable.
       const prmUrl = await findPublishedResourceMetadata(
         config,
-        trackedRequest,
+        trackedRequest
       );
       if (prmUrl) {
         return {
@@ -490,6 +488,7 @@ function mergeConformanceDynamicRegistration(
 export class OAuthConformanceTest {
   private readonly config: NormalizedOAuthConformanceConfig;
   private readonly deps: OAuthConformanceRunnerDependencies;
+  private readonly suppressTelemetry: boolean;
 
   constructor(
     config: OAuthConformanceConfig,
@@ -497,9 +496,12 @@ export class OAuthConformanceTest {
   ) {
     this.config = normalizeOAuthConformanceConfig(config);
     this.deps = deps;
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<ConformanceResult> {
+    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();
@@ -661,7 +663,7 @@ export class OAuthConformanceTest {
         // same 2xx and continues into proactive discovery, which is exactly
         // the path a client signing in to this server takes.
         this.config.onProgress(
-          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`,
+          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`
         );
       }
 

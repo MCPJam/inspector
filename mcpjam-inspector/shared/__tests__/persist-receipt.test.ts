@@ -69,3 +69,11 @@ describe("isPersistReceiptDataPart", () => {
     );
   });
 });
+
+
+it("requires an exact turn and project for opaque failed-save handles", () => {
+  const data = { outcome: "failed", chatSessionId: "chat", turnId: "turn", retryProjectId: "project", retryHandle: "ac7bb39a-9219-40ca-802d-583951fab542" };
+  expect(isPersistReceiptDataPart({ type: PERSIST_RECEIPT_PART_TYPE, data })).toBe(true);
+  for (const invalid of [{ retryHandle: "../../path" }, { retryProjectId: undefined }, { turnId: "" }, { outcome: "saved" }])
+    expect(isPersistReceiptDataPart({ type: PERSIST_RECEIPT_PART_TYPE, data: { ...data, ...invalid } })).toBe(false);
+});

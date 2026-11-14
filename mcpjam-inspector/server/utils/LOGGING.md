@@ -71,6 +71,7 @@ request body, path or header is not one, whatever its shape. Other IDs,
 | `apikey.admin_revoke.completed` | `routes/web/api-keys.ts` | `workosKeyId`, `alreadyRevoked`, `bindingCleanupFailed`, `bindingCleanupAttempts`, `bindingStatus?` |
 | `apikey.admin_revoke.unavailable` | `routes/web/api-keys.ts` | `workosKeyId`, `errorMessage` |
 | `auth.session.revoke_incomplete` | `routes/web/auth-session.ts` | `reason`, `status` |
+| `computer.terminal.input_failed` | `routes/web/computer-terminal.ts` | `errorCode` |
 | `mcp.connection.closed_with_pending_requests` | `index.ts` (system event) | `errorCode` |
 | `process.vitals` | `utils/process-vitals.ts` (system event) | `reason`, `heapUsedBytes`, `heapLimitBytes`, `oldSpaceUsedBytes`, `rpcLogBufferBytes`, `peakHeapUsedBytes` |
 

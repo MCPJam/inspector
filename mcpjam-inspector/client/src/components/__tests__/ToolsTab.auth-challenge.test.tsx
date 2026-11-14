@@ -7,7 +7,10 @@ import { CHAT_AUTH_RECOVERY_MESSAGE } from "@/lib/chat-auth-recovery";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
-import { useAuthChallengeCardStore } from "@/lib/auth-challenge-lifecycle";
+import {
+  registerAuthChallengeHostProfile,
+  useAuthChallengeCardStore,
+} from "@/lib/auth-challenge-lifecycle";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 // Mock posthog
@@ -256,6 +259,41 @@ describe("ToolsTab mid-session sign-in", () => {
     expect(sessionStorage.getItem("mcp-scope-step-up-replay-v1")).toBeNull();
   });
 
+  it("shows only the card for a hosted sign-in refusal, not a 403 error panel", async () => {
+    // Hosted answers a mid-call sign-in request as 403 UPSTREAM_AUTH_FAILED.
+    mockExecuteToolApi.mockResolvedValue({
+      error: 'Server "orders" asked for sign-in to complete this request.',
+      status: 403,
+      code: "UPSTREAM_AUTH_FAILED",
+      authChallenge: signal(),
+    });
+    await runTool("list_orders");
+
+    await screen.findByTestId("auth-challenge-card");
+    expect(
+      screen.queryByText(/asked for sign-in to complete this request/),
+    ).toBeNull();
+    expect(screen.queryByText(/Forbidden/)).toBeNull();
+    expect(
+      screen.getByText("Execute a tool to see results here"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the error panel for a scope upgrade it cannot start", async () => {
+    mockExecuteToolApi.mockResolvedValue({
+      error: "Needs write permission",
+      status: 403,
+      insufficientScope: { requiredScope: "orders:write" },
+    });
+    await runTool("list_orders");
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Execute a tool to see results here"),
+      ).toBeNull(),
+    );
+    expect(screen.queryByTestId("auth-challenge-card")).toBeNull();
+  });
+
   it("explains instead of prompting when the server's auth method cannot sign in", async () => {
     mockExecuteToolApi.mockResolvedValue({
       error: "Sign in required",
@@ -269,6 +307,36 @@ describe("ToolsTab mid-session sign-in", () => {
       ),
     );
     expect(screen.queryByTestId("auth-challenge-card")).toBeNull();
+  });
+
+  it("keeps the call failed when the selected host passes a 401 through", async () => {
+    const unregister = registerAuthChallengeHostProfile(() => ({
+      unauthorizedChallenge: "passthrough",
+    }));
+    try {
+      // Hosted reports the sign-in request as 403 UPSTREAM_AUTH_FAILED; the
+      // refusal shown must say sign-in, not a permissions problem.
+      mockExecuteToolApi.mockResolvedValue({
+        error: 'Server "orders" asked for sign-in to complete this request.',
+        status: 403,
+        code: "UPSTREAM_AUTH_FAILED",
+        authChallenge: signal({ errorDescription: "Sign in to see orders" }),
+      });
+      await runTool("list_orders");
+
+      await screen.findByTestId("auth-challenge-notice");
+      expect(
+        await screen.findByText(
+          "The call failed because the server requires sign-in. The server said: Sign in to see orders. Change Mid-session sign-in in Connect settings.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("auth-challenge-card")).toBeNull();
+      expect(
+        screen.queryByText("Execute a tool to see results here"),
+      ).toBeNull();
+    } finally {
+      unregister();
+    }
   });
 
   it("does not count a _meta-challenged result as a success", async () => {

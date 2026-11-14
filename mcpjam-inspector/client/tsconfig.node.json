@@ -11,6 +11,7 @@
     "vite.config.ts",
     "vite-telemetry-catalog.ts",
     "vite-lexer-safe-minify.ts",
-    "vite-posthog-warn-only.ts"
+    "vite-posthog-warn-only.ts",
+    "vite-dev-do-not-track.ts"
   ]
 }

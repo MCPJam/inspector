@@ -295,6 +295,8 @@ export interface PluginWorkspaceAdmission {
   readonly actorId: string;
   readonly projectId: string;
   readonly workspaceId: string;
+  /** Bound by the server to the same admitted turn identity, never serialized. */
+  readonly getAuthorization?: () => Promise<string>;
   /** A fresh backend query. A prior successful read is never an execution grant. */
   revalidate(options?: {
     expectedActorId?: string;
@@ -308,10 +310,7 @@ export function assertPluginWorkspaceRuntime(runtime: {
   agentLoop?: string;
   hostPolicy: { hostStyle?: string };
 }): void {
-  if (
-    !usesMcpjamClient(runtime) ||
-    (!runtime.agentLoop && !runtime.harness && runtime.hostPolicy.hostStyle !== "chatgpt")
-  ) {
+  if (!usesMcpjamClient(runtime)) {
     throw new PluginWorkspaceAdmissionError();
   }
 }
@@ -342,6 +341,7 @@ export async function admitPluginWorkspace(options: {
   descriptor: PluginWorkspaceDescriptor;
   projectId: string | undefined;
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   signal?: AbortSignal;
 }): Promise<PluginWorkspaceAdmission> {
   const { projectId, bearer, descriptor } = options;
@@ -365,9 +365,11 @@ export async function admitPluginWorkspace(options: {
     const deadline = AbortSignal.timeout(WEB_CALL_TIMEOUT_MS);
     const querySignal = AbortSignal.any([...requestSignals, deadline]);
     try {
+      const currentBearer = options.getAuthorization
+        ? await awaitAdmission(options.getAuthorization(), querySignal) : bearer;
       const result: unknown = await timedPluginStep("backend-admission", () =>
         awaitAdmission(
-          createConvexClient(bearer).query(ADMISSION_QUERY, { projectId }),
+          createConvexClient(currentBearer).query(ADMISSION_QUERY, { projectId }),
           querySignal,
         ),
       );
@@ -398,6 +400,7 @@ export async function admitPluginWorkspace(options: {
     actorId,
     projectId,
     workspaceId,
+    ...(options.getAuthorization ? { getAuthorization: options.getAuthorization } : {}),
     async revalidate(
       next: { expectedActorId?: string; signal?: AbortSignal } = {},
     ) {

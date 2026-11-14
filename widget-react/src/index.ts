@@ -123,3 +123,4 @@ export {
 } from "./widget-fullscreen-placement";
 
 export * from "./app-tools-catalog";
+export { SandboxViewAdmissionError } from "./sandbox-view-error";

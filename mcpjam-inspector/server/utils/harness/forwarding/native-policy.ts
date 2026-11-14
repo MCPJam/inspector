@@ -52,3 +52,10 @@ export function stampNativeForwardingPolicy(
     },
   };
 }
+
+/** Check the host-owned snapshot before the adapter can attach to a paused agent. */
+export function assertPendingPolicy(state: unknown, digest: string): void {
+  const stamp = z.object({ data: z.object({ mcpjamForwardingPolicy: z.literal(digest) }) });
+  if (!stamp.safeParse(state).success)
+    throw new Error("The pending turn's tool policy has changed. Start a new turn.");
+}

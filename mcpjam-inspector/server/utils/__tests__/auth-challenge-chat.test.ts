@@ -223,6 +223,32 @@ describe("wrapToolsWithScopeStepUp with a sign-in observer", () => {
     expect(isAuthRequiredDataPart(chunks[0])).toBe(true);
   });
 
+  it.each([
+    ["names an account the call was routed to", false, "acct-b"],
+    ["keeps a server's only login off the card", true, undefined],
+  ])("%s, and binds the saved call to it either way", async (_c, implicit, onCard) => {
+    const { chunks, writer } = makeWriter();
+    const auth = observer({
+      connectionIdFor: () => "acct-b",
+      connectionIsImplicit: () => implicit,
+    });
+    const tool = wrap(
+      () => {
+        throw http401();
+      },
+      auth,
+      writer,
+    );
+
+    await tool.execute({ id: 7 }, call).catch(() => undefined);
+    expect(auth.createContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: "acct-b" }),
+    );
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].data.connectionId).toBe(onCard);
+    expect(isAuthRequiredDataPart(chunks[0])).toBe(true);
+  });
+
   it("suspends a headerless 401 under the spec defaults", async () => {
     const { chunks, writer } = makeWriter();
     const auth = observer({ effectiveAuth: "oauth" });

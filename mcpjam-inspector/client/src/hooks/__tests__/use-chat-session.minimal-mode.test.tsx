@@ -783,6 +783,39 @@ describe("useChatSession minimal mode parity", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
+  describe("a chat-v2 stream error after a declined card", () => {
+    const DECLINE =
+      "Your card was declined, so auto-reload is paused and this organization is out of MCPJam credits.";
+
+    async function failStream(message: string) {
+      renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          minimalMode: true,
+          executionConfig: { systemPrompt: "Prompt" },
+        })
+      );
+      await waitFor(() => {
+        expect(mockUseChatErrorHandlers.length).toBeGreaterThan(0);
+      });
+      act(() => {
+        mockUseChatErrorHandlers.at(-1)?.(new Error(message));
+      });
+    }
+
+    it("leaves the dialog shut when the banner names the card", async () => {
+      await failStream(DECLINE);
+      expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+    });
+
+    it("opens the dialog when the error only quotes a decline", async () => {
+      await failStream(
+        `Provider request failed after an earlier refusal: ${DECLINE}`
+      );
+      expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    });
+  });
+
   describe("a chat turn refused for an unapproved stdio command", () => {
     // The chat route's 403 body, as the transport hands it to onError.
     const refusedTurn = () =>
@@ -1104,9 +1137,6 @@ describe("useChatSession minimal mode parity", () => {
       selectedServerIds: ["server-id-1"],
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    // A remote server needs no local runtime: the route resolves the org
-    // connection as usual (the key stays in Convex).
-    expect(transport.requests[0]).not.toHaveProperty("localMcpRuntimeRequired");
     expect(transport.requests[0]).toHaveProperty("accessScope", "chat_v2");
     expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
@@ -1198,7 +1228,6 @@ describe("useChatSession minimal mode parity", () => {
       projectId: "project-1",
       selectedServerNames: ["server-1"],
       selectedServerIds: ["hosted-server-id"],
-      localMcpRuntimeRequired: true,
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(transport.requests[0].selectedServerIds).toEqual(["hosted-server-id"]);

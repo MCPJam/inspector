@@ -107,6 +107,17 @@ describe("toAcpMcpServers", () => {
 });
 
 describe("attributeCursorToolCall", () => {
+  it("attributes host-executed tool names using the shared parser", () => {
+    expect(attributeCursorToolCall({ rawToolName: "mcp__fixture__echo", input: { providerIdentifier: "forged", toolName: "wrong", args: {} }, keyToServerId: { fixture: "server" } })).toEqual({ serverId: "server", toolName: "echo" });
+  });
+
+  it("attributes the reserved host channel's wrapped MCP name before approval", () => {
+    expect(attributeCursorToolCall({
+      rawToolName: "acp_tool_call", input: { providerIdentifier: "ai-sdk-harness-tools", toolName: "mcp__fixture__show_app", args: {} },
+      keyToServerId: { fixture: "server" },
+    })).toEqual({ serverId: "server", toolName: "show_app" });
+  });
+
   const keyToServerId = { weather: "srv-weather", "user-notes": "srv-notes" };
 
   it("reads identity out of the INPUT, not the opaque stream name", () => {

@@ -118,7 +118,7 @@ const GATE_WAIVER_REFUSAL_CODES: ReadonlySet<string> = new Set([
  * is a bug worth surviving, and three links is already more nesting than any
  * path here has.
  */
-function convexErrorData(error: unknown): ConvexErrorData | null {
+export function convexErrorData(error: unknown): ConvexErrorData | null {
   let current: unknown = error;
   for (let depth = 0; depth < 4 && current; depth += 1) {
     const data = (current as { data?: unknown }).data;
@@ -194,18 +194,24 @@ export interface TranslateConvexWriteErrorOptions {
  * `currentImpact` is a small object of counts rather than a scalar, and it is
  * forwarded whole: an agent proposal that conflicted on impact needs to know
  * WHICH consumer count moved to describe the edit honestly the second time.
+ *
+ * A directory submission's revision guard puts `currentRevision` and
+ * `conflictingKeys` beside its code rather than under `data`; the keys that
+ * conflicted are what lets a writer reapply only its own change.
  */
 function preconditionDetails(
   data: Record<string, unknown> | null | undefined
 ): Record<string, unknown> | undefined {
-  const payload = data?.data;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return undefined;
-  }
-  const source = payload as Record<string, unknown>;
   const details: Record<string, unknown> = {};
-  for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
-    if (source[key] !== undefined) details[key] = source[key];
+  const payload = data?.data;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const source = payload as Record<string, unknown>;
+    for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
+      if (source[key] !== undefined) details[key] = source[key];
+    }
+  }
+  for (const key of ["currentRevision", "conflictingKeys"]) {
+    if (data?.[key] !== undefined) details[key] = data[key];
   }
   return Object.keys(details).length > 0 ? details : undefined;
 }
@@ -273,7 +279,7 @@ function retryAfterFromResetsAt(
 }
 
 /** Same, from a duration a token bucket measured directly. */
-function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
+export function retryAfterFromMs(retryAfterMs: unknown): string | undefined {
   if (typeof retryAfterMs !== "number" || !Number.isFinite(retryAfterMs)) {
     return undefined;
   }

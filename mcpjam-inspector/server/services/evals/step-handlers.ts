@@ -315,12 +315,10 @@ export function buildHostedStepHandlers(
     const outBefore = acc.accumulatedUsage.outputTokens ?? 0;
     const totalBefore = acc.accumulatedUsage.totalTokens ?? 0;
 
-    const outcome = await driveHostedEvalTurn({
-      ...ctx,
-      promptIndex: turnOrdinal,
-      prompt,
-      widgetChecks: [],
-    });
+    const outcome = await driveHostedEvalTurn(
+      { ...ctx, promptIndex: turnOrdinal, prompt, widgetChecks: [] },
+      "widget-follow-up",
+    );
 
     const messages = acc.messageHistory.slice(messagesBefore);
     const spans = acc.capturedSpans.slice(spansBefore);

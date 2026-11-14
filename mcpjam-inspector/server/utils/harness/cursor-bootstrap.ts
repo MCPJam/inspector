@@ -34,8 +34,8 @@ export const CURSOR_CLI_VERSION: string = HARNESS_PINNED_VERSIONS.cursor;
  * are recorded: an arm64 CI image verifies as strictly as the amd64 template.
  */
 export const CURSOR_CLI_CHECKSUMS = {
-  x64: "a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8",
-  arm64: "785c5f6bf2a60eb1121e27ed8c14f5ee07ed1b5b6692324f2d9a997238245eb5",
+  x64: "170b77786cbf4c93064d64fff12b71a178b968730561c64afc2e8e752535442e",
+  arm64: "131554bfdbf683d8ebfef83a2bb46ac4e5d060f198711040b07ed063c2471871",
 } as const satisfies Record<string, string>;
 
 /** The vendor installer's path inside the recipe, relative to `bootstrapDir`. */

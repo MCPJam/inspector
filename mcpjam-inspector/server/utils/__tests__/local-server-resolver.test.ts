@@ -1346,12 +1346,12 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
         },
         { xaaPolicy: POLICY }
       );
-      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+      expect(config.capabilities.extensions[EMA]).toEqual({});
     });
 
     it("advertises EMA on stdio servers under the policy (declare-support is host-wide)", () => {
       const config: any = toMCPServerConfig(stdioAuth, { xaaPolicy: POLICY });
-      expect(config.clientCapabilities.extensions[EMA]).toEqual({});
+      expect(config.capabilities.extensions[EMA]).toEqual({});
     });
 
     it("does not advertise EMA on non-XAA servers without the policy", () => {
@@ -1451,7 +1451,7 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
       );
       // Host-wide declare-support rides along even on the override.
       expect(
-        config.clientCapabilities.extensions[
+        config.capabilities.extensions[
           "io.modelcontextprotocol/enterprise-managed-authorization"
         ]
       ).toEqual({});
@@ -1783,4 +1783,29 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       }
     }
   });
+});
+
+
+it("keeps synthesized local defaults additive rather than pinning an exact set", () => {
+  const defaults = toMCPServerConfig(httpHeaderOnlyAuth);
+  expect(defaults.clientCapabilities).toBeUndefined();
+  expect(defaults.capabilities?.extensions).toHaveProperty("io.modelcontextprotocol/skills");
+  const exact = { elicitation: { form: {} } };
+  expect(toMCPServerConfig(httpHeaderOnlyAuth, { clientCapabilities: exact }).clientCapabilities).toMatchObject(exact);
+});
+
+it("follows the client's own Skills over MCP declaration when it passes capabilities", () => {
+  const skillsPath = ["extensions", "io.modelcontextprotocol/skills"];
+  const off = toMCPServerConfig(httpHeaderOnlyAuth, {
+    clientCapabilities: { elicitation: { form: {} } },
+  });
+  expect(off.clientCapabilities).not.toHaveProperty(skillsPath);
+  expect(off.capabilities).not.toHaveProperty(skillsPath);
+
+  const on = toMCPServerConfig(httpHeaderOnlyAuth, {
+    clientCapabilities: {
+      extensions: { "io.modelcontextprotocol/skills": {} },
+    },
+  });
+  expect(on.clientCapabilities).toHaveProperty(skillsPath);
 });

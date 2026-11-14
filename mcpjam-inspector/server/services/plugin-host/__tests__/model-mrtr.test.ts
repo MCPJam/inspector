@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { z } from "zod";
 const state = vi.hoisted(() => ({
   run: vi.fn(),
   resume: vi.fn(),
@@ -6,9 +7,9 @@ const state = vi.hoisted(() => ({
   release: vi.fn(),
   assertSchema: vi.fn(),
 }));
-vi.mock("../receipt-store.js", () => ({
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
   createPluginInvocationReceiptPort: () => undefined,
-  pluginInvocationOwnerHash: () => "hash",
 }));
 vi.mock("../request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
@@ -23,6 +24,9 @@ vi.mock("../request-runtime.js", () => ({
 import { createModelMrtrAdapter } from "../model-mrtr.js";
 import { PluginInvocationSuspension } from "../invocation.js";
 import { pluginInstances } from "../instances.js";
+import { modelApps } from "../model-apps.js";
+import { PLUGIN_MODEL_APP_META } from "../../../../shared/plugin-model-app.js";
+afterEach(() => vi.restoreAllMocks());
 const identity = {
   actorId: "actor",
   projectId: "project",
@@ -175,6 +179,7 @@ describe("original model MRTR owner", () => {
     expect(state.resume).toHaveBeenCalledTimes(1);
   });
   it("treats invalid completed output as a recoverable result without retrying the wire", async () => {
+    const publication = vi.spyOn(modelApps, "publish");
     const f = fixture();
     await expect(f.adapter.execute(f.execution, vi.fn())).rejects.toMatchObject(
       { code: "MRTR_SUSPENDED" },
@@ -194,6 +199,33 @@ describe("original model MRTR owner", () => {
     ).toMatchObject({ kind: "recover" });
     expect(state.resume).toHaveBeenCalledTimes(1);
     expect(f.write.mock.calls.at(-1)![0].data.kind).toBe("resolved");
+    expect(publication).not.toHaveBeenCalled();
+  });
+  it("publishes only a completed continuation and replays its closed token", async () => {
+    const catalog = await state.resolve();
+    state.resolve.mockResolvedValue({ ...catalog, tool: {
+      name: "review", _meta: { ui: { resourceUri: "ui://app" } },
+    } });
+    const publication = vi.spyOn(modelApps, "publish");
+    const f = fixture();
+    await expect(f.adapter.execute(f.execution, vi.fn())).rejects.toMatchObject({ code: "MRTR_SUSPENDED" });
+    expect(publication).not.toHaveBeenCalled();
+    const event = f.write.mock.calls[0][0].data;
+    const submission = { continuationId: event.continuationId, round: 1, responsesBlobId: "private" };
+    await f.adapter.resume(event.pluginModelOperation, submission, "server");
+    expect(publication).toHaveBeenCalledOnce();
+    const result = z.object({ _meta: z.object({
+      [PLUGIN_MODEL_APP_META]: z.object({ instanceToken: z.string() }),
+    }) }).parse(await publication.mock.results[0]!.value);
+    const token = result._meta[PLUGIN_MODEL_APP_META].instanceToken;
+    const signal = new AbortController().signal;
+    await modelApps.close(token, identity, signal);
+    await f.adapter.resume(event.pluginModelOperation, submission, "server");
+    expect(publication).toHaveBeenCalledOnce();
+    expect(state.resume).toHaveBeenCalledOnce();
+    await expect(modelApps.restore(token, identity, signal)).rejects.toThrow(
+      "MODEL_APP_UNAVAILABLE",
+    );
   });
   it("refuses replay with changed arguments under the same engine id", async () => {
     const f = fixture();

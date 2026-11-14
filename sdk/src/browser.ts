@@ -90,6 +90,22 @@ export type {
   DirectoryLazyAuthToolCall,
 } from "./directory-readiness/lazy-auth.js";
 
+/**
+ * Directory submission forms, so a page can draw the portal's steps and
+ * check answers as the API does. A wildcard on purpose: the flows barrel
+ * lists its exports by name and is pure data and functions by contract.
+ */
+export * from "./directory-readiness/flows/index.js";
+/** The decision scan, for the same reason: its barrel is pure by contract. */
+export * from "./directory-readiness/decisions/index.js";
+
+/**
+ * Directory test plans, so a page can draft, edit and check a plan and show
+ * per-tool outcomes as the API does. A wildcard: the barrel is pure by
+ * contract and its modules export only public names.
+ */
+export * from "./directory-readiness/test-plan/index.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,
@@ -586,9 +602,12 @@ export {
 // the debugger without sending it to their own exception tracker.
 export { isAuthenticatedRequestFailure } from "./oauth/state-machines/shared/response-error.js";
 // A proxy route's verdict that the server under test presented a certificate
-// Node.js would not accept: the debugger shows it as the server's and keeps it
-// out of the host's exception tracker.
-export { isTlsTrustFailure } from "./oauth-proxy-error.js";
+// Node.js would not accept, or could not be reached at all: the debugger shows
+// it as the server's and keeps it out of the host's exception tracker.
+export {
+  isTlsTrustFailure,
+  isUnreachableTargetFailure,
+} from "./oauth-proxy-error.js";
 export { stepFailureFindingKey } from "./oauth/state-machines/shared/step-failure-key.js";
 export {
   isResourceMetadataNotImplemented,
@@ -979,6 +998,21 @@ export {
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
 
+// The spec section each check tests, per protocol era, so a row can link to
+// the requirement it is graded against.
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
+
 export {
   buildConformanceRunReport,
   CONFORMANCE_RUN_SCHEMA_VERSION,
@@ -1108,6 +1142,12 @@ export type {
   PaginationTraversalMode,
   MrtrSupport,
 } from "./host-config/index.js";
+
+// Reviewed canonical ↔ native model ids (also at `@mcpjam/sdk/model-factory`).
+// Pure and browser-safe: the Inspector client canonicalizes picker rows with
+// the same rows the SDK sends.
+export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
 // browser-safe.
@@ -1242,6 +1282,32 @@ export type {
   TaskMode,
   TaskSurface,
 } from "./host-config/tasks-policy.js";
+
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the modes a subscription may use. Browser-safe.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./host-config/events-support.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
+} from "./host-config/events-support.js";
 
 // Skills over MCP (SEP-2640) — the browser-safe halves only. The dispatch
 // gate is pure predicates over capability objects, and the integrity helpers

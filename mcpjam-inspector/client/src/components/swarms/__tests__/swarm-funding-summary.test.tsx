@@ -1,7 +1,13 @@
+import { useUnlimitedCredits } from "@/hooks/useCreditBalance";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SwarmFundingPreviewState } from "@/hooks/use-swarm-funding-preview";
 import { SwarmFundingSummary } from "../swarm-funding-summary";
+
+vi.mock("@/hooks/useCreditBalance", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/hooks/useCreditBalance")>(),
+  useUnlimitedCredits: vi.fn(() => false),
+}));
 
 const ready = (
   overrides: Partial<{
@@ -26,6 +32,19 @@ const ready = (
 });
 
 describe("SwarmFundingSummary", () => {
+  it("hides funding prompts for an unlimited-credit organization", () => {
+    vi.mocked(useUnlimitedCredits).mockReturnValueOnce(true);
+    const { container } = render(
+      <SwarmFundingSummary
+        state={ready()}
+        requestedRuns={1}
+        pendingGoals={0}
+        notice="Review funding before continuing."
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("shows '5 sponsored · 10 use org credits'", () => {
     render(
       <SwarmFundingSummary

@@ -25,7 +25,7 @@ import {
   usesClaudeInlineStreamingFooter,
   usesMcpjamInlineStreamingFooter,
 } from "@/components/chat-v2/shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { ClaudeMarkIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import {
   type AnyPart,
@@ -39,6 +39,10 @@ import { ToolPart } from "@/components/chat-v2/thread/parts/tool-part";
 import { describeUserContext } from "@/components/chat-v2/thread/user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { TextPart } from "@/components/chat-v2/thread/parts/text-part";
+import {
+  ContextAttachmentList,
+  type ContextAttachment,
+} from "./chat-input/attachments/context-attachment-chip";
 
 function extractTextFromUnknown(value: unknown): string {
   if (typeof value === "string") return value.trim();
@@ -266,15 +270,15 @@ function getFullscreenSurfaceStyle(
 function MessageBubble({
   text,
   isUser,
-  claudeFooterMode = "none",
+  claudeFooterActive = false,
   mcpjamFooterActive = false,
 }: {
   text: string;
   isUser: boolean;
-  claudeFooterMode?: "none" | "animated" | "static";
+  claudeFooterActive?: boolean;
   mcpjamFooterActive?: boolean;
 }) {
-  const showClaudeFooter = !isUser && claudeFooterMode !== "none";
+  const showClaudeFooter = !isUser && claudeFooterActive;
   const showMcpjamFooter = !isUser && mcpjamFooterActive;
 
   return (
@@ -303,11 +307,8 @@ function MessageBubble({
           </div>
         ) : null}
         {showClaudeFooter ? (
-          <div
-            data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
-            className="pl-1"
-          >
-            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          <div data-testid="fullscreen-claude-footer" className="pl-1">
+            <ClaudeMarkIndicator />
           </div>
         ) : null}
       </div>
@@ -318,15 +319,15 @@ function MessageBubble({
 function ToolMessageEntry({
   part,
   chatSessionId,
-  claudeFooterMode = "none",
+  claudeFooterActive = false,
   mcpjamFooterActive = false,
 }: {
   part: FullscreenToolPart;
   chatSessionId?: string;
-  claudeFooterMode?: "none" | "animated" | "static";
+  claudeFooterActive?: boolean;
   mcpjamFooterActive?: boolean;
 }) {
-  const showClaudeFooter = claudeFooterMode !== "none";
+  const showClaudeFooter = claudeFooterActive;
   const showMcpjamFooter = mcpjamFooterActive;
 
   return (
@@ -344,11 +345,8 @@ function ToolMessageEntry({
           </div>
         ) : null}
         {showClaudeFooter ? (
-          <div
-            data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
-            className="pl-1"
-          >
-            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          <div data-testid="fullscreen-claude-footer" className="pl-1">
+            <ClaudeMarkIndicator />
           </div>
         ) : null}
       </div>
@@ -468,12 +466,8 @@ function MessageList({
           const isLatestAssistantEntry =
             message.role === "assistant" &&
             entry.key === lastVisibleEntry?.key;
-          const claudeFooterMode =
-            isClaudeFamily && isLatestAssistantEntry
-              ? isThinking
-                ? "animated"
-                : "static"
-              : "none";
+          const claudeFooterActive =
+            isClaudeFamily && isLatestAssistantEntry && isThinking;
           const mcpjamFooterActive =
             isMcpjamHost && isLatestAssistantEntry && isThinking;
           return entry.kind === "tool" ? (
@@ -481,7 +475,7 @@ function MessageList({
               key={entry.key}
               part={entry.part}
               chatSessionId={chatSessionId}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
             />
           ) : (
@@ -489,7 +483,7 @@ function MessageList({
               key={entry.key}
               text={entry.text}
               isUser={message.role === "user"}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
             />
           );
@@ -504,6 +498,7 @@ function MessageList({
 }
 
 function Composer({
+  contextAttachments,
   value,
   onChange,
   placeholder,
@@ -517,6 +512,7 @@ function Composer({
   activeSubmitButtonClassName,
   inactiveSubmitButtonClassName,
 }: {
+  contextAttachments: ContextAttachment[];
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
@@ -555,6 +551,11 @@ function Composer({
       className={composerClassName}
       style={composerStyle}
     >
+      {contextAttachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-6 pt-3">
+          <ContextAttachmentList attachments={contextAttachments} />
+        </div>
+      )}
       <div className="flex items-center gap-2 px-6 py-3">
         <TextareaAutosize
           value={value}
@@ -611,6 +612,7 @@ function Composer({
 }
 
 type FullscreenChatOverlayProps = {
+  contextAttachments?: ContextAttachment[];
   startupPhase?: HarnessStartupPhase | null;
   chatSessionId?: string;
   messages: UIMessage[];
@@ -645,6 +647,7 @@ type FullscreenChatOverlayProps = {
   contained?: boolean;
 };
 export function FullscreenChatOverlay({
+  contextAttachments = [],
   startupPhase,
   chatSessionId,
   messages,
@@ -709,6 +712,7 @@ export function FullscreenChatOverlay({
             </div>
           ) : null}
           <Composer
+            contextAttachments={contextAttachments}
             value={input}
             onChange={onInputChange}
             placeholder={placeholder}

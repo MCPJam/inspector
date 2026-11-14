@@ -102,6 +102,7 @@ function getPlanRank(plan: OrganizationPlan): number {
 }
 
 function getPlanColumnCta(params: {
+  contractManaged?: boolean;
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
   currentCatalogPlanId?: string;
@@ -170,7 +171,7 @@ function getPlanColumnCta(params: {
     return { label: "Current plan", disabled: true, variant: "outline" };
   }
 
-  if (isEnterprisePlan) {
+  if (isEnterprisePlan || params.contractManaged) {
     return {
       label: "Contact us",
       disabled: false,
@@ -1374,6 +1375,7 @@ export function OrganizationBillingSection({
                                     : ""
                                   : null;
                               const cta = getPlanColumnCta({
+                                contractManaged: (billingStatus?.unlimitedCreditsUntil ?? 0) > Date.now(),
                                 plan,
                                 currentPlan,
                                 currentCatalogPlanId:

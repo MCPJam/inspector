@@ -64,7 +64,7 @@ function makeClient(): {
           deduped: false,
           includeLlmObservations: false,
         },
-        { status: 202 },
+        { status: 202 }
       );
     }
     return Response.json({ code: "NOT_FOUND", message: path }, { status: 404 });
@@ -83,8 +83,10 @@ describe("start_claude_readiness_run forwards the lazy-auth inputs", () => {
   it("sends neither key when neither was asked for", async () => {
     const { client, bodies } = makeClient();
     await startClaudeReadinessRunOperation.execute(
-      startClaudeReadinessRunOperation.inputSchema.parse({ server: "Shop MCP" }),
-      { client },
+      startClaudeReadinessRunOperation.inputSchema.parse({
+        server: "Shop MCP",
+      }),
+      { client }
     );
     expect(bodies[0]?.body).toEqual({});
   });
@@ -101,7 +103,7 @@ describe("start_claude_readiness_run forwards the lazy-auth inputs", () => {
         },
         claimedFeatures: ["lazy-authentication", "lazy-authentication"],
       }),
-      { client },
+      { client }
     );
     expect(bodies[0]).toEqual({
       path: "/api/v1/projects/project-1/servers/server-1/readiness-runs/claude",
@@ -124,7 +126,7 @@ describe("start_claude_readiness_run forwards the lazy-auth inputs", () => {
         submissionMode: "mcp-only",
         lazyAuthProbe: { enabled: true },
       }),
-      { client },
+      { client }
     );
     expect(bodies[0]?.body).toEqual({
       submissionMode: "mcp-only",
@@ -149,13 +151,13 @@ describe("the inputs are validated before anything is sent", () => {
   it("bounds tool names and refuses unknown keys", () => {
     expect(
       parse({ lazyAuthProbe: { enabled: true, toolName: "x".repeat(129) } })
-        .success,
+        .success
     ).toBe(false);
     expect(
-      parse({ lazyAuthProbe: { enabled: true, toolName: "  " } }).success,
+      parse({ lazyAuthProbe: { enabled: true, toolName: "  " } }).success
     ).toBe(false);
     expect(
-      parse({ lazyAuthProbe: { enabled: true, credentials: "token" } }).success,
+      parse({ lazyAuthProbe: { enabled: true, credentials: "token" } }).success
     ).toBe(false);
   });
 
@@ -163,19 +165,19 @@ describe("the inputs are validated before anything is sent", () => {
     expect(
       parse({
         lazyAuthProbe: { enabled: true, toolName: "a", publicToolName: "a" },
-      }).success,
+      }).success
     ).toBe(false);
   });
 
   it("accepts only known claims, at most ten", () => {
     expect(parse({ claimedFeatures: ["lazy-auth"] }).success).toBe(false);
     expect(
-      parse({ claimedFeatures: Array(11).fill("lazy-authentication") }).success,
+      parse({ claimedFeatures: Array(11).fill("lazy-authentication") }).success
     ).toBe(false);
     expect(
       parse({
         claimedFeatures: ["lazy-authentication", "enterprise-managed-auth"],
-      }).success,
+      }).success
     ).toBe(true);
   });
 });
@@ -183,7 +185,7 @@ describe("the inputs are validated before anything is sent", () => {
 describe("PlatformApiClient picks the fields it forwards", () => {
   it("drops keys the endpoint does not accept", async () => {
     const fetchMock = vi.fn(async () =>
-      Response.json({ runId: "r" }, { status: 202 }),
+      Response.json({ runId: "r" }, { status: 202 })
     );
     const client = new PlatformApiClient({
       baseUrl: "https://api.example.com/api/v1",
@@ -201,7 +203,10 @@ describe("PlatformApiClient picks the fields it forwards", () => {
       } as { enabled: boolean; toolName: string },
       claimedFeatures: ["lazy-authentication"],
     });
-    const [, init] = fetchMock.mock.calls[0]! as unknown as [unknown, RequestInit];
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [
+      unknown,
+      RequestInit,
+    ];
     expect(JSON.parse(String(init.body))).toEqual({
       lazyAuthProbe: { enabled: true, toolName: "t" },
       claimedFeatures: ["lazy-authentication"],

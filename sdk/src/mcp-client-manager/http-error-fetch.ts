@@ -123,6 +123,10 @@ export function wrapFetchForHttpErrors(
     if (
       operation === undefined ||
       response.ok ||
+      // A redirect belongs to the transport: it follows same-origin hops
+      // itself (calling this fetch with `redirect: "manual"`), and names the
+      // target of one it refuses. Raising here would end the call at hop one.
+      (response.status >= 300 && response.status < 400) ||
       // HTTP 400 can carry a JSON-RPC error the transport needs to dispatch.
       response.status === 400 ||
       // The transport must handle authentication and scope retries itself.

@@ -1,7 +1,35 @@
+import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
 import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
+import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
+import {
+  EventsCapabilityCapture,
+  resolveEventsSupport,
+  type CapturedEventsCapability,
+  type EventsSupport,
+} from "./events-capability-capture.js";
+import {
+  listEventsExt,
+  pollEventsExt,
+  subscribeEventsExt,
+  unsubscribeEventsExt,
+  type EventsPollParams,
+  type EventsSubscribeParams,
+  type EventsUnsubscribeOutcome,
+} from "./events-ext.js";
+import { MCPEventsWireError } from "./events-ext-guards.js";
+import {
+  EVENTS_STREAM_KEY_META,
+  EventsStreamTap,
+  wrapTransportForEventStreams,
+} from "./events-stream-tap.js";
+import type {
+  EventsListResultWire,
+  EventsPollResultWire,
+  EventsSubscribeResultWire,
+} from "./events-ext-schemas.js";
 /**
  * MCPClientManager - Manages multiple MCP server connections
  */
@@ -210,7 +238,10 @@ import {
 } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
-import { resolveVersionNegotiation } from "./version-negotiation.js";
+import {
+  legacyFirstFallback,
+  resolveVersionNegotiation,
+} from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
@@ -326,12 +357,19 @@ type UpstreamToolDefinition = NonNullable<
  */
 const SUPPRESSED_CANCELLATION_TIMEOUT_MS = 86_400_000;
 
+/** `events/stream`'s final frame is an empty result; validated loosely. */
+const EVENTS_STREAM_RESULT_SCHEMA = z.looseObject({});
+
 export class MCPClientManager {
   // State management
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
   private readonly toolDeclarationCapture = new ToolDeclarationCapture();
+  /** Raw `capabilities.events` from the handshake (contract C10). */
+  private readonly eventsCapabilityCapture = new EventsCapabilityCapture();
+  /** In-flight `events/stream` requests we opened, per server (push). */
+  private readonly eventStreamTaps = new Map<string, EventsStreamTap>();
   private readonly toolsAnnotationsCache = new Map<
     string,
     Map<string, Record<string, unknown> | undefined>
@@ -600,6 +638,198 @@ export class MCPClientManager {
     return "disconnected";
   }
 
+  // ---------------------------------------------------------------------
+  // MCP Events (triggers) — draft@28ec35e
+  // ---------------------------------------------------------------------
+
+  /**
+   * The events support matrix for a connection, read from the RAW handshake
+   * (contract C10) — never from `getServerCapabilities()`, which cannot see
+   * `capabilities.events` because upstream strips unknown capability keys.
+   *
+   * MCPJam's client declares nothing for events (the ChatGPT profile shows
+   * ChatGPT declares nothing either), so unlike skills this is one-sided:
+   * the server's declaration alone decides.
+   */
+  getEventsSupport(serverId: string): EventsSupport {
+    return resolveEventsSupport(this.eventsCapabilityCapture.read(serverId));
+  }
+
+  /** {@link getEventsSupport} after ensuring the connection exists. */
+  async ensureEventsSupport(serverId: string): Promise<EventsSupport> {
+    await this.ensureConnected(serverId);
+    return this.getEventsSupport(serverId);
+  }
+
+  /** The raw capture behind {@link getEventsSupport}, for display. */
+  getCapturedEventsCapability(
+    serverId: string
+  ): CapturedEventsCapability | undefined {
+    return this.eventsCapabilityCapture.read(serverId);
+  }
+
+  /**
+   * Advertise = enforce: `events/*` is refused before it reaches the wire
+   * when the server did not declare the capability. `allowUndeclared` is the
+   * explicit escape hatch for conformance probes that test exactly that case.
+   */
+  private assertEventsDeclared(
+    serverId: string,
+    method: string,
+    options?: { allowUndeclared?: boolean }
+  ): void {
+    if (options?.allowUndeclared) return;
+    const support = this.getEventsSupport(serverId);
+    if (!support.declared) {
+      throw new MCPEventsWireError({
+        method,
+        serverId,
+        handshakeObserved: support.handshakeObserved,
+      });
+    }
+  }
+
+  /** `events/list` — one page. */
+  async listServerEvents(
+    serverId: string,
+    params?: { cursor?: string },
+    options?: ClientRequestOptions & { allowUndeclared?: boolean }
+  ): Promise<EventsListResultWire> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertEventsDeclared(serverId, "events/list", options);
+      return listEventsExt(
+        { client, options: this.withTimeout(serverId, options) },
+        params
+      );
+    });
+  }
+
+  /**
+   * `events/poll` — one request. Not retried here: a poll the transport lost
+   * is simply polled again by the coordinator with the same cursor, which is
+   * the draft's own recovery rule.
+   */
+  async pollServerEvents(
+    serverId: string,
+    params: EventsPollParams,
+    options?: ClientRequestOptions & { allowUndeclared?: boolean }
+  ): Promise<EventsPollResultWire> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertEventsDeclared(serverId, "events/poll", options);
+    return pollEventsExt(
+      { client, options: this.withTimeout(serverId, options) },
+      params
+    );
+  }
+
+  /**
+   * `events/subscribe` — create or refresh. Idempotent on the draft's key,
+   * so a caller whose response was lost retries with the same arguments.
+   * The request carries `delivery.secret`; the logging transport redacts it
+   * from every captured copy (contract C8).
+   */
+  async subscribeServerEvents(
+    serverId: string,
+    params: EventsSubscribeParams,
+    options?: ClientRequestOptions & { allowUndeclared?: boolean }
+  ): Promise<EventsSubscribeResultWire> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertEventsDeclared(serverId, "events/subscribe", options);
+    return subscribeEventsExt(
+      { client, options: this.withTimeout(serverId, options) },
+      params
+    );
+  }
+
+  /** `events/unsubscribe` — `NotFound` reads as `"already-gone"`. */
+  async unsubscribeServerEvents(
+    serverId: string,
+    params: {
+      name: string;
+      arguments: Record<string, unknown>;
+      delivery: { url: string };
+    },
+    options?: ClientRequestOptions & { allowUndeclared?: boolean }
+  ): Promise<EventsUnsubscribeOutcome> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertEventsDeclared(serverId, "events/unsubscribe", options);
+    return unsubscribeEventsExt(
+      { client, options: this.withTimeout(serverId, options) },
+      params
+    );
+  }
+
+  private eventStreamTapFor(serverId: string): EventsStreamTap {
+    let tap = this.eventStreamTaps.get(serverId);
+    if (!tap) {
+      tap = new EventsStreamTap();
+      this.eventStreamTaps.set(serverId, tap);
+    }
+    return tap;
+  }
+
+  /**
+   * `events/stream` — open ONE push stream (draft *Push-Based Delivery*).
+   *
+   * Resolves with the server's final (empty) result when the SERVER closes
+   * the stream; rejects on an error response, on `signal` abort (per-request
+   * cancellation: this stream only, the connection stays up), or when
+   * `timeout` elapses. The request timer is finite on purpose — the caller
+   * rolls the stream over deliberately before it fires (see
+   * `EventsPushRuntime`); only progress would reset it, and push sends none.
+   *
+   * `onRequestId` reports the JSON-RPC id the protocol assigned, which every
+   * push notification echoes in `_meta["io.modelcontextprotocol/
+   * subscriptionId"]`; `onRequestStreamEnd` fires when the transport sees the
+   * stream close without a response.
+   */
+  async openEventsStream(
+    serverId: string,
+    params: {
+      name: string;
+      arguments: Record<string, unknown>;
+      cursor: string | null;
+      maxAgeMs?: number;
+    },
+    options: {
+      signal: AbortSignal;
+      timeout: number;
+      onRequestId: (id: string | number) => void;
+      onRequestStreamEnd: () => void;
+      allowUndeclared?: boolean;
+    }
+  ): Promise<unknown> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertEventsDeclared(serverId, "events/stream", options);
+    const streamKey = `stream_${crypto.randomUUID()}`;
+    const unregister = this.eventStreamTapFor(serverId).register(streamKey, {
+      onRequestId: options.onRequestId,
+      onRequestStreamEnd: options.onRequestStreamEnd,
+    });
+    try {
+      return await client.requestWithSchema(
+        {
+          method: "events/stream",
+          params: {
+            name: params.name,
+            arguments: params.arguments,
+            cursor: params.cursor,
+            ...(params.maxAgeMs !== undefined ? { maxAgeMs: params.maxAgeMs } : {}),
+            _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
+          },
+        } as never,
+        EVENTS_STREAM_RESULT_SCHEMA,
+        { signal: options.signal, timeout: options.timeout }
+      );
+    } finally {
+      unregister();
+    }
+  }
+
   /**
    * Gets the configuration for a server.
    */
@@ -811,13 +1041,18 @@ export class MCPClientManager {
       const resolvedPin = this.isStdioConfig(config)
         ? undefined
         : config.mcpProtocolVersion;
-      const negotiation = resolveVersionNegotiation(resolvedPin);
+      const preference = this.isStdioConfig(config)
+        ? undefined
+        : config.versionNegotiation;
+      const negotiation = resolveVersionNegotiation(resolvedPin, preference);
       const configuredMode: ConfiguredNegotiationMode =
-        negotiation === undefined
-          ? "legacy"
-          : negotiation.mode === "auto"
-            ? "auto"
-            : "modern-pin";
+        resolvedPin === undefined && preference === "legacy-first"
+          ? "legacy-first"
+          : negotiation === undefined
+            ? "legacy"
+            : negotiation.mode === "auto"
+              ? "auto"
+              : "modern-pin";
 
       let negotiatedEra: "legacy" | "modern" | undefined;
       let negotiatedProtocolVersion: string | undefined;
@@ -873,6 +1108,8 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
     this.toolDeclarationCapture.clear(serverId);
+    this.eventsCapabilityCapture.clear(serverId);
+    this.eventStreamTaps.delete(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
@@ -1745,6 +1982,19 @@ export class MCPClientManager {
         this.notificationManager.createDispatcher(serverId, method)
       );
     }
+  }
+
+  /**
+   * Removes a handler added with {@link addNotificationHandler}. Other
+   * handlers for the same method keep receiving notifications — handlers are
+   * shared, never replaced.
+   */
+  removeNotificationHandler(
+    serverId: string,
+    method: NotificationMethodName,
+    handler: NotificationHandler
+  ): void {
+    this.notificationManager.removeHandler(serverId, method, handler);
   }
 
   /**
@@ -2639,7 +2889,8 @@ export class MCPClientManager {
       // per-server or manager-default list here can make the first connection
       // succeed but a later reconnect reject the server's valid counter-offer.
       const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
+        resolvedProtocolVersion,
+        this.isStdioConfig(config) ? undefined : config.versionNegotiation
       );
       const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
@@ -2848,7 +3099,21 @@ export class MCPClientManager {
             timeout,
             state,
             signal
-          );
+          ).catch(async (error: unknown) => {
+            // Legacy-first's one fallback, as Cursor CLI takes it: the server
+            // refused the 2025 handshake and named 2026-07-28, so discover it.
+            const pin = legacyFirstFallback(startupConfig, error);
+            if (!pin) throw error;
+            upstreamClient.setVersionNegotiation({ mode: { pin } });
+            return this.connectViaHttp(
+              serverId,
+              managedClient,
+              { ...startupConfig, mcpProtocolVersion: pin },
+              timeout,
+              state,
+              signal
+            );
+          });
         } finally {
           startupSignal = undefined;
         }
@@ -2921,6 +3186,10 @@ export class MCPClientManager {
     state: LiveClientState,
     signal?: AbortSignal
   ): Promise<Transport> {
+    // A new handshake is about to run (first connect, reconnect, protocol
+    // switch): the previous declaration no longer describes this connection
+    // (contract C10).
+    this.eventsCapabilityCapture.clear(serverId);
     const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
@@ -2930,16 +3199,19 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = this.applyDroppedListChanged(
-      config,
-      this.applyFirstPageOnly(
+    const transport = wrapTransportForEventStreams(
+      this.applyDroppedListChanged(
         config,
-        wrapTransportForTaskResults(
-          logger
-            ? wrapTransportForLogging(serverId, logger, underlying)
-            : underlying
+        this.applyFirstPageOnly(
+          config,
+          wrapTransportForTaskResults(
+            logger
+              ? wrapTransportForLogging(serverId, logger, underlying)
+              : underlying
+          )
         )
-      )
+      ),
+      this.eventStreamTapFor(serverId)
     );
 
     const stderrDrain = this.createStdioStderrDrain(underlying);
@@ -2967,6 +3239,10 @@ export class MCPClientManager {
     state: LiveClientState,
     signal?: AbortSignal
   ): Promise<Transport | undefined> {
+    // A new handshake is about to run (first connect, reconnect, protocol
+    // switch): the previous declaration no longer describes this connection
+    // (contract C10).
+    this.eventsCapabilityCapture.clear(serverId);
     const url = new URL(config.url);
 
     let effectiveAuthProvider = config.authProvider;
@@ -3087,16 +3363,20 @@ export class MCPClientManager {
       client.onclose = undefined;
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = this.applyDroppedListChanged(
-          config,
-          this.applyFirstPageOnly(
+        const guarded = guardToolResponseStreams(streamableTransport);
+        const wrapped = wrapTransportForEventStreams(
+          this.applyDroppedListChanged(
             config,
-            wrapTransportForTaskResults(
-              logger
-                ? wrapTransportForLogging(serverId, logger, streamableTransport)
-                : streamableTransport
+            this.applyFirstPageOnly(
+              config,
+              wrapTransportForTaskResults(
+                logger
+                  ? wrapTransportForLogging(serverId, logger, guarded)
+                  : guarded
+              )
             )
-          )
+          ),
+          this.eventStreamTapFor(serverId)
         );
         signal?.throwIfAborted();
         state.transport = streamableTransport;
@@ -3124,6 +3404,11 @@ export class MCPClientManager {
         // to gain by trying it; preserve the original error so the host can
         // serialize the challenge and drive the union-scope re-authorization.
         if (isInsufficientScopeError(error)) {
+          throw error;
+        }
+        // The caller retries a legacy-first refusal on the revision it named;
+        // SSE could only reach the 2025 era the server just refused.
+        if (legacyFirstFallback(config, error)) {
           throw error;
         }
         // Declared-transport servers (`disableSseFallback`) never downgrade
@@ -3213,16 +3498,19 @@ export class MCPClientManager {
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = this.applyDroppedListChanged(
-        config,
-        this.applyFirstPageOnly(
+      const wrapped = wrapTransportForEventStreams(
+        this.applyDroppedListChanged(
           config,
-          wrapTransportForTaskResults(
-            logger
-              ? wrapTransportForLogging(serverId, logger, sseTransport)
-              : sseTransport
+          this.applyFirstPageOnly(
+            config,
+            wrapTransportForTaskResults(
+              logger
+                ? wrapTransportForLogging(serverId, logger, sseTransport)
+                : sseTransport
+            )
           )
-        )
+        ),
+        this.eventStreamTapFor(serverId)
       );
       signal?.throwIfAborted();
       state.transport = sseTransport;
@@ -3488,6 +3776,7 @@ export class MCPClientManager {
       this.toolsMetadataCache.delete(serverId);
       this.toolsAnnotationsCache.delete(serverId);
       this.toolDeclarationCapture.clear(serverId);
+      this.eventsCapabilityCapture.clear(serverId);
       this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
@@ -3512,6 +3801,7 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
     this.toolDeclarationCapture.clear(serverId);
+    this.eventsCapabilityCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3545,6 +3835,7 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
     this.toolsAnnotationsCache.delete(serverId);
     this.toolDeclarationCapture.clear(serverId);
+    this.eventsCapabilityCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
   }
 
@@ -3888,14 +4179,11 @@ export class MCPClientManager {
         delete exactCapabilities.elicitation;
       }
 
-      return (
-        era === "modern"
-          ? this.withoutUnansweredClaims(
-              serverId,
-              exactCapabilities,
-              mrtrFulfils
-            )
-          : exactCapabilities
+      return this.withoutUnansweredClaims(
+        serverId,
+        exactCapabilities,
+        mrtrFulfils,
+        era === "modern" || this.isPinnedModern(config)
       ) as ClientCapabilityOptions;
     }
 
@@ -3933,13 +4221,12 @@ export class MCPClientManager {
     if (mrtrDisabled && era === "modern") {
       delete (resolved as Record<string, unknown>).elicitation;
     }
-    return era === "modern"
-      ? (this.withoutUnansweredClaims(
-          serverId,
-          resolved as Record<string, unknown>,
-          mrtrFulfils
-        ) as ClientCapabilityOptions)
-      : resolved;
+    return this.withoutUnansweredClaims(
+      serverId,
+      resolved as Record<string, unknown>,
+      mrtrFulfils,
+      era === "modern" || this.isPinnedModern(config)
+    ) as ClientCapabilityOptions;
   }
 
   /** The `extensions` keys nothing on this server answers on a 2026-era
@@ -3960,15 +4247,22 @@ export class MCPClientManager {
       : [...legacy, ...modern];
   }
 
-  /** A 2026-era connection has no server-to-client requests, so a claim only
-   *  such a request could honor is withheld there, as is a claim only an
-   *  MRTR collector that drives no rounds could honor. Narrowing only. */
+  /** Withhold extension claims whose only fulfiller belongs to the other era.
+   * Modern connections also withhold claims when MRTR is disabled. */
   private withoutUnansweredClaims(
     serverId: string,
     capabilities: Record<string, unknown>,
-    mrtrFulfils: boolean
+    mrtrFulfils: boolean,
+    modern = true
   ): Record<string, unknown> {
-    const claims = this.unansweredModernClaims(serverId, mrtrFulfils);
+    const legacyClaims = (
+      this.extensionRequestHandlers.get(serverId) ?? []
+    ).flatMap((binding) => (binding.legacyClaim ? [binding.legacyClaim] : []));
+    const claims = modern
+      ? this.unansweredModernClaims(serverId, mrtrFulfils)
+      : (this.mrtrExtensionClaims.get(serverId) ?? []).filter(
+          (claim) => !legacyClaims.includes(claim)
+        );
     const extensions = capabilities.extensions;
     if (
       !claims.length ||
@@ -4135,6 +4429,11 @@ export class MCPClientManager {
         this.toolDeclarationCapture.observe(event);
       } catch {
         this.toolDeclarationCapture.clear(event.serverId);
+      }
+      try {
+        this.eventsCapabilityCapture.observe(event);
+      } catch {
+        this.eventsCapabilityCapture.clear(event.serverId);
       }
       logger?.(event);
     };

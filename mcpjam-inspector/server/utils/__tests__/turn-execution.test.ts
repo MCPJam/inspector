@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const runAssistantTurnMock = vi.fn();
 const runDirectChatTurnMock = vi.fn();
 const consumeDirectChatTurnHeadlessMock = vi.fn();
+const consumeDirectChatTurnFullStreamMock = vi.fn();
 
 vi.mock("../assistant-turn", () => ({
   runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
@@ -17,6 +18,10 @@ vi.mock("../direct-chat-turn", () => ({
   // tool-less messages where stamping is a no-op — so the assertions still see
   // the raw response slice.
   stampMcpToolOriginProviderOptions: (messages: unknown[]) => messages,
+}));
+vi.mock("../direct-chat-turn-full-stream", () => ({
+  consumeDirectChatTurnFullStream: (...args: unknown[]) =>
+    consumeDirectChatTurnFullStreamMock(...args),
 }));
 
 // eslint-disable-next-line import/first
@@ -288,10 +293,90 @@ describe("runUnifiedAssistantTurn", () => {
     } as never);
 
     const passed = runDirectChatTurnMock.mock.calls[0][0];
-    // No chunk hook → no traceEvents object forwarded at all.
+    // No hook → no traceEvents object and no retry budget forwarded at all.
     expect(passed.traceEvents).toBeUndefined();
-    // …and the existing result contract is unchanged.
+    expect("maxRetries" in passed).toBe(false);
+    // …and the existing result contract and consumer are unchanged.
     expect(res.messages).toEqual([userMsg, asstMsg]);
     expect(res.newMessages).toEqual([asstMsg]);
+    expect(res).not.toHaveProperty("direct");
+    expect(consumeDirectChatTurnFullStreamMock).not.toHaveBeenCalled();
+  });
+
+  describe("direct: the eval runner's contract", () => {
+    const headlessResult = (messages: unknown[] = []) => ({
+      messages,
+      steps: [],
+      totalUsage: {},
+      finishReason: "stop",
+      spans: [],
+      turnTrace: { spans: [], usage: {} },
+      aborted: false,
+    });
+    const runDirect = (extra: Record<string, unknown> = {}) =>
+      runUnifiedAssistantTurn({
+        runtime: { kind: "direct", llmModel: {}, modelId: "m1" },
+        streamSink: "none",
+        messages: [userMsg],
+        systemPrompt: "sys",
+        tools: {},
+        ...extra,
+      } as never);
+
+    it("forwards maxRetries and maps the step hooks into traceEvents", async () => {
+      runDirectChatTurnMock.mockReturnValue({ handle: true });
+      consumeDirectChatTurnHeadlessMock.mockResolvedValue(headlessResult());
+      const onRequestPayload = vi.fn();
+      const onStepSnapshot = vi.fn();
+
+      await runDirect({ maxRetries: 3, onRequestPayload, onStepSnapshot });
+
+      const passed = runDirectChatTurnMock.mock.calls[0][0];
+      expect(passed.maxRetries).toBe(3);
+      expect(passed.traceEvents).toEqual({ onRequestPayload, onStepSnapshot });
+    });
+
+    it("hands the live trace context over before the stream is consumed", async () => {
+      const traceContext = { recordedSpans: [] };
+      runDirectChatTurnMock.mockReturnValue({ traceContext });
+      const order: string[] = [];
+      consumeDirectChatTurnHeadlessMock.mockImplementation(async () => {
+        order.push("consume");
+        return headlessResult();
+      });
+      const onTraceContext = vi.fn(() => order.push("traceContext"));
+
+      await runDirect({ onTraceContext });
+
+      expect(onTraceContext).toHaveBeenCalledWith(traceContext);
+      expect(order).toEqual(["traceContext", "consume"]);
+    });
+
+    it("consumes part by part under onStreamPart and returns the raw step data", async () => {
+      const handle = { handle: true };
+      runDirectChatTurnMock.mockReturnValue(handle);
+      consumeDirectChatTurnFullStreamMock.mockResolvedValue({
+        ...headlessResult([asstMsg]),
+        steps: [{ stepNumber: 0 }],
+        totalUsage: { totalTokens: 9 },
+        upstreamModel: "m1-2026-01-01",
+      });
+      const onStreamPart = vi.fn();
+
+      const res = await runDirect({ onStreamPart });
+
+      expect(consumeDirectChatTurnFullStreamMock).toHaveBeenCalledWith(
+        handle,
+        onStreamPart,
+      );
+      expect(consumeDirectChatTurnHeadlessMock).not.toHaveBeenCalled();
+      expect(res.direct).toEqual({
+        steps: [{ stepNumber: 0 }],
+        totalUsage: { totalTokens: 9 },
+        upstreamModel: "m1-2026-01-01",
+      });
+      expect(res.newMessages).toEqual([asstMsg]);
+      expect(res.messages).toEqual([userMsg, asstMsg]);
+    });
   });
 });
