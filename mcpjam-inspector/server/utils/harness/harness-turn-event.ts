@@ -85,6 +85,8 @@ export type HarnessTurnStage =
 const RESET_FALLBACK: Record<HarnessResetReason, HarnessTurnFallbackReason> = {
   "runtime-changed": "configuration_changed",
   "sandbox-replaced": "sandbox_replaced",
+  // Resumed from the saved files after a replacement: `start` is disk_resume.
+  "sandbox-restored": "sandbox_replaced",
   "resume-failed": "resume_failed",
   // Still resumes from saved files: nothing was refused.
   "legacy-cold-resume": "none",
