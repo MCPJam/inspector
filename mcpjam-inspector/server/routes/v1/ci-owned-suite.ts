@@ -126,9 +126,10 @@ export function declaredSuiteIdOf(
  * `isCiOwnedSuiteDoc` is updated to match. It cannot err the other way — a
  * suite this copy calls writable still meets the lock in Convex.
  *
- * It also refuses a PATCH that would write nothing (say, only
- * `expectedRevisionNumber`): the one request on a CI-owned suite that the
- * platform answered 200 before this check and now gets 409.
+ * It also refuses two requests that would write nothing, which the platform
+ * answered 200 before this check: a PATCH carrying only, say,
+ * `expectedRevisionNumber`, and the environment launch `evalLaunchWritesSuite`
+ * describes.
  */
 export function assertSuiteWritableViaApi(
   suite: SuiteOwnership,

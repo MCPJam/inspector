@@ -9674,7 +9674,7 @@ evals.delete(
     // A QUERY PARAM, not a body: this DELETE reads no body at all, and giving
     // one route a body-carrying delete while its siblings have none is a shape
     // callers get wrong.
-    const declaredSuiteId = c.req.query("declaredSuiteId");
+    const declaredSuiteId = declaredSuiteIdOf(c);
     // The suite is read only for the pre-check, which a file sync skips.
     if (!fileSyncArg(declaredSuiteId).fileSync) {
       assertSuiteWritableViaApi(
@@ -10019,9 +10019,10 @@ evals.post(
       commitAuthoringJobSchema,
       await readJsonObjectBody(c),
     );
-    // Defense in depth: the backend refuses CI-owned suites when the job
-    // starts and on the status read above, so none reaches this line today.
-    // This keeps a later change to those checks from saving drafts into one.
+    // Defense in depth: the backend refuses a CI-owned suite when the job
+    // starts, and the status read above refuses one with a `declaredSuiteId`
+    // (not an SDK-owned one), so none reaches this line today. This keeps a
+    // later change to those checks from saving drafts into one.
     assertSuiteWritableViaApi(
       await readSuiteInProject(
         token,

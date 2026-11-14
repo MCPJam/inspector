@@ -1812,20 +1812,17 @@ async function composableEnvironmentTargets(args: {
 }
 
 /**
- * Author phase of a suite run: persist the suite + its test cases (create or
- * upsert), WITHOUT creating a run record or executing anything. Extracted from
- * `prepareEvalRun` so the author-only public surface
- * (`POST /api/v1/projects/:projectId/eval-suites`) can reuse the exact same
- * suite/case persistence the run path uses — same probe/widget handling,
- * partial-failure visibility, and rerun snapshot rules — and `prepareEvalRun`
- * stays the single run engine that calls this then starts the recorder.
- */
-/**
- * Whether a run launch writes the suite it runs: its cases on any launch that
- * is not a rerun, its saved server snapshot on `refreshSnapshot` outside an
- * environment launch. `authorEvalSuite` writes on exactly these launches, and
- * the v1 CI-owned pre-check (PLB-238) refuses exactly these, so both read it
- * from here.
+ * Whether a run launch may write the suite it runs. It may on every launch
+ * that is not a rerun (it upserts the suite's cases and, outside an
+ * environment launch, rewrites its server snapshot), and on `refreshSnapshot`
+ * outside an environment launch. `authorEvalSuite` writes only on these
+ * launches and the v1 CI-owned pre-check (PLB-238) refuses them, so both read
+ * it from here.
+ *
+ * "May": an environment launch that is not a rerun, sends no name or
+ * description and carries the tests already stored writes nothing, yet is
+ * refused. Telling it apart would mean diffing the stored cases before the
+ * pre-check.
  */
 export function evalLaunchWritesSuite(args: {
   suiteRerun: boolean | undefined;
@@ -1838,6 +1835,15 @@ export function evalLaunchWritesSuite(args: {
   );
 }
 
+/**
+ * Author phase of a suite run: persist the suite + its test cases (create or
+ * upsert), WITHOUT creating a run record or executing anything. Extracted from
+ * `prepareEvalRun` so the author-only public surface
+ * (`POST /api/v1/projects/:projectId/eval-suites`) can reuse the exact same
+ * suite/case persistence the run path uses — same probe/widget handling,
+ * partial-failure visibility, and rerun snapshot rules — and `prepareEvalRun`
+ * stays the single run engine that calls this then starts the recorder.
+ */
 export async function authorEvalSuite(args: {
   hostAttachments?: Array<{
     namedHostId: string;

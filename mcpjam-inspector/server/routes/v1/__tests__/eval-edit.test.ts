@@ -178,6 +178,18 @@ function defaultQueryImpl(name: string) {
 }
 
 /**
+ * Answer the authoring status read with `job` and every other read as usual,
+ * so the commit route's suite read gets a suite, not the job.
+ */
+function serveAuthoringJob(job: Record<string, unknown>) {
+  convexQueryMock.mockImplementation((name: string) =>
+    name === "evalAuthoringState:status"
+      ? Promise.resolve(job)
+      : defaultQueryImpl(name),
+  );
+}
+
+/**
  * Stand in for `testSuites:createTestCases`, committing every item.
  *
  * Shaped like the real mutation's reply rather than a bare id: the routes read
@@ -2625,7 +2637,7 @@ describe("v1 eval-edit routes", () => {
       additions: [],
       review: "required",
     };
-    convexQueryMock.mockResolvedValue({
+    serveAuthoringJob({
       jobId: "job",
       projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -3012,7 +3024,7 @@ describe("v1 eval-edit routes", () => {
       additions: [],
       review: "required",
     };
-    convexQueryMock.mockResolvedValue({
+    serveAuthoringJob({
       jobId: "job77",
       projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -3035,7 +3047,7 @@ describe("v1 eval-edit routes", () => {
   });
 
   it("omits the review link when every case landed", async () => {
-    convexQueryMock.mockResolvedValue({
+    serveAuthoringJob({
       jobId: "job77",
       projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -3048,11 +3060,12 @@ describe("v1 eval-edit routes", () => {
       "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/authoring/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/commit",
       {},
     );
+    expect(response.status).toBe(200);
     expect(await response.json()).not.toHaveProperty("reviewUrl");
   });
 
   it("carries a commit-time duplicate policy into the case writer", async () => {
-    convexQueryMock.mockResolvedValue({
+    serveAuthoringJob({
       jobId: "job",
       projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
       suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
