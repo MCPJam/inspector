@@ -109,17 +109,17 @@ describe("filterByFeatureFlags", () => {
     expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
-  it("hides Conformance when the feature flag is off", () => {
+  it("hides Compatibility when the feature flag is off", () => {
     const result = filterByFeatureFlags(
       [
         {
           id: "others",
           items: [
             {
-              title: "Conformance",
-              url: "#conformance",
+              title: "Compatibility",
+              url: "#compatibility",
               icon: FakeIcon,
-              featureFlag: "mcpjam-conformance",
+              featureFlag: "mcpjam-compatibility",
             },
             {
               title: "OAuth Debugger",
@@ -129,7 +129,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "mcpjam-conformance": false },
+      { "mcpjam-compatibility": false },
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -351,12 +351,7 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
-          {
-            title: "Conformance",
-            url: "#conformance",
-            icon: FakeIcon,
-            featureFlag: "mcpjam-conformance",
-          },
+          { title: "Conformance", url: "#conformance", icon: FakeIcon },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
           { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
@@ -374,12 +369,7 @@ describe("getHostedNavigationSections", () => {
         icon: FakeIcon,
         billingFeature: "evals",
       },
-      {
-        title: "Conformance",
-        url: "#conformance",
-        icon: FakeIcon,
-        featureFlag: "mcpjam-conformance",
-      },
+      { title: "Conformance", url: "#conformance", icon: FakeIcon },
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
