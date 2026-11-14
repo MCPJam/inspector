@@ -1260,8 +1260,8 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
   defaultPermissionMode: "allow-all",
   approvalPermissionMode: "allow-reads",
   liveApprovalRuntime: true,
-  // Only registered host tools and forwarded servers are exposed. The CLI
-  // denies any other request.
+  // Only registered host tools, forwarded servers and the built-in `skill`
+  // tool are exposed. The CLI denies any other request.
   supportsNativeToolApproval: true,
   supportsHostExecutedToolApproval: true,
   // Its MCP calls reach a server only through MCPJam's forwarder, whose gate
@@ -1279,7 +1279,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     passThroughOnly: true,
     refresh: (runtime) => refuseForwardedContinuation(runtime),
   },
-  supportsSkills: false,
+  supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],

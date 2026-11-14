@@ -144,11 +144,15 @@ describe("harness registry", () => {
       if (adapter.supportsPluginBundles) {
         expect(adapter.deliverPluginBundles).toBeTypeOf("function");
       }
-      // A runtime takes skills only where its headless mode loads them on
-      // its own; turning one on with its bridge still off would deliver
-      // folders nobody reads.
-      if (adapter.supportsSkills) {
-        expect(adapter.skills.headlessLoading).toBe("native");
+      // A runtime takes skills only where its headless mode loads them: on
+      // its own, or once MCPJam's bridge switches them on, as Copilot CLI's
+      // does (`copilot-cli-skills.test.ts`). Turning another runtime on with
+      // its bridge still off would deliver folders nobody reads.
+      if (
+        adapter.supportsSkills &&
+        adapter.skills.headlessLoading !== "native"
+      ) {
+        expect(adapter.id).toBe("copilot-cli");
       }
       // The writer cleans what a runtime reads and writes where its adapter
       // does, so both must be relative to the box's home.
