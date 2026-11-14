@@ -17,7 +17,7 @@ const UNDECIDED: Record<
   string
 > = {
   needs_secret:
-    "It needs a secret, which MCPJam never sends to a model. Enter its arguments in the plan below, or exclude the tool as needing a person.",
+    "It needs a secret. Enter its arguments in the plan below, or exclude the tool as needing a person.",
   needs_fixture:
     "It needs a fixture the plan does not name. Enter its arguments in the plan below.",
   unclear:
