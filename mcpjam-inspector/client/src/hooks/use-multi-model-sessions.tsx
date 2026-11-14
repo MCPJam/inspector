@@ -1,12 +1,32 @@
-import { useCallback, useEffect, useRef } from "react";
-import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  markMultiModelColumnRemoved,
+  type ChatHistorySession,
+} from "@/lib/apis/web/chat-history-api";
 import type { ComparisonAuthRecovery } from "@/lib/comparison-auth-recovery";
+import { comparisonColumnSessions } from "@/lib/comparison-auth-recovery";
 import {
   fetchMultiModelRestore,
   type MultiModelRestore,
 } from "@/lib/multi-model-session-restore";
+import { formatChatHistoryModelLabel } from "@/components/chat-v2/history/ChatHistoryRow";
+import {
+  MultiModelColumnNotice,
+  MultiModelMissingColumnsNotice,
+  multiModelBranchToast,
+} from "@/components/ui-playground/multi-model-column-notice";
+import type { UseChatSessionReturn } from "./use-chat-session";
 import { useMultiModelPositions } from "./use-multi-model-positions";
+import { useHostedModelCatalog } from "./use-hosted-model-catalog";
 import { useMultiModelSessionsEnabled } from "./useMultiModelSessionsEnabled";
+import { track } from "@/lib/analytics";
+import { isRebuiltLineup } from "@/lib/multi-model-analytics";
+
+type BranchMessage = Omit<
+  Parameters<UseChatSessionReturn["branchFromThread"]>[0],
+  "onBeforeBranch"
+>;
 
 /** The project's servers, as the Playground loads them. */
 export interface ServerCatalog {
@@ -18,8 +38,9 @@ export interface ServerCatalog {
 }
 
 /**
- * The Playground's side of multi-model sessions: each column's position and
- * reopening a session from Sessions.
+ * The Playground's side of multi-model sessions: each column's position,
+ * reopening a session from Sessions, the notice and new-chat branch for a
+ * column opened alone, and marking columns that leave the session.
  */
 export function useMultiModelSessions(deps: {
   groupId: string;
@@ -27,26 +48,51 @@ export function useMultiModelSessions(deps: {
   selectedServers: string[];
   /** Saved server names or ids are mapped to ids through this catalog. */
   serverCatalog: ServerCatalog;
-  /** The keys of the columns on screen; a column that leaves frees its key. */
+  /** Whether columns are on screen, and which (`kind:compareId`). */
+  compareActive: boolean;
+  generation: number;
   liveColumnKeys: readonly string[];
   /** Puts the restored record in place; the layout and columns follow it. */
   applyRestore: (record: ComparisonAuthRecovery) => void;
+  branchFromThread: UseChatSessionReturn["branchFromThread"];
+  /** Detaches from the opened column as the branch is minted. */
+  detachForBranch: () => void;
+  /**
+   * Turns compare off so the branch shows as one chat: once the history view
+   * is detached, a lineup left on would cover it with empty columns.
+   */
+  showSingleChat: (column: ChatHistorySession) => void;
+  /** Client columns whose client could not be resolved (`compareId`s). */
+  unavailableHostIds: readonly string[];
+  /** The model list has loaded, so a model that is missing is really gone. */
+  modelsReady: boolean;
+  /** Opens one saved column as a single chat, as its row in Sessions does. */
+  openColumnAlone: (column: ChatHistorySession) => void;
+  /**
+   * The opened column runs on a harness client. Those keep the conversation
+   * on their side and receive only the newest message, so a branch would
+   * answer with none of the copied history.
+   */
+  branchBlocked: boolean;
 }) {
-  const {
-    groupId,
-    projectId,
-    selectedServers,
-    serverCatalog,
-    liveColumnKeys,
-    applyRestore,
-  } = deps;
+  const { groupId, projectId, selectedServers, serverCatalog, applyRestore } =
+    deps;
   const enabled = useMultiModelSessionsEnabled();
   const positions = useMultiModelPositions(groupId);
   const { seed, syncLiveColumns } = positions;
-  const liveColumns = liveColumnKeys.join("\n");
+  const liveColumns = deps.liveColumnKeys.join("\n");
   useEffect(() => {
     syncLiveColumns(liveColumns ? liveColumns.split("\n") : []);
   }, [liveColumns, syncLiveColumns]);
+  // Bumped by every selection, reset and branch, so an "Open multi-model
+  // session" still loading when one happens is dropped instead of applied.
+  const openRequest = useRef(0);
+  const [openedColumn, setOpenedColumn] = useState<ChatHistorySession | null>(
+    null,
+  );
+  const [opening, setOpening] = useState(false);
+  const [restored, setRestored] = useState<MultiModelRestore | null>(null);
+  const { hostedCatalog } = useHostedModelCatalog();
 
   // Read after each await, so a load sees the catalog and project as they are
   // now rather than as they were when it started.
@@ -81,8 +127,11 @@ export function useMultiModelSessions(deps: {
   );
 
   const restore = useCallback(
-    ({ record, positions: saved, highestPosition }: MultiModelRestore) => {
+    (restoredSession: MultiModelRestore) => {
+      const { record, positions: saved, highestPosition } = restoredSession;
       seed(record.id, saved, highestPosition);
+      setOpenedColumn(null);
+      setRestored(restoredSession);
       applyRestore(record);
     },
     [applyRestore, seed],
@@ -91,9 +140,10 @@ export function useMultiModelSessions(deps: {
   /**
    * "restored" when the click reopened the whole session, "stale" when another
    * selection, a project switch or a sign-in change replaced it while it
-   * loaded, and null when the row opens on its own. Waits for the project's
-   * servers, so client panes get their saved servers back as ids. A row passes its Sessions section as `siblings`, where the session
-   * finds the rest of its columns.
+   * loaded, and null when the row opens as a single chat. Waits for the
+   * project's servers, so client panes get their saved servers back as ids. A
+   * grouped row passes its Sessions section as `siblings`; a column row opened
+   * alone does not, and then shows the notice.
    */
   const openFromHistory = useCallback(
     async (
@@ -101,7 +151,15 @@ export function useMultiModelSessions(deps: {
       siblings: readonly ChatHistorySession[] | undefined,
       isCurrent: () => boolean,
     ): Promise<"restored" | "stale" | null> => {
-      if (!enabled || !session.multiModel || !siblings) return null;
+      openRequest.current += 1;
+      if (!enabled || !session.multiModel) {
+        setOpenedColumn(null);
+        return null;
+      }
+      if (!siblings) {
+        setOpenedColumn(session);
+        return null;
+      }
       const startedIn = scope();
       await catalogLoaded();
       const restored = await fetchMultiModelRestore({
@@ -112,7 +170,10 @@ export function useMultiModelSessions(deps: {
         toServerIds,
       });
       if (!isCurrent() || scope() !== startedIn) return "stale";
-      if (!restored) return null;
+      if (!restored) {
+        setOpenedColumn(null);
+        return null;
+      }
       restore(restored);
       return "restored";
     },
@@ -127,6 +188,127 @@ export function useMultiModelSessions(deps: {
     ],
   );
 
+  const openSessionFromColumn = useCallback(async () => {
+    const groupOfColumn = openedColumn?.multiModel?.groupId;
+    if (!openedColumn || !groupOfColumn) return;
+    const request = ++openRequest.current;
+    const startedIn = scope();
+    setOpening(true);
+    try {
+      await catalogLoaded();
+      const restored = await fetchMultiModelRestore({
+        groupId: groupOfColumn,
+        projectId,
+        selectedServers,
+        loadedSessions: [openedColumn],
+        toServerIds,
+      });
+      if (request !== openRequest.current || scope() !== startedIn) return;
+      if (restored) restore(restored);
+      else
+        toast.error(
+          "Couldn't open the multi-model session. Its other columns may be archived; open them from Sessions.",
+        );
+    } finally {
+      setOpening(false);
+    }
+  }, [
+    catalogLoaded,
+    openedColumn,
+    projectId,
+    restore,
+    scope,
+    selectedServers,
+    toServerIds,
+  ]);
+
+  const { branchFromThread, detachForBranch, showSingleChat } = deps;
+  const sendInColumn = useCallback(
+    async (message: BranchMessage): Promise<boolean> => {
+      if (!openedColumn) return false;
+      if (deps.branchBlocked) {
+        toast.error(
+          "This client can't continue a saved column in a new chat. Open the multi-model session to keep chatting.",
+        );
+        return false;
+      }
+      openRequest.current += 1;
+      const label = formatChatHistoryModelLabel(
+        openedColumn,
+        (id) => hostedCatalog.find((model) => String(model.id) === id)?.name,
+      );
+      const outcome = await branchFromThread({
+        ...message,
+        onBeforeBranch: () => {
+          showSingleChat(openedColumn);
+          detachForBranch();
+        },
+      });
+      if (!outcome) return false;
+      setOpenedColumn(null);
+      toast.success(multiModelBranchToast(label), { position: "bottom-right" });
+      return true;
+    },
+    [
+      branchFromThread,
+      deps.branchBlocked,
+      detachForBranch,
+      hostedCatalog,
+      openedColumn,
+      showSingleChat,
+    ],
+  );
+
+  useMarkRemovedColumns({ ...deps, enabled });
+
+  // A restored session stays "restored" until its group is left behind.
+  const restoredGroupId = restored?.record.id;
+  const restoredIsLive = restoredGroupId === groupId && deps.compareActive;
+  const missingColumns =
+    enabled && restored && restoredIsLive
+      ? restored.record.columns.flatMap((column, index) => {
+          const session = restored.columnSessions[index];
+          const missing =
+            column.kind === "model"
+              ? deps.modelsReady &&
+                !deps.liveColumnKeys.includes(`model:${column.compareId}`)
+              : deps.unavailableHostIds.includes(column.compareId);
+          if (!missing || !session) return [];
+          return [
+            {
+              id: `${column.kind}:${column.compareId}`,
+              label:
+                formatChatHistoryModelLabel(
+                  session,
+                  (id) =>
+                    hostedCatalog.find((model) => String(model.id) === id)
+                      ?.name,
+                ) ?? "This",
+              reason:
+                column.kind === "model"
+                  ? ("model" as const)
+                  : ("client" as const),
+              open: () => deps.openColumnAlone(session),
+            },
+          ];
+        })
+      : [];
+
+  const liveColumnKeysRef = useRef(deps.liveColumnKeys);
+  liveColumnKeysRef.current = deps.liveColumnKeys;
+  // Not behind the flag: the product metric needs a baseline before launch.
+  const trackStarted = useCallback((prompt: string) => {
+    const keys = liveColumnKeysRef.current;
+    track("playground_multi_model_started", {
+      location: "playground",
+      column_count: keys.length,
+      column_kind: keys.some((key) => key.startsWith("host:"))
+        ? "host"
+        : "model",
+      rebuilt: isRebuiltLineup(prompt, Date.now()),
+    });
+  }, []);
+
   return {
     /**
      * A column's position, or undefined while the flag is off: with no
@@ -135,5 +317,74 @@ export function useMultiModelSessions(deps: {
     positionFor: (columnKey: string) =>
       enabled ? positions.positionFor(columnKey) : undefined,
     openFromHistory,
+    notice:
+      enabled && openedColumn ? (
+        <MultiModelColumnNotice
+          opening={opening}
+          onOpenSession={() => void openSessionFromColumn()}
+        />
+      ) : missingColumns.length > 0 ? (
+        <MultiModelMissingColumnsNotice columns={missingColumns} />
+      ) : null,
+    /** Set while a column is open alone: sends go to a new branch instead. */
+    sendInColumn: enabled && openedColumn ? sendInColumn : null,
+    clearOpenedColumn: useCallback(() => {
+      openRequest.current += 1;
+      setOpenedColumn(null);
+      setRestored(null);
+    }, []),
+    /** Call on a multi-model session's first send. */
+    trackStarted,
   };
+}
+
+/**
+ * A column that disappears while compare stays on (removed, or replaced by a
+ * new effort or model) is marked removed, so reopening the session does not
+ * bring it back. Turning compare off or starting a new chat removes nothing.
+ */
+function useMarkRemovedColumns(args: {
+  enabled: boolean;
+  groupId: string;
+  compareActive: boolean;
+  generation: number;
+  liveColumnKeys: readonly string[];
+}) {
+  const previous = useRef<{
+    groupId: string;
+    generation: number;
+    active: boolean;
+    keys: readonly string[];
+    sessions: Map<string, string>;
+  } | null>(null);
+  const { enabled, groupId, compareActive, generation, liveColumnKeys } = args;
+  useEffect(() => {
+    const before = previous.current;
+    if (
+      enabled &&
+      before &&
+      before.active &&
+      compareActive &&
+      before.groupId === groupId &&
+      before.generation === generation
+    ) {
+      for (const key of before.keys) {
+        if (liveColumnKeys.includes(key)) continue;
+        const chatSessionId = before.sessions.get(key);
+        if (!chatSessionId) continue;
+        markMultiModelColumnRemoved(chatSessionId).catch((error: unknown) => {
+          // The column still restores until this lands; the next removal or
+          // reopen shows it, which is safer than blocking the lineup change.
+          console.warn("[multi-model] could not mark a column removed", error);
+        });
+      }
+    }
+    previous.current = {
+      groupId,
+      generation,
+      active: compareActive,
+      keys: [...liveColumnKeys],
+      sessions: comparisonColumnSessions(groupId),
+    };
+  });
 }

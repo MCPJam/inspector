@@ -1523,6 +1523,7 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     loadChatSession,
     rewindToMessage,
+    branchFromThread,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -4080,9 +4081,36 @@ export function PlaygroundMain({
       loaded: !serversLoading && !serversBootstrapping,
       signedIn: isConvexAuthenticated,
     },
+    compareActive: isCompareMode,
+    generation: multiModelSessionGeneration,
     liveColumnKeys: compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
+    branchFromThread,
+    detachForBranch: () => {
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      pendingRestoredModelRef.current = null;
+      clearConversationUrlRef.current();
+    },
+    showSingleChat: (column) => {
+      setMultiModelEnabled(false);
+      if (column.hostId) setSelectedHostIds([column.hostId]);
+    },
+    unavailableHostIds: unavailableClients.map((client) => client.compareId),
+    modelsReady: availableModels.length > 0,
+    openColumnAlone: (column) => void handleSelectThread(column),
+    branchBlocked: Boolean(previewedHarnessId),
   });
+  // While a column is open alone, every send starts a new chat from it, so
+  // the saved column keeps the turns its session ran.
+  const sendOrBranch = useCallback(
+    (message: Parameters<typeof sendMessage>[0]) =>
+      multiModelSessions.sendInColumn
+        ? multiModelSessions.sendInColumn(message)
+        : sendMessage(message),
+    [multiModelSessions.sendInColumn, sendMessage],
+  );
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -4354,6 +4382,7 @@ export function PlaygroundMain({
       // root single-model session alone leaves the visible lane transcripts
       // intact and the user sees nothing happen.
       resetMultiModelSessions();
+      multiModelSessions.clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
       return true;
@@ -4409,6 +4438,7 @@ export function PlaygroundMain({
       syncResumedVersion(null);
       resetChat();
       resetMultiModelSessions();
+      multiModelSessions.clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
@@ -5019,13 +5049,20 @@ export function PlaygroundMain({
     // Leaves the new chat time to publish and send before the server's
     // preparation lapses.
     preparedForMs: PLUGIN_MESSAGE_PREPARATION_MS - 15_000,
-    send: (intent, isCurrent) =>
-      sendMessage({
+    send: async (intent, isCurrent) => {
+      if (multiModelSessions.sendInColumn) {
+        toast.error(
+          "Apps can't send into a saved column. Open the multi-model session, or send a message to start a new chat.",
+        );
+        return false;
+      }
+      return sendMessage({
         text: "",
         pluginMessage: intent,
         isCurrent,
         metadata: outgoingSenderMetadata,
-      }),
+      });
+    },
     onSent: onFirstMessageSent,
   });
   pluginMessageDispatchRef.current = pluginMessage.send;
@@ -5073,7 +5110,7 @@ export function PlaygroundMain({
           return;
         }
         const sentContext = modelContextQueue;
-        const sent = await sendMessage({
+        const sent = await sendOrBranch({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
@@ -5104,7 +5141,7 @@ export function PlaygroundMain({
       ensureThreadReadyForSend,
       ensureLocalHarnessReadyForSend,
       modelContextQueue,
-      sendMessage,
+      sendOrBranch,
       outgoingSenderMetadata,
     ],
   );
@@ -5193,11 +5230,13 @@ export function PlaygroundMain({
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
+    multiModelSessions.clearOpenedColumn();
     setViewingHistoryReplay(false);
   }, [
     cancelPendingHistorySelection,
     clearLogs,
     composer,
+    multiModelSessions.clearOpenedColumn,
     resetChat,
     resetMultiModelSessions,
     syncResumedVersion,
@@ -5783,6 +5822,8 @@ export function PlaygroundMain({
 
     if (isCompareMode) {
       // Each card prepends the same messages to its own thread.
+      if (compareSentPrompts.length === 0)
+        multiModelSessions.trackStarted(composerText);
       if (!queueBroadcastRequest({
         text: composerText,
         files,
@@ -5800,7 +5841,7 @@ export function PlaygroundMain({
       // `sendMessage` writes the prompt and skill turns after its own
       // admission check, so a study block during server preparation neither
       // sends nor leaves those turns in the thread.
-      const sent = await sendMessage({
+      const sent = await sendOrBranch({
         text: composerText,
         files,
         metadata: outgoingSenderMetadata,
@@ -5844,7 +5885,9 @@ export function PlaygroundMain({
     queueBroadcastRequest,
     trackSendMessage,
     modelContextQueue,
-    sendMessage,
+    sendOrBranch,
+    multiModelSessions.trackStarted,
+    compareSentPrompts.length,
     outgoingSenderMetadata,
     onFirstMessageSent,
     computerAttachmentsActive,
@@ -6172,7 +6215,7 @@ export function PlaygroundMain({
           trackSendMessage({ single_model_send: true });
           // Held until dispatch: the chips stay on screen through the hosted
           // preflight inside sendMessage, and a second click there would send.
-          const sent = await sendMessage({
+          const sent = await sendOrBranch({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
@@ -6208,7 +6251,7 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
-      sendMessage,
+      sendOrBranch,
       trackSendMessage,
     ],
   );
@@ -6255,7 +6298,7 @@ export function PlaygroundMain({
         setModelContextQueue([]);
       } else {
         trackSendMessage({ single_model_send: true });
-        sendMessage({
+        void sendOrBranch({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
@@ -6274,7 +6317,7 @@ export function PlaygroundMain({
       isCompareMode,
       queueBroadcastRequest,
       trackSendMessage,
-      sendMessage,
+      sendOrBranch,
       outgoingSenderMetadata,
       modelContextQueue,
       onFirstMessageSent,
@@ -6392,6 +6435,7 @@ export function PlaygroundMain({
       : { model: selectedModel },
   );
   const composerNotice =
+    multiModelSessions.notice ||
     apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
@@ -6399,6 +6443,7 @@ export function PlaygroundMain({
     clientInitNotice ||
     signInNotice ? (
       <div className="flex flex-col gap-2">
+        {multiModelSessions.notice}
         {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}

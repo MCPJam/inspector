@@ -1,3 +1,4 @@
+import type { UIMessage } from "@ai-sdk/react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
@@ -1023,6 +1024,47 @@ describe("useChatSession fork preservation", () => {
       firstAssistant,
       secondUser,
     ]);
+  });
+
+  it("branches a multi-model column with its whole transcript and leaves the column intact", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const columnChatSessionId = result.current.chatSessionId;
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    act(() => {
+      result.current.setMessages(transcript);
+    });
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    const outcome = await result.current.branchFromThread({ text: "follow up" });
+
+    expect(outcome).toEqual({ previousChatSessionId: columnChatSessionId });
+    const branchChatSessionId = result.current.chatSessionId;
+    expect(branchChatSessionId).not.toBe(columnChatSessionId);
+    // The branch carries the whole column, not a prefix.
+    expect(result.current.messages).toEqual(transcript);
+    await waitFor(() => {
+      expect(mockState.sendMessage).toHaveBeenCalled();
+    });
+    expect(bodyAtSend).toMatchObject({
+      chatSessionId: branchChatSessionId,
+      rewind: {
+        parentChatSessionId: columnChatSessionId,
+        rewoundFromMessageId: "assistant-1",
+        reason: "multi_model_column",
+      },
+    });
+    expect(mockState.sendsBySession.has(columnChatSessionId)).toBe(false);
   });
 
   it("refuses a previous thread's late cursor and sends only the current version", async () => {
