@@ -6,6 +6,8 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
   PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
@@ -17,6 +19,8 @@ export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
 export type SubmissionPlugin = PlatformDirectorySubmissionPlugin;
 export type SubmissionScope = { projectId: string; submissionId: string };
+export type SubmissionEvent = PlatformDirectorySubmissionEvent;
+export type SubmissionEventBody = PlatformDirectorySubmissionEventBody;
 
 /** The flow as served by the API that stamps its wording on each write. */
 export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
@@ -59,3 +63,10 @@ export const startDirectorySubmissionRun = (
     idempotencyKey,
     pluginVersionId,
   });
+
+/** A retry with the same `idempotencyKey` is answered from the first write. */
+export const recordSubmissionEvent = (
+  scope: SubmissionScope,
+  body: SubmissionEventBody,
+): Promise<SubmissionEvent> =>
+  client().recordDirectorySubmissionEvent({ ...scope, ...body });

@@ -36,6 +36,19 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
 vi.mock("@/hooks/usePluginsEnabled", () => ({
   usePluginsEnabledState: () => plugins.enabled,
 }));
+// The drawer's reviewer path: no attempt yet, and no saved secrets.
+vi.mock("@/lib/apis/reviewer-attempts-api", () => ({
+  getLatestReviewerAttempt: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: true, isLoading: false }),
+}));
+vi.mock("@/hooks/useProjectSecrets", () => ({
+  useProjectSecrets: () => [],
+  useCreateProjectSecret: () => vi.fn(),
+  useUpdateProjectSecret: () => vi.fn(),
+}));
 
 const onClose = vi.fn();
 
@@ -137,11 +150,17 @@ describe("OpenAiPortal", () => {
       "href",
       flow.source.url,
     );
-    // The reviewer and submit steps' missing answers list on this tab.
-    expect(
-      screen.getByRole("tab", { name: "Metadata & Skills, has findings" }),
-    ).toHaveAttribute("aria-selected", "true");
+    // The reviewer and submit steps' missing answers list in the drawer and
+    // the dialog, not on this tab.
+    expect(screen.getByRole("tab", { name: "Metadata & Skills" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "Upload new version" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review information, has findings" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Submit for review" })).toBeEnabled();
 
     const version = screen.getByRole("combobox", { name: "Version" });
     expect(version).toHaveTextContent("1.0.1 · Draft");
@@ -197,7 +216,42 @@ describe("OpenAiPortal", () => {
     ).toBeVisible();
     const panel = within(screen.getByRole("complementary", { name: "Findings" }));
     expect(panel.queryByText(/Developer name is required/)).toBeNull();
-    expect(panel.getByText("Login URL is required.")).toBeVisible();
+    expect(panel.queryByText("Login URL is required.")).toBeNull();
+  });
+
+  it("opens the Review information drawer and the Submit for review dialog from the toolbar", async () => {
+    renderPage(
+      view({}, {
+        findings: [
+          finding("openai.submission.geography", "violated", {
+            remediation: "Declare the countries the plugin is offered in.",
+          }),
+        ],
+      }),
+    );
+    // A reviewer result shows in the drawer, not in the tab's Findings.
+    const panel = within(screen.getByRole("complementary", { name: "Findings" }));
+    expect(panel.queryByText("Declare the countries the plugin is offered in.")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Review information/ }));
+    const drawer = within(screen.getByRole("dialog", { name: "Review information" }));
+    expect(drawer.getByRole("heading", { name: "2. Reviewer credentials" })).toBeVisible();
+    // The reviewer step's missing answers, under their fields.
+    expect(drawer.getByText("Error: Login URL is required.")).toBeVisible();
+    expect(await drawer.findByRole("region", { name: "Reviewer path" })).toBeVisible();
+    await userEvent.click(
+      drawer.getByRole("button", { name: "Countries and translations, has findings" }),
+    );
+    expect(drawer.getByText("Declare the countries the plugin is offered in.")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Submit for review" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Submit for review" }));
+    expect(dialog.getAllByRole("checkbox")).toHaveLength(6);
+    expect(dialog.getByRole("button", { name: "Mark as submitted" })).toBeDisabled();
+    await userEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("gives each skill the last run's status", () => {

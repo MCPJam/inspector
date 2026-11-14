@@ -58,7 +58,7 @@ const rowsOf = (value: DirectoryAnswerValue | undefined) =>
   );
 
 /** The portal's red asterisk; assistive tech hears the word. */
-const REQUIRED = (
+export const REQUIRED = (
   <>
     <span aria-hidden="true" className="text-destructive">
       {" *"}
