@@ -3606,6 +3606,44 @@ describe("PlaygroundMain", () => {
       });
     });
 
+    it("sends without connecting an app-wide server that is not in the Playground selection", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      });
+      mockSharedAppState.servers["test-server"] = { connectionStatus: "failed" };
+      mockSharedAppState.servers["picked-server"] = { connectionStatus: "connected" };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+          playgroundServerSelectorProps={{
+            serverConfigs: {},
+            selectedServer: "test-server",
+            selectedMultipleServers: ["picked-server"],
+            isMultiSelectEnabled: true,
+            onServerChange: vi.fn(),
+            onConnect: vi.fn(),
+          }}
+        />
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Hello from playground" },
+      });
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello from playground" })
+        );
+      });
+      expect(ensureServersReady).not.toHaveBeenCalled();
+    });
+
     it("does not reconnect an unrelated standalone server for an environment-owned widget message", async () => {
       mockEnvironmentReadiness.enabled = true;
       mockUseChatSession.messages = [{ id: "existing", role: "assistant", parts: [{ type: "text", text: "Disposable thread" }] }];

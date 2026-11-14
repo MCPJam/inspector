@@ -124,9 +124,18 @@ export interface ClaudeAuthEvidence {
  */
 export const CLAUDE_LAZY_AUTH_PROBE_INPUT = "lazyAuthProbe";
 
-/** Claude's documented trigger, quoted in every finding that applies it. */
-const CLAUDE_SIGN_IN_TRIGGER =
-  "Claude starts sign-in only on HTTP 401 with WWW-Authenticate; a 200 isError result is an ordinary tool failure to Claude";
+/**
+ * Claude's documented trigger, quoted in every finding that applies it. The
+ * clause about `isError` results is added only when the server answered with
+ * one; for a 401 without a Bearer header it would describe a different mistake.
+ */
+export function claudeSignInTrigger(answeredWithToolError: boolean): string {
+  const trigger =
+    "Claude starts sign-in only on HTTP 401 with WWW-Authenticate";
+  return answeredWithToolError
+    ? `${trigger}; a 200 isError result is an ordinary tool failure to Claude`
+    : trigger;
+}
 
 /**
  * The input that lets {@link RFC8707_RESOURCE_CANONICAL} run.
@@ -902,7 +911,7 @@ function gradeProtectedCallChallenge(
     violated(
       CHALLENGE_PRESENT,
       stamp,
-      `An unauthenticated call to the protected tool "${call.toolName}" ${refusal}. ${CLAUDE_SIGN_IN_TRIGGER}. Refuse it with HTTP 401 and \`WWW-Authenticate: Bearer resource_metadata="…"\`.`,
+      `An unauthenticated call to the protected tool "${call.toolName}" ${refusal}. ${claudeSignInTrigger(call.outcome !== "unauthorized" && signal?.source === "tool_result_meta")}. Refuse it with HTTP 401 and \`WWW-Authenticate: Bearer resource_metadata="…"\`.`,
       details,
     ),
     notEvaluated(
