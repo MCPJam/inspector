@@ -299,7 +299,7 @@ function ProjectServerDetailModal({
   extensionLaunchProfile,
   onClose,
   server,
-  defaultTab = "overview",
+  defaultTab = "configuration",
   onSubmit,
   onDisconnect,
   onReconnect,

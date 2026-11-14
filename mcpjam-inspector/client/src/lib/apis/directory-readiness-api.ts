@@ -66,20 +66,6 @@ export type ReadinessRunReceipt = PlatformReadinessRunReceipt;
 export type ReadinessRunStatus = PlatformReadinessRun["status"];
 export type HostedSubmissionMode = PlatformReadinessSubmissionMode;
 
-/**
- * The submission shapes a HOSTED run can grade.
- *
- * Two of OpenAI's four carry a package and there is no upload for it, so those
- * only ever run on the CLI. Offering them here and failing at the API would
- * teach a submitter that readiness is broken rather than that they are on the
- * wrong surface. Typed against the platform union so a fifth mode cannot
- * appear here without this list being reconsidered.
- */
-export const HOSTED_SUBMISSION_MODES = [
-  "mcp-only",
-  "mcp-imported-skills",
-] as const satisfies readonly HostedSubmissionMode[];
-
 /** Terminal states: nothing about this run will change again. */
 export function isTerminalRunStatus(status: ReadinessRunStatus): boolean {
   return (
@@ -117,6 +103,9 @@ function client(): PlatformApiClient {
     fetch: readinessFetch,
   });
 }
+
+/** The same client for directory submissions: one transport, one bearer owner. */
+export { client as readinessPlatformClient };
 
 // ── Local: synchronous, free, no run row ────────────────────────────────
 
@@ -235,11 +224,24 @@ export async function cancelHostedReadinessRun(runId: string): Promise<void> {
 }
 
 /**
+ * Run again a run that stopped on the server before it finished, with this
+ * user's credentials. Only the person who started it can; anyone else is
+ * refused, and the run's status says what happened either way.
+ */
+export async function resumeHostedReadinessRun(
+  runId: string,
+): Promise<ReadinessRunReceipt> {
+  return client().resumeReadinessRun({
+    projectId: getHostedProjectId(),
+    runId,
+  });
+}
+
+/**
  * The full graded report, fetched lazily.
  *
- * Megabytes are possible and the run row already carries everything the
- * collapsed section renders, so this is called when a reader opens the
- * findings rather than alongside every poll.
+ * Megabytes are possible and the run row already carries the summary, so
+ * this is fetched once the run finishes rather than alongside every poll.
  */
 export async function getHostedReadinessReport(
   runId: string,

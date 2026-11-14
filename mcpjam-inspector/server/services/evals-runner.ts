@@ -230,6 +230,7 @@ import {
 } from "@/shared/steps";
 import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
+import { failsOnToolError } from "@/shared/tool-error-policy";
 import {
   prepareChatV2,
   type PrepareChatV2Result,
@@ -5726,9 +5727,7 @@ const runLocalIteration = async ({
       stepState,
       steps,
     );
-    const failOnToolError =
-      (advancedConfig as { failOnToolError?: boolean } | undefined)
-        ?.failOnToolError !== false;
+    const failOnToolError = failsOnToolError(advancedConfig);
     const traceForGate =
       acc.capturedSpans.length > 0 || acc.conversationMessages.length > 0
         ? {
@@ -7573,9 +7572,7 @@ const runHostedIterationWithBrowser = async (
     mergeViewToolEvidence(toolsCalledByPrompt, browser.viewToolCalls ?? []),
     widgetToolCallsByPromptIndex(browser.browserInteractionSteps),
   );
-  const failOnToolError =
-    (advancedConfig as { failOnToolError?: boolean } | undefined)
-      ?.failOnToolError !== false;
+  const failOnToolError = failsOnToolError(advancedConfig);
   // Which transcript the predicate gate reads. EVIDENCE grading gets the
   // trace transcript (raw results and reconstructed wire-only calls are what
   // evidence-aware predicates are for); narration grading keeps the model

@@ -5,9 +5,9 @@ const state = vi.hoisted(() => ({
   resolve: vi.fn(),
   release: vi.fn(),
 }));
-vi.mock("../receipt-store.js", () => ({
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
   createPluginInvocationReceiptPort: () => undefined,
-  pluginInvocationOwnerHash: () => "hash",
 }));
 vi.mock("../request-runtime.js", () => ({
   createPluginRequestRuntime: () => ({
@@ -151,17 +151,20 @@ it("keeps native callback receipts for its turn without reviving a closed App", 
   ]);
   expect(duplicate).toEqual(first);
   const oldToken = token(first);
-  modelApps.close(oldToken, identity);
+  const signal = new AbortController().signal;
+  await modelApps.close(oldToken, identity, signal);
   expect(await f.execute(f.input, run)).toEqual(first);
   expect(run).toHaveBeenCalledOnce();
-  expect(() => modelApps.get(oldToken, identity)).toThrow();
+  await expect(modelApps.restore(oldToken, identity, signal)).rejects.toThrow(
+    "MODEL_APP_UNAVAILABLE",
+  );
   f.execute.dispose();
   await expect(f.execute(f.input, run)).rejects.toMatchObject({ code: "INSTANCE_REQUEST_CLOSED" });
   const nextTurn = fixture();
   const next = token(await nextTurn.execute(nextTurn.input, run));
   expect(next).not.toBe(oldToken);
   expect(run).toHaveBeenCalledTimes(2);
-  modelApps.close(next, identity);
+  await modelApps.close(next, identity, signal);
 });
 
 it.each(["tool failure", "source revocation"])(

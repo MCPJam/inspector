@@ -28,7 +28,7 @@ import {
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
-import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { ClaudeMarkIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { MCPJamMarkIndicator } from "@/lib/client-styles/indicators/mcpjam-mark";
 import { MistralStaticAvatar } from "@/lib/client-styles/mistral-avatar";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
@@ -47,8 +47,6 @@ function messageToolCallIds(message: { parts?: unknown[] }): string[] {
   }
   return ids;
 }
-
-type ClaudeFooterMode = "none" | "animated" | "static";
 
 type MessagePart = UIMessage["parts"][number];
 
@@ -91,7 +89,8 @@ interface MessageViewProps {
   widgetPolicy?: "live" | "placeholder";
   reasoningDisplayMode?: ReasoningDisplayMode;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
-  claudeFooterMode?: ClaudeFooterMode;
+  /** Claude host: animated mark beneath the streaming assistant bubble. */
+  claudeFooterActive?: boolean;
   /** MCPJam host: pulsing dots beneath the streaming assistant bubble. */
   mcpjamFooterActive?: boolean;
   /**
@@ -249,7 +248,7 @@ function areMessageViewPropsEqual(
     prev.widgetPolicy === next.widgetPolicy &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.mcpToolResultImageRendering === next.mcpToolResultImageRendering &&
-    prev.claudeFooterMode === next.claudeFooterMode &&
+    prev.claudeFooterActive === next.claudeFooterActive &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
     // Without this the memo freezes the footer: the rating widget's status
@@ -483,7 +482,7 @@ function MessageViewImpl({
   widgetPolicy = "live",
   reasoningDisplayMode = "inline",
   mcpToolResultImageRendering,
-  claudeFooterMode = "none",
+  claudeFooterActive = false,
   mcpjamFooterActive = false,
   renderUserMessageActions,
   renderAssistantTurnFooter,
@@ -615,7 +614,6 @@ function MessageViewImpl({
   }
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
-  const showClaudeFooter = claudeFooterMode !== "none";
   // Only offer copy when there is text to copy — a tool-call-only turn would
   // put an empty string on the clipboard.
   const hasAssistantText = (message.parts ?? []).some(
@@ -715,12 +713,9 @@ function MessageViewImpl({
             <MCPJamMarkIndicator />
           </div>
         ) : null}
-        {showClaudeFooter ? (
-          <div
-            data-testid={`claude-message-footer-${claudeFooterMode}`}
-            className="pt-4"
-          >
-            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+        {claudeFooterActive ? (
+          <div data-testid="claude-message-footer" className="pt-4">
+            <ClaudeMarkIndicator />
           </div>
         ) : null}
         {hasAssistantText || hasTimestamp ? (

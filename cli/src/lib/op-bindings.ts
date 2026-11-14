@@ -403,7 +403,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_readiness_run: { command: "readiness status" },
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
+  resume_readiness_run: { command: "readiness resume" },
   get_readiness_report: { command: "readiness report" },
+  // `readiness flows` lists the flows, or shows the one it is given.
+  list_directory_flows: { command: "readiness flows" },
+  get_directory_flow: { command: "readiness flows" },
+  create_directory_submission: { command: "readiness submission create" },
+  list_directory_submissions: { command: "readiness submission list" },
+  get_directory_submission: { command: "readiness submission get" },
+  update_directory_submission: { command: "readiness submission set" },
+  delete_directory_submission: { command: "readiness submission delete" },
+  start_directory_submission_run: { command: "readiness submission run" },
+  get_directory_submission_results: {
+    command: "readiness submission results",
+  },
   // Hosted conformance, beside the local `mcpjam conformance` commands: those
   // grade what this machine reaches and record nothing in a project, these
   // run on the platform against a saved server and leave a run to poll.

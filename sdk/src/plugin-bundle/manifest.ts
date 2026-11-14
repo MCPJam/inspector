@@ -15,6 +15,8 @@
 
 import { isUnsafeRawUrl, urlCarriesSecret } from "./mcp-entry-values.js";
 import { resolveContainedPath } from "./paths.js";
+import { checkPluginName } from "./plugin-name.js";
+import type { PluginParserProfile } from "./types.js";
 import {
   MAX_VALUE_DEPTH,
   sanitizeUnknownRecord,
@@ -48,7 +50,7 @@ export interface NormalizedPluginManifest {
    * `$schema` (e.g. `"1.0.0"`). Never fetched.
    */
   schemaVersion: string;
-  /** Validated plugin name — the stable logical identity. Dots are legal. */
+  /** Validated plugin name, the stable logical identity (`plugin-name.ts`). */
   name: string;
   /** Declared version string, when present. Metadata only, format-free. */
   version?: string;
@@ -87,17 +89,6 @@ export interface NormalizedPluginManifest {
    */
   extensions: Record<string, unknown>;
 }
-
-/**
- * Agent Plugins name rule, byte-for-byte the canonical
- * plugin.schema.json pattern: lowercase alphanumerics plus `-`/`.`, no
- * leading/trailing separator, no `--`, no `..`; 1–64 chars. Note the
- * published pattern DOES accept mixed adjacent separators (`foo.-bar`,
- * `foo-.bar`) — only same-character doubles are excluded — and rejecting
- * them here would reject spec-valid names.
- */
-const AP_NAME = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
-const MAX_NAME_LENGTH = 64;
 
 const PLACEHOLDER = /\[TODO:/i;
 
@@ -451,12 +442,14 @@ export interface PluginManifestNormalization {
  *
  * `filePaths` is the set of canonical bundle paths, used to verify files
  * referenced from the `com.mcpjam` namespace (icon/logo) exist in-bundle.
+ * `profile` (default `strict`) decides which names are accepted.
  */
 export function normalizePluginManifest(
   raw: unknown,
   context: {
     filePaths: ReadonlySet<string>;
     issues: PluginIssueCollector;
+    profile?: PluginParserProfile;
   }
 ): PluginManifestNormalization {
   const { filePaths, issues } = context;
@@ -490,24 +483,16 @@ export function normalizePluginManifest(
     return { manifest: null };
   }
 
-  // name — required, Agent Plugins charset (dots legal, no "--"/"..").
-  const name = record.name;
-  if (
-    typeof name !== "string" ||
-    name.length === 0 ||
-    name.length > MAX_NAME_LENGTH ||
-    !AP_NAME.test(name)
-  ) {
-    issues.error(
-      "MANIFEST_INVALID_NAME",
-      `manifest "name" must be 1-${MAX_NAME_LENGTH} lowercase [a-z0-9.-] chars with single separators (no "--" or "..")`
-    );
+  // name — required; the profile decides which spellings are accepted.
+  const name = checkPluginName(record.name, context.profile ?? "strict");
+  if (!name.ok) {
+    issues.error("MANIFEST_INVALID_NAME", name.message);
     return { manifest: null };
   }
 
   const manifest: NormalizedPluginManifest = {
     schemaVersion,
-    name,
+    name: name.name,
     extensions: {},
   };
 

@@ -178,12 +178,15 @@ describe("swarm single-host runner — attempt ordering", () => {
 
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // ChatGPT's preset plus the override, not only the override's own keys.
+    // Messages carrying every OpenAI content type (not just text) is
+    // ChatGPT-specific, and so is `downloadFile` among these presets.
     expect(adapter.runtime.hostCapabilities).toMatchObject({
       openLinks: {},
       serverTools: {},
       serverResources: {},
+      downloadFile: {},
+      message: { text: {}, image: {}, resourceLink: {}, resource: {} },
     });
-    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
   });
 
   it("advertises only the override's own keys while the snapshot has no host style", async () => {
@@ -1761,6 +1764,28 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     // (undefined would fall back to the live pool).
     expect(b.runtime.pinnedSkillSource.pins).toEqual([]);
     expect(b.runtime.pinnedSkillSource.harnessSkills).toEqual([]);
+  });
+
+  it("downloads the pinned supporting file before the swarm starts its sessions", async () => {
+    const file = {
+      path: "scripts/check.sh",
+      contentHash: "file-hash",
+      size: 9,
+      url: "data:text/plain,echo%20test",
+    };
+    fetchPinnedSkillMock.mockResolvedValue({
+      ...pinnedArtifact("hash-1"),
+      files: [file],
+    });
+
+    await startJourneyRun(baseOpts({ hosts: [ENV_TARGET_A], sessionsPerTarget: 1 }));
+
+    const session = runSyntheticHostSessionMock.mock.calls[0]?.[0];
+    expect(session?.runtime.pinnedSkillSource.harnessSkills[0].files).toEqual([
+      { path: file.path, mimeType: "text/plain", content: "echo test" },
+    ]);
+    const [supporting] = session.runtime.pinnedSkillSource.set.standaloneSkills[0].files;
+    expect(new TextDecoder().decode(await supporting.read())).toBe("echo test");
   });
 
   it("addresses a plugin's skill by the target's pinned plugin version", async () => {

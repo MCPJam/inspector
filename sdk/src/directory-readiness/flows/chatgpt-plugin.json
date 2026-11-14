@@ -1,0 +1,770 @@
+{
+  "title": "Upload new or existing plugin",
+  "steps": {
+    "upload": {
+      "title": "Upload your plugin ZIP",
+      "intro": "Compress your plugin folder into a .zip file before uploading",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "upload",
+            "text": {
+              "drop": "Upload new or existing plugin",
+              "button": "Upload plugin",
+              "checked": "Errors block the upload; warnings require confirmation."
+            }
+          }
+        ]
+      }
+    },
+    "listing": {
+      "title": "Metadata & Skills",
+      "intro": "Package details are read-only here; edit them in your source package.",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "plugin-header",
+            "fields": [
+              "listing.displayName",
+              "listing.shortDescription"
+            ]
+          },
+          {
+            "heading": "Metadata",
+            "fields": [
+              "listing.description",
+              "listing.developer",
+              "listing.name",
+              "listing.category",
+              "listing.capabilities",
+              "listing.website",
+              "listing.support",
+              "listing.privacyPolicy",
+              "listing.terms",
+              "listing.starterPrompts"
+            ],
+            "text": {
+              "upload": "Upload new version"
+            }
+          },
+          {
+            "heading": "Skills",
+            "widget": "skills",
+            "text": {
+              "passed": "Checks passed",
+              "attention": "Needs attention"
+            }
+          },
+          {
+            "widget": "findings",
+            "text": {
+              "title": "Findings",
+              "all": "All",
+              "blocking": "Blocking",
+              "copy": "Copy findings"
+            }
+          }
+        ]
+      }
+    },
+    "mcp": {
+      "title": "MCPs",
+      "intro": "Your package can declare multiple MCP servers, but only one MCP server can be connected per plugin.",
+      "layout": {
+        "blocks": [
+          {
+            "heading": "Connect MCP server",
+            "widget": "connect",
+            "fields": [
+              "mcp.serverUrl",
+              "mcp.verificationToken"
+            ],
+            "text": {
+              "authentication": "Authentication",
+              "authorize": "Your MCP server needs OAuth access before we can scan its tools.",
+              "settings": "You can define advanced settings in your mcp.json",
+              "domain": "Domain verification",
+              "verified": "Domain verified",
+              "reconnect": "Reconnect",
+              "rescan": "Rescan"
+            }
+          },
+          {
+            "heading": "Tools",
+            "widget": "tools"
+          }
+        ]
+      }
+    },
+    "reviewer": {
+      "title": "Review information",
+      "intro": "Read-only fields are managed by your plugin ZIP. To change read-only information, update your plugin ZIP and upload it again.",
+      "layout": {
+        "blocks": [
+          {
+            "heading": "Countries and translations",
+            "note": "Its fields were not captured."
+          },
+          {
+            "heading": "Reviewer credentials",
+            "note": "Test credentials must work immediately with no additional setup required. Logging in must provide immediate access to a demo account.",
+            "fields": [
+              "reviewer.loginUrl",
+              "reviewer.tenant",
+              "reviewer.username",
+              "reviewer.passwordSecret",
+              "reviewer.signInSteps"
+            ]
+          },
+          {
+            "heading": "Test cases",
+            "fields": [
+              "reviewer.testCases"
+            ]
+          },
+          {
+            "heading": "Negative test cases",
+            "fields": [
+              "reviewer.negativeTestCases"
+            ]
+          },
+          {
+            "heading": "Supporting content",
+            "fields": [
+              "reviewer.demoRecordingUrl",
+              "reviewer.releaseNotes"
+            ]
+          },
+          {
+            "widget": "drawer-actions",
+            "text": {
+              "back": "Back",
+              "next": "Next",
+              "save": "Save details"
+            }
+          }
+        ]
+      }
+    },
+    "submit": {
+      "title": "Submit for review",
+      "intro": "Complete the required policy attestations.",
+      "layout": {
+        "blocks": [
+          {
+            "fields": [
+              "submit.developerIdentity"
+            ]
+          },
+          {
+            "fields": [
+              "submit.attestations"
+            ]
+          },
+          {
+            "widget": "non-blocking-findings",
+            "text": {
+              "title": "Non-blocking findings",
+              "body": "These findings do not block submission, but unresolved findings may lead to rejection during review."
+            }
+          },
+          {
+            "fields": [
+              "submit.additionalContext"
+            ]
+          },
+          {
+            "widget": "submit",
+            "text": {
+              "cancel": "Cancel",
+              "submit": "Submit"
+            }
+          }
+        ]
+      }
+    },
+    "publish": {
+      "title": "Publish your approved plugin",
+      "intro": "Open the approved package version and select Publish plugin.",
+      "layout": {
+        "blocks": [
+          {
+            "widget": "publish",
+            "text": {
+              "button": "Publish plugin"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "fields": {
+    "listing.displayName": {
+      "label": "Display name",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/displayName",
+      "errors": {
+        "required": "Display name is required, non-empty, and single-line.",
+        "tooLong": "Display name must be 30 characters or fewer."
+      }
+    },
+    "listing.shortDescription": {
+      "label": "Short description",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/shortDescription",
+      "errors": {
+        "required": "Short description is required, non-empty, and single-line.",
+        "tooLong": "Short description must be 30 characters or fewer."
+      }
+    },
+    "listing.description": {
+      "label": "About",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/longDescription",
+      "errors": {
+        "required": "Long description is required and must be non-empty. Line breaks are allowed.",
+        "tooLong": "Long description must be 4,000 characters or fewer."
+      }
+    },
+    "listing.developer": {
+      "label": "Developer",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/developerName",
+      "errors": {
+        "required": "Developer name is required.",
+        "tooLong": "Developer name must be 80 characters or fewer."
+      }
+    },
+    "listing.name": {
+      "label": "Package name",
+      "packagePath": "plugin.json#/name"
+    },
+    "listing.category": {
+      "label": "Category",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/category",
+      "options": [
+        {
+          "value": "Productivity",
+          "label": "Productivity"
+        },
+        {
+          "value": "Creativity",
+          "label": "Creativity"
+        },
+        {
+          "value": "Developer Tools",
+          "label": "Developer Tools"
+        },
+        {
+          "value": "Business & Operations",
+          "label": "Business & Operations"
+        },
+        {
+          "value": "Data & Analytics",
+          "label": "Data & Analytics"
+        },
+        {
+          "value": "Communication",
+          "label": "Communication"
+        },
+        {
+          "value": "Education & Research",
+          "label": "Education & Research"
+        },
+        {
+          "value": "Security",
+          "label": "Security"
+        },
+        {
+          "value": "Finance",
+          "label": "Finance"
+        },
+        {
+          "value": "Healthcare",
+          "label": "Healthcare"
+        },
+        {
+          "value": "Travel",
+          "label": "Travel"
+        },
+        {
+          "value": "Entertainment",
+          "label": "Entertainment"
+        },
+        {
+          "value": "Other",
+          "label": "Other"
+        }
+      ]
+    },
+    "listing.capabilities": {
+      "label": "Capabilities",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/capabilities"
+    },
+    "listing.website": {
+      "label": "Website",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/websiteURL",
+      "errors": {
+        "required": "Website URL is required."
+      }
+    },
+    "listing.support": {
+      "label": "Support",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/supportURL"
+    },
+    "listing.privacyPolicy": {
+      "label": "Privacy policy",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/privacyPolicyURL"
+    },
+    "listing.terms": {
+      "label": "Terms of service",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/termsOfServiceURL"
+    },
+    "listing.starterPrompts": {
+      "label": "Starter prompts",
+      "packagePath": "plugin.json#/extensions/com.openai/interface/defaultPrompt"
+    },
+    "mcp.serverUrl": {
+      "label": "MCP Server URL",
+      "packagePath": "mcp.json#/mcpServers/*/url"
+    },
+    "mcp.verificationToken": {
+      "label": "Domain verification token",
+      "helper": "The portal issues this token in its MCP step."
+    },
+    "reviewer.loginUrl": {
+      "label": "Login URL"
+    },
+    "reviewer.tenant": {
+      "label": "Tenant",
+      "placeholder": "Choose an organization"
+    },
+    "reviewer.username": {
+      "label": "Username"
+    },
+    "reviewer.passwordSecret": {
+      "label": "Password",
+      "placeholder": "Demo account password"
+    },
+    "reviewer.signInSteps": {
+      "label": "Sign-in steps",
+      "placeholder": "Steps for this account"
+    },
+    "reviewer.testCases": {
+      "label": "Test cases",
+      "packagePath": "plugin.json#/extensions/com.openai/review/test_cases/positive"
+    },
+    "reviewer.negativeTestCases": {
+      "label": "Negative test cases",
+      "packagePath": "plugin.json#/extensions/com.openai/review/test_cases/negative"
+    },
+    "reviewer.demoRecordingUrl": {
+      "label": "Video walkthrough URL",
+      "packagePath": "plugin.json#/extensions/com.openai/review/demo_recording_url"
+    },
+    "reviewer.releaseNotes": {
+      "label": "Release notes",
+      "packagePath": "plugin.json#/extensions/com.openai/publication/release_notes"
+    },
+    "submit.developerIdentity": {
+      "label": "Developer identity"
+    },
+    "submit.attestations": {
+      "label": "Policy attestations",
+      "options": [
+        {
+          "value": "terms-and-guidelines",
+          "label": "I have reviewed and agree to OpenAI's Terms and Plugin Guidelines. I confirm that my plugin is in compliance with those Terms and Guidelines."
+        },
+        {
+          "value": "applicable-laws",
+          "label": "I confirm that my plugin complies with all laws and regulations applicable to the industry it operates in. I understand that I am responsible for that compliance."
+        },
+        {
+          "value": "no-money-movement",
+          "label": "I confirm that my plugin does not initiate or execute money transfers, crypto transfers, or investment trades on behalf of users."
+        },
+        {
+          "value": "third-party-rights",
+          "label": "I confirm that I have all necessary rights to any third-party content or API endpoints accessed, displayed, or used by my plugin."
+        },
+        {
+          "value": "suitable-under-18",
+          "label": "I confirm that my plugin is suitable for individuals under 18 and does not include mature or adult content."
+        },
+        {
+          "value": "not-targeting-children",
+          "label": "I confirm that my plugin does not target children under 13 or share their personal information with OpenAI."
+        }
+      ]
+    },
+    "submit.additionalContext": {
+      "label": "Additional Submission Context",
+      "helper": "Add any additional information that might be useful for the review team, including justification for any findings. This optional note is private to the review."
+    }
+  },
+  "placements": [
+    {
+      "step": "upload",
+      "needs": [
+        "package"
+      ],
+      "reads": [],
+      "checks": [
+        "openai.package.archive",
+        "openai.package.manifest",
+        "openai.package.skills",
+        "openai.package.assets",
+        "openai.package.exclusions",
+        "openai.package.manifest-location",
+        "openai.package.observation.*",
+        "openai.migration.unsupported-surfaces",
+        "openai.migration.user-config",
+        "openai.migration.stdio-transport",
+        "openai.migration.host-language"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [
+        "package"
+      ],
+      "reads": [
+        "listing.displayName",
+        "listing.shortDescription",
+        "listing.description"
+      ],
+      "checks": [
+        "openai.policy.non-promotional-package"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [
+        "listing.displayName",
+        "listing.shortDescription",
+        "listing.description"
+      ],
+      "checks": [
+        "openai.policy.non-promotional-listing"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [
+        "listing.displayName",
+        "listing.shortDescription",
+        "listing.description",
+        "listing.category"
+      ],
+      "checks": [
+        "openai.submission.listing-fields"
+      ]
+    },
+    {
+      "step": "listing",
+      "field": "listing.privacyPolicy",
+      "needs": [],
+      "reads": [
+        "listing.privacyPolicy",
+        "listing.support"
+      ],
+      "checks": [
+        "openai.submission.urls"
+      ]
+    },
+    {
+      "step": "listing",
+      "field": "listing.privacyPolicy",
+      "needs": [],
+      "reads": [
+        "listing.privacyPolicy"
+      ],
+      "checks": [
+        "openai.submission.privacy-disclosure",
+        "openai.policy.privacy-consistency"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [],
+      "reads": [],
+      "checks": [
+        "openai.policy.originality",
+        "openai.policy.no-advertising",
+        "openai.policy.commerce",
+        "openai.feature.checkout"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [
+        "server"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.skills.extension",
+        "openai.skills.listing-complete",
+        "openai.skills.caps",
+        "openai.skills.digests",
+        "openai.skills.frontmatter",
+        "openai.skills.snapshot",
+        "openai.feature.imported-skills",
+        "openai.ui.screenshots"
+      ]
+    },
+    {
+      "step": "listing",
+      "needs": [
+        "server",
+        "model"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.experience.listing-copy-placeholder",
+        "openai.experience.listing-copy-overpromises",
+        "openai.experience.skill-overlap"
+      ]
+    },
+    {
+      "step": "mcp",
+      "field": "mcp.serverUrl",
+      "needs": [],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.endpoint.https",
+        "openai.endpoint.path"
+      ]
+    },
+    {
+      "step": "mcp",
+      "field": "mcp.serverUrl",
+      "needs": [
+        "server"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.endpoint.redirects-stay-https",
+        "openai.endpoint.redirects-terminate"
+      ]
+    },
+    {
+      "step": "mcp",
+      "field": "mcp.verificationToken",
+      "needs": [
+        "server"
+      ],
+      "reads": [
+        "mcp.serverUrl",
+        "mcp.verificationToken"
+      ],
+      "checks": [
+        "openai.domain.challenge-served",
+        "openai.domain.challenge-matches"
+      ]
+    },
+    {
+      "step": "mcp",
+      "field": "mcp.verificationToken",
+      "needs": [],
+      "reads": [
+        "mcp.verificationToken"
+      ],
+      "checks": [
+        "openai.submission.domain-token"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [
+        "server"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.auth.challenge",
+        "openai.auth.prm-discoverable",
+        "openai.auth.prm-pointer",
+        "openai.auth.issuers-resolve",
+        "openai.auth.pkce-s256",
+        "openai.auth.rfc9207-iss",
+        "openai.auth.client-acquisition",
+        "openai.auth.runtime-challenge",
+        "openai.auth.unsupported-flows",
+        "openai.tools.annotations",
+        "openai.tools.descriptions",
+        "openai.tools.name-length",
+        "openai.tools.schemas",
+        "openai.tools.annotation-honesty",
+        "openai.tools.security-schemes",
+        "openai.profile.declared",
+        "openai.profile.input-empty",
+        "openai.profile.output-schema",
+        "openai.profile.read-only",
+        "openai.profile.description-honesty",
+        "openai.ui.mime",
+        "openai.ui.domain-present",
+        "openai.ui.domain-unique",
+        "openai.ui.csp-exact",
+        "openai.ui.output-schema",
+        "openai.ui.useful-without-ui",
+        "openai.submission.annotation-justifications",
+        "openai.submission.frame-domain-explanations",
+        "openai.release.origin",
+        "openai.release.contract",
+        "openai.release.schema-compatibility",
+        "openai.release.live-changes",
+        "openai.feature.profile-identification",
+        "openai.feature.ui-templates",
+        "openai.feature.cimd",
+        "openai.feature.lazy-authentication"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [],
+      "reads": [],
+      "checks": [
+        "openai.submission.scan-currency",
+        "openai.policy.predictable-side-effects",
+        "openai.policy.response-minimization"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [
+        "server",
+        "model"
+      ],
+      "reads": [
+        "mcp.serverUrl"
+      ],
+      "checks": [
+        "openai.experience.tool-descriptions-uninformative",
+        "openai.experience.tool-overlap",
+        "openai.experience.naming-inconsistent",
+        "openai.experience.destructive-tool-underexplained",
+        "openai.experience.auth-story-unclear",
+        "both.decision.annotation-matches-behaviour"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [
+        "model"
+      ],
+      "reads": [
+        "mcp.serverUrl",
+        "listing.displayName",
+        "listing.shortDescription",
+        "listing.description"
+      ],
+      "checks": [
+        "openai.decision.fair-play",
+        "openai.decision.secret-seeking"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "needs": [],
+      "reads": [
+        "reviewer.demoRecordingUrl",
+        "reviewer.loginUrl",
+        "reviewer.username",
+        "reviewer.passwordSecret"
+      ],
+      "checks": [
+        "openai.submission.demo-access"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "field": "reviewer.testCases",
+      "needs": [],
+      "reads": [
+        "reviewer.testCases",
+        "reviewer.negativeTestCases"
+      ],
+      "checks": [
+        "openai.submission.test-cases"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "field": "reviewer.negativeTestCases",
+      "needs": [],
+      "reads": [
+        "reviewer.negativeTestCases"
+      ],
+      "checks": [
+        "openai.submission.test-case-quality"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "field": "reviewer.releaseNotes",
+      "needs": [],
+      "reads": [
+        "reviewer.releaseNotes"
+      ],
+      "checks": [
+        "openai.submission.release-notes"
+      ]
+    },
+    {
+      "step": "reviewer",
+      "needs": [],
+      "reads": [],
+      "checks": [
+        "openai.submission.geography"
+      ]
+    },
+    {
+      "step": "submit",
+      "field": "submit.attestations",
+      "needs": [],
+      "reads": [
+        "submit.attestations"
+      ],
+      "checks": [
+        "openai.submission.attestations",
+        "openai.submission.attestation-truth"
+      ]
+    },
+    {
+      "step": "submit",
+      "field": "submit.developerIdentity",
+      "needs": [],
+      "reads": [
+        "submit.developerIdentity"
+      ],
+      "checks": [
+        "openai.submission.account"
+      ]
+    },
+    {
+      "step": "submit",
+      "needs": [],
+      "reads": [],
+      "checks": [
+        "openai.submission.profile-valid"
+      ]
+    }
+  ],
+  "laneSteps": {
+    "runtime-compatibility": "mcp",
+    "directory-policy": "mcp",
+    "plugin-package": "upload",
+    "release-contract": "mcp",
+    "optional-features": "mcp",
+    "submission-artifacts": "reviewer",
+    "experience-insights": "mcp"
+  }
+}

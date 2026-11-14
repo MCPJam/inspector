@@ -1027,6 +1027,8 @@ async function runJourneyFanOut(
             ? undefined
             : checkHarnessRuntimeAvailable({
                 harnessId: dispatch.harnessId!,
+                surface: "swarms",
+                agentLoop: target.agentLoop !== undefined,
                 localExecution: localHarness,
                 requireToolApproval: target.requireToolApproval,
                 // PLUGIN servers count. A target whose MCP servers come solely
@@ -2538,6 +2540,7 @@ async function resolveTargetPinnedSkills(args: {
       skills,
       pluginVersions: target.pluginVersions ?? [],
       serverIds: target.serverIds,
+      signal,
     });
   if (meta.length === 0) return frozen([]);
   const targetId = target.targetId;
@@ -2558,6 +2561,7 @@ async function resolveTargetPinnedSkills(args: {
     const artifact = await resolvePinnedSkillCached({
       projectId,
       contentHash: entry.contentHash,
+      aggregateHash: entry.aggregateHash,
       ...(serverSkill ? { serverSkill } : {}),
       // Caller-agnostic: the shared fetch keeps only its own request timeout, so
       // this run's cancellation can't fail another run coalesced on the same

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "10.5.0",
+  "version": "10.7.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -153,6 +153,8 @@
     "generate:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts",
     "check:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts --check",
     "check:host-catalog-fallback:remote": "node --import tsx scripts/check-host-catalog-fallback-remote.ts",
+    "generate:decision-scan-catalogs": "tsx scripts/generate-decision-scan-catalogs.ts",
+    "measure:decision-scan": "tsx scripts/measure-decision-scan.ts",
     "predev": "node ../scripts/generate-telemetry-catalogs.mjs",
     "dev": "concurrently -n telemetry,tsup \"node ../scripts/generate-telemetry-catalogs.mjs --watch\" \"tsup --watch\"",
     "sentry:inject": "sentry-cli sourcemaps inject ./dist",

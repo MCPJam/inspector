@@ -142,12 +142,9 @@ import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness
 import {
   acquirePlaygroundHarnessBox,
   describePlaygroundBoxRefusal,
-  playgroundCredentialRefusal,
   playgroundHarnessBoxUnavailableReason,
-  type PlaygroundBoxReason,
 } from "../../utils/harness/playground-box.js";
 import type { HarnessBox } from "../../utils/harness/harness-box.js";
-import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
 import {
   assertHarnessDispatchable,
   engineLabel,
@@ -1585,11 +1582,6 @@ async function handleTurn(c: Context): Promise<Response> {
       // and wants to see what it advertises, not a search/load indirection.
       progressiveToolDiscovery: { enabled: false },
     });
-    // MCPJam's agent holds its skill tools now; a harness turn reports from
-    // its box writer (`onBoxSkillsWritten` below).
-    if (engine.kind !== "harness") {
-      reportSkillsDelivered("api", turnSkills.skills);
-    }
 
     // STEPS ARE NOT CALLS, which is why `maxToolCalls` is enforced here rather
     // than folded into the step budget. One step can emit several parallel
@@ -1703,16 +1695,11 @@ async function handleTurn(c: Context): Promise<Response> {
     // `projectComputers` row. Acquired before the model call so a refused box
     // spends nothing.
     if (engine.kind === "harness") {
-      // A harness that signs in with the customer's own account (Cursor) is
-      // on the box for its credential, as in the Playground.
-      const boxReason: PlaygroundBoxReason = harnessUsesExternalAccount(
-        engine.harness,
-      )
-        ? "credential"
-        : "conversation";
+      // The preflight refuses every runtime on the customer's own account
+      // here, so the box is only ever the conversation's.
       const unavailable = playgroundHarnessBoxUnavailableReason(
         engine.harness,
-        boxReason,
+        "conversation",
       );
       if (unavailable) {
         return v1Error(c, "FEATURE_NOT_SUPPORTED", unavailable, {
@@ -1720,25 +1707,8 @@ async function handleTurn(c: Context): Promise<Response> {
         });
       }
       // Only a pinned environment is the box's grant, never the trace
-      // composition; a Cursor key is the organization's, on no environment.
+      // composition.
       const boxEnvironmentId = pins.environmentId;
-      if (boxReason === "credential") {
-        // The credential check `runHarnessTurn` would fail, run BEFORE the box
-        // is booted: a refused turn must not pay for a box, nor fail past
-        // `modelCallStarted` and hold the lease to its TTL. Same function and
-        // inputs as the turn's own check.
-        const credentialRefusal = await playgroundCredentialRefusal({
-          harnessId: engine.harness,
-          bearer: authHeader,
-          projectId,
-          signal: abortController.signal,
-        });
-        if (credentialRefusal) {
-          return v1Error(c, "CONFLICT", credentialRefusal, {
-            reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
-          });
-        }
-      }
       const acquired = await acquirePlaygroundHarnessBox({
         bearer: authHeader.replace(/^Bearer\s+/i, ""),
         projectId,
@@ -1750,7 +1720,7 @@ async function handleTurn(c: Context): Promise<Response> {
       if (!acquired.ok) {
         const described = describePlaygroundBoxRefusal(
           engine.harness,
-          boxReason,
+          "conversation",
           acquired.refusal,
         );
         const rateLimited =
@@ -1795,6 +1765,12 @@ async function handleTurn(c: Context): Promise<Response> {
         body: { turnId: leaseTurnId, executionOwnerToken, resumeConfig: turnPins },
       });
     modelCallStarted = true;
+    // MCPJam's agent holds its skill tools, the connected servers' own among
+    // them, and its engine starts next. A harness turn reports from its box
+    // writer (`onBoxSkillsWritten` below).
+    if (engine.kind !== "harness" && prepared.effectiveSkills) {
+      reportSkillsDelivered("api", prepared.effectiveSkills);
+    }
     const result = await runUnifiedAssistantTurn({
       runtime: runtime.runtime as never,
       streamSink: "none",
