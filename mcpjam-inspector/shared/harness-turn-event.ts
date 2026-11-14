@@ -111,7 +111,11 @@ export type HarnessTurnBootstrap = (typeof HARNESS_TURN_BOOTSTRAPS)[number];
 export type HarnessTurnOutcome = (typeof HARNESS_TURN_OUTCOMES)[number];
 export type HarnessTurnDuration = (typeof HARNESS_TURN_DURATIONS)[number];
 
-/** `kind` once the lane is claimed; `start` and `fallback_reason` once a session starts. */
+/**
+ * `kind` once the lane is claimed; `start` and `fallback_reason` once a
+ * session starts. A turn that fails before its session still sends the
+ * `fallback_reason` of a reuse it refused.
+ */
 export type HarnessTurnEventProperties = {
   surface: HarnessTurnSurface;
   harness_id: Harness;
