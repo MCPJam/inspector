@@ -12,6 +12,7 @@ import { PLUGIN_MANIFEST_SCHEMAS } from "../../plugin-bundle/manifest.js";
 import { MCP_CONFIG_PATH } from "../../plugin-bundle/parse.js";
 import { portalPluginNameRefusals } from "../../plugin-bundle/plugin-name.js";
 import type { PluginManifestLocation } from "../../plugin-bundle/plugin-root.js";
+import { SEMVER } from "../portal-codes/define.js";
 import { openaiPortalIssue, type OpenAIPortalIssue } from "../portal-errors.js";
 import { OPENAI_MANIFEST_LOCATIONS } from "../profile.js";
 import type {
@@ -130,12 +131,7 @@ export async function readPluginManifest(
 
     // Semver, deliberately without a dependency: the portal wants a version
     // it can order, and `1.0` is the mistake this catches.
-    if (
-      version !== undefined &&
-      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-        version,
-      )
-    ) {
+    if (version !== undefined && !SEMVER.test(version)) {
       issues.push(
         openaiPortalIssue("manifest-version-invalid", {
           subject: manifestPath,

@@ -29,7 +29,7 @@ const AP_NAME = /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 export const PLUGIN_NAME_MAX_LENGTH = 64;
 
 /** The portal's `plugin_name_format`. */
-const PORTAL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const PORTAL_PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export type PluginNameRuleCode = Extract<
   PluginPortalRuleCode,
@@ -46,7 +46,9 @@ export function portalPluginNameRefusals(value: unknown): PluginNameRuleCode[] {
   if (value.length > PLUGIN_NAME_MAX_LENGTH) {
     refusals.push("plugin_name_too_long");
   }
-  if (!PORTAL_NAME.test(value)) refusals.push("plugin_name_format");
+  if (!PORTAL_PLUGIN_NAME_PATTERN.test(value)) {
+    refusals.push("plugin_name_format");
+  }
   return refusals;
 }
 
