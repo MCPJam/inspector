@@ -214,8 +214,8 @@ describe("process vitals sampler", () => {
     expect(last.peakHeapUsedBytes).toBe(900 * MB);
   });
 
-  // A renderer can die of ENFILE while holding few fds of its own; this count
-  // says whether the main process is the one draining the system file table.
+  // A process can die of ENFILE while holding few fds of its own; this count
+  // says whether the server process is the one draining the system file table.
   it("counts this process's open file descriptors", async () => {
     const { flushProcessVitals } = await loadVitals([500 * MB]);
 

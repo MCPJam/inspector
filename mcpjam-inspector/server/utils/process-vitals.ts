@@ -24,6 +24,7 @@ import { getSystemLogger } from "./request-logger.js";
 import { logger } from "./logger.js";
 import { rpcLogBus } from "../services/rpc-log-bus.js";
 import { getTokenizerPeak } from "./tokenizer-helpers.js";
+import type { ProcessVitalsEvent } from "./log-events/process-vitals.js";
 
 const SAMPLE_INTERVAL_MS = 60_000;
 
@@ -48,26 +49,7 @@ const HEAP_TREND_SAMPLES = 10;
 
 const vitalsLogger = getSystemLogger("process.vitals");
 
-export type ProcessVitals = {
-  uptimeSeconds: number;
-  heapUsedBytes: number;
-  heapTotalBytes: number;
-  heapLimitBytes: number;
-  oldSpaceUsedBytes: number;
-  oldSpaceSizeBytes: number;
-  externalBytes: number;
-  rssBytes: number;
-  peakHeapUsedBytes: number;
-  rpcLogBufferBytes: number;
-  rpcLogBufferEvents: number;
-  rpcLogBufferServers: number;
-  rpcLogTruncatedFrames: number;
-  peakRpcLogBufferBytes: number;
-  tokenizerPeakChars: number;
-  tokenizerOversizeSkips: number;
-  openFdCount: number | null;
-  openFdError: (typeof FD_ERRNOS)[number] | "unknown" | null;
-};
+export type ProcessVitals = Omit<ProcessVitalsEvent, "reason">;
 
 let peakHeapUsedBytes = 0;
 let peakRpcLogBufferBytes = 0;
@@ -85,7 +67,7 @@ function oldSpace(): { used: number; size: number } {
   return { used: 0, size: 0 };
 }
 
-// A closed list because the Axiom row keeps only the values log-events.ts
+// A closed list because the Axiom row keeps only the errnos ProcessVitalsEvent
 // spells out; any other errno arrives as "unknown".
 const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
 
