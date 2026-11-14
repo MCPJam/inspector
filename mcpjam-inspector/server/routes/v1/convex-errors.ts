@@ -194,18 +194,24 @@ export interface TranslateConvexWriteErrorOptions {
  * `currentImpact` is a small object of counts rather than a scalar, and it is
  * forwarded whole: an agent proposal that conflicted on impact needs to know
  * WHICH consumer count moved to describe the edit honestly the second time.
+ *
+ * A directory submission's revision guard puts `currentRevision` and
+ * `conflictingKeys` beside its code rather than under `data`; the keys that
+ * conflicted are what lets a writer reapply only its own change.
  */
 function preconditionDetails(
   data: Record<string, unknown> | null | undefined
 ): Record<string, unknown> | undefined {
-  const payload = data?.data;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return undefined;
-  }
-  const source = payload as Record<string, unknown>;
   const details: Record<string, unknown> = {};
-  for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
-    if (source[key] !== undefined) details[key] = source[key];
+  const payload = data?.data;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const source = payload as Record<string, unknown>;
+    for (const key of ["currentConfigId", "currentName", "currentImpact"]) {
+      if (source[key] !== undefined) details[key] = source[key];
+    }
+  }
+  for (const key of ["currentRevision", "conflictingKeys"]) {
+    if (data?.[key] !== undefined) details[key] = data[key];
   }
   return Object.keys(details).length > 0 ? details : undefined;
 }

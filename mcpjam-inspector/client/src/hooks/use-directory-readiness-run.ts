@@ -1,5 +1,5 @@
 /**
- * One directory-readiness section's run, in either execution mode.
+ * One directory-readiness run, in either execution mode.
  *
  * ## Why this is not `use-conformance-run`
  *
@@ -27,6 +27,7 @@ import {
   isOpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk/browser";
+import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import {
   cancelHostedReadinessRun,
   canRunHostedReadiness,
@@ -34,12 +35,14 @@ import {
   getHostedReadinessReport,
   getHostedReadinessRun,
   isTerminalRunStatus,
+  resumeHostedReadinessRun,
   runLocalReadiness,
   startHostedReadiness,
   type DirectoryReadinessPublisher,
   type DirectoryReadinessResult,
   type HostedSubmissionMode,
   type ReadinessRun,
+  type ReadinessRunReceipt,
 } from "@/lib/apis/directory-readiness-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
 
@@ -98,12 +101,40 @@ function pollIntervalFor(tick: number): number {
   return withJitter(POLL_LADDER_MS[rung]!);
 }
 
+/** Transient resume failures tried again for one re-queue. */
+const RESUME_TRIES = 3;
+
+/** A 4xx other than a timeout or rate limit: asking again gets the same answer. */
+function isDefiniteRefusal(error: unknown): boolean {
+  return (
+    isPlatformApiError(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![408, 425, 429].includes(error.status)
+  );
+}
+
+interface ResumeAttempt {
+  /** `runId:attemptCount`: recovery counts each re-queue as an attempt. */
+  requeue: string;
+  /** Resumed, or refused for good. */
+  settled: boolean;
+  inFlight: boolean;
+  transientFailures: number;
+}
+
 export interface UseDirectoryReadinessRunOptions {
   publisher: DirectoryReadinessPublisher;
   server: ServerLike;
-  /** Required for OpenAI. Never inferred — see the section component. */
+  /** Required for OpenAI, and never inferred: the submitter declares it. */
   submissionMode?: HostedSubmissionMode;
   includeLlmObservations?: boolean;
+  /**
+   * Starts the run through another route, such as a directory submission's.
+   * Always hosted, and no report is fetched: that caller reads the results
+   * placed on its own form. Keep it stable: a new one resets the run.
+   */
+  start?: (idempotencyKey: string) => Promise<ReadinessRunReceipt>;
 }
 
 export function useDirectoryReadinessRun({
@@ -111,6 +142,7 @@ export function useDirectoryReadinessRun({
   server,
   submissionMode,
   includeLlmObservations = false,
+  start,
 }: UseDirectoryReadinessRunOptions) {
   const hosted = isHostedMode();
 
@@ -168,9 +200,10 @@ export function useDirectoryReadinessRun({
 
   useEffect(() => {
     reset();
-    // `serverConfigKey` is the trigger; the rest is read through it.
+    // `serverConfigKey` is the trigger; the rest is read through it. A new
+    // `start` is a new thing to grade, such as another submission.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverConfigKey, publisher]);
+  }, [serverConfigKey, publisher, start]);
 
   useEffect(() => {
     return () => {
@@ -182,6 +215,47 @@ export function useDirectoryReadinessRun({
 
   const isCurrent = useCallback((token: number) => {
     return token === runTokenRef.current;
+  }, []);
+
+  /** The latest re-queue this hook tried to resume. */
+  const resumeRef = useRef<ResumeAttempt | null>(null);
+
+  /**
+   * A run whose node stopped is re-queued, and only the person who started
+   * it can run it again, with their credentials. Resume once per re-queue,
+   * then keep polling: a refusal (another person's run, or one resumed
+   * elsewhere first) leaves nothing to do that the poll will not show. A
+   * failure that is not a refusal, such as an outage, is tried again on later
+   * polls, up to `RESUME_TRIES` times.
+   */
+  const resumeOnce = useCallback(async (run: ReadinessRun) => {
+    if (!run.resumable) return;
+    const requeue = `${run.id}:${run.attemptCount}`;
+    const attempt: ResumeAttempt =
+      resumeRef.current?.requeue === requeue
+        ? resumeRef.current
+        : { requeue, settled: false, inFlight: false, transientFailures: 0 };
+    resumeRef.current = attempt;
+    if (
+      attempt.settled ||
+      attempt.inFlight ||
+      attempt.transientFailures >= RESUME_TRIES
+    ) {
+      return;
+    }
+    attempt.inFlight = true;
+    try {
+      await resumeHostedReadinessRun(run.id);
+      attempt.settled = true;
+    } catch (error) {
+      if (isDefiniteRefusal(error)) attempt.settled = true;
+      else attempt.transientFailures += 1;
+      if (import.meta.env?.DEV) {
+        console.warn("[readiness] resume failed", error);
+      }
+    } finally {
+      attempt.inFlight = false;
+    }
   }, []);
 
   /** One poll, then schedule the next unless the run is done. */
@@ -211,6 +285,8 @@ export function useDirectoryReadinessRun({
           clearPoll();
           return;
         }
+        await resumeOnce(run);
+        if (!isCurrent(token)) return;
       } catch (error) {
         if (!isCurrent(token)) return;
         // A failed poll is not a failed run: the run continues on the server
@@ -227,7 +303,7 @@ export function useDirectoryReadinessRun({
         pollIntervalFor(tick),
       );
     },
-    [clearPoll, isCurrent],
+    [clearPoll, isCurrent, resumeOnce],
   );
 
   // Resume immediately when the tab comes back, rather than waiting out the
@@ -252,7 +328,7 @@ export function useDirectoryReadinessRun({
     setState({ status: "running" });
 
     try {
-      if (!hosted) {
+      if (!hosted && !start) {
         const controller = new AbortController();
         abortRef.current = controller;
         const { result } = await runLocalReadiness(publisher, server.name, {
@@ -263,13 +339,16 @@ export function useDirectoryReadinessRun({
         return;
       }
 
-      const receipt = await startHostedReadiness(publisher, server.name, {
-        submissionMode,
-        includeLlmObservations,
-        // One key per start press: a double-click replays onto the run it
-        // already made rather than dialling somebody's server twice.
-        idempotencyKey: `ui-${publisher}-${token}-${Date.now()}`,
-      });
+      // One key per start press: a double-click replays onto the run it
+      // already made rather than dialling somebody's server twice.
+      const idempotencyKey = `ui-${publisher}-${token}-${Date.now()}`;
+      const receipt = start
+        ? await start(idempotencyKey)
+        : await startHostedReadiness(publisher, server.name, {
+            submissionMode,
+            includeLlmObservations,
+            idempotencyKey,
+          });
       if (!isCurrent(token)) return;
       activeRunIdRef.current = receipt.runId;
       void pollRun(receipt.runId, token, 0);
@@ -288,12 +367,26 @@ export function useDirectoryReadinessRun({
     pollRun,
     publisher,
     server.name,
+    start,
     submissionMode,
   ]);
 
+  /** Follow a run started elsewhere, such as one still going after a reload. */
+  const watch = useCallback(
+    (runId: string) => {
+      if (activeRunIdRef.current === runId) return;
+      runTokenRef.current += 1;
+      activeRunIdRef.current = runId;
+      clearPoll();
+      void pollRun(runId, runTokenRef.current, 0);
+    },
+    [clearPoll, pollRun],
+  );
+
   const cancel = useCallback(async () => {
     const runId = activeRunIdRef.current;
-    if (!hosted) {
+    // As `run` decides: a run through `start` is hosted even in a local build.
+    if (!hosted && !start) {
       // Local has no run row; stopping means abandoning the request.
       runTokenRef.current += 1;
       abortRef.current?.abort();
@@ -314,7 +407,7 @@ export function useDirectoryReadinessRun({
         error: error instanceof Error ? error.message : String(error),
       }));
     }
-  }, [hosted, initialState]);
+  }, [hosted, initialState, start]);
 
   /**
    * Fetch the full report. Kept callable for retries, but the effect below is
@@ -353,15 +446,15 @@ export function useDirectoryReadinessRun({
   // with nothing under them, which reads as "nothing found" when the truth is
   // "49 findings you cannot see".
   useEffect(() => {
-    if (!state.run || !isTerminalRunStatus(state.run.status)) return;
+    if (start || !state.run || !isTerminalRunStatus(state.run.status)) return;
     if (!state.run.hasReport || state.report || state.reportLoading) return;
     void loadReport();
-  }, [loadReport, state.report, state.reportLoading, state.run]);
+  }, [loadReport, start, state.report, state.reportLoading, state.run]);
 
   /**
    * Adopt the newest run for this server after a reload.
    *
-   * Only when this section holds no run of its own, and only for a matching
+   * Only when this hook holds no run of its own, and only for a matching
    * server and publisher — the list endpoint's "newest" is the wrong answer
    * for somebody who was watching an older run.
    */
@@ -394,6 +487,7 @@ export function useDirectoryReadinessRun({
     hosted,
     isOpenAI,
     run,
+    watch,
     cancel,
     loadReport,
     rediscover,

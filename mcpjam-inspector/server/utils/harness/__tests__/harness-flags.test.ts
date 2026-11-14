@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { hostedWarmAgentEnabled } from "../harness-flags.js";
+import { harnessQuietClaudeStartup, hostedWarmAgentEnabled } from "../harness-flags.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -30,4 +30,14 @@ it("treats an empty restriction as unrestricted", () => {
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", undefined);
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", " , ");
   expect(hostedWarmAgentEnabled("organization-a")).toBe(true);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])("keeps Claude Code's start-up traffic unless switched on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", value);
+  expect(harnessQuietClaudeStartup()).toBe(false);
+});
+
+it("quiets Claude Code's start-up only when the switch reads exactly true", () => {
+  vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+  expect(harnessQuietClaudeStartup()).toBe(true);
 });

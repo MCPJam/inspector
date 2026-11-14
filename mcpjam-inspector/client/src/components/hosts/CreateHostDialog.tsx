@@ -288,14 +288,20 @@ export function CreateHostDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-y-auto sm:max-w-lg">
+        <DialogHeader className="shrink-0">
           <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col gap-4 py-2">
-          <div className="flex flex-col gap-2">
-            <Label>Start from template</Label>
-            <div className="grid grid-cols-3 gap-2">
+        <div className="flex min-h-0 flex-col gap-4 py-2">
+          <div className="flex min-h-0 flex-col gap-2">
+            <Label id="client-template-label" className="shrink-0">
+              Start from template
+            </Label>
+            <div
+              role="group"
+              aria-labelledby="client-template-label"
+              className="-mx-1 grid min-h-0 grid-cols-2 gap-2 overflow-y-auto overscroll-contain p-1 sm:grid-cols-3"
+            >
               {visibleCatalogHosts.map((host) => {
                 const isSelected = host.id === selectedTemplateId;
                 const templateAvailable =
@@ -309,7 +315,7 @@ export function CreateHostDialog({
                     onClick={() => setSelectedTemplateId(host.id)}
                     disabled={!templateAvailable}
                     className={cn(
-                      "flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
+                      "flex min-w-0 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
                       isSelected
                         ? "border-primary ring-2 ring-primary/30 bg-accent"
                         : "border-border hover:bg-accent/50",
@@ -322,7 +328,7 @@ export function CreateHostDialog({
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
-                    <span className="text-sm font-medium leading-none">
+                    <span className="break-words text-sm font-medium leading-none">
                       {host.label}
                     </span>
                   </button>
@@ -330,16 +336,16 @@ export function CreateHostDialog({
               })}
             </div>
             {adminOnly ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="shrink-0 text-xs text-muted-foreground">
                 {PROJECT_CLIENTS_ADMIN_ONLY_MESSAGE}
               </p>
             ) : templatesUnavailableMessage && (
-              <p className="text-xs text-muted-foreground">
+              <p className="shrink-0 text-xs text-muted-foreground">
                 {templatesUnavailableMessage}
               </p>
             )}
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex shrink-0 flex-col gap-2">
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
@@ -358,7 +364,7 @@ export function CreateHostDialog({
           </div>
         </div>
         {!HOSTED_MODE && selectedLocalHarness && (
-          <p className="text-sm text-muted-foreground">
+          <p className="shrink-0 text-sm text-muted-foreground">
             Install {LOCAL_HARNESS_CLIENT_NAMES[selectedLocalHarness]} on this computer.{" "}
             {LOCAL_RUNTIME_COPY[selectedLocalHarness].setup}
           </p>
@@ -370,8 +376,8 @@ export function CreateHostDialog({
             message={`Sign in to use ${selectedTemplateLabel || "this client"}.`}
           />
         )}
-        {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
-        <DialogFooter>
+        {setupError && <p role="alert" className="shrink-0 text-sm text-destructive">{setupError}</p>}
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={handleClose}>
             Cancel
           </Button>

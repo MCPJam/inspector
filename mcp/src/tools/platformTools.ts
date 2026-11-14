@@ -21,7 +21,17 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -208,6 +218,10 @@ import {
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 import { isClosedWorldOperation } from "./closedWorldOperations.js";
+import {
+  describeGuestMintFailure,
+  guestMintErrorContent,
+} from "../guestMint.js";
 
 /**
  * Catalog tools HELD off this surface while their feature is in beta.
@@ -227,18 +241,6 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
   feature: string;
   operations: ReadonlyArray<PlatformOperation<any, any>>;
 }> = [
-  {
-    feature: "readiness",
-    operations: [
-      startClaudeReadinessRunOperation,
-      startOpenAIReadinessRunOperation,
-      startMuseReadinessRunOperation,
-      getReadinessRunOperation,
-      listReadinessRunsOperation,
-      cancelReadinessRunOperation,
-      getReadinessReportOperation,
-    ],
-  },
   { feature: "unified sessions", operations: [searchSessionsOperation] },
   {
     feature: "the registry directory",
@@ -352,13 +354,25 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getServerSkillOperation,
   readServerSkillFileOperation,
   checkHostCompatibilityOperation,
+  // Directory readiness: in beta, yet listed for every caller. The backend refuses
+  // an organization outside the beta with the reason, and each description says so.
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   startMuseReadinessRunOperation,
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  deleteDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -863,6 +877,8 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "publish_study",
   "create_client",
   "duplicate_client",
+  // A new rehearsal; a replayed key returns the one it made.
+  "create_directory_submission",
   "send_feedback",
 ]);
 
@@ -1140,10 +1156,14 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
   // first tool execution), never at connect/list_tools.
-  const token = await context.getBearerToken();
-  if (!token) {
-    return toolError("No bearer token on the request.");
+  const bearer = await context.getBearerToken();
+  if (!bearer.ok) {
+    return toolError(
+      describeGuestMintFailure(bearer.failure),
+      guestMintErrorContent(bearer.failure)
+    );
   }
+  const token = bearer.token;
 
   const client = new PlatformApiClient({
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,

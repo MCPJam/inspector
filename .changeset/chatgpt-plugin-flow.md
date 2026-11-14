@@ -1,0 +1,7 @@
+---
+"@mcpjam/sdk": minor
+---
+
+ChatGPT's plugin submission is now a directory flow. `CHATGPT_PLUGIN_FLOW` (`getDirectoryFlow("chatgpt-plugin")`) describes the portal's stages: the ZIP upload, the "Metadata & Skills" and "MCPs" tabs, "Review information", "Submit for review" with its six attestations, and publishing. It places every OpenAI readiness check on them. Fields the package manages carry `managedBy: "package"` and a `packagePath`, and `validateDirectoryAnswerInput` refuses a person's write to one in the portal's words, while a package import passes `{ origin: "imported" }`. The reviewer's password is a `secret` field that holds a project secret's name, never the password; given the project's `savedSecrets`, `validateDirectoryAnswers` and `placeDirectoryResults` report `secretUnset` when that secret has no value. Also new: the `rows` control, `requiredWith`, placements for a family of ids (`prefix.*`) and `directoryPlacementOf`.
+
+The OpenAI engine no longer fails `openai.domain.challenge-served` on a 404 before the portal has issued a verification token: without a token the check is not evaluated and names the next step. The three UI checks whose evidence no run gathers (`openai.ui.csp-exact`, `openai.ui.output-schema` and `openai.ui.useful-without-ui`) say so, and `directoryVerdict` lists them apart instead of waiting on them. `collectZipArchiveObservations` reads encryption flags from the archive's central directory, so a valid package uploaded as a ZIP can reach a ready package lane.

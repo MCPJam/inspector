@@ -539,6 +539,31 @@ it("refuses hosted approval resumes with no paused state instead of replaying a 
   harnessState.continuations = [];
 });
 
+describe("Claude Code's quiet start on hosted boxes", () => {
+  const createHarnessArgs = () => {
+    const adapter = vi.mocked(getHarnessAdapter).mock.results.at(-1)!.value;
+    return vi.mocked(adapter.createHarness).mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+  };
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.mocked(getHarnessAdapter).mockClear();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("asks a hosted runtime for a quiet start when switched on", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+    await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
+    expect(createHarnessArgs()?.quietStartup).toBe(true);
+  });
+
+  it("asks for nothing while the switch is off", async () => {
+    await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
+    expect(createHarnessArgs()).not.toHaveProperty("quietStartup");
+  });
+});
+
 describe("the hosted command sandbox under Tool Approval", () => {
   const CODEX_LIKE = {
     supportsNativeToolApproval: true,

@@ -396,6 +396,8 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
     "Started a new session because this client's runtime changed, so earlier context isn't available.",
+  "sandbox-restored":
+    "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
   "legacy-cold-resume": null,
 };
 

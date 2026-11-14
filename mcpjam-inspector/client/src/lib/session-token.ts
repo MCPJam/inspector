@@ -454,10 +454,14 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   /^\/api\/mcp\/(chat-persistence|turn-authorization)\/?$/,
   // Reading command terms re-authorizes the server under the signed-in member.
   /^\/api\/mcp\/servers\/command-approval\/?$/,
-  // The /conformance page starting, polling, cancelling and reading a
-  // directory-readiness run.
-  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
+  // The /conformance page starting, polling, cancelling, resuming and reading
+  // a directory-readiness run.
+  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+  // The /readiness page: the flows it copies, and a project's directory
+  // submissions with their runs and results.
+  /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results))?)?$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the

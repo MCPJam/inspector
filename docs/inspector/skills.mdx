@@ -239,7 +239,7 @@ When a connected MCP server advertises the SEP-2640 skills extension, MCPJam dis
 
 Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
 
-The extension is mutually declared, so the client has to advertise it too. Each client has a **Skills over MCP** switch in its Protocol tab that decides this, in local and hosted mode alike. The MCPJam client has it on; other clients start with it off. A change applies on the next connect.
+The extension is mutually declared, so the client has to advertise it too. Each client has a **Skills over MCP** switch in its Protocol tab that decides this, in local and hosted mode alike. The MCPJam and VS Code clients have it on; other clients start with it off. A change applies on the next connect.
 
 Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows — "this host and server never had a skills conversation" is a different fact from "this server has no skills".
 
