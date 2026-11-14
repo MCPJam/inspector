@@ -11,8 +11,9 @@ import type { PlacedFinding } from "@mcpjam/sdk/browser";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@mcpjam/design-system/cn";
 import { EvidenceNote, EvidenceStatusBadge } from "./EvidenceStatus";
+import { ShowEvidence } from "./ShowEvidence";
 
-const SOURCE: Record<string, string> = {
+export const SOURCE: Record<string, string> = {
   wire: "Verified on your server",
   browser: "Seen in a browser",
   static: "Checked without calling your server",
@@ -31,7 +32,7 @@ const TONE: Record<Tone, string> = {
 };
 
 /** The directory's severity, in the words its portal would use. */
-function severityOf({ finding }: PlacedFinding): {
+export function severityOf({ finding }: PlacedFinding): {
   label?: string;
   tone: Tone;
 } {
@@ -74,6 +75,26 @@ export function McpjamMark({ children }: { children?: ReactNode }) {
   );
 }
 
+/** A dashed block marked "MCPJam" for what MCPJam adds to the copied page. */
+export function McpjamBlock(props: {
+  title: string;
+  note: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2 rounded-lg border border-dashed border-border px-4 py-3">
+      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <McpjamMark />
+        <span className="text-sm font-medium text-foreground">
+          {props.title}
+        </span>
+        {props.note}
+      </p>
+      {props.children}
+    </section>
+  );
+}
+
 function CheckResult({ entry }: { entry: PlacedFinding }) {
   const { finding, evidenceStatus } = entry;
   const severity = severityOf(entry);
@@ -95,6 +116,7 @@ function CheckResult({ entry }: { entry: PlacedFinding }) {
       </div>
       <p className="text-xs text-muted-foreground">
         {SOURCE[finding.provenance] ?? finding.provenance}
+        <ShowEvidence entry={entry} />
       </p>
       {detail ? <p className="mt-1">{detail}</p> : null}
       <EvidenceNote entry={entry} />
