@@ -11,6 +11,7 @@
  */
 
 import { acceptsEmptyArguments } from "../lazy-auth.js";
+import { directoryFixtureReferences } from "./fixtures.js";
 import {
   DIRECTORY_TEST_PLAN_LIMITS,
   DIRECTORY_TEST_PLAN_SCHEMA_VERSION,
@@ -97,7 +98,8 @@ export function draftDirectoryTestPlan(
  * The default order: cases that create fixtures, then reads, then other
  * writes, then every destructive case. Within each, closed-world calls come
  * first, so a budget that runs out stops at the calls that reach past the
- * server; otherwise the plan's order holds.
+ * server; otherwise the plan's order holds. A case that uses a fixture
+ * another case creates waits for that case, whatever its own place.
  */
 export function orderDirectoryTestCases(
   plan: Pick<DirectoryTestPlan, "tools" | "cases">
@@ -116,8 +118,33 @@ export function orderDirectoryTestCases(
             : 2;
     return stage * 2 + (entry?.openWorld === false ? 0 : 1);
   };
-  return plan.cases
-    .map((testCase, index) => ({ testCase, index, rank: rank(testCase) }))
-    .sort((a, b) => a.rank - b.rank || a.index - b.index)
-    .map(({ testCase }) => testCase);
+  const createdByPlan = new Set(
+    plan.cases.flatMap((testCase) => testCase.creates ?? [])
+  );
+  const waiting = plan.cases
+    .map((testCase, index) => ({
+      testCase,
+      index,
+      rank: rank(testCase),
+      needs: directoryFixtureReferences(testCase.arguments)
+        .map((reference) => reference.fixture)
+        .filter(
+          (fixture) =>
+            createdByPlan.has(fixture) && !testCase.creates?.includes(fixture)
+        ),
+    }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index);
+  const created = new Set<string>();
+  const ordered: DirectoryTestCase[] = [];
+  while (waiting.length > 0) {
+    // The first whose fixtures exist. In a cycle none does: the first goes
+    // anyway, and the validator names the fixture it uses too early.
+    const ready = waiting.findIndex(({ needs }) =>
+      needs.every((fixture) => created.has(fixture))
+    );
+    const [next] = waiting.splice(Math.max(ready, 0), 1);
+    ordered.push(next.testCase);
+    for (const fixture of next.testCase.creates ?? []) created.add(fixture);
+  }
+  return ordered;
 }

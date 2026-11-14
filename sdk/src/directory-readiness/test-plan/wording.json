@@ -21,9 +21,11 @@
     "actionCases.excluded": "{tool} is excluded but has cases. Remove its cases, or include the tool.",
     "actionCases.noValid": "{tool} has no valid-input case. Add one, or plan the tool as negative only.",
     "actionCases.noNegative": "{tool} is negative only and has no negative case. Add one.",
+    "actionCases.negativeOnly": "{tool} is negative only but has valid-input cases. Remove them, or plan the tool to run.",
     "argumentsMissing": "Case {caseId} has no arguments yet. Draft or enter them.",
     "writeScope.missing": "{tool} can change data and names no fixture it may change. Name its fixtures, or exclude it.",
     "writeScope.creates": "Case {caseId} creates {fixture}, which {tool} may not write. Add {fixture} to its permitted writes.",
+    "writeScope.uses": "{where} uses {fixture}, which {tool} may not write. Add {fixture} to its permitted writes.",
     "unknownFixture": "{where} names the fixture {fixture}, which the plan does not declare. Declare it, or correct the name.",
     "unknownFixture.value": "{where} uses the value \"{value}\" of {fixture}, which that fixture does not provide. Add it to the fixture, or correct the reference.",
     "fixtureCreation.none": "Nothing in the plan creates {fixture}. Add a case that creates it, or mark it existing.",
@@ -33,7 +35,9 @@
     "order.destructive": "Case {caseId} can destroy data and runs before case {later}. Move destructive cases to the end.",
     "cleanup.missing": "{fixture} is created by the plan and never removed. Add a cleanup step for it.",
     "cleanup.existing": "{fixture} was in the reviewer's account before the sweep, so cleanup must not remove it. Remove the step.",
-    "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes."
+    "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes.",
+    "cleanup.readOnly": "Cleanup calls {tool}, which only reads data. Use a tool that can remove {fixture}.",
+    "cleanup.writes": "Cleanup removes {fixture} with {tool}, which may not write it. Add {fixture} to the tool's permitted writes."
   },
   "cases": {
     "ambiguous": "The call started and did not finish, so it may have changed data. Check what it changed, then record what happened or rerun it.",

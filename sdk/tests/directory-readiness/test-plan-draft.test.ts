@@ -182,6 +182,45 @@ describe("orderDirectoryTestCases", () => {
     ]);
   });
 
+  it("runs a creator after the creator of a fixture it uses, whatever its priority", () => {
+    const write = (tool: string, openWorld: boolean, writes: string[]) => ({
+      tool,
+      effect: "write" as const,
+      openWorld,
+      action: "run" as const,
+      writes,
+    });
+    const folder = { $fixture: "scratchFolder", value: "id" };
+    // create_doc is closed world, so it outranks create_folder, but it puts
+    // the document in the folder create_folder makes.
+    const ordered = orderDirectoryTestCases({
+      tools: [
+        write("create_folder", true, ["scratchFolder"]),
+        write("create_doc", false, ["scratchFolder", "scratchDoc"]),
+      ],
+      cases: [
+        {
+          id: "create_folder#valid",
+          tool: "create_folder",
+          kind: "valid",
+          arguments: { name: "Readiness scratch" },
+          creates: ["scratchFolder"],
+        },
+        {
+          id: "create_doc#valid",
+          tool: "create_doc",
+          kind: "valid",
+          arguments: { folderId: folder, title: "Readiness scratch" },
+          creates: ["scratchDoc"],
+        },
+      ],
+    });
+    expect(caseIds(ordered)).toEqual([
+      "create_folder#valid",
+      "create_doc#valid",
+    ]);
+  });
+
   it("puts a case whose tool is not in the plan with the destructive ones", () => {
     const plan = completePlan();
     const stray = {
