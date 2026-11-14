@@ -5,6 +5,7 @@ import { useHarnessApprovalStop } from "./use-harness-approval-stop";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
+import { createChatTurnQueue, createIdleGate } from "@/lib/chat-turn-queue";
 import { appToolInvocationEvent, appToolInvocations } from "@/shared/app-tool-rendezvous";
 import { fulfillHarnessAppTool } from "@/components/playground/fulfill-harness-app-tool";
 import { isCurrentHarnessStartup, isHarnessStartupPart, type HarnessStartupPhase } from "@/shared/harness-startup";
@@ -5495,6 +5496,14 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // One turn at a time per session: a send that arrives while a turn runs
+  // waits for it to end and for React to render the session idle.
+  const [runTurn] = useState(createChatTurnQueue);
+  const [idleGate] = useState(createIdleGate);
+  useEffect(() => {
+    idleGate.set(status === "ready" || status === "error");
+  }, [idleGate, status]);
+
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
     (options: {
@@ -5551,20 +5560,25 @@ export function useChatSession(
         toast.error(requestChoiceRef.current.reason);
         return Promise.resolve(false);
       }
-      savedClientSendGuard.begin();
+      // Taken now: a Stop, a thread or settings change, or unmount while this
+      // send waits for the running turn makes it stale, and it is dropped.
       const sendIsCurrent = sendPreparationGuard.begin();
-      chatToolCallRequestIdsRef.current.clear();
-      pendingWidgetModelContextRef.current =
-        widgetModelContext && widgetModelContext.length > 0
-          ? widgetModelContext
-          : undefined;
+      let turn: Promise<void> | undefined;
       // Resolves `true` once `baseSendMessage` has actually been invoked, and
       // `false` on every fail-closed path below. The preflight bails by
       // RETURNING (after surfacing its own toast), not by rejecting, so a caller
       // that merely awaits this promise cannot tell "sent" from "swallowed" —
       // `rewindToMessage` needs that distinction to avoid announcing a branch
       // whose turn never ran. Callers that fire-and-forget are unaffected.
-      return (async (): Promise<boolean> => {
+      const startTurn = async (): Promise<boolean> => {
+        if (!sendIsCurrent()) return false;
+        // These belong to this turn, so they wait until the previous one ends.
+        savedClientSendGuard.begin();
+        chatToolCallRequestIdsRef.current.clear();
+        pendingWidgetModelContextRef.current =
+          widgetModelContext && widgetModelContext.length > 0
+            ? widgetModelContext
+            : undefined;
         // Hosted preflight: resolve selected runtime server NAMES → persisted
         // Convex ids (persisting ad-hoc/App servers) BEFORE the synchronous
         // transport body builds, so the hosted send never carries a display
@@ -5669,6 +5683,9 @@ export function useChatSession(
           );
           return false;
         }
+        // A turn started outside this queue (an approval or sign-in
+        // continuation) may have begun during the preflight above.
+        await idleGate.wait();
         try {
           if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
             pendingWidgetModelContextRef.current = undefined;
@@ -5752,6 +5769,7 @@ export function useChatSession(
           } else {
             sent = baseSendMessage({ text, ...extra }, requestOptions);
           }
+          turn = sent;
           if (cancelClaim) {
             // The settle effect then clears the marker once the server's
             // finished part or the call's result arrived, and otherwise
@@ -5771,9 +5789,15 @@ export function useChatSession(
           throw error;
         }
         return true;
-      })();
+      };
+      return runTurn(
+        async () => ({ result: await startTurn(), turn }),
+        idleGate,
+      );
     },
     [
+      runTurn,
+      idleGate,
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
