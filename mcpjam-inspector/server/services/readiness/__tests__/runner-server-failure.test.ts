@@ -3,8 +3,9 @@
  *
  * The SDK's gather marks that on the evidence as `serverFailure`, and the
  * grader already drops observations from such a run, so asking for them
- * would spend for nothing. The gather is wrapped here to add the mark, so this
- * holds whichever SDK gather sets it.
+ * would spend for nothing. The gather is wrapped here so each test sets the
+ * mark itself: the SDK's gather records a failure for the unreachable test
+ * server, and the second test needs a run that recorded none.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => {
       ...args: Parameters<typeof actual.gatherClaudeReadinessEvidence>
     ) => ({
       ...(await actual.gatherClaudeReadinessEvidence(...args)),
-      ...(mark.serverFailure ? { serverFailure: mark.serverFailure } : {}),
+      serverFailure: mark.serverFailure,
     }),
   };
 });
