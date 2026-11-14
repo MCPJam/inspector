@@ -261,6 +261,8 @@ export function createDraftStore(render: () => void) {
   const left = new Map<string, SubmissionDraft>();
   return {
     draft: () => current.draft(),
+    /** The open submission; a new one each time another opens. */
+    scope: () => current.scope,
     load: () => current.load(),
     /**
      * Opens another submission. The one open now keeps its draft until the
@@ -381,8 +383,10 @@ export function useDirectorySubmission({
   );
   const startRun = useCallback(async () => {
     // A run grades the answers stored when it starts, so it starts only
-    // once every edit is saved.
-    if (await store.saveNow()) await run();
+    // once every edit is saved, and only for the submission still open.
+    const scope = store.scope();
+    if (!(await store.saveNow())) return;
+    if (store.scope() === scope) await run();
   }, [store, run]);
 
   return {

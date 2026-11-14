@@ -339,6 +339,33 @@ describe("useDirectorySubmission", () => {
     });
   });
 
+  it("starts no run when another submission opened during the save", async () => {
+    const hook = renderHook(
+      ({ submissionId }) =>
+        useDirectorySubmission({
+          projectId: "proj_1",
+          submissionId,
+          server: { name: "Sample server" },
+        }),
+      { initialProps: { submissionId: "sub_1" } },
+    );
+    await settle();
+    const answer = heldSave();
+    act(() => hook.result.current.setAnswer("listing.name", "Mine"));
+    let started: Promise<void> = Promise.resolve();
+    act(() => {
+      started = hook.result.current.startRun();
+    });
+
+    hook.rerender({ submissionId: "sub_2" });
+    await act(async () => {
+      answer(viewAt(4, "Mine"));
+      await started;
+    });
+    expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(1);
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
   it("reopening a submission whose save failed after it closed shows the edit", async () => {
     api.updateDirectorySubmission.mockRejectedValueOnce(
       new PlatformApiError("The slug is not valid.", "VALIDATION_ERROR", {
