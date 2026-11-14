@@ -51,6 +51,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 
 import v1Routes from "../index.js";
 import { v1OnError } from "../envelope.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 const RUN_ID = "runcomparexxxxxxxxxxxxxxxxxxxxxx";
 const BASE = `/api/v1/projects/p1/eval-runs/${RUN_ID}/compare`;
@@ -250,4 +251,38 @@ describe("compare route: baseCommitSha", () => {
     expect(body.details.baseCommitSha).toBe(SHA);
     expect(body.message).toMatch(/commit SHA/i);
   });
+});
+
+describe("compare route: Convex status errors", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_URL = "https://convex.example.com";
+    process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
+    convexQueryMock.mockResolvedValue(RUN_DOC);
+  });
+
+  it.each([
+    ["a Convex 401", new ConvexHttpStatusError(401, "Unauthorized"), 401],
+    [
+      "a proxy's 500",
+      new ConvexHttpStatusError(500, "500 Internal Server Error"),
+      502,
+    ],
+    // Deploy skew: the action is not on this deployment yet.
+    [
+      "a missing function",
+      new ConvexHttpStatusError(
+        404,
+        "Could not find public function for 'testSuites:compareTestSuiteRuns'",
+      ),
+      422,
+    ],
+  ])(
+    "answers %s on the action by its status",
+    async (_label, error, status) => {
+      convexActionMock.mockRejectedValue(error);
+      const res = await get(BASE);
+      expect(res.status).toBe(status);
+    },
+  );
 });

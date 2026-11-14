@@ -28,13 +28,16 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
-import { redactedReadRefusalError } from "./convex-read-errors.js";
+import {
+  redactedReadRefusalError,
+  translateConvexStatusError,
+} from "./convex-read-errors.js";
+import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 
 const images = new Hono();
@@ -98,18 +101,20 @@ function toEnvironmentDto(row: EnvironmentRow) {
   };
 }
 
-function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
+const ENVIRONMENT_NOT_FOUND =
+  "Environment or project not found, or you do not have access to it.";
+
+/**
+ * For the reads only. The mutations keep the write translator, whose timeout
+ * and transport branches still read a status error's body as before.
+ */
+function translateConvexReadFailure(error: unknown): WebRouteError {
+  return (
+    translateConvexStatusError(error, {
+      scope: "v1.images",
+      notFoundMessage: ENVIRONMENT_NOT_FOUND,
+    }) ?? translateConvexWriteError(error)
+  );
 }
 
 function translateConvexWriteError(error: unknown): WebRouteError {
@@ -118,8 +123,7 @@ function translateConvexWriteError(error: unknown): WebRouteError {
     // Convex collapses "project missing", "not a member", "env missing", and
     // the shared-env admin gate into generic errors; keep the v1 message
     // neutral rather than leaking which.
-    notFoundMessage:
-      "Environment or project not found, or you do not have access to it.",
+    notFoundMessage: ENVIRONMENT_NOT_FOUND,
     fallbackMessage: "Environment write rejected by the platform",
     // The admin gate here also guards SHARED environments, so answering 403
     // would confirm the resource exists to someone who cannot otherwise see it.
@@ -138,7 +142,7 @@ async function readEnvironmentInProject(
   projectId: string,
   environmentId: string,
 ): Promise<EnvironmentRow> {
-  const readClient = createConvexReadClient(convexAuthToken);
+  const readClient = createConvexClient(convexAuthToken);
   let env: EnvironmentRow | null;
   try {
     env = (await readClient.query(
@@ -152,10 +156,8 @@ async function readEnvironmentInProject(
     // in production — answers the same neutral 404 instead of the write
     // translator's terminal 500 (MJ-021).
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexReadFailure(error)
     );
   }
   if (!env || env.projectId !== projectId) {
@@ -263,7 +265,7 @@ const validateBlueprintSchema = z.strictObject({
 // GET /v1/projects/:projectId/images — list a project's environments.
 images.get("/projects/:projectId/images", async (c) => {
   const projectId = requireProjectIdArg(c.req.param("projectId"), "v1.images");
-  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let rows: EnvironmentRow[] | null | undefined;
   try {
     rows = (await readClient.query(
@@ -273,10 +275,8 @@ images.get("/projects/:projectId/images", async (c) => {
   } catch (error) {
     // Project-scoped list: same masked-refusal reading as the detail read.
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexReadFailure(error)
     );
   }
   return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
@@ -312,7 +312,7 @@ images.post("/projects/:projectId/images/validate", async (c) => {
     validateBlueprintSchema,
     await readJsonObjectBody(c),
   );
-  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  const readClient = createConvexClient(await getConvexBearerForRequest(c));
   let result:
     | { ok: true; baseImageDigest: string }
     | { ok: false; errors: { path: string; message: string }[] };
@@ -325,10 +325,8 @@ images.post("/projects/:projectId/images/validate", async (c) => {
     // Saves nothing, so this is a read — and the only one on the route, so it
     // scopes the path's project id: same reading as the list (MJ-021).
     throw (
-      redactedReadRefusalError(
-        error,
-        "Environment or project not found, or you do not have access to it.",
-      ) ?? translateConvexWriteError(error)
+      redactedReadRefusalError(error, ENVIRONMENT_NOT_FOUND) ??
+      translateConvexReadFailure(error)
     );
   }
   return v1Resource(c, result);
@@ -395,7 +393,7 @@ images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
   const environmentId = c.req.param("imageId");
   const token = await getConvexBearerForRequest(c);
   await readEnvironmentInProject(token, projectId, environmentId);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let rows: BuildRow[] | null | undefined;
   try {
     rows = (await readClient.query(
@@ -403,7 +401,7 @@ images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
       { environmentId } as any,
     )) as BuildRow[] | null | undefined;
   } catch (error) {
-    throw translateConvexWriteError(error);
+    throw translateConvexReadFailure(error);
   }
   return v1PageJson(c, (rows ?? []).map(toBuildDto));
 });
