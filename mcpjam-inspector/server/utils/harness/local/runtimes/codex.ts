@@ -143,11 +143,14 @@ export const codexLocalRuntime: LocalRuntime<"codex"> = {
   // `OPENAI_BASE_URL` is the gateway's BARE origin, no `/v1`: Codex appends
   // `/responses`, and the gateway forwards exactly `POST /responses` under the
   // broker's own OpenAI base path.
-  childAuth: (gateway) =>
-    ({
-      CODEX_API_KEY: gateway.sessionCapability,
-      OPENAI_BASE_URL: gateway.baseUrl,
-    }) as HarnessAuth,
+  credential: {
+    kind: "gateway",
+    childAuth: (gateway) =>
+      ({
+        CODEX_API_KEY: gateway.sessionCapability,
+        OPENAI_BASE_URL: gateway.baseUrl,
+      }) as HarnessAuth,
+  },
   // Codex runs its own shell, so Git Bash is neither looked up nor handed to it.
   gitBashOnWindows: false,
 };

@@ -121,11 +121,14 @@ export const copilotCliLocalRuntime: LocalRuntime<"copilot-cli"> = {
   // The CLI's OpenAI Responses provider: the gateway's bare origin (it appends
   // `/responses`) and the capability as its key, exactly where the hosted
   // broker puts its URL and placeholder.
-  childAuth: (gateway) =>
-    ({
-      OPENAI_BASE_URL: gateway.baseUrl,
-      COPILOT_MODEL_PROXY_PLACEHOLDER: gateway.sessionCapability,
-    }) as HarnessAuth,
+  credential: {
+    kind: "gateway",
+    childAuth: (gateway) =>
+      ({
+        OPENAI_BASE_URL: gateway.baseUrl,
+        COPILOT_MODEL_PROXY_PLACEHOLDER: gateway.sessionCapability,
+      }) as HarnessAuth,
+  },
   // No built-in tools, so no shell to look up.
   gitBashOnWindows: false,
 };

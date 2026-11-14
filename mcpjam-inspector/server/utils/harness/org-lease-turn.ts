@@ -255,7 +255,7 @@ export class OrgLeaseTurn {
       runOwnsSession: this.runOwnsSession,
     });
     if (this.selection) this.upstream = preparation.prepared.orgUpstream;
-    this.leaseRunId = preparation.prepared.brokerRunId;
+    this.leaseRunId = preparation.prepared.brokerRunId ?? undefined;
     return {
       prepared: preparation.prepared,
       sessionId: preparation.sessionId,
