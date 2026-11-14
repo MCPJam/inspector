@@ -15,7 +15,6 @@ import {
 import type { ProjectSecretView } from "@/hooks/useProjectSecrets";
 import { ReviewerPath, ReviewerSection } from "../ReviewerSection";
 import {
-  ACTION,
   ASKED,
   attemptIn,
   EMAIL_SECRET,
@@ -291,7 +290,11 @@ describe("ReviewerSection", () => {
     await status("Credentials saved; reviewer sign-in waiting for a person");
     // On the stage that stopped it, and again in the handover.
     expect(screen.getAllByText(ASKED)).toHaveLength(2);
-    expect(screen.getByText(ACTION)).toBeVisible();
+    expect(
+      screen.getByText(
+        /^The reviewer account must sign in without a verification step/,
+      ),
+    ).toBeVisible();
     expect(
       screen.getByText(
         "A teammate or an agent can resume this attempt with its id.",

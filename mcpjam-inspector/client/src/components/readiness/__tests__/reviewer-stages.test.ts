@@ -102,7 +102,7 @@ describe("reviewerPathRows", () => {
 
   it("a verification stop: the step that asked waits for a person, and what follows waits on it", () => {
     const path = reviewerPathRows(WAITING, []);
-    const waits = "Waits for a person to finish the sign-in.";
+    const waits = "Waits for the sign-in.";
     expect(words(path.rows)).toEqual([
       ["Sign-in page", "established", OPENED.detail],
       ["Fresh sign-in", "established", SIGNED_IN.detail],
@@ -290,51 +290,75 @@ describe("frameOf", () => {
 });
 
 describe("handoverOf", () => {
-  it("a verification stop: what the page asked for, who can finish it, and what they do", () => {
+  /** A rehearsal stopped for a person at `name`, in the rehearsal's words. */
+  const stoppedAt = (
+    name: "verification" | "consent" | "sign-in",
+    reason: string,
+  ) =>
+    handoverOf(
+      attemptIn("waiting-for-person", {
+        stages: [OPENED, stage(name, "blocked", reason, 13)],
+        waitingFor: {
+          reason,
+          action: "Sign in as the reviewer yourself, then resume this attempt.",
+          since: NOV_13,
+        },
+      }),
+    );
+
+  it("a verification stop: the account must sign in without one, and whoever manages it removes it", () => {
     expect(handoverOf(WAITING)).toEqual({
       asked: ASKED,
       approximated: false,
       frame: { recordingId: "res_1", seconds: 11.2 },
-      finisher:
-        "Someone who can sign in as the reviewer and complete its verification step.",
-      action: ACTION,
+      finisher: "Whoever manages the reviewer account.",
+      action:
+        "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
       since: NOV_13,
+    });
+    // Signing in yourself changes nothing for the attempt, so that is never advised.
+    expect(handoverOf(WAITING)?.action).not.toBe(ACTION);
+  });
+
+  it("a bot check: whoever manages the sign-in turns it off", () => {
+    expect(
+      stoppedAt(
+        "verification",
+        'The sign-in page asked for a verification step MCPJam cannot complete: "Confirm you\'re not a robot".',
+      ),
+    ).toMatchObject({
+      finisher: "Whoever manages your server's sign-in.",
+      action:
+        "Turn the bot check off for the reviewer account or its sign-in. Then resume this attempt.",
     });
   });
 
-  it("a consent page it could not read needs someone who can approve access", () => {
-    const reason =
-      "Approximated: MCPJam could not tell which control on the consent page approves access, so it clicked none.";
-    const handover = handoverOf(
-      attemptIn("waiting-for-person", {
-        stages: [OPENED, SIGNED_IN, stage("consent", "blocked", reason, 13)],
-        waitingFor: {
-          reason,
-          action:
-            "Approve access as the reviewer yourself, then resume this attempt.",
-          since: NOV_13,
-        },
-      }),
+  it("a consent page it could not read: one button that approves access", () => {
+    const handover = stoppedAt(
+      "consent",
+      "Approximated: MCPJam could not tell which control on the consent page approves access, so it clicked none.",
     );
     expect(handover).toMatchObject({
       asked:
         "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
       approximated: true,
-      finisher: "Someone who can sign in as the reviewer and approve access.",
+      finisher: "Whoever manages your server's sign-in.",
+      action:
+        "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
     });
   });
 
-  it("any other stop needs someone who can sign in as the reviewer", () => {
-    const reason =
-      "MCPJam did not recognize a page in the sign-in, so it stopped.";
+  it("any other stop: a sign-in that asks only for an email and password", () => {
     expect(
-      handoverOf(
-        attemptIn("waiting-for-person", {
-          stages: [OPENED, stage("sign-in", "blocked", reason, 20)],
-          waitingFor: { reason, action: "Resume it.", since: NOV_13 },
-        }),
-      )?.finisher,
-    ).toBe("Someone who can sign in as the reviewer.");
+      stoppedAt(
+        "sign-in",
+        "MCPJam did not recognize a page in the sign-in, so it stopped.",
+      ),
+    ).toMatchObject({
+      finisher: "Whoever manages your server's sign-in.",
+      action:
+        "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.",
+    });
   });
 
   it("there is no handover unless the attempt waits for a person", () => {

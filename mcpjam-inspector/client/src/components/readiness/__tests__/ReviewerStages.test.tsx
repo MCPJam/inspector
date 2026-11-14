@@ -128,6 +128,10 @@ describe("the reviewer path's stages", () => {
   it("a full rehearsal: each stage in words, the identity once, and one recording its frames open", async () => {
     renderPath(PASSED, VERIFIED);
     await waitFor(async () => expect(await rows()).toHaveLength(6));
+    // Frames come once the run's recording is read.
+    const recording = await within(region()).findByRole("button", {
+      name: "Recording 0:48",
+    });
     const texts = (await rows()).map((row) => row.textContent);
     expect(texts).toEqual([
       expect.stringContaining("Reviewer credentials"),
@@ -147,9 +151,6 @@ describe("the reviewer path's stages", () => {
     });
 
     // The recording appears once, closed until asked for.
-    const recording = within(region()).getByRole("button", {
-      name: "Recording 0:48",
-    });
     expect(recording).toHaveAttribute("aria-expanded", "false");
     expect(within(region()).queryByLabelText(/^Recording of/)).toBeNull();
 
@@ -193,7 +194,7 @@ describe("the reviewer path's stages", () => {
     expect(within(region()).getAllByText("Approximated")).toHaveLength(1);
   });
 
-  it("a verification stop: the step waits for a person, and the handover says what, who and how", async () => {
+  it("a verification stop: the step waits for a person, and the handover says what, who and what works", async () => {
     renderPath(WAITING);
     const verification = await rowNamed("Verification");
     expect(verification.getByText("Needs a person")).toBeVisible();
@@ -207,25 +208,36 @@ describe("the reviewer path's stages", () => {
     expect(
       handover.getByText("What the page asked for").nextElementSibling,
     ).toHaveTextContent(ASKED);
-    expect(
-      handover.getByText(
-        "Someone who can sign in as the reviewer and complete its verification step.",
-      ),
-    ).toBeVisible();
-    expect(handover.getByText(ACTION)).toBeVisible();
+    const who = handover.getByText("Who can finish it");
+    expect(who.nextElementSibling).toHaveTextContent(
+      "Whoever manages the reviewer account.",
+    );
+    expect(who.nextElementSibling?.nextElementSibling).toHaveTextContent(
+      "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
+    );
+    // The rehearsal's own advice, to sign in as the reviewer elsewhere, changes
+    // nothing for the attempt, so the page does not repeat it.
+    expect(screen.queryByText(ACTION)).toBeNull();
     expect(
       handover.getByText(
         "A teammate or an agent can resume this attempt with its id.",
       ),
     ).toBeVisible();
     expect(handover.getByText("att_1")).toBeVisible();
-    // No link is offered: nothing serves one for a run's own sign-in.
+    expect(
+      handover.getByRole("button", { name: "Copy resume command" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Cancel rehearsal" }),
+    ).toBeVisible();
+    // Nothing on the path offers a link to finish the sign-in somewhere else.
     expect(screen.queryByRole("link")).toBeNull();
-    expect(screen.queryByText(/single-use/i)).toBeNull();
+    expect(region()).not.toHaveTextContent(/\blink\b/i);
 
     // The page it stopped on is a frame of the recording too.
     await userEvent.click(
-      handover.getByRole("button", {
+      await handover.findByRole("button", {
         name: "Screenshot of the page the sign-in stopped on",
       }),
     );

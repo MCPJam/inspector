@@ -1,11 +1,6 @@
 /**
  * The handover when the reviewer sign-in stops for a person: what the page
- * asked for, who can finish it, and how a teammate or an agent picks the
- * same attempt up again.
- *
- * It offers no link to finish the sign-in from. The rehearsal's connection
- * is bound to its run and has none, so the person signs in as the reviewer
- * on the server's own sign-in page, and a resumed run signs in again.
+ * asked for, who can change the sign-in, and how the attempt is resumed.
  */
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@mcpjam/design-system/button";

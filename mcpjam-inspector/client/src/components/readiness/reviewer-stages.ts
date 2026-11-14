@@ -129,10 +129,7 @@ function unreached(
     case "running":
       return { status: "not-tested", detail: "Not reached yet." };
     case "waiting-for-person":
-      return {
-        status: "blocked",
-        detail: "Waits for a person to finish the sign-in.",
-      };
+      return { status: "blocked", detail: "Waits for the sign-in." };
   }
   return recorded
     ? {
@@ -231,17 +228,35 @@ export interface Handover {
   asked: string;
   approximated: boolean;
   frame?: Frame;
-  /** Who can finish the sign-in. */
+  /** Who can change the sign-in. */
   finisher: string;
-  /** What they do, then: resume. */
+  /** The change, then: resume. */
   action: string;
   since: number;
 }
 
-const FINISHERS: Partial<Record<ReviewerStage["stage"], string>> = {
-  verification:
-    "Someone who can sign in as the reviewer and complete its verification step.",
-  consent: "Someone who can sign in as the reviewer and approve access.",
+/** What works today: a resumed run signs in afresh, so the sign-in must change. */
+const NEXT_STEPS = {
+  verification: {
+    finisher: "Whoever manages the reviewer account.",
+    action:
+      "The reviewer account must sign in without a verification step, because directory reviewers can't complete one either. Turn it off for that account, or save credentials for an account that has none. Then resume this attempt.",
+  },
+  "bot-check": {
+    finisher: "Whoever manages your server's sign-in.",
+    action:
+      "Turn the bot check off for the reviewer account or its sign-in. Then resume this attempt.",
+  },
+  consent: {
+    finisher: "Whoever manages your server's sign-in.",
+    action:
+      "Give the consent page one button that approves access, such as Allow. Then resume this attempt.",
+  },
+  other: {
+    finisher: "Whoever manages your server's sign-in.",
+    action:
+      "Change the sign-in so it asks the reviewer only for an email and password. Then resume this attempt.",
+  },
 };
 
 /** What a person needs to know when the rehearsal stopped for one. */
@@ -249,17 +264,23 @@ export function handoverOf(attempt: ReviewerAttempt | null): Handover | null {
   if (attempt?.state !== "waiting-for-person" || !attempt.waitingFor) {
     return null;
   }
-  const { reason, action, since } = attempt.waitingFor;
+  const { reason, since } = attempt.waitingFor;
   const stop = shownRun(attempt).stages.at(-1);
   const { detail, approximated } = unprefixed(reason);
+  // The rehearsal files a bot check as a verification step; the page says which.
+  const kind =
+    stop?.stage === "verification"
+      ? /captcha|not a robot/i.test(reason)
+        ? "bot-check"
+        : "verification"
+      : stop?.stage === "consent"
+        ? "consent"
+        : "other";
   return {
     asked: detail ?? reason,
     approximated,
     frame: frameOf(stop?.evidence?.screenshotArtifactId),
-    finisher:
-      (stop && FINISHERS[stop.stage]) ??
-      "Someone who can sign in as the reviewer.",
-    action,
+    ...NEXT_STEPS[kind],
     since,
   };
 }
