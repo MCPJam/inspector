@@ -798,6 +798,20 @@ describe("v1 directory submissions", () => {
       expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
     });
 
+    it("says a start that names a test plan revision found no saved plan, not that the run is missing", async () => {
+      const message =
+        "This submission has no saved test plan. Save one, then start the run with its revision.";
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
+        throw new ConvexError({ code: "NOT_FOUND", message });
+      };
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 1 },
+      });
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as Record<string, any>).message).toBe(message);
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
     it("refuses a run the backend says does not match the submission", async () => {
       mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
         throw new ConvexError({

@@ -128,6 +128,9 @@ export type {
   PlatformDirectorySubmissionSnapshotsView,
 } from "./directory-submission-handoff-types.js";
 export type {
+  PlatformDirectoryTestArgumentDraft,
+  PlatformDirectoryTestArgumentDrafting,
+  PlatformDirectoryTestArgumentUndecided,
   PlatformDirectoryTestCaseCounts,
   PlatformDirectoryTestPlanCatalog,
   PlatformDirectoryTestPlanDraft,

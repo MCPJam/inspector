@@ -13,6 +13,7 @@ import { ConformanceServerPicker } from "@/components/conformance/ConformancePag
 import { ScopedNavigate } from "@/components/routing/scoped-navigate";
 import type { DirectoryReadinessState } from "@/hooks/use-directory-readiness-run";
 import { useDirectorySubmission } from "@/hooks/use-directory-submission";
+import { useDirectoryTestPlan } from "@/hooks/use-directory-test-plan";
 import { useProjectServers } from "@/hooks/useViews";
 import { routePaths } from "@/lib/app-navigation";
 import { useAppRouteContext } from "@/lib/app-route-context";
@@ -25,6 +26,8 @@ import type { ServerWithName } from "@/state/app-types";
 import { McpjamMark } from "./McpjamChecks";
 import { PortalFrame } from "./PortalFrame";
 import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
+import { isConfirmed, recordConfirmed } from "./test-plan-consent";
+import { TestPlanConsentDialog } from "./TestPlanConsentDialog";
 import "./portal-theme.css";
 
 /** The one flow with a rehearsal so far: Claude's MCP connector. */
@@ -229,6 +232,43 @@ export function ReadinessPage({
     server: chosen?.server ?? NO_SERVER,
   });
   const { flow, view, run } = session;
+  // A run starts with the saved plan revision the run button names.
+  const plan = useDirectoryTestPlan({
+    projectId: projectId ?? "",
+    submissionId: projectId ? openId : null,
+    runKey: view
+      ? `${view.lastRunId ?? ""}:${view.resultsRunId ?? ""}:${run.status}`
+      : "",
+  });
+  const planRevision = plan.saved?.revision;
+  // The run waiting on the person, and the plan revision it would send.
+  const [confirming, setConfirming] = useState<{
+    submissionId: string;
+    revision: number;
+  } | null>(null);
+  const scope =
+    projectId && openId ? { projectId, submissionId: openId } : null;
+  const startRun = () => {
+    if (
+      scope &&
+      planRevision !== undefined &&
+      !isConfirmed(scope, planRevision)
+    ) {
+      setConfirming({ ...scope, revision: planRevision });
+    } else {
+      void session.startRun(planRevision);
+    }
+  };
+  // Shown only while the saved plan is the revision the run would send, so
+  // what the person reads is what runs. A newer save hides it unanswered.
+  const saved = plan.saved;
+  const pending =
+    scope &&
+    saved &&
+    confirming?.submissionId === scope.submissionId &&
+    saved.revision === confirming.revision
+      ? { scope, saved }
+      : null;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -304,11 +344,24 @@ export function ReadinessPage({
         canRun={Boolean(view) && run.status !== "unavailable"}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
-        onRun={() => void session.startRun()}
+        planRevision={planRevision}
+        onRun={startRun}
       />
       <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
         {body}
       </div>
+      {pending ? (
+        <TestPlanConsentDialog
+          saved={pending.saved}
+          serverName={chosen?.server.name ?? ""}
+          onConfirm={() => {
+            setConfirming(null);
+            recordConfirmed(pending.scope, pending.saved.revision);
+            void session.startRun(pending.saved.revision);
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </div>
   );
 }
