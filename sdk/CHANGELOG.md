@@ -1,5 +1,39 @@
 # `@mcpjam/sdk` changelog
 
+## 10.7.0
+
+### Minor Changes
+
+- [#7479](https://github.com/MCPJam/inspector/pull/7479) [`8c541e8`](https://github.com/MCPJam/inspector/commit/8c541e815e75ff771e0140fa7ab3f9e5a99ddb76) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Eight new built-in clients from the November probes: ChatGPT Desktop, ChatGPT Work, ChatGPT Work Desktop, Claude Code Desktop, Claude Code Web, Codex CLI, Muse and Grokbot. Each has a host template, a client style and a bundled catalog row. Codex CLI runs on the Codex harness and sits behind the same rollout flag as Codex.
+
+### Patch Changes
+
+- [#7485](https://github.com/MCPJam/inspector/pull/7485) [`13b5fba`](https://github.com/MCPJam/inspector/commit/13b5fba0c451c16923b0c832a01e81f3e77d73d4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The chat sessions API now refuses a client that runs a vendor's agent loop instead of answering on MCPJam's emulated engine under that client's name. Use the client in the Playground, or choose a different client.
+
+- [#7437](https://github.com/MCPJam/inspector/pull/7437) [`a0b5a68`](https://github.com/MCPJam/inspector/commit/a0b5a680307967fa1329245cbf938c4db7b81ba7) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The built-in host catalog matches the November probes. ChatGPT supports `downloadFile`, ChatGPT and Codex grant clipboard write and no longer load cdn.jsdelivr, unpkg or esm.sh without declaring them, Claude Desktop sends `toolInfo` and 12px safe-area insets, and Copilot, Cursor and Slack run Apps in a same-origin iframe. Host versions move to Codex 26.1103.60933, Cursor 3.29.9, Gemini ADK 2.14.0 and Claude Code 2.1.312.
+
+- [#7478](https://github.com/MCPJam/inspector/pull/7478) [`fff6ee6`](https://github.com/MCPJam/inspector/commit/fff6ee6e0a46dcfd999d433c7f63f67ec55af345) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - The built-in VS Code client now turns on Skills over MCP and runs MCP Apps in a same-origin frame, as the latest VS Code probe measured.
+
+## 10.6.0
+
+### Minor Changes
+
+- [#7417](https://github.com/MCPJam/inspector/pull/7417) [`53163b1`](https://github.com/MCPJam/inspector/commit/53163b1852e2e6e56958af6d7dd5301f223ff8b1) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The SDK manages a saved server's accounts. It adds `listServerAccounts`, `getServerAccount`, `uploadServerAccountTokens`, `updateServerAccount` and `deleteServerAccount` with matching operations, each addressing an account by id or name, and none returns a token. `uploadServerAccountTokens` answers `created: true` when the upload made the account and `created: false` when it replaced the token of an existing one. Listing, reading and deleting accounts are tools on the hosted MCP server, and a turn of `POST /projects/{projectId}/agent` can list and read them. Uploading a token and updating an account are not tools: a token in a tool argument reaches the model before anyone approves the call, and the default decides which account a run with no saved account choice signs in as.
+
+### Patch Changes
+
+- [#7386](https://github.com/MCPJam/inspector/pull/7386) [`626d8a9`](https://github.com/MCPJam/inspector/commit/626d8a95fafe523ad6a85e0037cf3bc087ad654e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Claude Haiku 5.5 is selectable with your own Anthropic key, and the SDK sends it to Anthropic as `claude-haiku-5-5`.
+
+- [#7397](https://github.com/MCPJam/inspector/pull/7397) [`f4c57f5`](https://github.com/MCPJam/inspector/commit/f4c57f565f5ea849683b91af8986edf7c2c5c274) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Claude clients with plugin extensions list global Apps the way Claude does: the sidebar lists an App only when its tool is visible to the model, lists no quick actions, and lists but won't open a tool whose name has two underscores or dots in a row (or a dot next to an underscore), with a Logs entry naming the characters. A global App that can't go full screen opens inline at the top of a new chat instead of full screen. Claude on the web now turns on Sidebar Apps by default; Claude Desktop keeps it off. ChatGPT, Codex and every other client behave as before. `@mcpjam/widget-react` adds the `onFixedDisplayModeUnsupported` renderer prop, which lets a host take back an App that leaves out the display mode the host fixed.
+
+- [#7400](https://github.com/MCPJam/inspector/pull/7400) [`6c52eb3`](https://github.com/MCPJam/inspector/commit/6c52eb3d9d2e3916e77cdf410ac5f9da9b371269) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Claude and Claude Desktop client styles now allow an MCP App's declared `frameDomains`, following Claude's embedded-sites docs, so an App can show its own site in an iframe. The bundled host catalog fallback is regenerated to match.
+
+- [#7399](https://github.com/MCPJam/inspector/pull/7399) [`54fb168`](https://github.com/MCPJam/inspector/commit/54fb168737bb9923b645aca7194af82f4b684f29) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The GitHub Copilot CLI host template no longer pins MCPJam's client identity, the 2025-11-25 protocol or a 10 second request timeout, and it lists App-only tools as the CLI does. Its MCP connections now match the CLI's own handshake, so its calls can pass through to your server unchanged.
+
+- [#7386](https://github.com/MCPJam/inspector/pull/7386) [`626d8a9`](https://github.com/MCPJam/inspector/commit/626d8a95fafe523ad6a85e0037cf3bc087ad654e) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Host templates now default to current, cheap models. Gemini uses `google/gemini-3.8-flash` (it named `google/gemini-3-pro`, which MCPJam does not serve). Claude, Claude Desktop, Cursor, VS Code, AgentCore, Cline and Notion use `anthropic/claude-haiku-5.5`. ChatGPT, Copilot, Copilot CLI, Goose, Slack, n8n and Perplexity use `openai/gpt-6-luna`. Mistral uses `mistralai/mistral-small-2603`.
+
+- [#7370](https://github.com/MCPJam/inspector/pull/7370) [`af0f51a`](https://github.com/MCPJam/inspector/commit/af0f51a72522a9778d25b29e9e2bf5585276c322) Thanks [@prathmeshpatel](https://github.com/prathmeshpatel)! - Match host template tool discovery defaults to Claude, Claude Code, Cursor, Codex, Copilot CLI, and VS Code.
+
 ## 10.5.0
 
 ### Minor Changes

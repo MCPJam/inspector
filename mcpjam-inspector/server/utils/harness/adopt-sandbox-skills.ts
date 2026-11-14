@@ -25,6 +25,7 @@
  *    shell `cat` (exec output is capped at 16k).
  */
 import matter from "gray-matter";
+import { HOSTED_MODE } from "../../config.js";
 import { isValidSkillName } from "../../../shared/skill-types.js";
 import {
   convexAdoptComputerSkills,
@@ -32,7 +33,6 @@ import {
 } from "../computers/convex-skills-client.js";
 import { extractExtraFrontmatter } from "../skill-extra-frontmatter.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 
 const MANIFEST_BASENAME = ".mcpjam-skills.json";
@@ -183,23 +183,30 @@ function parseAdoptCandidate(
  * of the snapshot claim, and `executionScope` does not cover it: eval runs set
  * no execution scope at all.
  *
- * `HARNESS_SKILL_ADOPTION_DISABLED=1` remains the operator-side kill switch.
+ * The hosted app never adopts. Whatever runs on the box can write a SKILL.md
+ * there, including commands a model chose after reading an MCP server's
+ * output, and adopting it would turn that text into a skill the person's later
+ * turns load. A self-hosted Inspector adopts unless its operator sets
+ * `HARNESS_SKILL_ADOPTION_DISABLED=1`.
  */
 export function shouldAdoptSandboxSkills(args: {
   runSucceeded: boolean;
   aborted: boolean;
   pausedForApproval: boolean;
   supportsSkills: boolean;
-  /** `null` ⇒ the live skills fetch failed; adopting on top of an unknown set
-   *  could re-adopt something we simply failed to see as already-managed. */
+  /** False when the turn named no skill source, so its set is unknown;
+   *  adopting on top of an unknown set could re-adopt something we simply
+   *  failed to see as already-managed. */
   runtimeSkillsKnown: boolean;
   skillsArePinned: boolean;
   /** Guest / swarm scopes never adopt (v1). */
   hasExecutionScope: boolean;
   hasCredentials: boolean;
   hasFileSession: boolean;
-  adoptionDisabled: boolean;
 }): boolean {
+  if (HOSTED_MODE || process.env.HARNESS_SKILL_ADOPTION_DISABLED === "1") {
+    return false;
+  }
   return (
     args.runSucceeded &&
     !args.aborted &&
@@ -209,8 +216,7 @@ export function shouldAdoptSandboxSkills(args: {
     !args.skillsArePinned &&
     !args.hasExecutionScope &&
     args.hasCredentials &&
-    args.hasFileSession &&
-    !args.adoptionDisabled
+    args.hasFileSession
   );
 }
 
@@ -225,12 +231,11 @@ export async function adoptSandboxSkills(args: {
   authHeader: string;
   projectId: string;
   managedNames: Set<string>;
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
+  /** The runtime's skills folder, absolute. */
+  skillsBase: string;
   signal?: AbortSignal;
 }): Promise<{ adopted: AdoptedSkillEntry[] }> {
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+  const { skillsBase } = args;
   try {
     if (args.signal?.aborted) return { adopted: [] };
     // List entries (small output — bounded dir). `-1` one per line; dotfiles

@@ -34,9 +34,10 @@
  * cannot write into the attempt that replaced it.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -44,7 +45,10 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
-import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import {
+  convexErrorData,
+  translateConvexWriteError as translateConvexError,
+} from "./convex-errors.js";
 import { redactedReadRefusalError } from "./convex-read-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import {
@@ -54,6 +58,7 @@ import {
   toReadinessRunDto,
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
+import { resumeHostedReadinessRun } from "../shared/readiness-resume.js";
 import {
   DIRECTORY_FEATURE_CLAIMS,
   LAZY_AUTH_PROBE_LIMITS,
@@ -61,7 +66,7 @@ import {
   type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
-import { requireProjectIdArg } from "./convex-id-param.js";
+import { requireConvexIdShape, requireProjectIdArg } from "./convex-id-param.js";
 
 const readiness = new Hono();
 
@@ -196,8 +201,8 @@ function toRunDto(run: Record<string, any>, projectId: string) {
  * worse than no event, since an unmatched `distinct_id` pollutes person
  * profiles.
  */
-function readinessAnalyticsActor(
-  c: any,
+export function readinessAnalyticsActor(
+  c: Context,
   projectId: string,
 ): ServerAnalyticsActor | undefined {
   const ctx = c.var?.requestLogContext as RequestLogContext | undefined;
@@ -325,16 +330,20 @@ async function readBody(c: any): Promise<unknown> {
 
 // ── Read ────────────────────────────────────────────────────────────────
 
-readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
-  const projectId = c.req.param("projectId");
-  const runId = c.req.param("runId");
-  const convex = createConvexClient(await getConvexBearerForRequest(c));
+const getRun = makeFunctionReference<
+  "query",
+  { runId: string },
+  Record<string, any> | null
+>("claudeReadinessRuns:getReadinessRun");
 
+/** The run as the caller may read it, or the 404 an unknown id gets. */
+async function readRun(
+  convex: ConvexHttpClient,
+  runId: string,
+): Promise<Record<string, any>> {
   let run: Record<string, any> | null;
   try {
-    run = await convex.query("claudeReadinessRuns:getReadinessRun" as any, {
-      runId,
-    });
+    run = await convex.query(getRun, { runId });
   } catch (error) {
     // The scoping read for the caller-supplied run id. A plain membership
     // refusal — masked to "Server Error" in production — answers the same 404
@@ -351,6 +360,13 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
       "Readiness run not found",
     );
   }
+  return run;
+}
+
+readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
+  const run = await readRun(convex, c.req.param("runId"));
   return v1Resource(c, toRunDto(run, projectId));
 });
 
@@ -429,6 +445,66 @@ readiness.post(
     // than the row's status: the thing being stopped is traffic to somebody
     // else's server.
     return v1Resource(c, { runId, projectId, status: "cancelled" });
+  },
+);
+
+// ── Resume ──────────────────────────────────────────────────────────────
+
+/** Nothing to say beyond which run: an empty body, or `{}`. */
+const resumeSchema = z.strictObject({});
+
+/**
+ * The resume's own refusals describe the run's state, not the request, so
+ * they answer 409 with the backend's sentence. The rest translate as a
+ * start's do: a non-requester gets the backend's single "nothing you can
+ * resume" refusal, which never confirms the run exists.
+ */
+function translateResumeRefusal(error: unknown): Error {
+  const data = convexErrorData(error);
+  const code = typeof data?.code === "string" ? data.code : undefined;
+  if (
+    (code === "already_claimed" || code === "not_resumable") &&
+    typeof data?.message === "string"
+  ) {
+    return new WebRouteError(409, ErrorCode.CONFLICT, data.message, { code });
+  }
+  return translateConvexError(error, { resource: "Readiness run" });
+}
+
+/**
+ * Run a re-queued run again, with the caller's credentials. Only its
+ * requester can: the backend refuses everyone else, and the server is
+ * authorized again exactly as a start authorizes it.
+ */
+readiness.post(
+  "/projects/:projectId/readiness-runs/:runId/resume",
+  async (c) => {
+    parseWithSchema(resumeSchema, await readBody(c));
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.readiness",
+    );
+    const runId = requireConvexIdShape(c.req.param("runId"), "runId", {
+      scope: "v1.readiness",
+      notFoundMessage: "Readiness run not found",
+    });
+    const convexAuthToken = await getConvexBearerForRequest(c);
+    const convex = createConvexClient(convexAuthToken);
+    // Read first for the submission the run grades, which the resume does
+    // not return: a submission run resumed without it would grade no answers.
+    const run = await readRun(convex, runId);
+    const receipt = await resumeHostedReadinessRun({
+      convex,
+      runId,
+      ...(typeof run.submissionId === "string"
+        ? { submissionId: run.submissionId }
+        : {}),
+      authorize: (runProjectId, serverId, signal) =>
+        authorizeServer(c, convexAuthToken, runProjectId, serverId, { signal }),
+      analyticsActor: readinessAnalyticsActor(c, projectId),
+      translateError: translateResumeRefusal,
+    });
+    return v1Resource(c, receipt, 202);
   },
 );
 

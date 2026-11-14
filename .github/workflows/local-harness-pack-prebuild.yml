@@ -30,6 +30,8 @@ on:
       - "mcpjam-inspector/scripts/local-harness-pack-recipes/**"
       - "mcpjam-inspector/server/utils/harness/local/tree-digest.ts"
       - "mcpjam-inspector/server/utils/harness/codex-appserver/bootstrap/**"
+      - "mcpjam-inspector/server/utils/harness/copilot-cli/bridge/package.json"
+      - "mcpjam-inspector/server/utils/harness/copilot-cli/bridge/pnpm-*.yaml"
       - "mcpjam-inspector/tools/mcpjam-job-launcher/**"
       - "package-lock.json"
   schedule:

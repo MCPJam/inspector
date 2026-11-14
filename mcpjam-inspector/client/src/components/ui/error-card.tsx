@@ -49,12 +49,11 @@ export type ErrorCardProps = {
    * than none.
    */
   action?: { label: string; onClick: () => void };
-  variant?: "inline" | "banner" | "toast";
   /**
    * `row` is the server-card density: one line the height of the support
    * pill, with the diagnostic rows behind the clickable title. `card` is the
-   * diagnostic report. A primary `action` also selects `row` — the action
-   * is the thing to do, and the rest is secondary.
+   * diagnostic report. Left unset, a primary `action` selects `row`; pass
+   * `card` to keep the bordered card and show the action as its main button.
    */
   density?: "card" | "row";
   /**
@@ -358,8 +357,7 @@ export function ErrorCard({
   onRetry,
   onDismiss,
   action,
-  variant = "inline",
-  density = "card",
+  density,
   defaultOpen = false,
   open,
   onOpenChange,
@@ -439,12 +437,13 @@ export function ErrorCard({
     Boolean(normalized.cause) ||
     hasTechnical;
   /**
-   * `row` (or a primary `action`) is one line the height of the server
-   * card's support pill: a clickable title and the click. Badge,
-   * one-liner, Copy, and evidence wait behind the title. `card` stays a
-   * diagnostic report.
+   * `row` (or a primary `action` with no density given) is one line the
+   * height of the server card's support pill: a clickable title and the
+   * click. Badge, one-liner, Copy, and evidence wait behind the title.
+   * `card` stays a diagnostic report, action or not.
    */
-  const compact = density === "row" || Boolean(action);
+  const compact =
+    density === "row" || (density === undefined && Boolean(action));
   const showDetailsPanel = isOpen && (hasDetail || compact);
 
   const detailsPanel = showDetailsPanel ? (
@@ -695,7 +694,6 @@ export function ErrorCard({
       className={cn(
         "rounded-lg border border-l-2 border-border bg-muted/40 p-3 text-xs select-text nodrag nopan dark:bg-muted/20",
         styles.accent,
-        variant === "banner" ? "shadow-sm" : "",
         className,
       )}
     >
@@ -751,10 +749,21 @@ export function ErrorCard({
               behind the disclosure would undo that. "Learn more" is reading,
               not repair, so it sits in the panel with the rest of the detail. */}
           <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-            {onRetry ? (
+            {action ? (
               <Button
                 type="button"
                 variant="secondary"
+                size="sm"
+                onClick={action.onClick}
+                data-testid="error-card-action"
+              >
+                {action.label}
+              </Button>
+            ) : null}
+            {onRetry ? (
+              <Button
+                type="button"
+                variant={action ? "ghost" : "secondary"}
                 size="sm"
                 onClick={onRetry}
               >

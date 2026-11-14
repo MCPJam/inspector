@@ -17,7 +17,7 @@ describe("EvalsHeader", () => {
         onAddCase={add}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Setup Run" }));
+    await user.click(screen.getByRole("button", { name: "Run" }));
     expect(setup).toHaveBeenCalledOnce();
     await user.click(
       screen.getByRole("button", { name: "More evaluate actions" }),
@@ -66,7 +66,7 @@ describe("EvalsHeader", () => {
         parentCrumb={{ label: "Amazon", onClick: vi.fn() }}
         detailCrumb={[
           { label: "Test Case Evaluators", onClick: toCaseEvaluators },
-          { label: "Test Suite Evaluators" },
+          { label: "Suite settings" },
         ]}
         onCurrentCrumbClick={toCase}
       >
@@ -83,7 +83,7 @@ describe("EvalsHeader", () => {
     expect(toCaseEvaluators).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("link", {
-        name: "Test Suite Evaluators",
+        name: "Suite settings",
         current: "page",
       }),
     ).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe("EvalsHeader", () => {
     expect(onLandingViewChange).toHaveBeenCalledWith("runs");
   });
 
-  it("on a phone, keeps Setup Run on the title's line and puts the tabs below", () => {
+  it("on a phone, keeps Run on the title's line and puts the tabs below", () => {
     render(
       <EvalsHeader
         onCreateSuite={vi.fn()}
@@ -181,7 +181,7 @@ describe("EvalsHeader", () => {
     const actions = screen.getByTestId("evals-header-actions");
     const tabs = screen.getByTestId("evals-header-tabs");
     expect(actions).toContainElement(
-      screen.getByRole("button", { name: /setup run/i }),
+      screen.getByRole("button", { name: /^run$/i }),
     );
     expect(tabs).toContainElement(
       screen.getByRole("navigation", { name: "Evaluate view" }),

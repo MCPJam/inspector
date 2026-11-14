@@ -23,6 +23,8 @@ import {
   resetShownPluginNotices,
   showPluginNotice,
 } from "@/lib/plugins/plugin-notice-display";
+import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -461,6 +463,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
+        // The display rules the chat gives the Apps in this thread.
+        displayBehavior: useChatAppDisplayBehavior(),
       });
       return (
         <div data-testid="thread">
@@ -955,6 +959,23 @@ describe("PlaygroundMain", () => {
     mockMultiModelPlaygroundCard.mockClear();
     compareSetup.ready = true;
     compareSetup.error = undefined;
+  });
+
+  describe("display rules for the chat's Apps", () => {
+    it("gives a Claude chat's Apps none while plugin extensions are off, though the provider is mounted", () => {
+      // PlaygroundTab mounts the provider whatever the flag says; the flag is
+      // off in this suite.
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Open it" }] },
+      ];
+      render(
+        <ExtensionWorkspaceProvider>
+          <PlaygroundMain {...defaultProps} />
+        </ExtensionWorkspaceProvider>,
+      );
+      expect(mockThread).toHaveBeenCalled();
+      expect(mockThread.mock.calls.at(-1)?.[0].displayBehavior).toBeUndefined();
+    });
   });
 
   describe("installed plugins (hidden environment)", () => {
@@ -3583,6 +3604,44 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Hello from playground" })
         );
       });
+    });
+
+    it("sends without connecting an app-wide server that is not in the Playground selection", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["test-server"],
+        reauthServerNames: [],
+      });
+      mockSharedAppState.servers["test-server"] = { connectionStatus: "failed" };
+      mockSharedAppState.servers["picked-server"] = { connectionStatus: "connected" };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          ensureServersReady={ensureServersReady}
+          playgroundServerSelectorProps={{
+            serverConfigs: {},
+            selectedServer: "test-server",
+            selectedMultipleServers: ["picked-server"],
+            isMultiSelectEnabled: true,
+            onServerChange: vi.fn(),
+            onConnect: vi.fn(),
+          }}
+        />
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Hello from playground" },
+      });
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Hello from playground" })
+        );
+      });
+      expect(ensureServersReady).not.toHaveBeenCalled();
     });
 
     it("does not reconnect an unrelated standalone server for an environment-owned widget message", async () => {

@@ -88,6 +88,7 @@ export function resolvePlaygroundClientColumn({
   models,
   orgConfig,
   pickedSelection,
+  modelsSettling = false,
 }: {
   /** The pane this column renders. */
   paneId: string;
@@ -98,6 +99,12 @@ export function resolvePlaygroundClientColumn({
   hosts: readonly HostListItem[];
   models: readonly ModelDefinition[];
   orgConfig?: OrgVisibleConfig;
+  /**
+   * Sign-in, the session or the model catalog is still loading, as it is just
+   * after a page load such as the return from a sign-in redirect. A model
+   * missing from `models` then is not yet known to be unavailable.
+   */
+  modelsSettling?: boolean;
 }): PlaygroundClientResolution {
   const host = slot?.host?.hostId === hostId ? slot.host : null;
   const listed = hosts.find((item) => item.hostId === hostId);
@@ -140,6 +147,14 @@ export function resolvePlaygroundClientColumn({
           orgConfig,
           { exactSelection: !!selection && selection.source !== "legacy" },
         ));
+  if ((!model || model.disabled) && modelsSettling)
+    return {
+      ...identity,
+      status: "loading",
+      reason: "Loading saved configuration…",
+      hostConfig: config,
+      modelRows,
+    };
   if (!model || model.disabled)
     return {
       ...identity,

@@ -193,9 +193,7 @@ describe("the policy manifest", () => {
   it("is total over the pages the check inventory was written against", () => {
     for (const page of CLAUDE_POLICY_PAGES) {
       expect(CLAUDE_POLICY_MANIFEST[page]).toBeDefined();
-      expect(CLAUDE_POLICY_MANIFEST[page].snapshotDate).toBe(
-        CLAUDE_POLICY_SNAPSHOT_DATE,
-      );
+      expect(CLAUDE_POLICY_MANIFEST[page].page).toBe(page);
     }
   });
 
@@ -207,11 +205,12 @@ describe("the policy manifest", () => {
     // Asserting `false` here would have gone red the first time a maintainer
     // ran `claude-policy:sync` as designed, and the failure would have read as
     // a policy problem rather than a stale assertion. The RULE is what must
-    // hold: verified exactly when every page carries a revision.
-    const everyPageHasRevision = CLAUDE_POLICY_PAGES.every((page) =>
-      Boolean(CLAUDE_POLICY_MANIFEST[page].revision),
+    // hold: verified exactly when every page carries the sync's hash. A page
+    // pinned to the date it was read is not verified by that pin.
+    const everyPageHashed = CLAUDE_POLICY_PAGES.every((page) =>
+      /^[0-9a-f]{32}$/.test(CLAUDE_POLICY_MANIFEST[page].revision ?? "")
     );
-    expect(isPolicyCorpusVerified()).toBe(everyPageHasRevision);
+    expect(isPolicyCorpusVerified()).toBe(everyPageHashed);
   });
 
   it("is unverified while the shipped corpus is unpopulated", () => {
@@ -242,7 +241,7 @@ describe("the manifest stays machine-editable", () => {
   );
 
   it("exposes the base URL in the literal form the sync script reads", () => {
-    expect(source).toMatch(/CLAUDE_DOCS_BASE_URL = "https?:\/\/[^"]+"/);
+    expect(source).toMatch(/CLAUDE_DOCS_BASE_URL =\s*"https?:\/\/[^"]+"/);
   });
 
   it("keeps the page list as a flat `as const` array of string literals", () => {

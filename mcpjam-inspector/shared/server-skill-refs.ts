@@ -3,8 +3,8 @@
  *
  * SHARED because three surfaces must agree on the ref a skill is addressed
  * under, byte for byte:
- *   - `server/utils/server-skill-tools.ts`, which resolves the ref the model
- *     passes to `loadSkill`;
+ *   - `server/utils/computers/live-server-skills.ts`, which mints the refs a
+ *     live turn lists and `loadSkill` resolves;
  *   - the playground SKILLS picker, which shows the ref and injects it;
  *   - the backend capture store, whose `serverSkills.ref` mirrors this rule.
  *
@@ -73,7 +73,7 @@ export interface ServerSlugAssignment<T> {
  * caller passed — the returned array keeps the caller's order, but which of two
  * servers labelled "Acme" gets `acme` and which gets `acme-2` does not depend
  * on it. That independence is the point: the picker builds its list from the
- * app's connected servers and the chat wrapper builds its from the turn's
+ * app's connected servers and a live turn's listing builds its from the turn's
  * selected servers, and those two arrays are not ordered alike. When they
  * disagreed, the picker showed `acme/refunds` for a server the turn resolved as
  * `acme-2/refunds`, and the ref the user clicked loaded someone else's skill.
@@ -85,7 +85,7 @@ export interface ServerSlugAssignment<T> {
  * it is a contract, not a guarantee. The two ref-minting callers both feed the
  * turn's selected servers UNFILTERED:
  *   - the playground picker, from the selection it renders;
- *   - `withServerSkills`, from the same selection, before its own
+ *   - `listLiveServerSkills`, from the same selection, before its own
  *     extension-active filter runs.
  *
  * Filtering before assignment is the trap: a server dropped for being
@@ -185,7 +185,7 @@ export async function skillUriHash8(uri: string): Promise<string> {
  * `{uri, digest}` pair, sorted by `uri`.
  *
  * This is what a load binds to and what the origin banner records, so the
- * chat wrapper and the playground popover must compute it identically. The
+ * agent's tools and the playground popover must compute it identically. The
  * serialization matches the SDK's `canonicalSkillJson` for this shape (keys
  * sorted, so `digest` before `uri`), and it is written out here rather than
  * imported so the browser bundle does not pull the SDK in for one hash.
@@ -218,7 +218,7 @@ export interface SkillRefAssignment<T> {
  * different URIs. When that happens BOTH get the `~<uriHash8>` form — not just
  * the second one. Giving the first arrival the bare ref would make the refs
  * depend on listing order, and a server is free to reorder its listing between
- * two calls; the picker and the chat wrapper would then disagree about which
+ * two calls; the picker and a live turn would then disagree about which
  * skill `acme/refunds` means. Disambiguating every member of a duplicated name
  * removes the question: a bare ref is only ever issued when it is unambiguous.
  *
