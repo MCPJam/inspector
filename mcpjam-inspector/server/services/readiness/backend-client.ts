@@ -166,6 +166,37 @@ export async function claimReadinessRun(
 export type ReadinessLeaseAnswer = "owned" | "lost" | "unanswered";
 
 /**
+ * Join the reviewer sign-in attempt the run was started for, so the attempt
+ * names the run working on it and a resume of the run finds it again. A lost
+ * lease throws; any other refusal comes back as the reason.
+ */
+export async function joinReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+): Promise<{ joined: true } | { joined: false; reason: string }> {
+  try {
+    const { response, release } = await postInternal(
+      `${READINESS_PATH}/reviewer-attempt`,
+      { ...lease, attemptId },
+      CLAIM_TIMEOUT_MS,
+    );
+    try {
+      const body = parseJsonObject(await response.text());
+      if (response.ok && body?.ok === true) return { joined: true };
+      if (body?.error === "lease_lost") throw new ReadinessLeaseLostError();
+      const reason = typeof body?.error === "string" ? body.error : undefined;
+      return { joined: false, reason: reason ?? `HTTP ${response.status}` };
+    } finally {
+      release();
+    }
+  } catch (error) {
+    if (error instanceof ReadinessLeaseLostError) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    return { joined: false, reason };
+  }
+}
+
+/**
  * Renew the lease, and report only what the backend confirmed. For a caller
  * about to start work on the lease: an unanswered heartbeat is not ownership.
  */

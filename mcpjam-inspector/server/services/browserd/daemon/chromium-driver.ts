@@ -1000,8 +1000,13 @@ export class ChromiumDriver implements BrowserDriver {
         // placeholders. Throws on a missing value, so a literal
         // `{{secret:NAME}}` is never typed, even via the `/v1` routes.
         let resolved = action;
+        const page = this.tabs.get(tabId)?.page;
         try {
-          resolved = resolveActSecrets(action, context?.secrets);
+          resolved = resolveActSecrets(
+            action,
+            context?.secrets,
+            page && safeUrl(page),
+          );
         } catch (error) {
           return {
             ok: false,
