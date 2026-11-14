@@ -116,6 +116,7 @@ export {
 export { runClaudeCrossToolScan } from "./checks/cross-tool.js";
 export { runClaudeDeclarationChecks } from "./checks/declarations.js";
 export type { ClaudeDeclarationEvidence } from "./checks/declarations.js";
+export { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
 export { runClaudeEndpointChecks } from "./checks/endpoint.js";
 export type {
   ClaudeEndpointEvidence,
