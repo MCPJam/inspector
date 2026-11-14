@@ -1169,9 +1169,17 @@ async function runJourneyFanOut(
 
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
-        const releaseLocalSlot = runsLocally(opts, (target.agentLoop ?? target.harness))
-          ? await acquireLocalHarnessSlot(attemptSignal)
-          : undefined;
+        let releaseLocalSlot: (() => void) | undefined;
+        if (runsLocally(opts, (target.agentLoop ?? target.harness))) {
+          try {
+            releaseLocalSlot = await acquireLocalHarnessSlot(attemptSignal);
+          } catch (err) {
+            // A stop scoped to credit-funded conversations ends this wait, and
+            // the target's sponsored ones still run.
+            if (attemptSignal.aborted && creditStop.signal.aborted && !stopScheduling()) continue;
+            throw err;
+          }
+        }
         try {
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the

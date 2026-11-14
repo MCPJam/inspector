@@ -1,4 +1,5 @@
-vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(await vi.importActual("../../../utils/harness/local/run-resources.js")), isLocalHarnessVenue: () => false }));
+const acquireLocalSlotMock = vi.hoisted(() => vi.fn(async (_signal?: AbortSignal) => () => {}));
+vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(await vi.importActual("../../../utils/harness/local/run-resources.js")), isLocalHarnessVenue: () => false, acquireLocalHarnessSlot: (signal?: AbortSignal) => acquireLocalSlotMock(signal) }));
 /**
  * swarm-runner.sandbox.test.ts — the per-attempt ephemeral sandbox (B-isolation).
  *
@@ -346,6 +347,7 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  acquireLocalSlotMock.mockReset().mockImplementation(async () => () => {});
   // A deployment that CAN run hosted browsers — see the "declines to book a
   // desktop" case for the other side of it.
   hostedBrowserAdvertisableMock.mockReset().mockReturnValue(true);
@@ -1010,6 +1012,7 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     // Target 2's credit-funded box is still on its way when target 1's refusal
     // stops credit-funded conversations. That stop cancels the box, and target
     // 2's sponsored conversation still runs.
+    personaDrivesOneTurn();
     let target2Asked!: () => void;
     const asked = new Promise<void>((resolve) => (target2Asked = resolve));
     const provisionBox = provisionJourneySandboxMock.getMockImplementation()!;
@@ -1043,8 +1046,49 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       expect.objectContaining({ targetId: "environment:env-2", sessionIdx: 1 }),
     );
     expect(terminalReports()).toContainEqual(
-      expect.objectContaining({ targetId: "environment:env-2", sessionIdx: 1 }),
+      expect.objectContaining({
+        targetId: "environment:env-2",
+        sessionIdx: 1,
+        status: "succeeded",
+      }),
     );
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still runs a local target's sponsored conversation when the refusal stops credit-funded ones while it waits for a slot", async () => {
+    // The local target's credit-funded conversation is queued for a local
+    // harness slot when the other target's refusal stops credit-funded ones.
+    let slotQueued!: () => void;
+    const queued = new Promise<void>((resolve) => (slotQueued = resolve));
+    acquireLocalSlotMock.mockImplementationOnce(
+      (signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          slotQueued();
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    provisionJourneySandboxMock.mockImplementation(async () => {
+      await queued;
+      return trialRefusal;
+    });
+
+    await startJourneyRun({
+      ...twoTargetOpts(
+        {},
+        { harness: "claude-code", builtInToolIds: [], computerEnvironment: undefined },
+      ),
+      sessionsPerTarget: 2,
+      localHarnessActor: { credential: "authkit", userId: "user-1", subject: "sub-1" },
+      localHarnessIds: ["claude-code"],
+      sessionFunding: [
+        { targetId: "environment:env-2", sessionIdx: 1, funding: "starter" },
+      ],
+    });
+
+    // The local target went on to its sponsored conversation's slot.
+    expect(acquireLocalSlotMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries a 503 and fails with `sandbox_at_capacity` once the retries are spent", async () => {
