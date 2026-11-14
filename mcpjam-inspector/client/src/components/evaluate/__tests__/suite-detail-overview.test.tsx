@@ -1630,55 +1630,50 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     expect(headerButtons()).toEqual(buttons);
   });
 
-  it("offers Build a test case and Suite settings on a suite with no cases", async () => {
-    const { onDescribeCases, onEditSuite } = renderSuitePage({
+  it.each(["runs", "test-cases"] as const)(
+    "shows today's No cases yet on the %s tab of an empty suite",
+    (view) => {
+      renderSuitePage({ cases: [], runs: [], view });
+      expect(screen.getByTestId("suite-detail-empty-cases")).toBeVisible();
+      expect(screen.getByTestId("suite-page-tabs")).toBeVisible();
+      expect(screen.queryByTestId("nav-suite-no-runs")).toBeNull();
+    },
+  );
+
+  it("opens Test cases first when adding cases from the Runs tab", async () => {
+    const onViewChange = vi.fn();
+    const { onDescribeCases } = renderSuitePage({
       cases: [],
       runs: [],
-      view: "test-cases",
+      onViewChange,
     });
-    expect(screen.getByText("No test cases yet")).toBeVisible();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Build a test case" }));
-    await user.click(
-      screen.getByRole("button", { name: "or open Suite settings" }),
-    );
-    expect(onDescribeCases).toHaveBeenCalled();
-    expect(onEditSuite).toHaveBeenCalled();
-  });
-
-  it("offers neither action on a CI-locked suite with no cases", () => {
-    renderSuitePage({
-      cases: [],
-      runs: [],
-      configLocked: true,
-      view: "test-cases",
-    });
-    expect(screen.getByText("No test cases yet")).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Build a test case" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "or open Suite settings" }),
-    ).toBeNull();
-  });
-
-  it("shows the no-runs panel, with its own Run, in place of the Runs card", async () => {
-    renderSuitePage({ runs: [] });
-    const panel = screen.getByTestId("nav-suite-no-runs");
-    expect(panel).toHaveTextContent("No runs yet");
-    expect(panel).toHaveTextContent("Run the suite once to start a trend.");
-    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
     await userEvent
       .setup()
-      .click(within(panel).getByRole("button", { name: "Run" }));
-    expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
+      .click(screen.getByRole("button", { name: /^Describe/ }));
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
+    expect(onDescribeCases).toHaveBeenCalled();
   });
 
-  it("keeps No runs yet on the Runs tab of a suite with no cases, with Run blocked", () => {
-    renderSuitePage({ cases: [], runs: [] });
+  it("offers no way to add cases on a CI-locked empty suite", () => {
+    renderSuitePage({ cases: [], runs: [], configLocked: true });
+    expect(screen.getByTestId("suite-detail-empty-cases")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Describe/ })).toBeNull();
+  });
+
+  it("nudges a first run on the Runs tab, with Run and View test cases", async () => {
+    const onViewChange = vi.fn();
+    renderSuitePage({ runs: [], onViewChange });
     const panel = screen.getByTestId("nav-suite-no-runs");
-    expect(within(panel).getByRole("button", { name: "Run" })).toBeDisabled();
-    expect(screen.queryByText("No test cases yet")).toBeNull();
+    expect(panel).toHaveTextContent("No runs yet");
+    expect(panel).toHaveTextContent("Run your 1 test case to start a trend.");
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(
+      within(panel).getByRole("button", { name: "View test cases" }),
+    );
+    expect(onViewChange).toHaveBeenCalledWith("test-cases");
+    await user.click(within(panel).getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
   });
 
   it("shows today's Test Cases list on the Test cases tab, without the Runs card", () => {
