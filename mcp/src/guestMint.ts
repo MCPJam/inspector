@@ -85,16 +85,22 @@ export async function mintGuestToken(
     );
   }
 
-  let data: { token?: unknown; expiresAt?: unknown };
+  let data: unknown;
   try {
-    data = (await response.json()) as typeof data;
+    data = await response.json();
   } catch (error) {
     return fail(
       { reason: "invalid_response", status: response.status },
       `${url} returned a body that is not JSON: ${errorText(error)}`
     );
   }
-  if (typeof data.token !== "string" || data.token.length === 0) {
+  if (
+    data === null ||
+    typeof data !== "object" ||
+    !("token" in data) ||
+    typeof data.token !== "string" ||
+    data.token.length === 0
+  ) {
     return fail(
       { reason: "invalid_response", status: response.status },
       `${url} returned no token.`
@@ -103,7 +109,7 @@ export async function mintGuestToken(
   return {
     ok: true,
     token: data.token,
-    expiresAt: normalizeExpiry(data.expiresAt),
+    expiresAt: normalizeExpiry("expiresAt" in data ? data.expiresAt : undefined),
   };
 }
 

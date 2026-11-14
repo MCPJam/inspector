@@ -82,6 +82,10 @@ describe("mintGuestToken", () => {
 
   it.each([
     ["a non-JSON body", () => new Response("<html>", { status: 200 })],
+    ["a null body", () => Response.json(null)],
+    ["a primitive body", () => Response.json("guest-jwt")],
+    ["an array body", () => Response.json([])],
+    ["an empty token", () => Response.json({ token: "" })],
     ["no token", () => Response.json({ expiresAt: 1 })],
   ])("reports %s as an invalid response", async (_label, respond) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
