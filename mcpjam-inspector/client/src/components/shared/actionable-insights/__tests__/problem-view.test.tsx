@@ -527,7 +527,13 @@ describe("buildOptionPrompt", () => {
         problem(),
         option({ kind: "fix", change }),
       );
-      expect(prompt.match(/<<<END PROPOSAL>>>/g)).toHaveLength(1);
+      const baseline = buildOptionPrompt(
+        problem(),
+        option({ kind: "fix", change: "Fix it." }),
+      );
+      const ends = (text: string) =>
+        text.match(/<<<END PROPOSAL>>>/g)?.length ?? 0;
+      expect(ends(prompt)).toBe(ends(baseline));
       const outside = prompt.replace(
         /<<<PROPOSAL[\s\S]*?<<<END PROPOSAL>>>/g,
         "",
