@@ -189,8 +189,10 @@ import { ScenarioHarnessRepublishRequiredError } from "../scenario-runtime-confi
 import {
   harnessBootstrapLogFields,
   harnessBootstrapObservation,
+  harnessBootstrapOutcome,
   logHarnessBootstrapOnFailure,
 } from "./harness-bake-observer.js";
+import { HarnessTurnRecord } from "./harness-turn-event.js";
 import type { PreparedLocalHarnessTurn } from "./local/local-turn.js";
 import { assertLocalSecretDelivery } from "./local/secret-delivery.js";
 import { localPermissionModeFor, localSandboxPolicyFor } from "./local/compatibility.js";
@@ -900,6 +902,12 @@ export async function runHarnessTurn(
   // approval mode and the tool catalog all come from this adapter, so a local
   // Codex turn must see the app-server arm here exactly as its preflight did.
   const harnessAdapter = getHarnessAdapter(harness);
+  // The turn's `harness_turn_completed` event, sent when its response closes.
+  const turnEvent = new HarnessTurnRecord(
+    turnTiming,
+    harnessAdapter.id,
+    Boolean(harnessExecutionTarget),
+  );
   const copilotCli = harnessAdapter.id === "copilot-cli";
   // A warm agent exits after its box's idle window, so it runs only on a box
   // whose window the backend sent.
@@ -945,6 +953,9 @@ export async function runHarnessTurn(
   const promptIndex = getPromptIndex(messages);
   let aborted = false;
   let runSucceeded = false;
+  // The turn failed with an error, not a Stop. Kept apart from the pause
+  // flags, which the continuation save still reads after a failure.
+  let turnErrored = false;
   // The file-capable sandbox session, captured from `onSandboxSession` so the
   // turn-end adoption pass (in the finally, before the box is released) can read
   // `~/.claude/skills` and write the managed-skills manifest. The finally's own
@@ -1482,7 +1493,7 @@ export async function runHarnessTurn(
       // Phase timing — log where a turn spends its wall-clock (claim / box
       // wake / broker start / session connect / model stream / finalize) so
       // "takes forever" can be attributed instead of guessed.
-      const tStart = Date.now();
+      const tStart = turnEvent.mark("start");
       const startupBinding = chatSessionId && options.harnessStartupRequestId
         ? { chatSessionId, requestId: options.harnessStartupRequestId }
         : undefined;
@@ -2247,7 +2258,7 @@ export async function runHarnessTurn(
           sessionGrantOrigin = new URL(publicBaseUrl).origin;
         harnessKeyToServerId = keyToServerId;
       }
-      tClaim = Date.now();
+      tClaim = turnEvent.claimed(continuity?.stateVersion ?? 0);
 
       // 3. Get the box this turn runs on. TWO paths, and the choice is made by
       //    the CALLER, never inferred here:
@@ -2485,7 +2496,7 @@ export async function runHarnessTurn(
       // still bounds the write either way.
       const uploadQuotaComputerId =
         box !== null && box.kind === "computer" ? box.computerId : undefined;
-      tSandbox = Date.now();
+      tSandbox = turnEvent.mark("box");
 
       // Brokered turns acquire their exclusive box lease before any sandbox
       // bootstrap. External-account runtimes have no broker lease, so their
@@ -2750,7 +2761,7 @@ export async function runHarnessTurn(
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl, warmAgentPilot);
         modelEndpoint = org.brokeredEndpoint;
       }
-      tBroker = Date.now();
+      tBroker = turnEvent.mark("broker");
 
       continuity = org.continuityOnLeasedKey(continuity);
       // 4. Assemble the harness over the host's E2B computer (the provider and
@@ -2822,7 +2833,8 @@ export async function runHarnessTurn(
             });
       let harnessRuntime = warmAgentPilot && warmWindowMs !== undefined
         ? withWarmBridgeRuntime((ms, home) => withWarmBridgeBootstrap(buildRuntime(ms, home), warmWindowMs),
-            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmWindowMs)
+            JSON.stringify([runtimeFingerprint, skillsHash, systemPrompt, auth]), warmWindowMs,
+            turnEvent.warmAttach)
         : buildRuntime();
       if (elicitationServerIds.size > 0 && onHarnessElicitation) {
         harnessRuntime = withHarnessElicitation(harnessRuntime, {
@@ -3257,7 +3269,11 @@ export async function runHarnessTurn(
           transient: true,
         } as unknown as UIMessageChunk);
       }
-      tConnect = Date.now();
+      tConnect = turnEvent.sessionStarted({
+        approval: resumeFromApproval,
+        resumed: resumedSession,
+        resetReason,
+      });
       reportStartup("ready");
       // Session is up: the finalizer + heartbeat now own the continuity lane, so
       // the pre-session cleanup in onFinishEngine no longer needs to free it.
@@ -3288,7 +3304,7 @@ export async function runHarnessTurn(
         // Everything above this line is ours; everything at or below it is the
         // model's turn. See `modelInvoked`.
         if (resumeFromApproval && pausedCalls) await nativeForwarding?.approvals.record(pausedCalls);
-        tDispatch = Date.now();
+        tDispatch = turnEvent.mark("dispatch");
         logger.info(`[harness][dispatch] setup=${tDispatch - tStart}ms session=${tDispatch - tConnect}ms`, { harnessId: harnessAdapter.id, turnId });
         modelInvoked = true;
         const images = await promptImages;
@@ -4371,7 +4387,7 @@ export async function runHarnessTurn(
         // emitted above).
         activeDriver.finishTurn(writer, { alreadyEmittedFinish: true });
         runSucceeded = true;
-        const tStream = Date.now();
+        const tStream = turnEvent.mark("stream");
         // Whether the box's runtime came from the baked template or was
         // installed this turn (and if so why), plus the pinned versions —
         // empty on the local path. Inlined for the console, and passed as
@@ -4635,6 +4651,7 @@ export async function runHarnessTurn(
         aborted = true;
         return;
       }
+      turnErrored = true;
       // A bridge's typed provider failure is a PLAIN OBJECT (the harness wire
       // flattens Error instances), so `String(err)` would read
       // "[object Object]". Its structured fields ride separately below.
@@ -4896,6 +4913,17 @@ export async function runHarnessTurn(
     }
   };
 
+  // A turn paused on a decision ended cleanly, unless it then failed. A Stop
+  // that only ended a background drain kept the answer, so is not `aborted`.
+  const closeTurnEvent = () =>
+    turnEvent.close({
+      aborted,
+      completed:
+        !turnErrored &&
+        (runSucceeded || pausedForApproval || pausedForScopeStepUp),
+      bootstrap: harnessBootstrapOutcome(bakeObservedSandbox),
+    });
+
   if (streamSink === "ui") {
     const stream = createUIMessageStream({
       // Run finalization from `execute`'s finally rather than the SDK's
@@ -4917,7 +4945,7 @@ export async function runHarnessTurn(
         try {
           await executeEngine({ writer });
         } finally {
-          await onFinishEngine(context.writer);
+          await onFinishEngine(context.writer).finally(closeTurnEvent);
           releaseStopAfterPark?.();
         }
       },
@@ -4933,7 +4961,7 @@ export async function runHarnessTurn(
     await executeEngine({ writer: noopWriter });
   } finally {
     // onFinishEngine runs the broker teardown for this path too (see above).
-    await onFinishEngine();
+    await onFinishEngine().finally(closeTurnEvent);
     releaseStopAfterPark?.();
   }
   return {

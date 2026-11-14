@@ -260,6 +260,7 @@ import {
   playgroundHarnessBoxUnavailableReason,
 } from "../../../utils/harness/playground-box.js";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 
 describe("web routes — chat-v2 hosted mode", () => {
   const originalFetch = global.fetch;
@@ -717,6 +718,25 @@ describe("web routes — chat-v2 hosted mode", () => {
         gaps: ["host-capability:message.audio"],
       },
     }));
+  });
+
+  it("hands a harness turn the route's recorder, which reports its closing event as a web turn", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: { harness: "claude-code", hostStyle: "claude", selectedServerIds: ["server-1"] },
+    });
+    const response = await postJson(app, "/api/web/chat-v2", {
+      projectId: "project-1", hostId: "host-1", chatSessionId: "turn-event-chat",
+      selectedServerIds: ["server-1"],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+    }, token);
+    expect(response.status).toBe(200);
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledTimes(1);
+    const { turnTiming } = handleMCPJamFreeChatModelMock.mock.calls[0]![0];
+    expect(turnTiming).toBeInstanceOf(TurnTiming);
+    expect(turnTiming.harnessTurnEvent.surface).toBe("web");
   });
 
   it("FAILS CLOSED when the host runtime-config fetch fails — never runs the engine", async () => {
