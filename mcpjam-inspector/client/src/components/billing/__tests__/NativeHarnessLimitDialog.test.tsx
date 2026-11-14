@@ -267,6 +267,33 @@ describe("NativeHarnessLimitDialog", () => {
     expect(afterSwitch).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves a newer notice open when an earlier switch finishes", async () => {
+    switchState.switchCount = 3;
+    let finishSwitch!: (moved: boolean) => void;
+    switchState.switchClients.mockReturnValue(
+      new Promise((resolve) => {
+        finishSwitch = resolve;
+      }),
+    );
+    useNativeHarnessLimitDialogStore.getState().open({}, ["run:run_a"]);
+    render(<NativeHarnessLimitDialog />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Switch 3 clients to MCPJam Harness" }),
+    );
+
+    act(() => {
+      useNativeHarnessLimitDialogStore.getState().close();
+      useNativeHarnessLimitDialogStore
+        .getState()
+        .open({ organizationId: "org_b" }, ["run:run_b"]);
+    });
+    await act(async () => finishSwitch(true));
+
+    expect(useNativeHarnessLimitDialogStore.getState().notice).toEqual({
+      organizationId: "org_b",
+    });
+  });
+
   // The owners arrive after billing, as they do over the network: the
   // dialog waits for them, so it opens on the request, not the switch.
   it("opens on the request, not the switch, once the owners load", async () => {

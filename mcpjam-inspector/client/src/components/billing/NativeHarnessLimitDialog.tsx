@@ -120,9 +120,12 @@ function NativeHarnessUpgradeDialog({
       useNativeHarnessLimitDialogStore.getState().closeNotice(noticeSerial);
   };
   const switchClients = async () => {
+    // As with checkout, a notice that replaced this one stays open.
+    const { noticeSerial } = useNativeHarnessLimitDialogStore.getState();
     if (!(await harnessSwitch.switchClients())) return;
-    onClose();
-    useNativeHarnessLimitDialogStore.getState().afterSwitch?.();
+    const store = useNativeHarnessLimitDialogStore.getState();
+    store.closeNotice(noticeSerial);
+    store.afterSwitch?.();
   };
 
   return (
