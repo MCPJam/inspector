@@ -238,7 +238,11 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
+import type {
+  ChatMultiModelColumn,
+  ChatRewind,
+  WidgetModelContextEntry,
+} from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -674,6 +678,8 @@ export interface UseChatSessionOptions {
    * its own. Read through a ref so it reaches the body builder at POST time.
    */
   comparePane?: boolean;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModelColumn?: ChatMultiModelColumn;
   /**
    * Definitions for those built-in tools, as the model is shown them — used by
    * the RAW view of a reopened session and nowhere else.
@@ -2497,6 +2503,8 @@ export function useChatSession(
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const comparePaneRef = useRef(false);
   comparePaneRef.current = options.comparePane === true;
+  const multiModelColumnRef = useRef(options.multiModelColumn);
+  multiModelColumnRef.current = options.multiModelColumn;
   // Read through a ref for the same reason the ids above are: the transport's
   // body builder is created once and must see the CURRENT value at POST time,
   // not the one captured when the transport was memoized.
@@ -4326,6 +4334,9 @@ export function useChatSession(
             : {}),
           ...(rewind ? { rewind } : {}),
           ...(comparePaneRef.current ? { comparePane: true } : {}),
+          ...(multiModelColumnRef.current
+            ? { multiModel: multiModelColumnRef.current }
+            : {}),
           // Preserve []: it explicitly disables the client's built-in tools.
           ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }

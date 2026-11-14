@@ -229,6 +229,7 @@ export async function runStandaloneTurn(
         directVisibility: body.directVisibility,
         expectedVersion: body.expectedVersion,
         rewind: body.rewind,
+        multiModel: body.multiModel,
         runtimeSecrets: [],
       },
       runtime: {

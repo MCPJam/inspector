@@ -21,6 +21,17 @@ export interface ChatRewind {
   reason: "message_edit";
 }
 
+/**
+ * One column of a Playground multi-model session. The columns of one session
+ * share `groupId`; `position` only grows, so a replaced column never reuses one.
+ */
+export interface ChatMultiModelColumn {
+  groupId: string;
+  position: number;
+  columnKind: "model" | "host";
+  compareId: string;
+}
+
 export interface ChatV2Request {
   messages: UIMessage[];
   pluginMessage?: import("./plugin-message").PluginMessageIntent;
@@ -54,6 +65,8 @@ export interface ChatV2Request {
   browserScope?: "conversation";
   /** Lineage for a new session created by editing an earlier user message. */
   rewind?: ChatRewind;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn;
   /** Userless retry of a tool call suspended for SEP-2350 authorization. */
   scopeStepUpResume?: ScopeStepUpResumeRequest;
   /** Userless resolution when the user denied or failed authorization. */

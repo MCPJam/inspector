@@ -605,6 +605,9 @@ export async function handleManagedChatTurn(
             : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
+          ...(isDirectChat && body.multiModel
+            ? { multiModel: body.multiModel }
+            : {}),
           // Hosted sessions finally honor the CAS the client already sends.
           // Read from the SCHEMA-VALIDATED body, not the raw cast one.
           ...(hostedBody.expectedVersion !== undefined
