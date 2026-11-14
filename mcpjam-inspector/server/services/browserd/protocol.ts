@@ -114,6 +114,12 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * daemon ignores `origins` and would type the value on any page.
    */
   "secret-origins",
+  /**
+   * A command's `stopAt` stops a top-level navigation to that page before it
+   * is sent, and returns its URL as `stoppedAt`. Without it the server must
+   * not rely on one: an old daemon ignores `stopAt` and lets the page load.
+   */
+  "navigation-stop",
 ] as const;
 
 /**
@@ -600,6 +606,12 @@ export interface BrowserCommand {
   sessionId?: string;
   /** What else this command belongs to, when the caller knows. Echoed, never read. */
   correlation?: BrowserCommandCorrelation;
+  /**
+   * During a `navigate` or `act`, stop a top-level navigation to this page (an
+   * http(s) URL, matched whatever its query) before it is sent. The page never
+   * loads, and the URL it asked for comes back as `stoppedAt`.
+   */
+  stopAt?: string;
 }
 
 /** @see BrowserCommand.actor */
@@ -715,6 +727,12 @@ export interface BrowserCommandResult {
    * two rows without the ledger copying page text into every one of them.
    */
   cursors?: { console: number; errors: number };
+  /**
+   * The full URL of the navigation `stopAt` stopped. Beside `stateToken` and
+   * never in `output`, so no ledger, trace or mirror records it: it can carry
+   * a one-time authorization code.
+   */
+  stoppedAt?: string;
 }
 
 /**

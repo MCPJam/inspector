@@ -69,7 +69,7 @@ export interface ReviewerAttemptView {
 }
 
 export interface SignInBrowser {
-  /** What the daemon announced. Typing needs `secret-origins`. */
+  /** What the daemon announced; a sign-in needs `secret-origins` and `navigation-stop`. */
   readonly features: readonly string[];
   open(url: string): Promise<void>;
   read(): Promise<SignInPage>;
@@ -177,8 +177,16 @@ function scrubberFor(values: { name: string; value: string }[]): Scrub {
   return (text) =>
     (scrubber ? scrubber.scrubString(text) : text).replace(
       /\bhttps?:\/\/[^\s"'<>)]+/gi,
-      (url) => URL.parse(url)?.origin ?? "[address]",
+      originOf,
     );
+}
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "[address]";
+  }
 }
 
 /** An error as one scrubbed sentence. */
@@ -427,6 +435,16 @@ async function rehearse(
     return blocked(
       "This hosted browser cannot limit the reviewer's credentials to the sign-in page, so MCPJam did not type them. Start a new attempt after MCPJam updates its hosted browser.",
     );
+  }
+  // Without a stop at MCPJam's callback, its app would take the code before
+  // this run could read it, so nothing is started.
+  if (!browser.features.includes("navigation-stop")) {
+    return ending({
+      stage: "connected",
+      status: "failed",
+      detail:
+        "This hosted browser cannot stop at MCPJam's callback page, so MCPJam could not finish the reviewer's connection and did not sign in. Start a new attempt after MCPJam updates its hosted browser.",
+    });
   }
   let link: ReviewerConnectLink;
   try {

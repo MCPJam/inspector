@@ -22,7 +22,13 @@ var BROWSERD_WEBMCP_FEATURES = [
    * one of them. Without it the server must not send such an entry: an old
    * daemon ignores `origins` and would type the value on any page.
    */
-  "secret-origins"
+  "secret-origins",
+  /**
+   * A command's `stopAt` stops a top-level navigation to that page before it
+   * is sent, and returns its URL as `stoppedAt`. Without it the server must
+   * not rely on one: an old daemon ignores `stopAt` and lets the page load.
+   */
+  "navigation-stop"
 ];
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
@@ -1384,11 +1390,11 @@ var WorkspacePreviewRelay = class {
             headers: req.headers,
             setHost: false
           },
-          (answer) => {
-            res.writeHead(answer.statusCode ?? 502, answer.rawHeaders);
-            answer.pipe(res);
-            answer.once("close", () => {
-              if (!answer.complete) res.destroy();
+          (answer2) => {
+            res.writeHead(answer2.statusCode ?? 502, answer2.rawHeaders);
+            answer2.pipe(res);
+            answer2.once("close", () => {
+              if (!answer2.complete) res.destroy();
             });
           }
         );
@@ -5409,14 +5415,14 @@ async function selectOptionOnNode(cdp, backendNodeId, value, label) {
       return "ok";
     }`
   });
-  const answer = outcome?.result?.value ?? "";
-  if (answer === "ok") return;
-  if (answer === "not_select") {
+  const answer2 = outcome?.result?.value ?? "";
+  if (answer2 === "ok") return;
+  if (answer2 === "not_select") {
     throw new Error(
       `target_not_found: ${label} is not a <select>; use click or type instead`
     );
   }
-  const offered = answer.startsWith("no_option:") ? answer.slice(10) : "";
+  const offered = answer2.startsWith("no_option:") ? answer2.slice(10) : "";
   throw new Error(
     `target_not_found: ${label} has no option matching "${value}"` + (offered ? `; it offers: ${offered}` : "")
   );
@@ -5838,6 +5844,66 @@ function createBrowserSecretRegistry() {
     },
     get size() {
       return byValue.size;
+    }
+  };
+}
+
+// server/services/browserd/daemon/navigation-stop.ts
+function isStopTarget(value) {
+  if (typeof value !== "string" || /[*?\\#]/.test(value)) return false;
+  try {
+    return /^https?:$/.test(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+var isAt = (url, target) => url === target || url.startsWith(`${target}?`) || url.startsWith(`${target}#`);
+var watches = /* @__PURE__ */ new WeakMap();
+async function answer(cdp, slot, payload) {
+  const paused = payload;
+  const watch = slot.current;
+  const url = paused.request?.url ?? "";
+  const stop = watch !== void 0 && watch.stopped === void 0 && paused.frameId === watch.mainFrame && isAt(url, watch.target);
+  if (stop) watch.stopped = url;
+  try {
+    await cdp.send(
+      stop ? "Fetch.failRequest" : "Fetch.continueRequest",
+      stop ? { requestId: paused.requestId, errorReason: "Aborted" } : { requestId: paused.requestId }
+    );
+  } catch {
+  }
+}
+async function armNavigationStop(cdp, target) {
+  let slot = watches.get(cdp);
+  if (!slot) {
+    const created = {};
+    cdp.on("Fetch.requestPaused", (payload) => {
+      void answer(cdp, created, payload);
+    });
+    watches.set(cdp, created);
+    slot = created;
+  }
+  const tree = await cdp.send("Page.getFrameTree");
+  const watch = { target, mainFrame: tree.frameTree?.frame?.id };
+  const owner = slot;
+  owner.current = watch;
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      {
+        urlPattern: `${target}*`,
+        resourceType: "Document",
+        requestStage: "Request"
+      }
+    ]
+  });
+  return {
+    stopped: () => watch.stopped,
+    disarm: async () => {
+      if (owner.current === watch) owner.current = void 0;
+      try {
+        await cdp.send("Fetch.disable");
+      } catch {
+      }
     }
   };
 }
@@ -8052,7 +8118,30 @@ var ChromiumDriver = class {
    * true for all of them at once — including the ones added later.
    */
   async execute(command, context) {
-    return this.barrier.run(() => this.executeInBarrier(command, context));
+    return this.barrier.run(() => this.executeStopping(command, context));
+  }
+  /**
+   * Stop a top-level navigation to the command's `stopAt` page while it runs
+   * (`navigation-stop`). A stop that cannot be armed fails the command before
+   * it acts, rather than letting that page load.
+   */
+  async executeStopping(command, context) {
+    const target = command.stopAt;
+    const kind = command.action.kind;
+    const tabId = command.tabId ?? this.activeTabId ?? DEFAULT_TAB;
+    const page = (kind === "navigate" || kind === "act") && isStopTarget(target) ? this.tabs.get(tabId)?.page : void 0;
+    const cdp = page ? await page.cdp() : null;
+    if (!cdp || !isStopTarget(target)) {
+      return this.executeInBarrier(command, context);
+    }
+    const stop = await armNavigationStop(cdp, target);
+    try {
+      const result = await this.executeInBarrier(command, context);
+      const stoppedAt = stop.stopped();
+      return stoppedAt ? { ...result, stoppedAt } : result;
+    } finally {
+      await stop.disarm();
+    }
   }
   async executeInBarrier(command, context) {
     if (command.source !== "manual" && command.action.kind !== "webmcp_cancel" && !negotiateViewport(this.viewportPolicy, command).ok) {
