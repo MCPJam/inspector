@@ -130,6 +130,9 @@ export type {
   ClaudeCheckStamp,
 } from "./checks/helpers.js";
 
+export { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
+export type { ClaudeAnswerEvidence } from "./answers.js";
+
 export {
   CLAUDE_ATTESTATIONS,
   CLAUDE_DATA_HANDLING_MODES,

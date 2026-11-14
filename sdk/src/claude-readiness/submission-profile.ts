@@ -39,7 +39,11 @@ export const CLAUDE_DECLARED_AUTH_MODES = [
   "custom-connection",
 ] as const;
 
-/** What the connector does with user data, as declared on the submission form. */
+/**
+ * What the connector does with user data, as declared on the submission form.
+ *
+ * @deprecated Grade submission answers (`submissionAnswers`) instead.
+ */
 export const CLAUDE_DATA_HANDLING_MODES = [
   "no-user-data",
   "processes-user-data",
@@ -54,6 +58,8 @@ export const CLAUDE_DATA_HANDLING_MODES = [
  * that is missing one names WHICH one. Every one of them is a claim about the
  * world that no probe can verify, which is why the checks over them are
  * presence checks and the truth of them stays `manual-review`.
+ *
+ * @deprecated Grade submission answers (`submissionAnswers`) instead.
  */
 export const CLAUDE_ATTESTATIONS = [
   "ownsOrIsAuthorizedForService",
@@ -87,6 +93,7 @@ const screenshotSchema = z.object({
   prompt: z.string().min(1),
 });
 
+/** @deprecated Grade submission answers (`submissionAnswers`) instead. */
 export const claudeSubmissionProfileSchema = z.object({
   name: z.string().min(1).max(CLAUDE_SUBMISSION_LIMITS.nameMaxLength),
   tagline: z.string().min(1).max(CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength),
@@ -121,12 +128,15 @@ export const claudeSubmissionProfileSchema = z.object({
   attestations: z.record(z.enum(CLAUDE_ATTESTATIONS), z.boolean()),
 });
 
+/** @deprecated Grade submission answers (`submissionAnswers`) instead. */
 export type ClaudeSubmissionProfile = z.infer<
   typeof claudeSubmissionProfileSchema
 >;
 export type ClaudeDeclaredAuthMode =
   (typeof CLAUDE_DECLARED_AUTH_MODES)[number];
+/** @deprecated Grade submission answers (`submissionAnswers`) instead. */
 export type ClaudeDataHandlingMode = (typeof CLAUDE_DATA_HANDLING_MODES)[number];
+/** @deprecated Grade submission answers (`submissionAnswers`) instead. */
 export type ClaudeAttestation = (typeof CLAUDE_ATTESTATIONS)[number];
 
 /**
@@ -135,12 +145,15 @@ export type ClaudeAttestation = (typeof CLAUDE_ATTESTATIONS)[number];
  * A caller who supplied a malformed profile has NOT supplied no profile, and
  * reporting the lane as "no input" would hide their mistake behind a status
  * that reads like our limitation. The issues are surfaced as findings instead.
+ *
+ * @deprecated Grade submission answers (`submissionAnswers`) instead.
  */
 export interface ClaudeSubmissionProfileParse {
   profile?: ClaudeSubmissionProfile;
   issues: string[];
 }
 
+/** @deprecated Grade submission answers (`submissionAnswers`) instead. */
 export function parseClaudeSubmissionProfile(
   input: unknown,
 ): ClaudeSubmissionProfileParse {

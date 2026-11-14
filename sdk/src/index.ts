@@ -779,7 +779,7 @@ export type {
 } from "./directory-readiness/lazy-auth.js";
 export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
 export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
-// Directory submission forms as data.
+// Directory submission forms as data: flows, answer validation, placement.
 export * from "./directory-readiness/flows/index.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
