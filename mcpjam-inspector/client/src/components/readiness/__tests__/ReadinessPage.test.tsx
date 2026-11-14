@@ -3,14 +3,16 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHATGPT_PLUGIN_FLOW,
   CLAUDE_CONNECTOR_FLOW,
+  draftDirectoryTestPlan,
   placeDirectoryResults,
   type DirectoryAnswer,
+  type DirectoryTestPlan,
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
@@ -66,6 +68,17 @@ vi.mock("@/hooks/usePluginImportApi", () => ({
 }));
 vi.mock("@/hooks/usePluginsEnabled", () => ({
   usePluginsEnabledState: () => true,
+}));
+
+const plans = vi.hoisted(() => ({
+  getTestPlan: vi.fn(),
+  draftTestPlan: vi.fn(),
+  saveTestPlan: vi.fn(),
+  getToolTests: vi.fn(),
+}));
+vi.mock("@/lib/apis/directory-test-plan-api", () => plans);
+vi.mock("@/hooks/use-task-owner-id", () => ({
+  useTaskOwnerId: () => "user_1",
 }));
 
 function finding(
@@ -143,6 +156,9 @@ function pluginSubmission(): SubmissionView {
 describe("ReadinessRoute", () => {
   beforeEach(() => {
     for (const mock of Object.values(api)) mock.mockReset();
+    for (const mock of Object.values(plans)) mock.mockReset();
+    plans.getTestPlan.mockResolvedValue(null);
+    plans.getToolTests.mockResolvedValue({ run: null, tools: [], inDoubt: [] });
     api.getDirectoryFlow.mockResolvedValue(CLAUDE_CONNECTOR_FLOW);
     api.listServerSubmissions.mockResolvedValue([]);
     api.createDirectorySubmission.mockResolvedValue(submission());
@@ -192,6 +208,301 @@ describe("ReadinessRoute", () => {
       "srv_1",
       expect.any(AbortSignal),
     );
+  });
+
+  describe("confirming a test plan revision before a run uses it", () => {
+    const KEY = "mcpjam-readiness-test-plan-confirmed:proj_1:sub_1";
+    const plan = (
+      revision: number,
+      content: DirectoryTestPlan = draftDirectoryTestPlan([
+        { name: "search_docs", annotations: { readOnlyHint: true } },
+        { name: "create_note", annotations: { destructiveHint: false } },
+        { name: "delete_note" },
+      ]),
+    ) => ({
+      submissionId: "sub_1",
+      revision,
+      counts: { tools: 3, cases: 3, fixtures: 0, cleanup: 0 },
+      savedBy: "user_2",
+      savedAt: Date.now() - 3_600_000,
+      plan: content,
+      issues: [],
+      catalog: null,
+    });
+    const note = { $fixture: "note", value: "id" };
+    /** Every part the dialog must show: nested arguments, fixtures, cleanup. */
+    const CALLS: DirectoryTestPlan = {
+      schemaVersion: 1,
+      fixtures: [
+        {
+          id: "note",
+          description: "A note the plan creates",
+          origin: "created",
+          capture: { id: "note.id" },
+        },
+        {
+          id: "project",
+          description: "The reviewer's sample project",
+          origin: "existing",
+          values: { id: "proj_sample" },
+        },
+      ],
+      tools: [
+        {
+          tool: "search_docs",
+          effect: "read",
+          openWorld: true,
+          action: "run",
+          writes: [],
+        },
+        {
+          tool: "list_projects",
+          effect: "read",
+          openWorld: false,
+          action: "excluded",
+          exclusion: { reason: "costly" },
+          writes: [],
+        },
+        {
+          tool: "create_note",
+          effect: "write",
+          openWorld: false,
+          action: "run",
+          writes: ["note", "project"],
+        },
+        {
+          tool: "delete_note",
+          effect: "destructive",
+          openWorld: false,
+          action: "run",
+          writes: ["note"],
+        },
+      ],
+      cases: [
+        {
+          id: "create_note#valid",
+          tool: "create_note",
+          kind: "valid",
+          arguments: {
+            title: "Sample note",
+            project: { $fixture: "project", value: "id" },
+            tags: ["a", "b"],
+          },
+          creates: ["note"],
+        },
+        {
+          id: "search_docs#valid",
+          tool: "search_docs",
+          kind: "valid",
+          arguments: {
+            query: "pricing",
+            filter: { owner: { email: "review@example.com" } },
+          },
+        },
+        {
+          id: "search_docs#missing-arguments",
+          tool: "search_docs",
+          kind: "negative",
+          arguments: {},
+          expectedError: "invalid-arguments",
+        },
+        {
+          id: "delete_note#valid",
+          tool: "delete_note",
+          kind: "valid",
+          arguments: { id: note },
+        },
+      ],
+      budget: { maxCalls: 4, concurrency: 1, callTimeoutMs: 30_000 },
+      cleanup: [
+        {
+          fixture: "note",
+          tool: "delete_note",
+          arguments: { id: note, hard: true },
+        },
+      ],
+    };
+    const shownJson = (dialog: HTMLElement) =>
+      [...dialog.querySelectorAll("pre")].map((block) => block.textContent);
+    const json = (value: unknown) => JSON.stringify(value, null, 2);
+    const sentRevisions = () =>
+      api.startDirectorySubmissionRun.mock.calls.map((call) => call[3]);
+
+    /** Opens the rehearsal and presses the run button once it reads `label`. */
+    async function pressRun(label: string) {
+      const page = render(<ReadinessRoute />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /MCP connector/ }),
+      );
+      const button = await screen.findByRole("button", { name: label });
+      await waitFor(() => expect(button).toBeEnabled());
+      await userEvent.click(button);
+      return page;
+    }
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
+      plans.getTestPlan.mockResolvedValue(plan(3));
+    });
+
+    it("asks before a run uses a revision this browser has not confirmed, and Cancel starts nothing", async () => {
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Run checks with test plan revision 3?",
+      });
+      expect(dialog).toHaveTextContent(
+        "Revision 3 was saved by a project member about 1 hour ago. It calls 3 tools on Sample server with your account.",
+      );
+      expect(dialog).toHaveTextContent("create_note can change data.");
+      expect(dialog).toHaveTextContent("delete_note can destroy data.");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+    });
+
+    it("starts the run with the revision confirmed, and does not ask for it again", async () => {
+      const first = await pressRun("Run checks with test plan revision 3");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Run with revision 3" }),
+      );
+      await waitFor(() => expect(sentRevisions()).toEqual([3]));
+      expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
+        { projectId: "proj_1", submissionId: "sub_1" },
+        expect.any(String),
+        undefined,
+        3,
+      );
+      first.unmount();
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      await waitFor(() => expect(sentRevisions()).toEqual([3, 3]));
+    });
+
+    it("asks again for a newer revision", async () => {
+      window.localStorage.setItem(KEY, "3");
+      plans.getTestPlan.mockResolvedValue(plan(4));
+      await pressRun("Run checks with test plan revision 4");
+      expect(
+        screen.getByRole("alertdialog", {
+          name: "Run checks with test plan revision 4?",
+        }),
+      ).toBeVisible();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+    });
+
+    it("asks every time when storage is unavailable", async () => {
+      const blocked = (key: string) => {
+        if (key === KEY) throw new Error("Storage is blocked");
+        return null;
+      };
+      vi.spyOn(window.localStorage, "getItem").mockImplementation(blocked);
+      vi.spyOn(window.localStorage, "setItem").mockImplementation(blocked);
+      const first = await pressRun("Run checks with test plan revision 3");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Run with revision 3" }),
+      );
+      await waitFor(() => expect(sentRevisions()).toEqual([3]));
+      first.unmount();
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.getByRole("alertdialog")).toBeVisible();
+      expect(sentRevisions()).toEqual([3]);
+    });
+
+    it("shows every call in run order with its exact arguments, nested ones included", async () => {
+      plans.getTestPlan.mockResolvedValue(plan(3, CALLS));
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog");
+      const calls = within(dialog).getAllByRole("listitem");
+      expect(calls.map((call) => call.querySelector("p")?.textContent)).toEqual(
+        [
+          "create_note, valid input",
+          "search_docs, valid input, reaches outside the server",
+          "search_docs, negative case, reaches outside the server",
+          "delete_note, valid input",
+        ],
+      );
+      expect(shownJson(dialog).slice(0, 4)).toEqual(
+        CALLS.cases.map((testCase) => json(testCase.arguments)),
+      );
+      expect(calls[2]).toHaveTextContent(
+        "Expects an invalid-arguments refusal.",
+      );
+      expect(calls[0]).toHaveTextContent("Expects a result.");
+    });
+
+    it("shows the fixtures and the cleanup calls with their arguments, and names excluded tools", async () => {
+      plans.getTestPlan.mockResolvedValue(plan(3, CALLS));
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog).toHaveTextContent("note: A note the plan creates");
+      expect(dialog).toHaveTextContent("Created by create_note#valid.");
+      expect(dialog).toHaveTextContent(
+        "Tools allowed to change it: create_note and delete_note.",
+      );
+      expect(dialog).toHaveTextContent("Already in the reviewer's account.");
+      expect(dialog).toHaveTextContent("delete_note removes note");
+      expect(shownJson(dialog).slice(4)).toEqual([
+        json({ id: "proj_sample" }),
+        json(CALLS.cleanup[0].arguments),
+      ]);
+      expect(dialog).toHaveTextContent(
+        "list_projects is excluded and not called.",
+      );
+    });
+
+    it("shows nothing and sends nothing when the saved plan moves past the revision the run would send", async () => {
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.getByRole("alertdialog")).toBeVisible();
+      // Another session saves revision 4 while the dialog is open.
+      plans.getTestPlan.mockResolvedValue(plan(4));
+      api.getDirectorySubmission.mockResolvedValue({
+        ...submission(),
+        lastRunId: "run_9",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await screen.findByRole("button", {
+        name: "Run checks again with test plan revision 4",
+      });
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+    });
+
+    it("sends no revision and asks nothing when no plan is saved", async () => {
+      plans.getTestPlan.mockResolvedValue(null);
+      render(<ReadinessRoute />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /MCP connector/ }),
+      );
+      await waitFor(() => expect(plans.getTestPlan).toHaveBeenCalled());
+      const button = await screen.findByRole("button", { name: "Run checks" });
+      await waitFor(() => expect(button).toBeEnabled());
+      await userEvent.click(button);
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      await waitFor(() => expect(sentRevisions()).toEqual([undefined]));
+    });
+  });
+
+  it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    const rail = within(
+      await screen.findByRole("navigation", {
+        name: "Claude submission steps",
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "MCPJam test plan" }),
+    ).toBeNull();
+    await userEvent.click(rail.getByRole("button", { name: /Test & launch/ }));
+    const section = screen.getByRole("region", { name: "MCPJam test plan" });
+    expect(
+      await within(section).findByText(/^No test plan is saved/),
+    ).toBeVisible();
+    expect(plans.getToolTests).toHaveBeenCalled();
   });
 
   it("asks for a saved server first", () => {

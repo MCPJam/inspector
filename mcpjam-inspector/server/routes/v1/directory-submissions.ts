@@ -38,7 +38,7 @@ import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireConvexIdShape, requireProjectIdArg } from "./convex-id-param.js";
-import { translateConvexWriteError } from "./convex-errors.js";
+import { convexErrorData, translateConvexWriteError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { redactForLog } from "./redact-log-message.js";
 import {
@@ -376,6 +376,20 @@ directorySubmissions.delete(ONE, async (c) => {
 });
 
 /**
+ * Why a run did not start. A `NOT_FOUND` from the backend here names what is
+ * missing, such as the submission's saved test plan, to a caller who has just
+ * read the submission, so its words are kept: the generic translation would
+ * answer "Readiness run not found" about a run that was never created.
+ */
+function startRefusal(error: unknown): WebRouteError {
+  const data = convexErrorData(error);
+  if (data?.code === "NOT_FOUND" && typeof data.message === "string" && data.message.trim()) {
+    return new WebRouteError(404, ErrorCode.NOT_FOUND, data.message);
+  }
+  return translateConvexWriteError(error, { resource: "Readiness run" });
+}
+
+/**
  * Grade the submission's saved server with its answers frozen at this
  * revision, and for a ChatGPT plugin the stored version the body names. A
  * `testPlanRevision` adds that plan's calls, and must be the current one. The
@@ -424,8 +438,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
       authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
     ),
     analyticsActor: readinessAnalyticsActor(c, projectId),
-    translateError: (error) =>
-      translateConvexWriteError(error, { resource: "Readiness run" }),
+    translateError: startRefusal,
   });
   captureServerEvent(c, "directory_readiness_run_started_server", {
     readiness_kind: flow.directory,

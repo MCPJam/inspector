@@ -22,6 +22,7 @@ import type {
   AnswerValues,
   DirectorySubmissionSession,
 } from "@/hooks/use-directory-submission";
+import type { DirectoryTestPlanSession } from "@/hooks/use-directory-test-plan";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { McpjamChecks, McpjamMark } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
@@ -30,6 +31,7 @@ import { portalMarks, PortalStepRail } from "./PortalStepRail";
 import { PortalWidget } from "./PortalWidgets";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
 import { ReviewerPath } from "./ReviewerSection";
+import { TestPlanSection } from "./TestPlanSection";
 
 function StepBody({
   flow,
@@ -175,6 +177,7 @@ export function PortalFrame({
   flow,
   view,
   session,
+  testPlan,
   serverUrl,
   serverName,
   onClose,
@@ -182,6 +185,8 @@ export function PortalFrame({
   flow: DirectoryFlow;
   view: SubmissionView;
   session: DirectorySubmissionSession;
+  /** The submission's test plan, drawn on the step that asks about testing. */
+  testPlan?: DirectoryTestPlanSession;
   serverUrl?: string;
   serverName?: string;
   onClose: () => void;
@@ -289,6 +294,9 @@ export function PortalFrame({
               view={view}
               session={session}
             />
+            {testPlan ? (
+              <TestPlanSection flow={flow} step={step} session={testPlan} />
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
                 type="button"

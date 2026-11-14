@@ -465,6 +465,9 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // submissions with their runs, results and recorded events.
   /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
   /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|events))?)?$/,
+  // The /readiness page's test plan: the saved plan, a draft, and what a
+  // run's calls showed.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/(test-plan(\/draft)?|tool-tests)$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the

@@ -25,9 +25,14 @@ const runner = vi.hoisted(() => ({
   state: { status: "idle" },
   run: vi.fn(),
   watch: vi.fn(),
+  /** How the hook starts a run, as the run poller would call it. */
+  start: undefined as ((key: string) => Promise<unknown>) | undefined,
 }));
 vi.mock("@/hooks/use-directory-readiness-run", () => ({
-  useDirectoryReadinessRun: () => runner,
+  useDirectoryReadinessRun: (options: { start: typeof runner.start }) => {
+    runner.start = options.start;
+    return runner;
+  },
 }));
 
 function viewAt(revision: number, name: string): SubmissionView {
@@ -239,5 +244,21 @@ describe("useDirectorySubmission", () => {
     expect(
       api.updateDirectorySubmission.mock.invocationCallOrder[0],
     ).toBeLessThan(runner.run.mock.invocationCallOrder[0]);
+  });
+
+  it("starts a run with the test plan revision it was started with, and no other", async () => {
+    const start = () => runner.start?.("key_1");
+    runner.run.mockImplementationOnce(start).mockImplementationOnce(start);
+    const { result } = await openSubmission();
+    await act(async () => {
+      await result.current.startRun(3);
+    });
+    await act(async () => {
+      await result.current.startRun();
+    });
+    expect(api.startDirectorySubmissionRun.mock.calls).toEqual([
+      [SCOPE, "key_1", undefined, 3],
+      [SCOPE, "key_1", undefined, undefined],
+    ]);
   });
 });
