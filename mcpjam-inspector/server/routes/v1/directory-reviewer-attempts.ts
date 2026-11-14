@@ -132,6 +132,26 @@ function savedServerOf(row: Submission): string {
 }
 
 /**
+ * What the attempt's run grades beside the server. A ChatGPT plugin
+ * submission's run grades the plugin version saved on the submission, checked
+ * before an attempt is created or resumed so a refusal leaves none open.
+ */
+function gradedPackage(row: Submission) {
+  if (flowOf(row).directory !== "openai") return {};
+  if (!row.pluginVersionId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This ChatGPT plugin submission has no plugin version saved, so its run has nothing to grade. Choose the plugin version on the submission, then start the sign-in again.",
+    );
+  }
+  return {
+    submissionMode: "mcp-uploaded-skills" as const,
+    pluginVersionId: row.pluginVersionId,
+  };
+}
+
+/**
  * Start the run that works on the attempt. Its key comes from the attempt, so
  * a replayed start finds the run the first one started instead of signing in
  * twice. A start that fails leaves the attempt open, and names it.
@@ -145,6 +165,7 @@ async function startAttemptRun(
   runKey: string,
 ) {
   const flow = flowOf(row);
+  const graded = gradedPackage(row);
   try {
     const receipt = await startHostedReadinessRun({
       convex,
@@ -154,6 +175,7 @@ async function startAttemptRun(
       idempotencyKey: runKey,
       includeLlmObservations: false,
       submissionId: row.id,
+      ...graded,
       reviewerAttemptId: attempt.id,
       authorized,
       analyticsActor: readinessAnalyticsActor(c, row.projectId),
@@ -161,7 +183,7 @@ async function startAttemptRun(
     });
     captureServerEvent(c, "directory_readiness_run_started_server", {
       readiness_kind: flow.directory,
-      submission_mode: null,
+      submission_mode: graded.submissionMode ?? null,
       flow_id: flow.id,
       include_llm_observations: false,
       deduped: receipt.deduped,
@@ -182,7 +204,9 @@ reviewerAttempts.post(BASE, async (c) => {
   const token = await getConvexBearerForRequest(c);
   const convex = createConvexClient(token);
   const row = await readSubmission(convex, projectId, submissionId);
-  // Before anything is written: a server the caller cannot use leaves no attempt.
+  // Before anything is written: a server the caller cannot use, or a plugin
+  // with no version to grade, leaves no attempt.
+  gradedPackage(row);
   const authorized = await authorizeServer(c, token, projectId, savedServerOf(row));
   let created: Attempt & { replayed?: true };
   try {
@@ -235,6 +259,7 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
   const convex = createConvexClient(token);
   const row = await readSubmission(convex, scope.projectId, scope.submissionId);
   await readReviewerAttempt(convex, scope, attemptId, translateRead);
+  gradedPackage(row);
   const authorized = await authorizeServer(c, token, scope.projectId, savedServerOf(row));
   let attempt: Attempt;
   try {

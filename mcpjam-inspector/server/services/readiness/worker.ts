@@ -47,12 +47,17 @@ import {
   heartbeatReadinessRun,
   joinReviewerAttempt,
   ReadinessSubmissionUnreadableError,
+  recordReviewerAttempt,
   requestManagedObservations,
   type ReadinessClaimRefusal,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
   type ReadinessRunSubmission,
 } from "./backend-client.js";
+import type {
+  ReviewerAttemptView,
+  ReviewerSignInOutcome,
+} from "./reviewer-sign-in.js";
 import {
   ReadinessLeaseLostError,
   ReadinessRunCancelledError,
@@ -118,6 +123,17 @@ export interface ExecuteHostedReadinessOptions {
    * takes no attempt, so the run joins it before anything dials.
    */
   reviewerAttemptId?: string;
+  /**
+   * Rehearses the reviewer's sign-in on the attempt the run joined, before
+   * grading. The routes inject the live rehearsal, so a run without one, and
+   * a test, never reserves a desktop.
+   */
+  reviewerSignIn?: (input: {
+    lease: ReadinessLease;
+    attemptId: string;
+    attempt: ReviewerAttemptView;
+    signal: AbortSignal;
+  }) => Promise<ReviewerSignInOutcome>;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -229,19 +245,58 @@ function gradesPackage(options: ExecuteHostedReadinessOptions): boolean {
 }
 
 /**
- * Join the reviewer attempt the run carries. An attempt it cannot join (ended,
- * held by another run) leaves the run grading the submission without it.
+ * Join the reviewer attempt the run carries, and rehearse its sign-in. An
+ * attempt it cannot join (ended, held by another run) leaves the run grading
+ * the submission without it.
  */
-async function joinAttempt(options: ExecuteHostedReadinessOptions): Promise<void> {
+async function joinAndRehearse(
+  options: ExecuteHostedReadinessOptions,
+  signal: AbortSignal,
+): Promise<ReviewerSignInOutcome | undefined> {
   const attemptId = options.reviewerAttemptId;
-  if (!attemptId) return;
+  if (!attemptId) return undefined;
   const join = await joinReviewerAttempt(options.lease, attemptId);
-  if (join.joined) return;
-  logger.warn("[readiness] the run did not join its reviewer attempt", {
-    runId: options.lease.runId,
+  if (!join.joined) {
+    logger.warn("[readiness] the run did not join its reviewer attempt", {
+      runId: options.lease.runId,
+      attemptId,
+      reason: join.reason,
+    });
+    return undefined;
+  }
+  if (!join.attempt || !options.reviewerSignIn) return undefined;
+  return options.reviewerSignIn({
+    lease: options.lease,
     attemptId,
-    reason: join.reason,
+    attempt: join.attempt,
+    signal,
   });
+}
+
+/** A run that stops for a person ends with this; the attempt says what to do. */
+const WAITING_FOR_PERSON =
+  "The reviewer sign-in reached a step only a person can finish, so this run stopped. Finish that step, then resume the reviewer attempt.";
+
+/**
+ * End a connected attempt as passed once the run has graded with it, and
+ * before the finalize releases the lease the write needs.
+ */
+async function passAttempt(lease: ReadinessLease, attemptId: string) {
+  try {
+    await recordReviewerAttempt(lease, attemptId, {
+      outcome: "passed",
+      detail:
+        "MCPJam signed in as the reviewer, connected the reviewer account and graded the submission.",
+    });
+  } catch (error) {
+    if (error instanceof ReadinessLeaseLostError) throw error;
+    // The attempt was cancelled or taken over meanwhile; the grade stands.
+    logger.warn("[readiness] the reviewer attempt was not ended", {
+      runId: lease.runId,
+      attemptId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
@@ -328,7 +383,14 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "abandoned", terminalReason: refusal };
       return;
     }
-    await joinAttempt(options);
+    const signIn = await joinAndRehearse(options, controller.signal);
+    if (signIn?.kind === "waiting-for-person") {
+      // The attempt now waits for a person, who resumes it with a new run, so
+      // this one ends here and frees its slot.
+      await failReadinessRun(lease, "waiting_for_person", WAITING_FOR_PERSON);
+      terminal = { outcome: "blocked", terminalReason: "waiting_for_person" };
+      return;
+    }
     const submissionAnswers = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;
@@ -359,6 +421,9 @@ export async function executeHostedReadinessRun(
         : undefined,
     });
 
+    if (signIn?.kind === "connected" && options.reviewerAttemptId) {
+      await passAttempt(lease, options.reviewerAttemptId);
+    }
     await finalizeReadinessRun(
       lease,
       summarizeReadinessResult(result, options.sdkVersion),
