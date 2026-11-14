@@ -265,7 +265,7 @@ export function ToolPart({
     "data" | "state" | "sandbox" | "context" | null
   >("data");
   const [resultImageMode, setResultImageMode] = useState<"images" | "raw">(
-    "images",
+    "images"
   );
 
   const inputData = (part as any).input;
@@ -312,7 +312,7 @@ export function ToolPart({
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
-    mcpToolResultImageRendering,
+    mcpToolResultImageRendering
   );
   const showInlineImagePreview = imageRenderPlacement === "inline";
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
@@ -320,7 +320,7 @@ export function ToolPart({
     showInlineImagePreview || (showPanelImagePreview && isExpanded);
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? imagePreviewData : undefined,
-    { serverId, renderingPolicy: mcpToolResultImageRendering },
+    { serverId, renderingPolicy: mcpToolResultImageRendering }
   );
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
@@ -356,7 +356,7 @@ export function ToolPart({
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
   const storedWidgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
   // A completed eval can retain live store data from the streaming phase.
   // Once its widget becomes a frozen screenshot, the recorded snapshot is the
@@ -368,7 +368,7 @@ export function ToolPart({
   const hostContext = useEffectiveHostContext();
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext],
+    [hostContext]
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasRecordedWidgetDebug =
@@ -510,8 +510,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                  ? "bg-background text-foreground shadow-sm cursor-pointer"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                    ? "bg-background text-foreground shadow-sm cursor-pointer"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -533,18 +533,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Context";
+            ? "State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "Widget State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Model Context";
+            ? "Widget State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -560,8 +560,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -648,7 +648,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : runDisabledReason ?? "Re-run tool with edited input"}
+                  : (runDisabledReason ?? "Re-run tool with edited input")}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -791,11 +791,13 @@ export function ToolPart({
           </div>
         ) : showPanelImagePreview &&
           resultImageState.status === "ready" &&
-          resultImageState.previews.length > 0 &&
+          (resultImageState.previews.length > 0 ||
+            resultImageState.omittedImageCount > 0) &&
           resultImageMode === "images" ? (
           <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto p-2">
             <McpToolResultImagePreviewGrid
               previews={resultImageState.previews}
+              omittedImageCount={resultImageState.omittedImageCount}
               className="grid-cols-1"
               tileClassName="min-h-[120px]"
               imageClassName="max-h-[260px]"
@@ -845,7 +847,8 @@ export function ToolPart({
 
     if (
       resultImageState.status !== "ready" ||
-      resultImageState.previews.length === 0
+      (resultImageState.previews.length === 0 &&
+        resultImageState.omittedImageCount === 0)
     ) {
       return null;
     }
@@ -854,6 +857,7 @@ export function ToolPart({
       <div className="px-3 pb-3">
         <McpToolResultImagePreviewGrid
           previews={resultImageState.previews}
+          omittedImageCount={resultImageState.omittedImageCount}
           className="grid-cols-1"
           tileClassName="min-h-[160px]"
           imageClassName="max-h-[360px]"
@@ -869,7 +873,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (resultDisplayData as { authUrls?: unknown })?.authUrls,
+      (resultDisplayData as { authUrls?: unknown })?.authUrls
     );
     if (urls.length === 0) return null;
     return (
@@ -937,8 +941,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                ? "border-destructive/40 bg-destructive/10"
-                : "border-border/60 bg-muted/30",
+                  ? "border-destructive/40 bg-destructive/10"
+                  : "border-border/60 bg-muted/30"
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
@@ -981,7 +985,7 @@ export function ToolPart({
                     <ChevronDown
                       className={cn(
                         "h-3 w-3 transition-transform",
-                        paramsExpanded && "rotate-180",
+                        paramsExpanded && "rotate-180"
                       )}
                     />
                   </button>
@@ -1261,7 +1265,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt,
+                          widgetDebugInfo.modelContext.updatedAt
                         ).toLocaleTimeString()}
                       </div>
                     )}
@@ -1344,7 +1348,7 @@ export function ToolPart({
  */
 export function readToolRunLocation(
   toolName: string | undefined,
-  rawResult: unknown,
+  rawResult: unknown
 ): "local" | "cloud" | null {
   if (toolName !== "bash") return null;
   if (!rawResult || typeof rawResult !== "object") return null;
