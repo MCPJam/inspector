@@ -148,12 +148,15 @@ export const claudeCodeLocalRuntime: LocalRuntime<"claude-code"> = {
     "AI_GATEWAY_API_KEY",
     "AI_GATEWAY_BASE_URL",
   ],
-  childAuth: (gateway) =>
-    ({
-      ANTHROPIC_AUTH_TOKEN: gateway.sessionCapability,
-      ANTHROPIC_API_KEY: gateway.sessionCapability,
-      ANTHROPIC_BASE_URL: gateway.baseUrl,
-    }) as HarnessAuth,
+  credential: {
+    kind: "gateway",
+    childAuth: (gateway) =>
+      ({
+        ANTHROPIC_AUTH_TOKEN: gateway.sessionCapability,
+        ANTHROPIC_API_KEY: gateway.sessionCapability,
+        ANTHROPIC_BASE_URL: gateway.baseUrl,
+      }) as HarnessAuth,
+  },
   // Git Bash is how Claude Code runs shell commands on Windows.
   gitBashOnWindows: true,
 };

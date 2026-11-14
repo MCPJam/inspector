@@ -63,6 +63,10 @@ import {
 const HARNESS_ID = process.argv[2] ?? "";
 const runtime = localRuntimeOf(HARNESS_ID);
 if (runtime === undefined) throw new Error(`${JSON.stringify(HARNESS_ID)} is not a local runtime`);
+const credential = runtime.credential;
+// A runtime on its vendor's own login has no gateway to drive a turn through.
+if (credential.kind !== "gateway") throw new Error(`${HARNESS_ID} runs on a runtime login, not a model gateway`);
+const gatewayAuth = credential.childAuth;
 const ROOT = process.env.CONFORMANCE_ROOT!;
 const PLATFORM = process.platform as LocalPlatform;
 const PACK_TARGET = localPackTarget();
@@ -233,7 +237,7 @@ async function main() {
   };
   const harness = getHarnessAdapter(runtime!.harnessId).createHarness({
     modelId: "gpt-5.5",
-    auth: runtime!.childAuth({ baseUrl: `http://127.0.0.1:${gateway.port}`, sessionCapability: CAPABILITY }),
+    auth: gatewayAuth({ baseUrl: `http://127.0.0.1:${gateway.port}`, sessionCapability: CAPABILITY }),
     // No forwarded server: the host tool above is the MCP path this checks.
     mcpJson: { mcpServers: {} },
   });

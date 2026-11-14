@@ -137,6 +137,16 @@ vi.mock("../supervisor.js", () => ({
   },
 }));
 
+// A runtime on its vendor's own login (Cursor, once it is local): claude-code's
+// definition with that credential, so what is tested is the turn's own path.
+const login = vi.hoisted(() => ({ on: false, install: vi.fn(), clear: vi.fn(async () => undefined) }));
+vi.mock("../runtime-login.js", () => ({ installRuntimeLogin: login.install, clearRuntimeLogin: login.clear }));
+vi.mock("../runtimes/index.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../runtimes/index.js")>();
+  const credential = { kind: "runtime-login", childAuth: (issued: { accessToken: string }) => ({ VENDOR_TOKEN: issued.accessToken }) };
+  return { ...real, localRuntime: (id: never) => ({ ...real.localRuntime(id), ...(login.on ? { credential } : {}) }) };
+});
+
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
 const { resetApprovalParkForTests, describeParkedLocalSession } = await import(
   "../approval-park.js"
@@ -182,6 +192,7 @@ beforeEach(async () => {
   stateRoot = tempDir;
   installRoot = join(tempDir, "runtime");
   identityFixture.keyId = "key_1";
+  login.on = false;
   supervisorFixture.stopOutcome = { stopped: true };
   supervisorFixture.stopCalls = 0;
   supervisorFixture.live = 1;
@@ -805,4 +816,43 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
   if (!result.ok) throw new Error(result.message);
   expect(result.prepared.permissionMode).toBe("allow-reads");
   await result.prepared.teardown();
+});
+
+describe("a local turn on a runtime login", () => {
+  const issued = { ok: true, installId: "install_1", login: { accessToken: "vendor-login", expiresAt: Date.now() + 3_600_000 } };
+  beforeEach(() => { login.on = true; });
+
+  it("takes no lease and no gateway, and clears the login once, closing the MCP relay with it", async () => {
+    login.install.mockResolvedValueOnce(issued);
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    if (!result.ok) throw new Error(result.message);
+    expect(result.prepared).toMatchObject({ auth: { VENDOR_TOKEN: "vendor-login" }, brokerRunId: null });
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+    expect(startLocalModelGateway).not.toHaveBeenCalled();
+    const { strategy } = await result.prepared.bindMcpPlane({ manager: new MCPClientManager({}), serverIds: [], turnId: "t" });
+    await result.prepared.teardown();
+    expect(login.clear.mock.calls).toEqual([[expect.objectContaining({ installId: "install_1" })]]);
+    await expect(fetch(`${strategy.baseUrl}/selected`, { method: "POST" })).rejects.toThrow();
+  });
+
+  it("is re-adopted for a decision on the login its process holds, with no lease", async () => {
+    login.install.mockResolvedValueOnce(issued);
+    const first = await prepareLocalHarnessTurn(turnArgs());
+    if (!first.ok) throw new Error(first.message);
+    expect(first.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+    const adopted = await prepareLocalHarnessTurn({ ...turnArgs(), approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] } } as never);
+    if (!adopted.ok) throw new Error(adopted.message);
+    expect(adopted.prepared.auth).toEqual(first.prepared.auth);
+    expect([login.install.mock.calls.length, login.clear.mock.calls.length]).toEqual([1, 0]);
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
+    adopted.prepared.unpark();
+    await adopted.prepared.teardown();
+    expect(login.clear).toHaveBeenCalledOnce();
+  });
+
+  it("refuses before anything spawns when no login comes back", async () => {
+    login.install.mockResolvedValueOnce({ ok: false, message: "Ask an org admin to add a Cursor key." });
+    expect(await prepareLocalHarnessTurn(turnArgs())).toMatchObject({ ok: false, status: "login-unavailable" });
+    expect(createSupervisedLocalHarnessProvider).not.toHaveBeenCalled();
+  });
 });

@@ -31,10 +31,7 @@ import { readLocalHarnessAuthorization } from "./authorization.js";
 import { logger } from "../../logger.js";
 import type { HarnessAuth, HarnessId } from "../registry.js";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import {
-  revokeHarnessModelBroker,
-  startLoopbackModelBroker,
-} from "../harness-model-broker.js";
+import { startLoopbackModelBroker } from "../harness-model-broker.js";
 import type { HarnessOrgLeaseUpstream } from "../harness-org-lease.js";
 import {
   resolveLocalHarnessAvailability,
@@ -42,10 +39,7 @@ import {
   type LocalHarnessLaunchPlan,
 } from "./availability.js";
 import { resolveNodeLauncher } from "./node-launcher.js";
-import {
-  startLocalModelGateway,
-  type LocalModelGateway,
-} from "./model-gateway.js";
+import { openTurnCredential, revokeLease, type TurnCredential } from "./turn-credential.js";
 import { noteRuntimeLaunch, readRuntimeInstallStatus } from "./runtime-install.js";
 import {
   reserveRuntimeUse,
@@ -122,7 +116,8 @@ export interface PreparedLocalHarnessTurn {
   bindMcpPlane: (args: LocalHarnessMcpPlaneArgs) => Promise<Awaited<ReturnType<typeof startLocalHarnessMcpPlane>>>;
   /** The AI SDK sandbox provider the turn assembles its harness over. */
   sandbox: ReturnType<typeof createSupervisedLocalHarnessProvider>;
-  /** What the child gets: a gateway URL and a per-session capability. */
+  /** What the child is handed: a gateway and a per-session capability, or a
+   *  short-lived runtime login (`turn-credential.ts`). */
   auth: HarnessAuth;
   /**
    * The agent's working directory, RELATIVE to the provider's default.
@@ -145,7 +140,8 @@ export interface PreparedLocalHarnessTurn {
   /** Observed before preparation creates the directory; a sidecar alone is insufficient. */
   sessionStateExists: boolean;
   permissionMode: "allow-reads" | "allow-edits" | "allow-all";
-  brokerRunId: string;
+  /** The lease's run; null for a runtime login, which takes no lease. */
+  brokerRunId: string | null;
   /**
    * Present when the turn's lease runs on the organization's own provider
    * key, as the backend recorded it (profile + hashed credential revision).
@@ -472,9 +468,9 @@ async function prepareWithReservedRuntime(outer: {
     ? ("allow-reads" as const)
     : plan.permissionMode;
 
-  // The lease FIRST. A supervised tree with no credential is a process running
-  // for nothing, and one that discovers it mid-turn has already spent the
-  // user's time.
+  // The credential FIRST. A supervised tree with no credential is a process
+  // running for nothing, and one that discovers it mid-turn has already spent
+  // the user's time.
   const identity = await readLocalInstanceIdentity();
   const keyId = identity.keyId ?? getRegisteredKeyId();
   if (keyId === null) {
@@ -486,49 +482,41 @@ async function prepareWithReservedRuntime(outer: {
         "Re-authorize local execution on this machine.",
     };
   }
-  const broker = await startLoopbackModelBroker({
+  const supervisor = localHarnessSupervisor();
+  const opened = await openTurnCredential({
+    credential: localRuntime(harnessId).credential,
+    harnessId: args.harnessId,
     projectId: args.projectId,
+    modelId: args.modelId,
+    machineId: identity.machineId,
+    keyId,
+    runId: args.runId,
     evalIterationId: args.evalIterationId,
     journeyRunId: args.journeyRunId,
     targetId: args.targetId,
     sessionIdx: args.sessionIdx,
     hostId: args.hostId,
-    harnessId: args.harnessId,
-    modelId: args.modelId,
-    machineId: identity.machineId,
-    keyId,
-    runId: args.runId,
-    ...(args.maxOutputTokens !== undefined
-      ? { maxOutputTokens: args.maxOutputTokens }
-      : {}),
-    ...(args.reasoningEffort ? { reasoningEffort: args.reasoningEffort } : {}),
-    ...(args.modelSelection ? { modelSelection: args.modelSelection } : {}),
+    maxOutputTokens: args.maxOutputTokens,
+    reasoningEffort: args.reasoningEffort,
+    modelSelection: args.modelSelection,
     bearer: args.bearer,
-    ...(args.signal ? { signal: args.signal } : {}),
+    getCleanupAuthorization: args.getCleanupAuthorization,
+    signal: args.signal,
+    // Asked of the supervisor rather than captured as a pid set, because the
+    // tree grows: the bridge spawns the vendor CLI after the gateway listens.
+    isSupervisedPid: (pid) => supervisor.ownsPid(args.sessionId, pid),
   });
-  if (!broker.ok) {
-    return {
-      ok: false,
-      status: "broker-unavailable",
-      message: broker.error,
-    };
-  }
+  if (!opened.ok) return { ok: false, status: opened.status, message: opened.message };
+  const credential = opened.credential;
 
-  const supervisor = localHarnessSupervisor();
-
-  // From here the lease exists, and shortly a loopback listener that can spend
-  // it. Every step below can fail — a state directory that will not create, a
+  // From here the credential exists: a lease, and shortly a loopback listener
+  // that can spend it, or a runtime login. Every step below can fail — a state directory that will not create, a
   // port nothing will give up, a launcher that refuses the pack's node — and a
   // failure that escaped this stretch used to leave BOTH behind: no registry
   // record, so `stop-all` could not reach them, and no teardown, so only the
   // lease's own TTL would have ended it. The module header calls that "a
   // credential nobody is watching"; this is what makes the setup path obey it
   // too, not just the teardown path.
-  let gateway: LocalModelGateway | null = null;
-  // The lease the gateway currently forwards with. Mutable because a session
-  // parked on an approval gets a FRESH lease when the decision arrives, bound
-  // to the same gateway, and every revoke must hit the current one.
-  let currentRunId = broker.runId;
   try {
     const sessionStateExists = await stat(sessionStateDir)
       .then((entry) => entry.isDirectory())
@@ -540,31 +528,10 @@ async function prepareWithReservedRuntime(outer: {
 
     const hooksPath = join(sessionStateDir, "empty-git-hooks");
     if (args.scope === "unattended") await mkdir(hooksPath, { recursive: true, mode: 0o700 });
-    const gatewayStartedAt = Date.now();
-    try {
-      gateway = await startLocalModelGateway({
-        lease: broker.lease,
-        upstreamBaseUrl: broker.proxyBaseUrl,
-        // The gateway serves only processes in this session's supervised tree.
-        // Asked of the supervisor rather than captured as a pid set, because the
-        // tree grows: the bridge spawns the vendor CLI after the gateway is
-        // already listening.
-        isSupervisedPid: (pid) => supervisor.ownsPid(args.sessionId, pid),
-      });
-    } catch (error) {
-      // The lease exists and nothing can use it, so it is revoked before the
-      // failure propagates rather than left to its TTL.
-      await revokeLease(broker.runId, args.bearer);
-      return {
-        ok: false,
-        status: "gateway-unavailable",
-        message:
-          "The local model gateway could not start: " +
-          `${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    const started = gateway;
-    const localGatewayReadyMs = Date.now() - gatewayStartedAt;
+    const listening = await credential.listen();
+    if (!listening.ok) return { ok: false, status: listening.status, message: listening.message };
+    const started = credential.gateway;
+    const localGatewayReadyMs = listening.readyMs;
 
     const bridgePort = await reserveLoopbackPort();
     const launcher = resolveNodeLauncher({
@@ -604,24 +571,26 @@ async function prepareWithReservedRuntime(outer: {
     // Built before the teardown that has to drop it, so the drop can prove the
     // entry under this id is still the one this turn registered.
     let mcpPlane: Awaited<ReturnType<typeof startLocalHarnessMcpPlane>> | undefined;
-    let leaseBearer = args.bearer;
-    let leaseAuthorization = args.getCleanupAuthorization ?? (async () => leaseBearer);
     const sessionRecord: LocalHarnessSessionRecord = {
       userId: args.target.actingUserId,
       projectId: args.projectId,
       sessionId: args.sessionId,
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
-      brokerRunId: broker.runId,
-      gateway: {
-        ...started,
-        revoke: () => { started.revoke(); mcpPlane?.hold(); },
-        close: async () => {
-          try { await started.close(); } finally { await mcpPlane?.close(); }
-        },
-      },
+      brokerRunId: credential.brokerRunId,
+      // The MCP relay closes with the gateway, or on its own without one.
+      gateway: started
+        ? {
+            ...started,
+            revoke: () => { started.revoke(); mcpPlane?.hold(); },
+            close: async () => {
+              try { await started.close(); } finally { await mcpPlane?.close(); }
+            },
+          }
+        : null,
+      ...(started ? {} : { relay: { hold: () => mcpPlane?.hold(), close: async () => await mcpPlane?.close() } }),
       stop: async () => await supervisor.stopSession(args.sessionId),
-      revokeLease: () => revokeLease(currentRunId, leaseAuthorization),
+      revokeLease: () => credential.revoke(),
       releaseRuntime: outer.releaseRuntimeUse,
       // A Stop, stop-all, workspace or project stop ends a parked session
       // through this registry; the parked record must stop answering at once.
@@ -634,8 +603,10 @@ async function prepareWithReservedRuntime(outer: {
       try {
         sessionRecord.gateway?.revoke();
         await sessionRecord.gateway?.close();
+        sessionRecord.relay?.hold();
+        await sessionRecord.relay?.close();
       } finally {
-        await revokeLease(currentRunId, leaseAuthorization);
+        await credential.revoke();
         // Stop the supervised tree, THEN give up the reservation. This is the
         // teardown a normal turn takes — `run-harness-turn.ts` calls it when
         // the model stream ends — and `endLocalHarnessSession` never reaches
@@ -694,15 +665,12 @@ async function prepareWithReservedRuntime(outer: {
       projectId: args.projectId,
       runtimeId: plan.runtime.runtimeId,
       workspaceGrantId: plan.target.workspaceGrantId,
+      credentialKind: credential.kind,
       rebindLease: (next) => {
-        // Throws (and leaves the gateway held) for an unusable lease.
-        started.rebind(next.lease);
-        currentRunId = next.runId;
-        leaseBearer = next.bearer;
-        leaseAuthorization = next.getCleanupAuthorization ?? (async () => leaseBearer);
+        credential.rebind(next);
         sessionRecord.brokerRunId = next.runId;
       },
-      revokeCurrentLease: () => revokeLease(currentRunId, leaseAuthorization),
+      revokeCurrentLease: () => credential.revoke(),
     };
     const prepared: PreparedLocalHarnessTurn = {
       plan,
@@ -712,9 +680,8 @@ async function prepareWithReservedRuntime(outer: {
         return mcpPlane;
       },
       sandbox,
-      // The gateway and a capability that means nothing anywhere else, named
-      // the way this runtime's CLI reads them. The lease never reaches it.
-      auth: localRuntime(harnessId).childAuth(started),
+      // Named the way this runtime's CLI reads it. A lease never reaches it.
+      auth: listening.auth,
       sandboxWorkDir: "project",
       homeDir: toAdapterPath(join(sessionStateDir, "home")),
       attachmentsDir: {
@@ -723,8 +690,8 @@ async function prepareWithReservedRuntime(outer: {
       },
       sessionStateExists,
       permissionMode,
-      brokerRunId: broker.runId,
-      ...(broker.orgUpstream ? { orgUpstream: broker.orgUpstream } : {}),
+      brokerRunId: credential.brokerRunId,
+      ...(credential.orgUpstream ? { orgUpstream: credential.orgUpstream } : {}),
       timings: { localRuntimeVerifyMs, localGatewayReadyMs },
       teardown: teardownOnce,
       discardState: onceAsync(async () => {
@@ -751,12 +718,10 @@ async function prepareWithReservedRuntime(outer: {
           },
           isAlive: () => supervisor.liveProcessCount(args.sessionId) > 0,
           holdModelTraffic: () => {
-            // Nothing is generated while nobody is deciding anything, and the
-            // lease is not kept live across a human wait: a fresh one is
-            // minted, after re-checking authorization, when a decision lands.
-            started.hold();
+            // A held gateway's lease is revoked: a fresh one is minted, after
+            // re-checking authorization, when a decision lands.
+            credential.hold();
             mcpPlane?.hold();
-            void revokeLease(currentRunId, leaseAuthorization);
           },
         }),
       unpark: () => releaseParkedLocalSession(args.sessionId),
@@ -767,12 +732,7 @@ async function prepareWithReservedRuntime(outer: {
     // Whatever went wrong, the lease and any listener that could spend it go
     // with it. Both steps are attempted; a gateway that will not close is not a
     // reason to leave the lease live.
-    await abandonLocalSetup({
-      gateway,
-      sessionId: args.sessionId,
-      runId: broker.runId,
-      bearer: args.bearer,
-    });
+    await abandonLocalSetup({ credential, sessionId: args.sessionId });
     throw error;
   }
 }
@@ -784,6 +744,7 @@ interface LiveLocalRuntime {
   projectId: string;
   runtimeId: string;
   workspaceGrantId: string;
+  credentialKind: TurnCredential["kind"];
   /** Bind a fresh lease to the SAME gateway (same port, same capability). */
   rebindLease: (next: { runId: string; lease: string; bearer: string; getCleanupAuthorization?: () => Promise<string> }) => void;
   revokeCurrentLease: () => Promise<void>;
@@ -897,6 +858,32 @@ async function adoptParkedLocalTurn(
       "This installation is no longer registered for local execution.",
     );
   }
+  if (live.credentialKind === "runtime-login") {
+    // Nothing to renew. A lease is minted again below because the backend can
+    // refuse it; a login is already in the parked process, cannot be taken
+    // back, and runs out within the hour whatever is decided here.
+    if (claim.parked.state !== "continuing" || !claim.parked.isAlive()) {
+      return fail(
+        "process-died",
+        "approval-process-died",
+        "The local runtime holding this approval stopped while the decision " +
+          "was being delivered; the pending action will not run.",
+      );
+    }
+    logger.info("[local-harness] parked session re-adopted for an approval", {
+      sessionId: args.sessionId,
+      approvals: args.approvalContinuation!.approvalIds.length,
+    });
+    return {
+      ok: true,
+      prepared: {
+        ...live.prepared,
+        plan,
+        sessionStateExists: true,
+        timings: { localRuntimeVerifyMs: Date.now() - verifyStartedAt, localGatewayReadyMs: 0 },
+      },
+    };
+  }
   const gatewayStartedAt = Date.now();
   const broker = await startLoopbackModelBroker({
     projectId: args.projectId,
@@ -985,18 +972,16 @@ async function adoptParkedLocalTurn(
  *
  * Not `endLocalHarnessSession`: there is no supervised tree yet, and there may
  * be no registry record either — the failure can land before registration. What
- * there always is, past the broker, is a lease; and there may be a listener
- * holding it.
+ * there always is, past this point, is a credential: a lease and the listener
+ * holding it, or a runtime login.
  */
 async function abandonLocalSetup(args: {
-  gateway: LocalModelGateway | null;
+  credential: TurnCredential;
   sessionId: string;
-  runId: string;
-  bearer: string;
 }): Promise<void> {
   try {
-    args.gateway?.revoke();
-    await args.gateway?.close();
+    args.credential.gateway?.revoke();
+    await args.credential.gateway?.close();
   } catch (error) {
     logger.warn("[local-harness] gateway close during abandoned setup failed", {
       message: error instanceof Error ? error.message : String(error),
@@ -1005,21 +990,7 @@ async function abandonLocalSetup(args: {
   // A no-op unless the failure landed after registration, which is the one
   // window where a record exists for a session that will never run.
   forgetLocalHarnessSession(args.sessionId);
-  await revokeLease(args.runId, args.bearer);
-}
-
-async function revokeLease(runId: string, authorization: string | (() => Promise<string>)): Promise<void> {
-  try {
-    const bearer = typeof authorization === "string" ? authorization : await authorization();
-    await revokeHarnessModelBroker({ runId, bearer });
-  } catch (error) {
-    // Best-effort, exactly as the cloud path's revoke is: the lease's own TTL
-    // and the backend's sweep are the backstop, and the gateway is already
-    // refusing everything by the time this runs.
-    logger.warn("[local-harness] lease revoke failed", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
+  await args.credential.revoke();
 }
 
 /** Run an async function at most once, whatever the caller does. */
