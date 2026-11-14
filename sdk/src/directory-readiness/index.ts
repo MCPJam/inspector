@@ -81,6 +81,8 @@ export type {
 
 // Submission forms as data. The flows barrel names its own exports, all pure.
 export * from "./flows/index.js";
+// Test plans, all pure like the flows.
+export * from "./test-plan/index.js";
 
 /**
  * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.
