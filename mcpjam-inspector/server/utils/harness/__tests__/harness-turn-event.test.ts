@@ -372,6 +372,12 @@ describe("harness_turn_completed: closed vocabularies", () => {
       "sandbox_replaced",
     ],
     [
+      "a restored box",
+      { resumed: true, resetReason: "sandbox-restored" },
+      "disk_resume",
+      "sandbox_replaced",
+    ],
+    [
       "a resume that failed after a refused probe",
       { resetReason: "resume-failed", warm: "probe_refused" },
       "new",
@@ -519,6 +525,7 @@ describe("harness_turn_completed: closed vocabularies", () => {
       undefined,
       "runtime-changed",
       "sandbox-replaced",
+      "sandbox-restored",
       "resume-failed",
       "legacy-cold-resume",
     ];
