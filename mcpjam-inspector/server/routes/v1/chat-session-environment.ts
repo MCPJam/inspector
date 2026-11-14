@@ -11,6 +11,7 @@ import {
 } from "../../services/environments/plugin-attribution.js";
 import { assertHostPointerAgreement } from "./chat-session-host-target.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { type EarlyStart, takeEarly } from "../../utils/early-start.js";
 import type { ResolvedEnvironmentRuntime } from "../../services/environments/runtime.js";
 import type { ChatSessionHostTarget } from "./chat-session-host-target.js";
 
@@ -48,14 +49,28 @@ export function unappliedBuiltInToolIds(
     : [];
 }
 
+type ChatCapabilities = { chatEnvironmentVersion?: number } | null;
 const capabilitiesRef = makeFunctionReference<
   "query",
   { projectId: string },
-  { chatEnvironmentVersion?: number } | null
+  ChatCapabilities
 >("projects:getProjectCapabilities");
 
+/** The project's chat capabilities, the first thing the environment step reads. */
+export function readChatCapabilities(
+  client: ConvexHttpClient,
+  projectId: string,
+): Promise<ChatCapabilities> {
+  return client.query(capabilitiesRef, { projectId });
+}
+
 type Target = { environmentId?: string; serverIds?: string[]; hostId?: string };
-type Context = { authHeader: string; signal?: AbortSignal };
+type Context = {
+  authHeader: string;
+  signal?: AbortSignal;
+  /** {@link readChatCapabilities}, when the caller started it earlier. */
+  capabilities?: EarlyStart<ChatCapabilities>;
+};
 /** Require the shared resolver before choosing any runtime or billing policy. */
 export async function resolveChatSessionEnvironment(
   client: ConvexHttpClient,
@@ -63,7 +78,9 @@ export async function resolveChatSessionEnvironment(
   input: Target,
   context: Context,
 ): Promise<ResolvedTarget> {
-  const capabilities = await client.query(capabilitiesRef, { projectId });
+  const capabilities = context.capabilities
+    ? await takeEarly(context.capabilities)
+    : await readChatCapabilities(client, projectId);
   if (capabilities === null)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found.");
   if (capabilities?.chatEnvironmentVersion !== 1)
