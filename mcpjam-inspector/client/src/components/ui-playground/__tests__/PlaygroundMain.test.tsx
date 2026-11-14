@@ -3633,14 +3633,14 @@ describe("PlaygroundMain", () => {
       fireEvent.click(screen.getByTestId("chat-submit-button"));
 
       await waitFor(() => {
-        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
       });
-      // The prepend lands in the thread BEFORE the user turn, so the request
-      // carries it as history instead of trailing the model's answer.
-      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
-      const next = typeof updater === "function" ? updater([]) : updater;
-      expect(JSON.stringify(next)).toContain("release-notes");
-      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      // The send carries the prepend and lands it right before the user turn,
+      // so the request has it as history instead of trailing the model's answer.
+      const [options] = mockUseChatSession.sendMessage.mock.calls.at(-1)!;
+      expect(JSON.stringify(options.prependMessages)).toContain(
+        "release-notes",
+      );
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {

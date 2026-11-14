@@ -5528,12 +5528,9 @@ export function PlaygroundMain({
       setModelContextQueue([]);
     } else {
       trackSendMessage({ single_model_send: true });
-      // Single-model mode has no broadcast consumer, so the prepends have to
-      // land in the thread here — before `sendMessage`, so the request carries
-      // them as history rather than arriving after the model answered.
-      if (prependMessages.length > 0) {
-        setMessages((prev) => [...prev, ...prependMessages]);
-      }
+      // Single-model mode has no broadcast consumer, so the send itself lands
+      // the prepends in the thread, right before its message, so the request
+      // carries them as history rather than arriving after the model answered.
       const sent = await sendMessage({
         text: composerText,
         files,
@@ -5541,6 +5538,7 @@ export function PlaygroundMain({
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
         extraParts: draftItems.map((item) => item.part),
+        prependMessages,
       });
       if (!sent) return false;
       composerMentions.clear();
@@ -5602,7 +5600,6 @@ export function PlaygroundMain({
     ensureSelectedServerReadyForChat,
     ensureThreadReadyForSend,
     ensureLocalHarnessReadyForSend,
-    setMessages,
     trackSendMessage,
     sendMessage,
     outgoingSenderMetadata,

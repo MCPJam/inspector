@@ -308,4 +308,38 @@ describe("one chat turn at a time (real AI SDK)", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("adds a queued send's prompt and skill messages right before its own user message", async () => {
+    const { result } = renderHook(useHarness);
+    await act(async () => {
+      void result.current.sendMessage({ text: "count to 150" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+
+    const skill = {
+      id: "skill-context",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "skill context" }],
+    };
+    await act(async () => {
+      void result.current.sendMessage({
+        text: "App follow-up",
+        prependMessages: [skill],
+      });
+    });
+    expect(result.current.messages.map((m) => m.id)).not.toContain(
+      "skill-context",
+    );
+
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    const texts = result.current.messages.map((m) =>
+      m.parts.map((part) => ("text" in part ? part.text : "")).join(""),
+    );
+    expect(texts.slice(-3)).toEqual([
+      "skill context",
+      "App follow-up",
+      "reply 2",
+    ]);
+  });
 });

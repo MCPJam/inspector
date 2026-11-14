@@ -50,7 +50,6 @@ export interface PlaygroundOnboardingDeps {
   ensureSelectedServerReadyForChat: () => Promise<boolean>;
   ensureThreadReadyForSend: () => Promise<boolean>;
   ensureLocalHarnessReadyForSend: () => Promise<boolean>;
-  setMessages: UseChatSessionReturn["setMessages"];
   trackSendMessage: (captureProps?: Record<string, unknown>) => void;
   sendMessage: UseChatSessionReturn["sendMessage"];
   outgoingSenderMetadata: Record<string, unknown> | undefined;
@@ -67,7 +66,6 @@ export function createPluginOnboardingSend({
   ensureSelectedServerReadyForChat,
   ensureThreadReadyForSend,
   ensureLocalHarnessReadyForSend,
-  setMessages,
   trackSendMessage,
   sendMessage,
   outgoingSenderMetadata,
@@ -137,7 +135,6 @@ export function createPluginOnboardingSend({
         path: fresh.spec.onboarding.modelRef,
       },
     ]) as UIMessage[];
-    setMessages((previous) => [...previous, ...skillMessages]);
     trackSendMessage({ single_model_send: true });
     // One id per try. The server traces the turn under it, and Logs show
     // it, so a stalled try can be found even after a later one works.
@@ -148,6 +145,7 @@ export function createPluginOnboardingSend({
     const sent = await sendMessage({
       text: "Run the attached onboarding skill.",
       metadata: { ...outgoingSenderMetadata, pluginOnboarding },
+      prependMessages: skillMessages,
     });
     if (!sent) throw new Error("Onboarding could not start. Try again.");
     logPluginExtensionIssue({

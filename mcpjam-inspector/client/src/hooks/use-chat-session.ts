@@ -776,6 +776,8 @@ export interface UseChatSessionReturn {
     /** Items an App's editable draft left in the composer, sent as-is. */
     extraParts?: UIMessage["parts"];
     widgetModelContext?: WidgetModelContextEntry[];
+    /** Prompt or skill messages added to the thread right before this one. */
+    prependMessages?: UIMessage[];
     /**
      * Resolves `true` once the message was actually dispatched, `false` on
      * every fail-closed preflight path (server-id resolution failed, or the
@@ -5535,6 +5537,7 @@ export function useChatSession(
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
+      prependMessages?: UIMessage[];
     }) => {
       if (harnessStopBlockedRef.current) throw new Error("Confirm Stop before continuing this conversation.");
       const {
@@ -5546,6 +5549,7 @@ export function useChatSession(
         isCurrent,
         pluginMentions,
         extraParts,
+        prependMessages,
       } = options;
 
       // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
@@ -5717,6 +5721,11 @@ export function useChatSession(
             return false;
           }
           savedClientSendGuard.assertCurrent();
+          // Prompt and skill messages ride with their own send, so one that
+          // waited never lands them in the middle of the previous reply.
+          if (prependMessages && prependMessages.length > 0) {
+            setMessages((prev) => [...prev, ...prependMessages]);
+          }
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
             Date.now(),
@@ -5822,6 +5831,7 @@ export function useChatSession(
     [
       runTurn,
       idleGate,
+      setMessages,
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,

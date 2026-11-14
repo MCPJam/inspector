@@ -2331,14 +2331,6 @@ export function ChatTabV2({
         });
         setModelContextQueue([]);
       } else {
-        if (promptMessages.length > 0) {
-          setMessages((prev) => [...prev, ...promptMessages]);
-        }
-
-        if (skillMessages.length > 0) {
-          setMessages((prev) => [...prev, ...skillMessages]);
-        }
-
         track("send_message", {
           location: "chat_tab",
           model_id: selectedModel?.id ?? null,
@@ -2354,6 +2346,7 @@ export function ChatTabV2({
           files,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
+          prependMessages,
         });
         setModelContextQueue([]);
       }
