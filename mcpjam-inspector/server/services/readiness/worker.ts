@@ -48,6 +48,7 @@ import {
   joinReviewerAttempt,
   ReadinessSubmissionUnreadableError,
   requestManagedObservations,
+  requestReadinessDecisions,
   type ReadinessClaimRefusal,
   type ReadinessFinalizeSummary,
   type ReadinessLease,
@@ -364,6 +365,11 @@ export async function executeHostedReadinessRun(
       // stronger guarantee than one that checks a flag before asking.
       requestObservations: options.includeLlmObservations
         ? async ({ evidence }) => requestManagedObservations(lease, evidence)
+        : undefined,
+      // The same opt-in: the decision model reads the server's text too.
+      requestDecisions: options.includeLlmObservations
+        ? async ({ items, signal }) =>
+            requestReadinessDecisions(lease, items, signal)
         : undefined,
     });
 

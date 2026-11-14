@@ -163,6 +163,8 @@ export interface OpenAIReadinessEvidence {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial or absent, in plain words. */
   toolListingError?: string;
+  /** The server's `instructions` from `initialize`, which the model reads. */
+  instructions?: string;
   /** Skills advertised for import, when the run read them. */
   importedSkills?: OpenAISkillsEvidence;
   /** UI resources the server serves, and the screenshots that go with them. */
@@ -402,13 +404,14 @@ function readUiCspDomains(meta: Record<string, unknown> | undefined) {
 }
 
 /**
- * Everything a package says about ITSELF, for the guideline metadata rules.
+ * Everything a package says about ITSELF, for the guideline metadata rules
+ * and the decision scan's listing text.
  *
  * Collected here rather than in the check so the check stays a pure function of
  * named strings: it grades copy, and it should not have to know the shape of a
  * package to find it.
  */
-function packageSelfDescription(
+export function packageSelfDescription(
   evidence: OpenAIPluginPackageEvidence | undefined
 ): { field: string; text: string }[] {
   if (!evidence) return [];
@@ -1000,6 +1003,7 @@ export async function gatherOpenAIReadinessEvidence(
     tools,
     toolListingComplete,
     toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
+    instructions: dialled?.initialize.instructions,
     importedSkills,
     // THE DIALLED RESOURCES ARE USED, not discarded. Requesting them and then
     // returning only the caller's `appsUi` would leave the UI lane
