@@ -108,3 +108,52 @@ export function isEvalIterationTerminalStatus(
     status
   );
 }
+
+/**
+ * The run statuses at which a LEGACY run's `result` is not a verdict: the run
+ * stopped before its cases could be decided, so a gate must not read that
+ * `result` as a pass or a fail. Among terminal statuses only `completed` carries
+ * a legacy verdict.
+ *
+ * A policy-v2 run is different: its `verdictSummary` can hold a decision at any
+ * of these statuses, because its validity phase already accounts for how the
+ * run stopped. Read that decision first and use this predicate only when there
+ * is none (as `assembleEvalRunDecisionSummary` does).
+ */
+export const EVAL_RUN_NON_VERDICT_STATUSES = [
+  "failed",
+  "cancelled",
+  "timed_out",
+] as const satisfies readonly EvalRunTerminalStatus[];
+export type EvalRunNonVerdictStatus =
+  (typeof EVAL_RUN_NON_VERDICT_STATUSES)[number];
+
+/** Whether a run status means the run stopped without a verdict. */
+export function isEvalRunNonVerdictStatus(
+  status: unknown
+): status is EvalRunNonVerdictStatus {
+  return (EVAL_RUN_NON_VERDICT_STATUSES as readonly unknown[]).includes(status);
+}
+
+/**
+ * The iteration statuses that finished WITHOUT A VERDICT on the case: the
+ * trial never reached its judge. `failed` is absent because a failed iteration
+ * is a verdict on the case; these four say nothing about it.
+ */
+export const EVAL_ITERATION_NON_VERDICT_STATUSES = [
+  "cancelled",
+  "timed_out",
+  "setup_failed",
+  "skipped",
+] as const satisfies readonly EvalIterationTerminalStatus[];
+export type EvalIterationNonVerdictStatus =
+  (typeof EVAL_ITERATION_NON_VERDICT_STATUSES)[number];
+
+/** Whether an iteration status means the trial finished without a verdict. */
+export function isEvalIterationNonVerdictStatus(
+  status: unknown
+): status is EvalIterationNonVerdictStatus {
+  return (EVAL_ITERATION_NON_VERDICT_STATUSES as readonly unknown[]).includes(
+    status
+  );
+}
