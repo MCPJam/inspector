@@ -149,6 +149,8 @@ import {
 } from "../../services/environments/skills-delivered-event.js";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { resolveWebAuthorizedHarnessStrategy } from "../../utils/harness/harness-proxy-strategy.js";
+import { admitWarmChatManager } from "../../utils/harness/warm-approval-binding.js";
+import { harnessApiWarmEnabled } from "../../utils/harness/harness-flags.js";
 import {
   describePlaygroundBoxRefusal,
   playgroundHarnessBoxUnavailableReason,
@@ -1563,6 +1565,10 @@ async function handleTurn(c: Context): Promise<Response> {
       },
     );
     manager = connection.manager;
+    // Warm reuse on the web route's terms, with the organization the backend
+    // returned for this project, never one the request named.
+    if (harnessApiWarmEnabled())
+      admitWarmChatManager(manager, target.organizationId, connectableSelection.length > 0);
     const unavailable: Record<string, unknown> = {
       ...Object.fromEntries(
         (target.unavailableServerIds ?? []).map((id) => [
