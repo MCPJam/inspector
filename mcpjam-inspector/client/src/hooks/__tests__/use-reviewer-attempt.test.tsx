@@ -5,6 +5,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ACTION,
   attemptIn,
   NOV_13,
   PASSWORD_SECRET,
@@ -59,9 +60,7 @@ describe("useReviewerAttempt", () => {
 
     await settle(RUNNING_POLL_MS);
     expect(api.getLatestReviewerAttempt).toHaveBeenCalledTimes(2);
-    expect(result.current.attempt?.waitingFor?.action).toBe(
-      "Finish the sign-in from the single-use link, then resume.",
-    );
+    expect(result.current.attempt?.waitingFor?.action).toBe(ACTION);
 
     // Waiting for a person: no reads at the running pace.
     await settle(RUNNING_POLL_MS);

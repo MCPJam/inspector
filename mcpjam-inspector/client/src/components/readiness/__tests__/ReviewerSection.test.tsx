@@ -15,6 +15,8 @@ import {
 import type { ProjectSecretView } from "@/hooks/useProjectSecrets";
 import { ReviewerPath, ReviewerSection } from "../ReviewerSection";
 import {
+  ACTION,
+  ASKED,
   attemptIn,
   EMAIL_SECRET,
   NOV_13,
@@ -54,6 +56,13 @@ vi.mock("@/hooks/useProjectSecrets", () => ({
   useUpdateProjectSecret: () => world.update,
 }));
 
+// The run's recording is the stage tests' concern; here it is never kept.
+// One array, as Convex keeps one result until the data changes.
+const noRecordings = vi.hoisted(() => []);
+vi.mock("convex/react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("convex/react")>()),
+  useQuery: () => noRecordings,
+}));
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn() }));
 vi.mock("@/lib/clipboard", () => clipboard);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -150,7 +159,8 @@ describe("ReviewerSection", () => {
         "MCPJam saves them as project secrets and doesn't show them again.",
       ),
     ).toBeVisible();
-    expect(within(region()).getByText("Not tested")).toBeVisible();
+    const [credentialsRow] = within(region()).getAllByRole("listitem");
+    expect(within(credentialsRow).getByText("Not tested")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Rehearse reviewer sign-in" }),
     ).toBeNull();
@@ -279,14 +289,9 @@ describe("ReviewerSection", () => {
     );
     renderSection();
     await status("Credentials saved; reviewer sign-in waiting for a person");
-    expect(
-      screen.getByText("The sign-in page asked for a verification code."),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        "Finish the sign-in from the single-use link, then resume.",
-      ),
-    ).toBeVisible();
+    // On the stage that stopped it, and again in the handover.
+    expect(screen.getAllByText(ASKED)).toHaveLength(2);
+    expect(screen.getByText(ACTION)).toBeVisible();
     expect(
       screen.getByText(
         "A teammate or an agent can resume this attempt with its id.",
@@ -434,7 +439,7 @@ describe("ReviewerSection", () => {
 });
 
 describe("ReviewerPath", () => {
-  const view = { id: "sub_1", projectId: "proj_1" };
+  const view = { id: "sub_1", projectId: "proj_1", steps: [] };
   const session = { values: {}, setAnswer: vi.fn() };
 
   beforeEach(() => {
