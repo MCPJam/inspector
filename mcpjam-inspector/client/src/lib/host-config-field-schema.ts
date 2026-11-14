@@ -61,15 +61,17 @@ export interface HostConfigSection {
 }
 
 export const HOST_CONFIG_SECTIONS: ReadonlyArray<HostConfigSection> = [
-  {
-    id: "agent",
-    label: "Agent",
-    subtitle: "model · sampling · system prompt",
-  },
+  // MCP Protocol leads: the client version row at its top says which build
+  // every other row was captured from.
   {
     id: "protocol",
     label: "MCP Protocol",
     subtitle: "version · clientInfo · capabilities · connection",
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    subtitle: "model · sampling · system prompt",
   },
   {
     id: "apps",
@@ -507,6 +509,28 @@ function rendersNoMcpApps(cfg: HostConfigDtoV2): boolean {
 }
 
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
+  {
+    // The MCP Apps (UI) extension, declared in `initialize`. It leads the MCP
+    // Apps section because it gates every row below it: MCPJam renders a View
+    // only for a client that declares it. The catalog declares it exactly
+    // where the client renders widgets — even for Gemini, which renders
+    // without sending it — so this row answers "does this client show MCP
+    // Apps". The id keeps its `capabilities.` prefix so the caniuse slug
+    // stays `ui-extension`.
+    id: "capabilities.uiExtension",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: MCP_UI_EXTENSION_ID,
+    path: `clientCapabilities.extensions.${MCP_UI_EXTENSION_ID}`,
+    description: "Shows MCP Apps widgets.",
+    kind: { kind: "capability" },
+    read: (cfg) =>
+      (
+        cfg.clientCapabilities?.extensions as
+          | Record<string, unknown>
+          | undefined
+      )?.[MCP_UI_EXTENSION_ID],
+  },
   {
     id: "appsCap.availableDisplayModes",
     section: "apps",
@@ -1073,11 +1097,17 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "clientInfo",
     label: "Client version",
     path: "mcpProfile.initialize.clientInfo.version",
-    description: "`initialize.clientInfo.version` sent to the server.",
+    description: "`initialize.clientInfo` name and version sent to the server.",
     kind: { kind: "string" },
+    // The name the client actually sends, then its version (`Sydney 1.0.0`):
+    // a bare `1.0.0` says nothing about which client build it is.
     read: (cfg) => {
       const info = mcpProfile(cfg)?.initialize?.clientInfo;
-      return typeof info?.version === "string" ? info.version : undefined;
+      const name = typeof info?.name === "string" ? info.name.trim() : "";
+      const version =
+        typeof info?.version === "string" ? info.version.trim() : "";
+      const value = [name, version].filter(Boolean).join(" ");
+      return value || undefined;
     },
   },
   {
@@ -1194,25 +1224,6 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
           | Record<string, unknown>
           | undefined
       )?.[MCP_SKILLS_EXTENSION_ID],
-  },
-  {
-    // MCP Apps (the UI extension). MCPJam renders a View only for a client
-    // that declares it, and the catalog declares it exactly where the client
-    // renders widgets — even for Gemini, which renders without sending it —
-    // so this row answers "does this client show MCP Apps".
-    id: "capabilities.uiExtension",
-    section: "protocol",
-    subsection: "Client capabilities supported",
-    label: "MCP Apps",
-    path: `clientCapabilities.extensions.${MCP_UI_EXTENSION_ID}`,
-    description: "Shows MCP Apps widgets.",
-    kind: { kind: "capability" },
-    read: (cfg) =>
-      (
-        cfg.clientCapabilities?.extensions as
-          | Record<string, unknown>
-          | undefined
-      )?.[MCP_UI_EXTENSION_ID],
   },
 
   // ============================================================
