@@ -73,6 +73,14 @@ describe("useNativeHarnessLimitDialogStore", () => {
     expect(store().notice).toEqual({ organizationId: "org_1" });
   });
 
+  it("learns the open notice's wave from a report that names no organization", () => {
+    store().open({}, ["run:run_1"]);
+    store().open({}, ["run:run_1", "wave:wave_1"]);
+    // Another run of the same wave names the organization.
+    store().open({ organizationId: "org_1" }, ["run:run_2", "wave:wave_1"]);
+    expect(store().notice).toEqual({ organizationId: "org_1" });
+  });
+
   it("neither reopens a closed notice nor names it after another run", () => {
     store().open({}, ["run:run_1"]);
     store().close();

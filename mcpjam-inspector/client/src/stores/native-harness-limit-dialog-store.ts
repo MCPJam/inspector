@@ -49,20 +49,35 @@ export const useNativeHarnessLimitDialogStore =
           ? new Set([...state.notifiedKeys, ...fresh])
           : state.notifiedKeys;
         if (fresh.length < dedupeKeys.length) {
-          // Announced already, so nothing reopens. A later report of the open
-          // notice's run can still name the organization the first one
-          // lacked; without it the dialog speaks for the active project's.
+          // Announced already, so nothing reopens. A report that shares a key
+          // with the open notice is the same refusal: the notice learns its
+          // other keys (a run's wave), and the organization if it had none;
+          // without one the dialog speaks for the active project's.
           const open = state.notice;
           if (
             open &&
-            open.organizationId === undefined &&
-            notice.organizationId !== undefined &&
             dedupeKeys.some((key) => state.noticeKeys.includes(key))
           ) {
-            return {
-              notifiedKeys,
-              notice: { ...open, organizationId: notice.organizationId },
-            };
+            const added = dedupeKeys.filter(
+              (key) => !state.noticeKeys.includes(key),
+            );
+            const named =
+              open.organizationId === undefined &&
+              notice.organizationId !== undefined;
+            if (added.length || named) {
+              return {
+                notifiedKeys,
+                noticeKeys: [...state.noticeKeys, ...added],
+                ...(named
+                  ? {
+                      notice: {
+                        ...open,
+                        organizationId: notice.organizationId,
+                      },
+                    }
+                  : {}),
+              };
+            }
           }
           return fresh.length ? { notifiedKeys } : state;
         }
