@@ -215,8 +215,7 @@ export function EvidenceDrawer({
               </span>
             ) : details.state === "error" ? (
               <span role="alert" className="text-destructive">
-                The stored observation did not load. {details.message} Close
-                this panel and open it again.
+                {`The stored observation did not load. ${details.message} Close this panel and open it again.`}
               </span>
             ) : details.stored.details === undefined ? (
               <span className="text-muted-foreground">
