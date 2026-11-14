@@ -1183,7 +1183,7 @@ Launch a goal run. **Spends model credits** — fans out into `targets × iterat
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--goal <id-or-name>` | Yes | Goal name or ID (`--journey` is a deprecated alias) |
+| `--goal-id <id>` | Yes | Goal ID (`--journey` is a deprecated alias) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started and starts no second runner |
 | `--expected-sponsored <n>` | No | How many of this launch's conversations you expect to be sponsored (paid from MCPJam's per-user allowance instead of your organization's credits). If the actual split differs, the launch is refused with a `409` and nothing is created. Omit to accept whatever split applies. |

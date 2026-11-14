@@ -133,6 +133,7 @@
             "pages": [
               "cli/overview",
               "cli/migration",
+              "cli/use-cases",
               "cli/local-evals",
               "cli/mcp-server",
               "cli/server-inspection",
