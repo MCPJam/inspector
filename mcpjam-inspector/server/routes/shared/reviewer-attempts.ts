@@ -8,6 +8,11 @@ import { makeFunctionReference } from "convex/server";
 import type { PlatformReviewerAttempt } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
+import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
+import {
+  readinessMcpHeaders,
+  type AuthorizedReadinessServer,
+} from "./readiness-runs.js";
 
 const query = (name: string) =>
   makeFunctionReference<"query">(`directoryReviewerAttempts:${name}`);
@@ -93,5 +98,49 @@ export async function reviewerAttemptForRun(
       detail: error instanceof Error ? error.message : String(error),
     });
     return undefined;
+  }
+}
+
+const NO_REVIEWER_ACCOUNT =
+  "No reviewer account is connected for this submission. Rehearse the reviewer sign-in, then run again.";
+
+/**
+ * The reviewer account a run of the submission signs in as: the one its
+ * newest attempt connected, authorized as itself with the caller's bearer,
+ * never the caller's own account. Every failure is the reason the run's
+ * reviewer checks are blocked; none stops the run.
+ */
+export async function reviewerAccountForRun(
+  convex: ConvexHttpClient,
+  submissionId: string,
+  authorize: (connectionId: string) => Promise<AuthorizedReadinessServer>,
+): Promise<ReadinessReviewerAccount> {
+  const reason = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+  let accountId: string | undefined;
+  try {
+    const newest: PlatformReviewerAttempt[] | null = await convex.query(
+      reviewerAttemptFunctions.list,
+      { submissionId, limit: 1 },
+    );
+    accountId = newest?.[0]?.reviewerAccountId;
+  } catch (error) {
+    return {
+      missing: `MCPJam could not read this submission's reviewer sign-in (${reason(error)}). Start the run again.`,
+    };
+  }
+  if (!accountId) return { missing: NO_REVIEWER_ACCOUNT };
+  try {
+    const authorized = await authorize(accountId);
+    return authorized.oauthAccessToken
+      ? { accountId, mcpHeaders: readinessMcpHeaders(authorized) }
+      : {
+          missing:
+            "The reviewer account has no working sign-in. Rehearse the reviewer sign-in again, then run again.",
+        };
+  } catch (error) {
+    return {
+      missing: `MCPJam could not use the reviewer account (${reason(error)}). Rehearse the reviewer sign-in again, then run again.`,
+    };
   }
 }

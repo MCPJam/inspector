@@ -36,7 +36,10 @@ import {
   type HostedReadinessReceipt,
   type ReadinessPublisher,
 } from "./readiness-runs.js";
-import { reviewerAttemptForRun } from "./reviewer-attempts.js";
+import {
+  reviewerAccountForRun,
+  reviewerAttemptForRun,
+} from "./reviewer-attempts.js";
 
 /** The run's own start inputs, as the backend's resume hands them back. */
 interface ResumedRun {
@@ -115,11 +118,15 @@ export interface ResumeHostedReadinessRunInput {
   runId: string;
   /** The submission the run grades, read off the run: its answers are frozen. */
   submissionId?: string;
-  /** The surface's authorize exchange, with the caller's bearer. */
+  /**
+   * The surface's authorize exchange, with the caller's bearer: the server's
+   * own account, or the one `connectionId` names.
+   */
   authorize: (
     projectId: string,
     serverId: string,
     signal: AbortSignal,
+    connectionId?: string,
   ) => Promise<AuthorizedReadinessServer>;
   analyticsActor?: ServerAnalyticsActor;
   /** Maps a Convex refusal onto the surface's own error vocabulary. */
@@ -237,6 +244,18 @@ export async function resumeHostedReadinessRun(
   const reviewerAttemptId = input.submissionId
     ? await reviewerAttemptForRun(input.convex, input.submissionId, resumed.runId)
     : undefined;
+  const reviewer =
+    input.submissionId &&
+    (await reviewerAccountForRun(
+      input.convex,
+      input.submissionId,
+      (connectionId) =>
+        authorizeWithin(
+          (signal) =>
+            input.authorize(resumed.projectId, serverId, signal, connectionId),
+          AUTHORIZE_TIMEOUT_MS,
+        ),
+    ));
   executeHostedReadinessRunDetached(
     {
       lease,
@@ -250,6 +269,7 @@ export async function resumeHostedReadinessRun(
       ...(claimedFeatures?.length ? { claimedFeatures } : {}),
       ...(input.submissionId ? { submissionId: input.submissionId } : {}),
       ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
+      ...(reviewer ? { reviewer } : {}),
       analyticsActor: input.analyticsActor,
     },
     authorized,

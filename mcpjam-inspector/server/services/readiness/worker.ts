@@ -71,6 +71,7 @@ import {
   ReadinessPackageUnreadableError,
   readRunPackage,
 } from "./run-package.js";
+import type { ReadinessReviewerAccount } from "./reviewer-path.js";
 import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
@@ -79,6 +80,7 @@ import {
   isMuseReadinessResult,
   redactConformanceReportForSharing,
   type DirectoryFeatureClaim,
+  type DirectoryFlow,
   type DirectoryLazyAuthProbeConfig,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
@@ -136,6 +138,11 @@ export interface ExecuteHostedReadinessOptions {
     attempt: ReviewerAttemptView;
     signal: AbortSignal;
   }) => Promise<ReviewerSignInOutcome>;
+  /**
+   * The reviewer account the start authorized as itself: the only credential
+   * reviewer checks use. A submission run without one blocks them with why.
+   */
+  reviewer?: ReadinessReviewerAccount;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
   /**
@@ -222,7 +229,10 @@ export function summarizeReadinessResult(
  */
 async function readSubmissionAnswers(
   options: ExecuteHostedReadinessOptions,
-): Promise<ReadinessRunSubmission["answers"]> {
+): Promise<{
+  flow: DirectoryFlow;
+  answers: ReadinessRunSubmission["answers"];
+}> {
   const submission = await getReadinessRunSubmission(options.lease);
   const flow = getDirectoryFlow(submission.flowId);
   if (flow?.directory !== options.publisher) {
@@ -237,8 +247,13 @@ async function readSubmissionAnswers(
       `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
     );
   }
-  return submission.answers;
+  return { flow, answers: submission.answers };
 }
+
+const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
+  missing:
+    "This run was started without the reviewer account. Start a new run from the submission.",
+};
 
 /**
  * Whether the run's declared shape includes an uploaded package. A hosted
@@ -401,7 +416,7 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "blocked", terminalReason: "waiting_for_person" };
       return;
     }
-    const submissionAnswers = options.submissionId
+    const submission = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;
     const runPackage = gradesPackage(options)
@@ -421,7 +436,15 @@ export async function executeHostedReadinessRun(
         ? { claimedFeatures: options.claimedFeatures }
         : {}),
       // As stored: the grader merges the flow's defaults itself.
-      ...(submissionAnswers ? { submissionAnswers } : {}),
+      ...(submission
+        ? {
+            submissionAnswers: submission.answers,
+            reviewer: {
+              ...submission,
+              account: options.reviewer ?? NO_REVIEWER_ACCOUNT,
+            },
+          }
+        : {}),
       ...(runPackage ? { pluginPackage: runPackage } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a

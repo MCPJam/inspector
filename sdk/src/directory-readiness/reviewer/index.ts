@@ -1,7 +1,8 @@
 /**
  * The reviewer path's pure half: what a submission asks it to check, what a
  * run gathered, the findings, and the reviewer-only rule. Safe from the
- * browser entry.
+ * browser entry. Gathering it makes requests, so `gather.ts` and
+ * `client-signatures.ts` are exported from the root entry only.
  */
 
 export {
