@@ -26,6 +26,8 @@ import type { ServerWithName } from "@/state/app-types";
 import { McpjamMark } from "./McpjamChecks";
 import { PortalFrame } from "./PortalFrame";
 import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
+import { isConfirmed, recordConfirmed } from "./test-plan-consent";
+import { TestPlanConsentDialog } from "./TestPlanConsentDialog";
 import "./portal-theme.css";
 
 /** The one flow with a rehearsal so far: Claude's MCP connector. */
@@ -239,6 +241,21 @@ export function ReadinessPage({
       : "",
   });
   const planRevision = plan.saved?.revision;
+  // The submission whose run waits on the person confirming its plan revision.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const scope =
+    projectId && openId ? { projectId, submissionId: openId } : null;
+  const startRun = () => {
+    if (
+      scope &&
+      planRevision !== undefined &&
+      !isConfirmed(scope, planRevision)
+    ) {
+      setConfirming(scope.submissionId);
+    } else {
+      void session.startRun(planRevision);
+    }
+  };
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -316,11 +333,25 @@ export function ReadinessPage({
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
         planRevision={planRevision}
-        onRun={() => void session.startRun(planRevision)}
+        onRun={startRun}
       />
       <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
         {body}
       </div>
+      {scope && plan.saved && confirming === scope.submissionId ? (
+        <TestPlanConsentDialog
+          saved={plan.saved}
+          serverName={chosen?.server.name ?? ""}
+          onConfirm={() => {
+            const revision = plan.saved?.revision;
+            setConfirming(null);
+            if (revision === undefined) return;
+            recordConfirmed(scope, revision);
+            void session.startRun(revision);
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
     </div>
   );
 }
