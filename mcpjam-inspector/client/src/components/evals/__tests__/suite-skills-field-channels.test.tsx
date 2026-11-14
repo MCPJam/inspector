@@ -280,6 +280,15 @@ describe("From MCP servers", () => {
     ).toBeInTheDocument();
     // Its server isn't in the suite's group, so no environment would take it.
     expect(screen.queryByLabelText("billing/invoices")).toBeNull();
+    // Only a picked skill has a version menu to pick an older version from.
+    expect(screen.queryByText(/pick an older version/)).toBeNull();
+  });
+
+  it("waits for the backend that stores the scope, whose pin rules it needs", async () => {
+    mocks.capabilities = { environmentDerivation: true };
+    renderSettings();
+    await openSkills();
+    expect(screen.queryByText("From MCP servers")).toBeNull();
   });
 
   it("saves a pick on every client, and pins a captured version", async () => {
@@ -321,7 +330,7 @@ describe("From MCP servers", () => {
     renderSettings();
     await openSkills();
     expect(
-      screen.getByText(/Its server lists no files for this skill/),
+      screen.getByText(/or pick an older version that does/),
     ).toBeInTheDocument();
     const version = screen.getByLabelText("Version for acme-crm/broken");
     expect(version).not.toBeDisabled();
@@ -382,5 +391,38 @@ describe("From MCP servers", () => {
       { serverSkillSelection: null },
       { serverSkillSelection: null },
     ]);
+  });
+
+  it("keeps a picked skill removable after its server is deleted", async () => {
+    // Deleting a server deletes its captured skills, not the picks of them,
+    // and the backend refuses any other skills change until the pick is gone.
+    both({
+      serverSkillSelection: { mode: "explicit", serverSkillIds: ["gone"] },
+    });
+    mocks.serverSkills = [];
+    renderSettings();
+    await openSkills();
+    expect(screen.getByText("From MCP servers")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Unavailable skill gone (remove)"));
+    expect(await savedOverrides()).toEqual([
+      { serverSkillSelection: null },
+      { serverSkillSelection: null },
+    ]);
+  });
+
+  it("removes a deleted server's skill that only some clients still pick", async () => {
+    mocks.environments = [
+      {
+        ...mocks.environments[0]!,
+        serverSkillSelection: { mode: "explicit", serverSkillIds: ["gone"] },
+      },
+      mocks.environments[1]!,
+    ];
+    renderSettings();
+    await openSkills();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove from every client" }),
+    );
+    expect(await savedOverrides()).toEqual([{ serverSkillSelection: null }]);
   });
 });

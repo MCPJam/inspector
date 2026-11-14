@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
+import { sameServerSkillSelection } from "@/components/environment-composer/server-skill-selection";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import {
@@ -159,23 +160,6 @@ function sharedFields(
   };
 }
 
-/** Server-skill picks and pins, in order, as the backend fingerprints them. */
-function serverSkillsKey(
-  selection: ProjectEnvironmentServerSkillSelection | null | undefined,
-): string {
-  return JSON.stringify(
-    selection
-      ? [
-          selection.serverSkillIds,
-          (selection.versionPins ?? []).map((pin) => [
-            pin.serverSkillId,
-            pin.versionId,
-          ]),
-        ]
-      : null,
-  );
-}
-
 /**
  * Whether a named row's saved selection is the cell's, by `comparisonKey`
  * (see `sameModelTarget`): a row whose effort or temperature differs from the
@@ -237,8 +221,10 @@ function matchingNamedEnvironment(
     sameOptionalModel(env.modelId, modelId) &&
     sameSavedSelection(modelId, env.modelSelection, modelSelection) &&
     (env.skillScope ?? null) === fields.skillScope &&
-    serverSkillsKey(env.serverSkillSelection) ===
-      serverSkillsKey(fields.serverSkillSelection) &&
+    sameServerSkillSelection(
+      env.serverSkillSelection,
+      fields.serverSkillSelection,
+    ) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,

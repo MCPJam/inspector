@@ -27,6 +27,7 @@ import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
+import { sameServerSkillSelection } from "@/components/environment-composer/server-skill-selection";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import {
   harnessChoiceRefusalReason,
@@ -387,6 +388,8 @@ export function stackFromEnvironment(
     hostIds: env.hostId ? [env.hostId] : [],
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    serverSkillSelection: env.serverSkillSelection ?? null,
+    skillScope: env.skillScope ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
     modelSelection: {
       includeClientDefaults: !env.modelId,
@@ -425,7 +428,12 @@ function enabledSlotsEqual(
       (a.computerEnvironmentId ?? null) ===
         (b.computerEnvironmentId ?? null)) &&
     (!enabled.skillsEnabled ||
-      sameSkillSelection(a.skillSelection, b.skillSelection))
+      (sameSkillSelection(a.skillSelection, b.skillSelection) &&
+        sameServerSkillSelection(
+          a.serverSkillSelection,
+          b.serverSkillSelection,
+        ) &&
+        (a.skillScope ?? null) === (b.skillScope ?? null)))
   );
 }
 
@@ -615,6 +623,14 @@ export function composerStateFromEnvironments(
       skillSelection: sharedSlot(
         (env) => env.skillSelection ?? null,
         sameSkillSelection,
+      ),
+      serverSkillSelection: sharedSlot(
+        (env) => env.serverSkillSelection ?? null,
+        sameServerSkillSelection,
+      ),
+      skillScope: sharedSlot(
+        (env) => env.skillScope ?? null,
+        (a, b) => a === b,
       ),
       computerEnvironmentId: sharedSlot(
         (env) => env.computerEnvironmentId ?? null,

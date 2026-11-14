@@ -45,7 +45,11 @@ export function SuiteSkillsField({
   disabled: boolean;
   /** False when the backend can't derive from the stored environment. */
   editable: boolean;
-  /** The backend stores "All shared Library skills" (`allSharedLibrarySkillScope`). */
+  /**
+   * The backend stores "All shared Library skills" (`allSharedLibrarySkillScope`).
+   * It also judges a server skill's pin by the capture it names, which the
+   * MCP-server section's "pick an older version" needs, so that waits for it.
+   */
   scopeOffered: boolean;
   /** For a form whose labels sit over their fields. */
   labelAbove?: boolean;
@@ -80,13 +84,17 @@ export function SuiteSkillsField({
             }
           : undefined
       }
-      serverSkills={{
-        ...server,
-        serverAttachmentIds: environments.map(
-          (row) => row.serverAttachmentId ?? null,
-        ),
-        onChange: (edit) => onEdit((row) => serverChange(row, edit)),
-      }}
+      serverSkills={
+        scopeOffered
+          ? {
+              ...server,
+              serverAttachmentIds: environments.map(
+                (row) => row.serverAttachmentId ?? null,
+              ),
+              onChange: (edit) => onEdit((row) => serverChange(row, edit)),
+            }
+          : undefined
+      }
       // With no client yet there is no environment to hold a skill.
       disabled={disabled || environments.length === 0}
       testId="suite-clients-skills"

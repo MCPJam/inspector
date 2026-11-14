@@ -7,7 +7,8 @@
  * that skill's server (the backend checks again on every write), so the
  * section offers skills from the servers every environment's group holds.
  * A skill some environment already selects is listed either way, so it can
- * be removed.
+ * be removed, and so is one the project no longer holds: deleting a server
+ * deletes its captured skills but not the environments' picks of them.
  */
 import { useState } from "react";
 import { Server } from "lucide-react";
@@ -70,16 +71,19 @@ function blockedReason(
   skill: ProjectServerSkill,
   inEveryGroup: boolean,
   pinned: boolean,
+  checked: boolean,
 ): string | null {
   const latest = pinned ? undefined : skill.unpinnable;
+  // Only a selected skill has a version menu to pick an older version from.
+  const older = checked ? ", or pick an older version" : "";
   if (latest?.reason === "no_resources") {
-    return "Its server lists no files for this skill, so MCPJam can’t verify it. Update the server to list them, or pick an older version that does.";
+    return `Its server lists no files for this skill, so MCPJam can’t verify it. Update the server to list them${checked ? ", or pick an older version that does" : ""}.`;
   }
   if (latest?.reason === "files_over_cap") {
-    return "This skill has more files than MCPJam captures, so runs can’t use it. Remove some files on the server, or pick an older version.";
+    return `This skill has more files than MCPJam captures, so runs can’t use it. Remove some files on the server${older}.`;
   }
   if (latest) {
-    return "Runs can’t use the latest version of this skill. Open it in the Skills tab to see why, or pick an older version.";
+    return `Runs can’t use the latest version of this skill. Open it in the Skills tab to see why${older}.`;
   }
   if (!inEveryGroup) {
     return "Its server isn’t in every client’s server group. Add the server to the group to use this skill.";
@@ -112,7 +116,11 @@ export function ServerSkillsSection({
       selectedIds.has(skill.id) ||
       choice.across.partialIds.has(skill.id),
   );
-  if (!rows.length) return null;
+  const known = new Set(skills.map((skill) => skill.id));
+  const unavailable = [...selectedIds, ...choice.across.partialIds].filter(
+    (id) => !known.has(id),
+  );
+  if (!rows.length && !unavailable.length) return null;
   return (
     <>
       <div className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -123,7 +131,12 @@ export function ServerSkillsSection({
         const partial = !checked && choice.across.partialIds.has(skill.id);
         const inGroup = served.has(skill.serverId);
         const pinnedVersionId = pins.get(skill.id) ?? null;
-        const reason = blockedReason(skill, inGroup, pinnedVersionId !== null);
+        const reason = blockedReason(
+          skill,
+          inGroup,
+          pinnedVersionId !== null,
+          checked,
+        );
         const capBlocked = !checked && !choice.across.canAdd(skill.id);
         // Partly on but can't be turned on: only its own button removes it.
         const removeOnly = partial && (reason !== null || capBlocked);
@@ -188,6 +201,42 @@ export function ServerSkillsSection({
                 }
               />
             ) : null}
+          </Label>
+        );
+      })}
+      {unavailable.map((id) => {
+        const everywhere = selectedIds.has(id);
+        const remove = () => choice.onChange({ kind: "remove", skillId: id });
+        return (
+          <Label
+            key={id}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/30",
+              disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
+            )}
+          >
+            {/* No name to show: the row exists so the pick can be removed. */}
+            <Checkbox
+              checked={everywhere ? true : "indeterminate"}
+              onCheckedChange={remove}
+              disabled={disabled || !everywhere}
+              aria-label={`Unavailable skill ${id} (remove)`}
+            />
+            <Server className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-normal text-muted-foreground">
+                Unavailable skill
+                <span className="ml-1 font-mono text-[10px]">
+                  {id.slice(0, 8)}
+                </span>
+              </span>
+              <span className="truncate text-[11px] text-muted-foreground">
+                No longer in this project. Remove it to save.
+              </span>
+              {everywhere ? null : (
+                <RemoveEverywhere disabled={disabled} onRemove={remove} />
+              )}
+            </span>
           </Label>
         );
       })}

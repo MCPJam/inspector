@@ -1,7 +1,8 @@
 /**
  * A composed setup's MCP-server skills and "All shared Library skills"
- * scope: they reach the environments the backend creates, and a saved
- * environment is reused only when it runs the same ones.
+ * scope: they reach the environments the backend creates, a saved
+ * environment is reused only when it runs the same ones, and they survive the
+ * trip through a saved environment's stack.
  */
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -9,7 +10,10 @@ import {
   type EnsureAdhocEnvironmentsFn,
 } from "../resolve-stacks";
 import {
+  composerStateFromEnvironments,
   emptyEnvironmentStack,
+  environmentsExceedOneStack,
+  stackFromEnvironment,
   type EnvironmentStack,
 } from "../environment-stack";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
@@ -112,5 +116,55 @@ describe("resolveComposerEnvironments with server skills and the scope", () => {
       { liveEnvironments: [named({})] },
     );
     expect((await withServer.result).environmentIds).toEqual(["minted"]);
+  });
+});
+
+describe("a saved environment's stack", () => {
+  const scope = "all-shared-library" as const;
+  const fields = { serverSkillSelection: lookup, skillScope: scope };
+  const rich = named(fields);
+  const other = (overrides: Partial<ProjectEnvironmentView> = {}) =>
+    named({ environmentId: "other", hostId: "host-2", ...overrides });
+
+  it("carries the server skills and the scope, so the environment still matches its own stack", async () => {
+    const stack = stackFromEnvironment(rich);
+    expect(stack).toMatchObject({
+      serverSkillSelection: lookup,
+      skillScope: scope,
+    });
+    const { ensure, result } = resolve(stack, { liveEnvironments: [rich] });
+    expect((await result).environmentIds).toEqual(["named"]);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("seeds the composer with what every environment runs, and nothing where they differ", () => {
+    const same = composerStateFromEnvironments([rich, other(fields)]);
+    expect(same.stack).toMatchObject({
+      serverSkillSelection: lookup,
+      skillScope: scope,
+    });
+    const apart = composerStateFromEnvironments([rich, other()]);
+    expect(apart.stack).toMatchObject({
+      serverSkillSelection: null,
+      skillScope: null,
+    });
+  });
+
+  it("can't be edited as one stack when environments differ in either", () => {
+    const enabled = { skillsEnabled: true, computersEnabled: false };
+    const scoped = named({ skillScope: scope });
+    const picked = named({ serverSkillSelection: lookup });
+    expect(environmentsExceedOneStack([scoped, other()], enabled)).toBe(true);
+    expect(environmentsExceedOneStack([picked, other()], enabled)).toBe(true);
+    expect(environmentsExceedOneStack([rich, other(fields)], enabled)).toBe(
+      false,
+    );
+    // Without skills-enabled no run uses them, so differing costs nothing.
+    expect(
+      environmentsExceedOneStack([scoped, other()], {
+        ...enabled,
+        skillsEnabled: false,
+      }),
+    ).toBe(false);
   });
 });
