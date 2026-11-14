@@ -385,7 +385,8 @@ export function useDirectoryReadinessRun({
 
   const cancel = useCallback(async () => {
     const runId = activeRunIdRef.current;
-    if (!hosted) {
+    // As `run` decides: a run through `start` is hosted even in a local build.
+    if (!hosted && !start) {
       // Local has no run row; stopping means abandoning the request.
       runTokenRef.current += 1;
       abortRef.current?.abort();
@@ -406,7 +407,7 @@ export function useDirectoryReadinessRun({
         error: error instanceof Error ? error.message : String(error),
       }));
     }
-  }, [hosted, initialState]);
+  }, [hosted, initialState, start]);
 
   /**
    * Fetch the full report. Kept callable for retries, but the effect below is
