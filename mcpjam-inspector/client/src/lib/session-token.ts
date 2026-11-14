@@ -459,9 +459,10 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
   // The /readiness page: the flows it copies, and a project's directory
-  // submissions with their runs and results.
+  // submissions with their runs, results, handoff summary, findings (one
+  // check's under its id), export, events and snapshots.
   /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|handoff|export|events|snapshots|findings(\/[^/]+)?))?)?$/,
   // The pre-run eval disclosure (G4b). Deliberate, anchored bearer-scope
   // change: without this entry the UI's hint would silently 401, since
   // `/api/v1/projects/` is not a prefix this list grants wholesale — see the

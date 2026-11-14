@@ -33,6 +33,8 @@ interface Draft {
   view: SubmissionView | null;
   /** Edits not saved yet. */
   pending: AnswerValues;
+  /** Pending keys the person confirmed as shown: saved as confirmed, not set. */
+  confirming: readonly string[];
   /**
    * The revision each pending edit was made on. Edits made while a save is
    * out keep theirs: that save's revision covers only the fields it sent.
@@ -49,6 +51,7 @@ const EMPTY: Draft = {
   flow: null,
   view: null,
   pending: {},
+  confirming: [],
   bases: {},
   conflict: null,
   saving: false,
@@ -145,8 +148,13 @@ function createSubmissionDraft(
     const batch = nextBatch(draft);
     if (!scope || !batch) return Promise.resolve("idle");
     const sent = batch.answers;
+    // A confirmation goes with its value, so a default is stored as shown.
+    const confirm = draft.confirming.filter((key) => key in sent);
     set({ saving: true });
-    inflight = updateDirectorySubmission(scope, batch)
+    inflight = updateDirectorySubmission(scope, {
+      ...batch,
+      ...(confirm.length > 0 ? { confirm } : {}),
+    })
       .then(
         (saved): SaveOutcome => {
           // Edits made while this save was out stay, on top of its result.
@@ -159,6 +167,7 @@ function createSubmissionDraft(
             error: null,
             savedAt: Date.now(),
             pending,
+            confirming: draft.confirming.filter((key) => key in pending),
             bases: rebase(draft, pending, sent, saved.revision),
           });
           adopt(saved);
@@ -192,6 +201,7 @@ function createSubmissionDraft(
       saving: false,
       error: null,
       pending,
+      confirming: draft.confirming.filter((key) => !clash(key)),
       bases: rebase(draft, pending, sent, conflict.currentRevision),
       conflict: isEmpty(held) ? draft.conflict : { ...draft.conflict, ...held },
     });
@@ -213,7 +223,11 @@ function createSubmissionDraft(
   }
 
   /** Edits on the revision on screen, unless the field already waits on one. */
-  function edit(values: AnswerValues, conflict: AnswerValues | null) {
+  function edit(
+    values: AnswerValues,
+    conflict: AnswerValues | null,
+    confirming = draft.confirming,
+  ) {
     const revision = draft.view?.revision;
     const bases = { ...draft.bases };
     for (const key of Object.keys(values)) {
@@ -221,7 +235,12 @@ function createSubmissionDraft(
         bases[key] = revision;
       }
     }
-    set({ pending: { ...draft.pending, ...values }, bases, conflict });
+    set({
+      pending: { ...draft.pending, ...values },
+      confirming,
+      bases,
+      conflict,
+    });
     queue();
   }
 
@@ -238,9 +257,15 @@ function createSubmissionDraft(
     attach() {
       live = true;
     },
-    setAnswer(key: string, value: DirectoryAnswerValue) {
+    /** `confirm`: the person stands behind this value, as when they confirm a default. */
+    setAnswer(key: string, value: DirectoryAnswerValue, confirm = false) {
       const conflict = draft.conflict && keep(draft.conflict, (k) => k !== key);
-      edit({ [key]: value }, conflict && !isEmpty(conflict) ? conflict : null);
+      const others = draft.confirming.filter((k) => k !== key);
+      edit(
+        { [key]: value },
+        conflict && !isEmpty(conflict) ? conflict : null,
+        confirm ? [...others, key] : others,
+      );
     },
     reapply: () => edit(draft.conflict ?? {}, null),
     keepSaved: () => set({ conflict: null }),
@@ -301,8 +326,8 @@ export function createDraftStore(render: () => void) {
       render();
       void current.load();
     },
-    setAnswer: (key: string, value: DirectoryAnswerValue) =>
-      current.setAnswer(key, value),
+    setAnswer: (key: string, value: DirectoryAnswerValue, confirm = false) =>
+      current.setAnswer(key, value, confirm),
     /** Saves every waiting edit. False when one failed or conflicted. */
     saveNow: () => current.flush(),
     reapply: () => current.reapply(),
@@ -321,7 +346,7 @@ export function useDirectorySubmission({
 }) {
   const [, render] = useReducer((tick: number) => tick + 1, 0);
   const [store] = useState(() => createDraftStore(render));
-  const { flow, view, pending, ...status } = store.draft();
+  const { flow, view, pending, confirming, ...status } = store.draft();
 
   useEffect(() => {
     store.open(projectId, submissionId);
@@ -365,13 +390,17 @@ export function useDirectorySubmission({
     if (finished && finished !== resultsRunId) void store.load();
   }, [finished, resultsRunId, store]);
 
+  // An edit not saved yet has no stamp: nobody to attribute it to yet.
   const answers = useMemo((): DirectoryAnswer[] => {
     const stored = view?.answers.filter((answer) => !(answer.key in pending));
     const edits = Object.entries(pending).map(([key, value]) => {
-      return { key, value, origin: "set" as const };
+      const origin: DirectoryAnswer["origin"] = confirming.includes(key)
+        ? "confirmed"
+        : "set";
+      return { key, value, origin };
     });
     return [...(stored ?? []), ...edits];
-  }, [view, pending]);
+  }, [view, pending, confirming]);
   const values = useMemo(
     () => Object.fromEntries(answers.map(({ key, value }) => [key, value])),
     [answers],
@@ -394,10 +423,21 @@ export function useDirectorySubmission({
     if (!(await store.saveNow())) return;
     if (store.scope() === scope) await run();
   }, [store, run]);
+  const confirm = useCallback(
+    (key: string) => {
+      const value = values[key];
+      if (value !== undefined && value !== null) {
+        store.setAnswer(key, value, true);
+      }
+    },
+    [store, values],
+  );
 
   return {
     flow,
     view,
+    /** Stored answers with their origins, and this tab's edits on top. */
+    answers,
     values,
     issues,
     reviewIssues,
@@ -405,6 +445,8 @@ export function useDirectorySubmission({
     run: runner.state,
     startRun,
     setAnswer: store.setAnswer,
+    /** Stand behind the answer shown, such as a declaration on a default. */
+    confirm,
     saveNow: store.saveNow,
     reapply: store.reapply,
     keepSaved: store.keepSaved,

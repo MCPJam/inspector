@@ -3,7 +3,7 @@
  * portal's label, placeholder, counter, helper and error line, then MCPJam's
  * results for the checks that read it.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type {
   DirectoryAnswerValue,
@@ -44,6 +44,8 @@ export interface PortalFieldProps {
   serverName?: string;
   /** The portal's words for the field where a widget draws it, in place of its label. */
   label?: string;
+  /** MCPJam's mark of where the answer came from, under the portal's helper. */
+  mark?: ReactNode;
   onChange: (value: DirectoryAnswerValue) => void;
 }
 
@@ -362,7 +364,7 @@ function Control(props: ControlProps) {
 export const portalFieldId = (key: string) => `portal-${key}`;
 
 export function PortalField(props: PortalFieldProps) {
-  const { field, value, issue, findings = [], label } = props;
+  const { field, value, issue, findings = [], label, mark } = props;
   const id = portalFieldId(field.key);
   const errorId = `${id}-error`;
   const length = typeof value === "string" ? value.length : 0;
@@ -408,6 +410,7 @@ export function PortalField(props: PortalFieldProps) {
       {field.helper ? (
         <p className="text-sm text-muted-foreground">{field.helper}</p>
       ) : null}
+      {mark}
       <McpjamChecks findings={findings} />
     </div>
   );
