@@ -417,7 +417,7 @@ function extractToolData(
       const matchesToolCallId =
         typeof toolCallId === "string" && part.toolCallId === toolCallId;
       const matchesToolName =
-        !matchesToolCallId &&
+        !toolCallId &&
         typeof toolName === "string" &&
         partToolName(part) === toolName;
 
@@ -971,7 +971,7 @@ function partMatchesToolSpan(
     return true;
   }
   const spanToolName = span.toolName?.trim() || span.name?.trim();
-  return Boolean(spanToolName && partToolName(part) === spanToolName);
+  return Boolean(!span.toolCallId && spanToolName && partToolName(part) === spanToolName);
 }
 
 function findToolFocusSourceIndex(

@@ -72,6 +72,11 @@ export interface MCPAppsCheckResult {
 export type MCPAppsConformanceConfig = MCPServerConfig & {
   /** Cancel this run and its active requests. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   checkIds?: MCPAppsCheckId[];
 };
 
@@ -149,6 +154,8 @@ export interface MCPAppsConformanceResult {
 
 export interface MCPAppsConformanceSuiteConfig {
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   target: MCPServerConfig;
   defaults?: MCPAppsConformanceSuiteDefaults;
   runs: MCPAppsConformanceSuiteRun[];

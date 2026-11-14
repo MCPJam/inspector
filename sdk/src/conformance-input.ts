@@ -1,6 +1,28 @@
-/** Missing caller inputs leave a requirement untested without costing points. */
+/**
+ * A setup gap on the caller's side (a missing or unusable tool, bad arguments,
+ * no login) leaves a requirement untested without costing points: the server
+ * is not to blame. The check shows as gray "Not run" with a plain fix.
+ */
 export type ConformanceInputKey =
-  "tasksProbe" | "logProbe" | "inputRequiredProbe" | "toolCallProbe";
+  "tasksProbe" | "logProbe" | "inputRequiredProbe" | "toolCallProbe" | "login";
+
+/** `details` key holding the setup gap's own plain-English fix, when it has one. */
+export const MISSING_INPUT_MESSAGE_DETAIL = "missingInputMessage";
+
+/**
+ * `details` marking a check that could not run because of the caller's setup.
+ * `message` overrides the generic copy for that input, so each gap can say
+ * exactly what to change.
+ */
+export function needsSetupDetails(
+  input: ConformanceInputKey,
+  message?: string
+): Record<string, unknown> {
+  return {
+    missingInput: input,
+    ...(message ? { [MISSING_INPUT_MESSAGE_DETAIL]: message } : {}),
+  };
+}
 
 type InputCheck = {
   id?: string;
@@ -18,6 +40,7 @@ function inputDetail(details: unknown): ConformanceInputKey | undefined {
     case "logProbe":
     case "inputRequiredProbe":
     case "toolCallProbe":
+    case "login":
       return details.missingInput;
     default:
       return undefined;
@@ -79,12 +102,31 @@ const INPUT_MESSAGES: Record<ConformanceInputKey, string> = {
   inputRequiredProbe:
     "Select a tool that asks for input in setup, then run again.",
   toolCallProbe: "Select a tool to check output in setup, then run again.",
+  login: "This server needs a login. Log in, then run again.",
 };
+
+function ownMessage(details: unknown): string | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  const value = (details as Record<string, unknown>)[
+    MISSING_INPUT_MESSAGE_DETAIL
+  ];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
 
 /** Product copy for the missing input; raw diagnostics stay in the report. */
 export function missingInputMessage(check: InputCheck): string | undefined {
   const input = missingInputForCheck(check);
-  return input ? INPUT_MESSAGES[input] : undefined;
+  if (!input) return undefined;
+  const details = check.details;
+  return (
+    ownMessage(details) ??
+    ownMessage(
+      details && typeof details === "object" && "details" in details
+        ? details.details
+        : undefined
+    ) ??
+    INPUT_MESSAGES[input]
+  );
 }
 
 /**
@@ -97,8 +139,8 @@ const NO_TASK_CREATED =
 
 /**
  * Product copy for a tasks check that had no task to inspect because the
- * chosen tool returned a normal result. The SDK text names CLI flags; the app
- * points at setup instead. Unlike a missing input, this still costs points.
+ * chosen tool returned a normal result, for reports saved before that case
+ * carried the setup marker. Those older reports still cost a point.
  */
 export function noTaskCreatedMessage(check: InputCheck): string | undefined {
   if (check.status !== "skipped" || check.skipReason !== "could-not-run")
@@ -114,6 +156,11 @@ export function noTaskCreatedMessage(check: InputCheck): string | undefined {
     return undefined;
   }
   if (typeof tool !== "string") return undefined;
+  return noTaskCreatedCopy(tool);
+}
+
+/** The plain fix when the picked tool answered normally instead of making a task. */
+export function noTaskCreatedCopy(tool: string): string {
   return `"${tool}" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.`;
 }
 

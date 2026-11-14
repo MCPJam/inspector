@@ -1,3 +1,4 @@
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import type { ChatTransport, UIMessage } from "ai";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -14,6 +15,7 @@ export function orgPolicySendRefusal(
   pending: boolean,
 ): string {
   if (pending) return ORG_POLICY_LOADING_REASON;
+  if (isRuntimeAccountModel(String(model.id)) && model.disabledReason) return model.disabledReason;
   return isOrgKeysDisallowedRow(model)
     ? orgKeysDisallowedNotice(model)
     : ORG_KEYS_MODEL_REASON;
@@ -27,6 +29,9 @@ export function orgPolicyBlocksChatSend(args: {
 }): boolean {
   const { selectedModel: model } = args;
   if (args.pending || isOrgKeysDisallowedRow(model)) return true;
+  if (isRuntimeAccountModel(String(model.id)))
+    return model.disabled === true || !args.availableModels.some((row) =>
+      row.provider === "cursor" && row.id === model.id && row.disabled !== true);
   if (!args.requireOrgKeys) return false;
   return (
     model.disabled === true ||

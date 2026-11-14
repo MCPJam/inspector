@@ -1,4 +1,5 @@
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { Command } from "commander";
 import { reportReadiness, reportScore } from "../lib/conformance-exit-code.js";
 import {
@@ -890,7 +891,13 @@ export function registerTasksCommands(program: Command): void {
       }),
       ...(collector ? { rpcLogger: collector.rpcLogger } : {}),
     };
-    const result = await new MCPTasksConformanceTest(config).run();
+    // The CLI counts the run itself, under its own opt-outs.
+    const test = new MCPTasksConformanceTest({
+      ...config,
+      __suppressTelemetry: true,
+    });
+    captureConformanceRunEvent();
+    const result = await test.run();
 
     const outputResult = reporter
       ? result

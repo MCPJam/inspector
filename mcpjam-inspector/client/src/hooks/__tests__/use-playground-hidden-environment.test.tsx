@@ -460,42 +460,19 @@ describe("usePlaygroundHiddenEnvironment", () => {
     warn.mockRestore();
   });
 
-  it("grants a Cursor client the member's own key, as its client turn does", async () => {
+  it("composes a Cursor client's plugins with no secret for its key", async () => {
     state.plugins = [plugin("bits")];
-    state.secrets = [
-      {
-        secretId: "sec_mine",
-        name: "CURSOR_API_KEY",
-        delivery: "brokered",
-        sharing: "user",
-        isOwner: true,
-        brokerHosts: ["api2.cursor.sh"],
-        brokerHeader: "authorization",
-        brokerTemplate: "Bearer {}",
-      },
-    ];
     const { result } = render({ harnessId: "cursor" });
     await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
-    expect(state.ensure.mock.calls[0][0].secretSelection).toEqual({
-      mode: "explicit",
-      secretIds: ["sec_mine"],
-    });
-  });
-
-  it("leaves a Cursor client with no usable key on its client turn", async () => {
-    state.plugins = [plugin("bits")];
-    state.secrets = [];
-    const { result } = render({ harnessId: "cursor" });
-    expect(result.current.wanted).toBe(false);
-    await Promise.resolve();
-    expect(state.ensure).not.toHaveBeenCalled();
+    expect(state.ensure.mock.calls[0][0]).not.toHaveProperty("secretSelection");
+    expect(state.secretsProjectIds).toEqual([]);
   });
 
   it("waits for the client's settings before composing", async () => {
     state.plugins = [plugin("bits")];
     const { result, rerender } = render({ hostResolved: false });
     // Wanted, so sends wait — but nothing composed for a client whose
-    // harness (and so whose key) is not known yet.
+    // harness (and so its venue) is not known yet.
     expect(result.current.wanted).toBe(true);
     expect(result.current.environmentId).toBeNull();
     await Promise.resolve();
@@ -508,12 +485,6 @@ describe("usePlaygroundHiddenEnvironment", () => {
       hostResolved: true,
     });
     await waitFor(() => expect(result.current.environmentId).toBe("env_1"));
-  });
-
-  it("does not read secrets for a client that needs no key", () => {
-    state.plugins = [plugin("bits")];
-    render({ harnessId: "claude-code" });
-    expect(state.secretsProjectIds.every((id) => id === null)).toBe(true);
   });
 
   describe("the venue", () => {

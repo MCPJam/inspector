@@ -98,7 +98,9 @@ export type CodexSandboxPolicy =
 
 export type TurnStartParams = {
   threadId: string;
-  input: Array<{ type: "text"; text: string }>;
+  input: Array<
+    { type: "text"; text: string } | { type: "image"; url: string }
+  >;
   model?: string;
   effort?: string;
   summary?: "auto" | "concise" | "detailed" | "none";
@@ -276,6 +278,7 @@ export type ThreadItem =
       action?: unknown;
       results?: unknown[] | null;
     }
+  | { type: "imageView"; id: string; path: string }
   | { type: "contextCompaction"; id: string }
   | { type: string; id: string; [key: string]: unknown };
 

@@ -69,6 +69,7 @@ import {
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
 import type { BrowserSessionService } from "./session-service.js";
+import type { PreviewGrantClient } from "../workspace-preview/workspace-tunnel.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -143,6 +144,8 @@ export interface SessionClient {
   recordStatus?(): Promise<BrowserdRecordState>;
   /** Export the persistent profile after the daemon queue has drained. */
   exportProfile?(): Promise<Uint8Array>;
+  /** Serve a workspace port on the browser box's loopback (hosted only). */
+  previewGrant?: PreviewGrantClient["previewGrant"];
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -1176,6 +1179,10 @@ function withActivityTouches(
     // exported fine.
     ...(client.exportProfile
       ? { exportProfile: () => client.exportProfile!() }
+      : {}),
+    // Same rule: without it a hosted session cannot open the workspace's apps.
+    ...(client.previewGrant
+      ? { previewGrant: (grant) => client.previewGrant!(grant) }
       : {}),
   };
 }

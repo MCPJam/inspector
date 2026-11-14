@@ -1,9 +1,16 @@
 import { useCompareChatEnvironment } from "@/hooks/use-compare-chat-environment";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import { paneModelDriftReason } from "@/lib/compare-pane-model";
+import type { RenderComparePaneHeader } from "./compare-pane-settings";
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import { SavedClientProvider } from "@/contexts/saved-client-context";
+import { PaneDisplayProvider } from "@/contexts/pane-display-context";
+import type { PaneDisplay } from "@/stores/compare-pane-display-store";
+import { paneDeviceWidth } from "./compare-pane-display";
 import { CompareLaneWorkspace } from "@/components/host-workspace/CompareLaneWorkspace";
 import { OwnedModelAppPortsProvider } from "@/components/host-workspace/OwnedModelApp";
 import { useCompareLaneModelApps } from "@/components/host-workspace/use-compare-lane-model-apps";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import {
   useThreadAppWorkspace,
   type WorkspaceServer,
@@ -97,7 +104,10 @@ import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { fitWidgetModelContext } from "@/lib/widget-model-context";
 import { useComparisonBrowser } from "@/hooks/use-comparison-browser";
-import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  ModelReasoningEffort,
+  RequestedModelSelection,
+} from "@mcpjam/sdk/browser";
 import type { HostConfigHarnessV2 } from "@/lib/client-config-v2";
 import {
   CompareCardEffort,
@@ -164,6 +174,7 @@ interface MultiModelPlaygroundCardProps {
     identity: ExtensionOwnerIdentity;
     servers: WorkspaceServer[];
     capabilities: ExtensionCapabilities;
+    displayBehavior?: DisplayBehavior;
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
@@ -171,7 +182,8 @@ interface MultiModelPlaygroundCardProps {
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode it's the card's `comparisonKey` (the bare model id for a default
    * selection, so Sonnet·Low and Sonnet·High are two columns); in host mode
-   * it's the host id.
+   * it's the pane id, so two panes on one client stay apart. The client
+   * itself is `hostedContext.hostId`.
    * The card uses `compareId` to key transcripts/summaries/`hasMessages`
    * callbacks so two columns running the same default model can't collide.
    */
@@ -237,6 +249,8 @@ interface MultiModelPlaygroundCardProps {
   hostStyle: ScenarioHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
+  /** The pane's own Device and Theme, from its settings. */
+  displayOverrides?: PaneDisplay;
   hideInlineEdit?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -297,6 +311,15 @@ interface MultiModelPlaygroundCardProps {
    * (no per-card shadow).
    */
   hostCapsResolver?: HostConfigDtoV2 | null;
+  /** A host pane whose model was picked in it sends that choice. */
+  modelPicked?: boolean;
+  /** An environment pane's own model, shown without being sent. */
+  inheritedEnvironmentModel?: {
+    modelId: string | null;
+    modelSelection?: RequestedModelSelection | null;
+  };
+  /** A host pane's settings button and summary row, given this card's lane. */
+  renderPaneHeader?: RenderComparePaneHeader;
   onSendReadinessChange?: (laneId: string, ready: boolean, error?: string) => void;
   pluginHarnessId?: string | null;
   pluginHostResolved?: boolean;
@@ -339,6 +362,7 @@ export function MultiModelPlaygroundCard({
   hostStyle,
   effectiveThreadTheme,
   deviceType,
+  displayOverrides,
   hideInlineEdit = false,
   onWidgetStateChange,
   toolRenderOverrides = {},
@@ -358,6 +382,9 @@ export function MultiModelPlaygroundCard({
   onTranscriptSync,
   hostSnapshot,
   hostCapsResolver,
+  modelPicked = false,
+  inheritedEnvironmentModel,
+  renderPaneHeader,
   onSendReadinessChange,
   pluginHarnessId,
   pluginHostResolved = true,
@@ -473,9 +500,11 @@ export function MultiModelPlaygroundCard({
         : [],
     [],
   );
+  const hostHarnessId =
+    compareKind === "host" ? effectiveHarnessId(hostCapsResolver) : null;
   const { hiddenEnvironment, columnHostedContext } = useCompareChatEnvironment({
     hostedContext,
-    harnessId: pluginHarnessId ?? hostCapsResolver?.agentLoop ?? hostCapsResolver?.harness,
+    harnessId: pluginHarnessId ?? effectiveHarnessId(hostCapsResolver),
     hostResolved: pluginHostResolved,
     computerAttached: hostCapsResolver
       ? !!hostCapsResolver.computer
@@ -533,10 +562,13 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
     harnessStartupPhase,
     loadChatSession,
+    selectedModel,
   } = useChatSession({
     pickedModelSelection: selection,
+    inheritedEnvironmentModel,
     savedClientConfig: compareKind === "host" ? hostCapsResolver ?? undefined : undefined,
-    selectionIntent: compareKind === "host" ? "inherit" : "picked",
+    selectionIntent:
+      compareKind === "host" && !modelPicked ? "inherit" : "picked",
     // Bind extension ownership to this lane.
     pluginWorkspace: laneWorkspaceForSession,
     pluginContextReferences: currentLaneContext,
@@ -558,6 +590,8 @@ export function MultiModelPlaygroundCard({
     // The column's own row and effort: two cards of one model send their own
     // levels, and an OpenRouter card never resolves to the hosted row.
     pinnedModelProvider: String(model.provider),
+    // A client column offers only what its own harness runs, never the lead's list.
+    harnessModelTarget: hostHarnessId ? { harnessId: hostHarnessId } : null,
     reasoningEffortEnabled: true,
     reasoningEffortHarness,
     fixedReasoningEffort: reasoningEffort ?? null,
@@ -572,8 +606,22 @@ export function MultiModelPlaygroundCard({
     },
   });
 
+  const paneHeader = renderPaneHeader?.({
+    environmentId: hiddenEnvironmentActive
+      ? hiddenEnvironment.environmentId
+      : null,
+    pending:
+      hiddenEnvironmentActive &&
+      hiddenEnvironment.wanted &&
+      !hiddenEnvironment.environmentId &&
+      !hiddenEnvironment.failed,
+  });
+  const modelDrift =
+    compareKind === "host"
+      ? paneModelDriftReason({ label: compareLabel, shown: model, resolved: selectedModel })
+      : undefined;
   const readyToSend =
-    !readinessNotice && isSessionBootstrapComplete &&
+    !readinessNotice && isSessionBootstrapComplete && !modelDrift &&
     (!hiddenEnvironmentActive ||
       (!hiddenEnvironment.blockingError &&
         (!hiddenEnvironment.wanted || !!hiddenEnvironment.environmentId)));
@@ -581,7 +629,8 @@ export function MultiModelPlaygroundCard({
     onSendReadinessChange?.(
       `${compareKind}:${compareId}`,
       readyToSend,
-      hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined,
+      modelDrift ??
+        (hiddenEnvironmentActive ? hiddenEnvironment.blockingError : undefined),
     );
     return () => onSendReadinessChange?.(`${compareKind}:${compareId}`, false);
   }, [
@@ -589,6 +638,7 @@ export function MultiModelPlaygroundCard({
     compareKind,
     compareId,
     readyToSend,
+    modelDrift,
     hiddenEnvironment.blockingError,
     hiddenEnvironmentActive,
   ]);
@@ -639,6 +689,7 @@ export function MultiModelPlaygroundCard({
   const canInvoke = useCallback(() => !readinessRef.current, []);
   const laneApps = useThreadAppWorkspace(laneScope, laneServers, {
     capabilities: extensionBinding?.capabilities,
+    displayBehavior: extensionBinding?.displayBehavior,
     launchProfile: extensionBinding?.profile,
     canInvoke,
   });
@@ -647,6 +698,7 @@ export function MultiModelPlaygroundCard({
     extensionBinding?.capabilities,
     extensionBinding?.profile,
     canInvoke,
+    extensionBinding?.displayBehavior,
   );
   laneContextRefs.current = laneScope
     ? {
@@ -883,7 +935,7 @@ export function MultiModelPlaygroundCard({
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
-      // multi-host mode it holds the host's `compareId`. Renaming the
+      // multi-host mode it holds the pane's `compareId`. Renaming the
       // field would ripple to ChatTabV2 + evals — keep the field name,
       // change what we put in it.
       modelId: compareId,
@@ -911,13 +963,12 @@ export function MultiModelPlaygroundCard({
     ],
   );
   const errorMessage = formatErrorMessage(error);
-  // In host mode each column IS a different client, and `compareId` is that
-  // client's id — so the column's own host is the one holding the pin that
-  // failed here, not the turn's. In model mode every column shares the turn's
-  // client, and `compareId` is a model id, which must not be used as one.
+  // The client holding the pin that failed here: in host mode the column's own
+  // client, in model mode the turn's. Never `compareId`, which names the pane
+  // (or, in model mode, a model).
   const changeProtocolVersionHandler = useChangeProtocolVersionAction({
     error: errorMessage,
-    hostId: compareKind === "host" ? compareId : hostedContext?.hostId,
+    hostId: hostedContext?.hostId,
     location: "playground_compare_card",
   });
   const mergedToolRenderOverrides = useMemo(
@@ -936,6 +987,7 @@ export function MultiModelPlaygroundCard({
     deviceType === "tablet" && displayMode === "fullscreen";
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover ? "min-h-[34rem]" : "";
+  const shellMaxWidth = paneDeviceWidth(displayOverrides?.deviceType);
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -1191,6 +1243,8 @@ export function MultiModelPlaygroundCard({
         showComparisonChrome={showComparisonChrome}
         showIdentityHeader={showIdentityHeader}
         logoSrc={logoSrc}
+        identityActions={paneHeader?.actions}
+        identitySummary={paneHeader?.summary}
         titleAccessory={
           effort && showEffort ? (
             <CompareCardEffort model={model} {...effort} />
@@ -1309,11 +1363,13 @@ export function MultiModelPlaygroundCard({
               "scenario-host-shell app-theme-scope relative m-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border border-border/50",
               shellHeightClass,
               effectiveThreadTheme === "dark" && "dark",
+              shellMaxWidth && "mx-auto w-[calc(100%-1.5rem)]",
             )}
             data-host-style={hostStyle}
             data-thread-theme={effectiveThreadTheme}
             style={{
               backgroundColor: hostBackgroundColor,
+              maxWidth: shellMaxWidth,
             }}
           >
             {isThreadEmpty ? (
@@ -1383,7 +1439,9 @@ export function MultiModelPlaygroundCard({
       >
         <ScenarioChatUiOverrideProvider value={effectiveChatUiOverride}>
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
-            {cardBody}
+            <PaneDisplayProvider value={displayOverrides ?? null}>
+              {cardBody}
+            </PaneDisplayProvider>
           </ScenarioHostThemeProvider>
         </ScenarioChatUiOverrideProvider>
       </ScenarioHostCapabilitiesOverrideProvider>

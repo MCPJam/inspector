@@ -194,7 +194,7 @@ Use `--format json|human` for the raw command result. Use `--reporter json-summa
 
 ## Telemetry
 
-`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`).
+`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`). Conformance commands also send one `conformance_run_triggered` event per run, with only `run_source: "cli"`.
 
 Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
 

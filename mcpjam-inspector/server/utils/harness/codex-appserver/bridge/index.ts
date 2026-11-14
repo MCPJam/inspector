@@ -56,6 +56,7 @@ import { buildHostToolCatalog } from "./host-tool-catalog.js";
 import { prepareCodexHome, untrustedProjectPathsFor, type CodexHomeInput } from "./codex-home.js";
 import { startHostToolRelay, type HostToolRelay } from "./host-tool-relay.js";
 import { createStreamTranslator } from "./stream-translator.js";
+import { toCodexTurnStartInput } from "./turn-start-input.js";
 
 type Args = {
   workdir: string;
@@ -550,7 +551,7 @@ async function main(): Promise<void> {
 
       const started = await runtime.request<TurnStartResult>("turn/start", {
         threadId,
-        input: [{ type: "text", text: start.prompt }],
+        input: toCodexTurnStartInput(start.prompt),
         ...(start.warmWorkDir ? { cwd: start.warmWorkDir, approvalPolicy } : {}),
         ...(start.model ? { model: start.model } : {}),
         ...(start.reasoningEffort ? { effort: start.reasoningEffort } : {}),

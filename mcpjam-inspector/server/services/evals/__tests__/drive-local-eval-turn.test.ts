@@ -11,6 +11,7 @@ vi.mock("ai", async () => {
   };
 });
 
+import { APICallError, NoOutputGeneratedError } from "ai";
 import { driveLocalEvalTurn } from "../drive-local-eval-turn";
 import type { DriveLocalEvalTurnParams } from "../drive-local-eval-turn";
 
@@ -174,5 +175,31 @@ describe("driveLocalEvalTurn through the unified turn", () => {
     );
     // The runner's catch path finalizes these spans after the throw.
     expect(turnParams.acc.activeTraceCtx).not.toBeNull();
+  });
+
+  it("throws the provider's error instead of the SDK's bare no-output error", async () => {
+    // What the SDK does when the first model call fails: the provider's error
+    // arrives as the stream's `error` part, then every result promise rejects
+    // with a `NoOutputGeneratedError` that has no cause.
+    const providerError = new APICallError({
+      message: "Incorrect API key provided",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 401,
+      isRetryable: false,
+    });
+    streamTextMock.mockReturnValueOnce({
+      ...streamResult(stream([{ type: "error", error: providerError }])),
+      get response() {
+        return Promise.reject(new NoOutputGeneratedError());
+      },
+    });
+    const turnParams = params();
+
+    await expect(driveLocalEvalTurn(turnParams)).rejects.toBe(providerError);
+    expect(turnParams.acc.stepErrorEvidence).toEqual({
+      source: "provider_call",
+      httpStatus: 401,
+    });
   });
 });

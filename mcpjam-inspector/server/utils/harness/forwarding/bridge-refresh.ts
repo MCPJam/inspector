@@ -1,5 +1,5 @@
 import type { HarnessV1 } from "@ai-sdk/harness";
-import { jsonSchema, safeValidateTypes } from "@ai-sdk/provider-utils";
+import { preserveLifecycleDataField } from "../lifecycle-data-field.js";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { z } from "zod";
@@ -112,44 +112,10 @@ const bridgeState = z.object({
 function withPolicyStamp(
   schema: NonNullable<HarnessV1["lifecycleStateSchema"]>,
 ) {
-  const resolved = typeof schema === "function" ? schema() : schema;
-  // The harness and host can use differently branded provider-utils versions.
-  const validator =
-    "jsonSchema" in resolved
-      ? jsonSchema(resolved.jsonSchema, {
-          validate: resolved.validate?.bind(resolved),
-        })
-      : resolved;
-  return jsonSchema(
-    { type: "object" },
-    {
-      validate: async (value) => {
-        const stamped = z
-          .object({
-            mcpjamForwardingPolicy: z.string().min(1).optional(),
-          })
-          .passthrough()
-          .safeParse(value);
-        if (!stamped.success) return { success: false, error: stamped.error };
-        const { mcpjamForwardingPolicy, ...data } = stamped.data;
-        const result = await safeValidateTypes({
-          value: data,
-          schema: validator,
-        });
-        if (!result.success || mcpjamForwardingPolicy === undefined)
-          return result;
-        // Runtime validators may strip unknown fields. Keep only their parsed
-        // data plus the host's policy stamp, which the resume guard checks below.
-        const parsed = z
-          .record(z.string(), z.unknown())
-          .safeParse(result.value);
-        if (!parsed.success) return { success: false, error: parsed.error };
-        return {
-          success: true,
-          value: { ...parsed.data, mcpjamForwardingPolicy },
-        };
-      },
-    },
+  return preserveLifecycleDataField(
+    schema,
+    "mcpjamForwardingPolicy",
+    z.string().min(1),
   );
 }
 
@@ -188,7 +154,8 @@ export function withForwardingResume<T extends HarnessV1>(
           return {
             ...bootstrap,
             files: bootstrap.files.map((file) =>
-              (file.path.endsWith("/bridge.mjs") || file.path.endsWith("/warm-bridge.mjs"))
+              file.path.endsWith("/bridge.mjs") ||
+              file.path.endsWith("/warm-bridge.mjs")
                 ? {
                     ...file,
                     content: patchBootstrap(file.content),

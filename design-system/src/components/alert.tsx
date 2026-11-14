@@ -11,6 +11,10 @@ const alertVariants = cva(
         default: "bg-card text-card-foreground",
         destructive:
           "text-destructive bg-card [&>svg]:text-current *:data-[slot=alert-description]:text-destructive/90",
+        // Tints with the reading foreground: small text never sits on a solid
+        // status fill.
+        success: "border-success/40 bg-success/10 text-foreground",
+        warning: "border-warning/40 bg-warning/10 text-foreground",
       },
     },
     defaultVariants: {

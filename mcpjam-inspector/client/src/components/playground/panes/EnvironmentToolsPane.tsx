@@ -14,6 +14,7 @@
  * (`state.executeTool`) cannot reach these servers. Expanding a row shows
  * the tool's description and input schema.
  */
+import type { EnvironmentOverrides } from "@/shared/execution-target";
 import { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, RefreshCw } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -40,11 +41,13 @@ import { cn } from "@/lib/utils";
 interface EnvironmentToolsPaneProps {
   projectId: string;
   environmentId: string;
+  environmentOverrides?: EnvironmentOverrides;
 }
 
 export function EnvironmentToolsPane({
   projectId,
   environmentId,
+  environmentOverrides,
 }: EnvironmentToolsPaneProps) {
   // The reactive row's `revision` makes a live edit (another tab, a
   // collaborator) refetch — same signal the environment preview keys on.
@@ -59,6 +62,7 @@ export function EnvironmentToolsPane({
     projectId,
     environmentId,
     revision,
+    environmentOverrides,
   );
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -133,7 +137,6 @@ export function EnvironmentToolsPane({
           <div className="py-6 px-2">
             <ErrorCard
               error={describeEnvironmentError(error)}
-              variant="inline"
               // A zero-servers environment is not a transient failure, so Retry
               // would only fail again. Send the user where the fix is instead.
               {...(isNoServersError(error)

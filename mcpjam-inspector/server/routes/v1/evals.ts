@@ -1,4 +1,5 @@
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
+import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -4401,6 +4402,11 @@ async function launchEvalRun(params: {
         conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
       )
     : undefined;
+  // The key owner's saved accounts for this suite; an inline suite has none.
+  const connectionIdSets = await loadSuiteConnectionIdSets(
+    createConvexClients(convexAuthToken).convexClient,
+    { suiteId: body.suiteId },
+  );
   const { manager } = await createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
@@ -4412,6 +4418,7 @@ async function launchEvalRun(params: {
     {
       // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
       pluginComputerRuntime: false,
+      ...(connectionIdSets ? { connectionIdSets } : {}),
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's

@@ -7,7 +7,7 @@ export const bridgeControlPlugin = {
     build.onLoad(
       { filter: /[/\\]@ai-sdk[/\\]harness[/\\]dist[/\\]bridge[/\\]index\.js$/ },
       (args) => {
-        const source = readFileSync(args.path, "utf8");
+        const source = readFileSync(args.path, "utf8").replaceAll("\t", "  ");
         const marker =
           "  const handleInbound = async (msg, ws) => {\n    switch (msg.type) {";
         if (source.split(marker).length !== 2) {

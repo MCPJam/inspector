@@ -140,7 +140,7 @@ export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
 
 /**
  * Overflow sentence appended OUTSIDE the budget when skills were dropped.
- * Shared by every inlined catalog (live cloud, pinned, effective) so the
+ * Shared by every inlined catalog (live cloud and effective) so the
  * notice stays byte-identical across surfaces.
  */
 export function skillCatalogOverflowNotice(omittedCount: number): string {
@@ -153,7 +153,7 @@ export function skillCatalogOverflowNotice(omittedCount: number): string {
  * Render a budgeted catalog as prompt-ready bullet lines.
  *
  * Entries with an `origin` keep the effective-path
- * `- **<ref>** (<origin>): <description>` shape; cloud/pinned entries omit
+ * `- **<ref>** (<origin>): <description>` shape; cloud entries omit
  * origin and render `- **<name>**: <description>`. Budget accounting is
  * unchanged (origin is optional and uncharged when absent).
  */

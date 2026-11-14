@@ -383,6 +383,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
@@ -1207,6 +1208,7 @@ function useTemplateVerifyDeepLink({
     useCanManageProjectClients({ isAuthenticated, projectId });
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
@@ -1277,6 +1279,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
@@ -1355,6 +1358,7 @@ function useTemplateVerifyDeepLink({
     claudeCodeEnabled,
     codexEnabled,
     cursorCliEnabled,
+    copilotCliEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -1869,13 +1873,19 @@ export function ConformanceRunDetailRoute() {
       projectId: convexProjectId,
     });
   // The run's server Settings, the same defaults the Conformance page reads.
-  const { defaultsByServer, inputsByServer, loadDefaults, saveDefaults } =
-    useConformanceServerData({
-      projectId: convexProjectId,
-      serversById,
-      serversByName,
-      serversLoading: isLoading || isBootstrapping,
-    });
+  const {
+    defaultsByServer,
+    inputsByServer,
+    timeoutsByServer,
+    loadDefaults,
+    saveDefaults,
+    saveTimeout,
+  } = useConformanceServerData({
+    projectId: convexProjectId,
+    serversById,
+    serversByName,
+    serversLoading: isLoading || isBootstrapping,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1908,6 +1918,8 @@ export function ConformanceRunDetailRoute() {
                     : "failed";
               },
               save: saveDefaults,
+              timeouts: timeoutsByServer,
+              saveTimeout,
             }
           : undefined
       }
@@ -7062,7 +7074,7 @@ export default function App() {
                 isOpeningPlayground={isOpeningFirstRunPlayground}
                 onWelcomeShown={markFirstRunServerChoiceWelcomeShown}
                 onSkip={dismissFirstRunOverlay}
-                guestSessionRefused={Boolean(guestSessionRefusal)}
+                guestSessionRefusal={guestSessionRefusal?.reason ?? null}
                 organizationId={activeOrganizationId}
                 isSignedIn={Boolean(workOsUser)}
                 onSignIn={() => {

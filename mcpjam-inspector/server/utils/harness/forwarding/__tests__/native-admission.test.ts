@@ -36,7 +36,7 @@ describe("native profile admission", () => {
     } })).toEqual([]);
   });
   it("requires new elicitation qualification when the installed runtime pin changes", () => {
-    expect(harnessPinnedVersion("claude-code")).toBe("2.1.245");
+    expect(harnessPinnedVersion("claude-code")).toBe("2.1.290");
   });
   const formConfig = () => ({
     url: "https://mcp.example/mcp",
@@ -46,6 +46,7 @@ describe("native profile admission", () => {
     const form = candidate(formConfig());
     expect(nativeForwardingGaps(form)).toContain("client-capabilities");
     expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.245" })).toEqual([]);
+    expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.290" })).toEqual([]);
     expect(nativeForwardingGaps({ ...form, elicitationRuntimeVersion: "2.1.310" })).toContain("client-capabilities");
   });
   it("honors exact-set precedence over duplicated or conflicting inactive overlays", () => {

@@ -90,6 +90,7 @@ vi.mock("../unified-findings-section", () => ({
     </section>
   ),
 }));
+vi.mock("../run-server-groups", () => ({ RunServerGroups: () => null }));
 vi.mock("../../evals/use-project-run-history", () => ({
   useProjectRunHistory: () => mocks.history,
 }));

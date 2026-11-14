@@ -134,7 +134,11 @@ describe("protocol checks that run out of time", () => {
     expect(result.checks[2]).toMatchObject({
       status: "skipped",
       skipReason: "could-not-run",
-      error: { message: "Skipped because the server stopped responding." },
+      error: {
+        message:
+          'Skipped because the server stopped responding ("Ping" and "Tools List" timed out).',
+      },
+      details: { blockedBy: "ping" },
     });
     expect(listTools).toHaveBeenCalledTimes(1);
   });
@@ -170,7 +174,7 @@ describe("protocol checks that run out of time", () => {
         false,
       ]);
       expect(result.checks[3]?.error?.message).toBe(
-        "Skipped because the server stopped responding."
+        'Skipped because the server stopped responding ("Ping" and "Tools List" timed out).'
       );
       expect(listTools).toHaveBeenCalledTimes(1);
     }

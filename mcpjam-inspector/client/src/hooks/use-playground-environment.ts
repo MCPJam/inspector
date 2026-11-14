@@ -11,7 +11,6 @@ import {
   type EnvironmentPreviewServer,
 } from "@/hooks/use-environment-preview";
 import type { EnvironmentErrorPayload } from "@/lib/environment-error";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 
 /**
@@ -125,9 +124,9 @@ export interface PlaygroundEnvironmentState {
 }
 
 export function usePlaygroundEnvironment(
-  projectId: string | null
+  projectId: string | null,
+  flagEnabled: boolean,
 ): PlaygroundEnvironmentState {
-  const flagEnabled = useProjectEnvironmentsEnabled();
   const [storedEnvironmentId, setStoredEnvironmentId] =
     usePreviewedEnvironmentId(projectId);
   // Fail closed: a persisted id must not resurrect the mode for a user whose

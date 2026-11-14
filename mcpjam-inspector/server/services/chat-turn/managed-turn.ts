@@ -33,11 +33,15 @@ import {
 } from "../../utils/effective-auth.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { runtimeServersAreOverridden } from "../environments/runtime.js";
-import { withLiveProjectSkills } from "../environments/effective-capabilities.js";
 import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import { TurnTiming } from "../../utils/turn-timing.js";
+import {
+  conversationExecutionArgs,
+  startBoundConversationExecutionCheck,
+} from "../../utils/harness/conversation-execution.js";
 
 export async function handleManagedChatTurn(
   c: Context,
@@ -45,6 +49,7 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
+  const timing = new TurnTiming();
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -94,6 +99,7 @@ export async function handleManagedChatTurn(
       rpcCollector,
     });
     if (!setup.value) return setup.response;
+    timing.mark("setup");
     let {
       hostedBody,
       initializePins,
@@ -117,10 +123,10 @@ export async function handleManagedChatTurn(
       effectiveCapabilities,
       effectiveServerIds,
       effectiveServerNames,
-      environmentSkills,
       xaaPolicy,
       resolvedExecution,
-      turnProvenance,
+      turnSkills,
+      clientTurn,
       externalAccountHarnessTurn,
       selected,
       routingSelection,
@@ -138,9 +144,7 @@ export async function handleManagedChatTurn(
       executionScope,
       scenarioParticipant,
       harnessComputerWorkdir,
-      includeProjectSkills,
-      liveProjectCapabilities,
-      projectSkillReadFailed,
+      executionBound,
     } = setup.value;
 
     const turnAuthorization = await prepareTurnAuthorization(c, {
@@ -148,6 +152,7 @@ export async function handleManagedChatTurn(
       requestId: hostedBody.harnessStartupRequestId,
       harness: resolvedExecution.harness,
     }, resources);
+    timing.mark("turnAuthorization");
     const connections = await prepareManagedConnections({
       c,
       rawBody,
@@ -184,6 +189,30 @@ export async function handleManagedChatTurn(
       validatedPageTools,
       validatedWidgetModelContext,
     } = connections;
+    timing.mark("connections");
+    // What the turn persists under, and so what its binding check validates.
+    // One object feeds both the check below and `persist`, so they agree.
+    const executionScopeFields = {
+      projectId: hostedBody.projectId,
+      chatSessionId: body.chatSessionId,
+      scenarioId,
+      executionBindingVersion: resolvedExecution.executionBindingVersion,
+      ...(executionScope ? { executionScope } : {}),
+      ...(resolvedExecution.harness
+        ? { harness: resolvedExecution.harness, agentLoop: resolvedExecution.agentLoop }
+        : {}),
+    };
+    // Started now, and awaited where the stream is prepared, only when the
+    // backend says the row `bind` would check is already bound (see the helper).
+    const executionBinding = startBoundConversationExecutionCheck(
+      executionBound,
+      conversationExecutionArgs({
+        manager,
+        scope: executionScopeFields,
+        authHeader: c.req.header("authorization"),
+        signal: c.req.raw.signal as AbortSignal | undefined,
+      }),
+    );
     const tools = await prepareManagedTools({
       c,
       rawBody,
@@ -205,6 +234,7 @@ export async function handleManagedChatTurn(
       builtInTools,
       effectiveSystemPrompt,
     } = tools;
+    timing.mark("tools");
     try {
       const sourceType = turnMode === "recorded" ? "scenario" : "direct";
       // Mirrors the sourceType branch — scenario surface stays "scenario", the
@@ -263,7 +293,7 @@ export async function handleManagedChatTurn(
                 environmentSpec.servers.baseEffectiveServerIds?.length ??
                 environmentSpec.servers.effectiveServerIds.length,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: environmentSkills?.length ?? 0,
+              environment_skill_count: turnSkills.box?.skills.length ?? 0,
               environment_skill_delivery: skillDelivery,
               environment_plugin_version_ids: (
                 environmentSpec.pluginVersions ?? []
@@ -282,9 +312,9 @@ export async function handleManagedChatTurn(
               environment_capability_problems: (
                 effectiveCapabilities?.problems ?? []
               ).map((problem) => problem.code),
-              // The Playground's hidden environment (a client turn carrying
-              // its project's plugins), not one a member chose.
-              ...(includeProjectSkills ? { environment_hidden: true } : {}),
+              // The Playground's hidden environment (a client's turn), not
+              // one a member chose.
+              ...(clientTurn ? { environment_hidden: true } : {}),
             }
           : {}),
         // Environment-BACKED SCENARIO turn (live-follow). A deliberately
@@ -298,7 +328,7 @@ export async function handleManagedChatTurn(
               environment_id: scenarioEnvironment.environmentRef.environmentId,
               environment_revision: scenarioEnvironment.environmentRef.revision,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: environmentSkills?.length ?? 0,
+              environment_skill_count: turnSkills.box?.skills.length ?? 0,
             }
           : {}),
       });
@@ -404,10 +434,6 @@ export async function handleManagedChatTurn(
                   ) ?? {},
               }
             : {}),
-          localMcpRuntimeRequired:
-            localIngress &&
-            (body.localMcpRuntimeRequired === true ||
-              localMachine?.localBrowserRequested === true),
           customProviders: body.customProviders,
           ...(localIngress &&
           (turnRail === "local" ||
@@ -475,42 +501,9 @@ export async function handleManagedChatTurn(
           ...(harnessComputerWorkdir
             ? { computerWorkdir: harnessComputerWorkdir }
             : {}),
-          // The project's skills as a capability set, for a target that
-          // resolves no environment (host / adhoc). Same gate as before, same
-          // laziness as before — a body is fetched for the skill the model
-          // loads, not for the catalog — but delivered through the one merged
-          // surface instead of a parallel branch of the orchestrator.
-          ...(liveProjectCapabilities && !effectiveCapabilities
-            ? {
-                effectiveCapabilities: liveProjectCapabilities,
-                liveSkillSurface: true,
-              }
-            : {}),
-          // Emulated-engine delivery of the environment's resolved skills.
-          // Mutually exclusive with the live set above (gated on the same
-          // `environmentSpec`), and ignored by the helper on a harness turn.
-          //
-          // Both are set for an environment turn: the capability set drives the
-          // emulated ref-addressed tools (INS-3), the flat list stays for the
-          // harness adapter, which writes name/description/content to disk.
-          ...(environmentSkills !== undefined
-            ? { runtimeSkillsOverride: environmentSkills }
-            : {}),
-          // A hidden environment adds the project's pool after its own union,
-          // and is a LIVE surface like the client turn it stands in for: its
-          // servers are connected now, not captured, so their skills compose
-          // too.
-          ...(effectiveCapabilities && liveProjectCapabilities
-            ? {
-                effectiveCapabilities: withLiveProjectSkills(
-                  effectiveCapabilities,
-                  liveProjectCapabilities,
-                ),
-                liveSkillSurface: true,
-              }
-            : effectiveCapabilities
-              ? { effectiveCapabilities }
-              : {}),
+          // The turn's one skill plan, made for the engine that runs it.
+          skills: turnSkills.skills,
+          skillsSurface: turnMode === "recorded" ? "scenario" : "playground",
           isolatedServers: {
             serverIds: isolatedServerIds,
             refused: refusedServers,
@@ -520,18 +513,12 @@ export async function handleManagedChatTurn(
           getAuthorization: turnAuthorization?.getAuthorization,
           ...(executionTarget.kind !== "scenario" && !c.get("guestId") && typeof retrySubject === "string" ? { retryOwner: { subject: retrySubject, projectId: hostedBody.projectId } } : {}),
           requireNativeToolDiscovery: resolvedExecution.requireNativeToolDiscovery,
-          executionBindingVersion: resolvedExecution.executionBindingVersion,
+          ...executionScopeFields,
           executionTarget: toResumeExecutionTarget(executionTarget),
-          chatSessionId: body.chatSessionId,
-          projectId: hostedBody.projectId,
           sourceType,
           origin,
           ...(turnMode === "recorded" && surface ? { surface } : {}),
-          scenarioId,
           accessVersion,
-          // Phase 3: forward the runtime-config scope into the harness path
-          // (alongside the bash-tool path threaded above).
-          ...(executionScope ? { executionScope } : {}),
           // The conversation's box: its binding for a harness turn, and its
           // heartbeat to stop when the turn's stream completes.
           ...(scenarioBox ? { scenarioBox } : {}),
@@ -539,28 +526,31 @@ export async function handleManagedChatTurn(
           authenticatedUserId,
           ...(sourceType === "direct" && typeof hostRuntimeConfig?.hostId === "string" ? { hostId: hostRuntimeConfig.hostId } : hostId ? { hostId } : {}),
           originalMessages: messages,
-          ...(resolvedExecution.harness
+          ...(resolvedExecution.harness && harnessExecutionTarget
+            ? { harnessExecutionTarget }
+            : {}),
+          // Harness-engine delivery of the same plan's skills, with the set
+          // that carries their supporting files and the pinned plugin
+          // versions that fork an incompatible resumed sandbox. Presence
+          // (even empty) is what makes it authoritative downstream.
+          ...(turnSkills.box
             ? {
-                harness: resolvedExecution.harness,
-                agentLoop: resolvedExecution.agentLoop,
-                ...(harnessExecutionTarget ? { harnessExecutionTarget } : {}),
+                runtimeSkillsOverride: turnSkills.box.skills,
+                ...(turnSkills.box.set
+                  ? { effectiveCapabilities: turnSkills.box.set }
+                  : {}),
               }
             : {}),
-          // Harness-engine delivery of the environment's resolved skills.
-          // Presence (even empty) is what makes it authoritative downstream.
-          ...(environmentSkills !== undefined
-            ? { runtimeSkillsOverride: environmentSkills }
+          // Its servers are connected now: a harness may offer their own
+          // skills, as MCPJam's agent does.
+          ...(turnSkills.live ? { liveTurn: true } : {}),
+          ...(turnSkills.turnProvenance
+            ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
-          // The Playground's hidden environment on a harness: the harness adds
-          // the project's live pool to the environment's own skills, as the
-          // plain client turn this stands in for would deliver it. Explicit,
-          // so a named environment's turn keeps exactly its own set.
-          ...(includeProjectSkills && resolvedExecution.harness
-            ? { includeProjectSkills: true }
-            : {}),
-          ...(turnProvenance ? { turnProvenance } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
-          setupSkillProvenanceIncomplete: projectSkillReadFailed,
+          // A study whose Library could not be read ran with unknown skills.
+          setupSkillProvenanceIncomplete:
+            turnMode === "recorded" && !turnSkills.box,
           // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
             !authoritativeConnectionPolicy &&
@@ -592,11 +582,6 @@ export async function handleManagedChatTurn(
                   ),
               }
             : {}),
-          // INS-7: the same resolution, unflattened, for Computer delivery —
-          // supporting files (the flat list drops them, and the project-wide
-          // file query cannot return a plugin skill's) and the pinned plugin
-          // versions that fork an incompatible resumed sandbox.
-          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           // PROJECT SECRETS: the id only, never the resolved spec. The harness
           // turn fetches this environment's materialized secrets from Convex
           // with the END USER'S OWN bearer, so the backend decides which of
@@ -676,6 +661,8 @@ export async function handleManagedChatTurn(
         },
         runtime: {
           turnAuthorization,
+          turnTiming: timing,
+          ...(executionBinding ? { executionBinding } : {}),
           authHeader: c.req.header("authorization"),
           clientIp: getSpendClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
@@ -722,8 +709,11 @@ export async function handleManagedChatTurn(
           dispose: () => resources.dispose(),
         },
       });
+      timing.mark("streamPreparation");
       streamOwnsResources = true;
-      return resources.response(response, c.req.raw.signal);
+      return resources.response(response, c.req.raw.signal, {
+        "Server-Timing": timing.serverTiming(),
+      });
     } catch (error) {
       // The bridge can hold rows created before the throw (e.g. an elicitation
       // during a tool call that then failed); withdraw them so no answerable

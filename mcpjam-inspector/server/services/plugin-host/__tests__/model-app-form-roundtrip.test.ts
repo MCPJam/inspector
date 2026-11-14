@@ -45,7 +45,10 @@ vi.mock("../../../routes/web/auth.js", () => ({
     };
   },
 }));
-vi.mock("../receipt-store.js", () => ({ createPluginInvocationReceiptPort: () => undefined }));
+vi.mock("../receipt-store.js", async (original) => ({
+  ...(await original<typeof import("../receipt-store.js")>()),
+  createPluginInvocationReceiptPort: () => undefined,
+}));
 // Only the durable backend boundary is in memory. The route, owner, runtime,
 // collector, form validation and resumed MCP request are production code.
 vi.mock("../../../utils/mrtr-continuation-state.js", async original => {
@@ -122,9 +125,9 @@ it.each(["accept", "cancel"] as const)("runs a model App's real MRTR %s round wi
     const runtime = createPluginRequestRuntime(c, admission, "fixture", { hostId: "host", serverId: "server" }, undefined, { ownedForms: false });
     try {
       const source = await runtime.resolve("library", c.req.raw.signal);
-      const published = modelApps.publish({ content: [] }, { owner: {
+      const published = await modelApps.publish({ content: [] }, { owner: {
         ...actor, instanceId: crypto.randomUUID(), generation: 1, serverId: "server", bindingId: source.bindingId, placement: "interactive",
-      }, subject: actor.subject, hostId: "host", hostRevision: source.hostRevision, serverIdentity: source.serverIdentity }, "library", source.revision, source.tool._meta);
+      }, subject: actor.subject, hostId: "host", hostRevision: source.hostRevision, serverIdentity: source.serverIdentity }, "library", source.revision, source.tool._meta, c.req.raw.signal);
       const envelope = z.object({ _meta: z.object({ [PLUGIN_MODEL_APP_META]: pluginModelAppSchema }) }).parse(published);
       token = envelope._meta[PLUGIN_MODEL_APP_META].instanceToken;
       return c.json({ ok: true });
@@ -156,7 +159,7 @@ it.each(["accept", "cancel"] as const)("runs a model App's real MRTR %s round wi
     expect(calls[1].requestState).toBe("private-state");
   } finally {
     const owner = modelApps.get(token, actor).owner.owner;
-    modelApps.close(token, actor);
+    await modelApps.close(token, actor, new AbortController().signal);
     expect(() => pluginInstances.getFormOwner(owner, actor)).toThrow();
   }
 });

@@ -161,6 +161,7 @@ vi.mock("../needs-ephemeral-sandbox", async (importOriginal) => {
 });
 
 import { withPluginExecutionServers } from "../plugin-execution-servers";
+import { PERSONAL, accountToolSet } from "./helpers/account-tools";
 import {
   createConcurrencyLimiter,
   defaultEvalExecutionBudgets,
@@ -311,6 +312,61 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       ]);
     },
   );
+
+  // OpenRouter answers a BYOK key with no balance with a 402 whose message
+  // matches the MCPJam exhaustion phrases.
+  it("keeps running when the customer's own provider reports insufficient credits", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw Object.assign(
+          new Error(
+            "Insufficient credits. Add more using https://openrouter.ai/settings/credits",
+          ),
+          {
+            name: "AI_APICallError",
+            statusCode: 402,
+            responseBody:
+              '{"error":{"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits","code":402}}',
+          },
+        );
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+
+    const result = await runEvalSuiteWithAiSdk(config as any);
+
+    expect(streamTextMock).toHaveBeenCalledTimes(3);
+    expect(
+      result?.quickRunIterationOutcomes?.map(
+        (outcome) => outcome.creditsExhausted,
+      ),
+    ).toEqual([false, false, false]);
+    const persisted = convexClient.action.mock.calls.find(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.errorDetails,
+    );
+    expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
+  });
+
+  it("redacts a key the provider's error message echoes before storing it", async () => {
+    const keyTail = "x".repeat(32);
+    streamTextMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error(`Incorrect API key provided: sk-proj-${keyTail}`),
+        { name: "AI_APICallError", statusCode: 401 },
+      );
+    });
+
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+
+    const failed = convexClient.action.mock.calls.find(
+      ([name, args]) => name === "testSuites:updateTestIteration" && args.error,
+    );
+    expect(failed?.[1].error).toContain("Incorrect API key provided");
+    expect(failed?.[1].error).not.toContain(keyTail);
+  });
 
   describe("environment quick runs (committed iterations)", () => {
     it("runs every attempt on its committed row and creates none", async () => {
@@ -880,6 +936,49 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         (row) => row.state === "failed" || row.reason === "missingToolCall",
       ),
     ).toBe(false);
+  });
+
+  it("grades and records a call made through an account selector as the server's tool", async () => {
+    preparedToolsOverride.current = accountToolSet("matching").tools;
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "delete_task",
+            toolCallId: "account-call",
+            input: { id: "task-1", link_id: PERSONAL.connectionId },
+          },
+        ],
+      },
+    ];
+    streamTextMock.mockImplementationOnce(() => ({
+      consumeStream: async () => {},
+      response: Promise.resolve({ modelId: "gpt-4-turbo", messages }),
+      responseMessages: Promise.resolve(messages),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 }),
+      finishReason: Promise.resolve("stop"),
+    }));
+    const runConfig = buildQuickRunConfig();
+    const expected = [{ toolName: "delete_task", arguments: { id: "task-1" } }];
+    Object.assign(runConfig.config.tests[0], {
+      expectedToolCalls: expected,
+      promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: expected }],
+      matchOptions: { argumentMatching: "exact" },
+    });
+    await runEvalSuiteWithAiSdk(runConfig as any);
+
+    const update = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration",
+    );
+    expect(update?.[1]).toMatchObject({
+      result: "passed",
+      actualToolCalls: [
+        { toolName: "delete_task", arguments: { id: "task-1" }, toolCallId: "account-call" },
+      ],
+    });
   });
 
   it("allows an explicitly allowed destructive MCP tool through the runner", async () => {
@@ -1734,6 +1833,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       reasoningTokens: 25,
       cachedInputTokens: 10,
     });
+  });
+
+  it("lets a turn use the accounts the manager was authorized with", async () => {
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+    const options = vi.mocked(orchestration.prepareChatV2).mock.calls.at(-1)?.[0];
+    expect(options).toBeDefined();
+    // No override: prepareChatV2 reads the manager's account groups, which
+    // exist only when a launcher sent the suite's chosen accounts.
+    expect(options).not.toHaveProperty("connectionsByServerId");
   });
 
   it("resolves persisted hosted server names to the live manager ids", async () => {

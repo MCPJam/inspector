@@ -82,7 +82,14 @@ function ensureUiCapability(config: MCPServerConfig): MCPServerConfig {
 export function normalizeMCPAppsConformanceConfig(
   config: MCPAppsConformanceConfig,
 ): NormalizedMCPAppsConformanceConfig {
-  const { checkIds, signal, ...serverConfig } = config;
+  // The usage-ping flag is the runner's, not the client's: keep it out of
+  // the server config every connection is built from.
+  const {
+    checkIds,
+    signal,
+    __suppressTelemetry: _suppressTelemetry,
+    ...serverConfig
+  } = config;
   const normalizedServerConfig = ensureUiCapability(
     serverConfig as MCPServerConfig
   );

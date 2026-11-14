@@ -127,7 +127,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -540,6 +539,31 @@ it("refuses hosted approval resumes with no paused state instead of replaying a 
   harnessState.continuations = [];
 });
 
+describe("Claude Code's quiet start on hosted boxes", () => {
+  const createHarnessArgs = () => {
+    const adapter = vi.mocked(getHarnessAdapter).mock.results.at(-1)!.value;
+    return vi.mocked(adapter.createHarness).mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+  };
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.mocked(getHarnessAdapter).mockClear();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("asks a hosted runtime for a quiet start when switched on", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP", "true");
+    await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
+    expect(createHarnessArgs()?.quietStartup).toBe(true);
+  });
+
+  it("asks for nothing while the switch is off", async () => {
+    await runHarnessTurn(baseOptions({ sourceType: "direct" }) as never, "none");
+    expect(createHarnessArgs()).not.toHaveProperty("quietStartup");
+  });
+});
+
 describe("the hosted command sandbox under Tool Approval", () => {
   const CODEX_LIKE = {
     supportsNativeToolApproval: true,
@@ -615,6 +639,13 @@ it.each(["claude-code", "codex"] as const)("delivers %s App context per turn wit
   await runHarnessTurn({ ...options, harnessTurnContext: "widget state two", harnessUnavailableAppTools: true } as never, "none");
   expect(agentConstruction.last?.instructions).toEqual(firstInstructions);
   expect(JSON.stringify(harnessState.stream.mock.calls.at(-1))).toContain("widget state two");
+});
+
+
+it.each(["claude-code", "codex"] as const)("hands %s the turn's Browser reason as instructions", async (harness) => {
+  const systemPrompt = "Baseline\n\n## Browser\n\nBrowser is unavailable on this conversation's computer for this turn.";
+  await runHarnessTurn(baseOptions({ harness, agentLoop: harness, sourceType: "direct", selectedServers: [], systemPrompt }) as never, "none");
+  expect(agentConstruction.last?.instructions).toBe(systemPrompt);
 });
 
 

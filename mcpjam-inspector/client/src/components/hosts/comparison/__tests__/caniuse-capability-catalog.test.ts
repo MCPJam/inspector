@@ -32,6 +32,10 @@ describe("caniuse capability catalog", () => {
     expect(getCaniuseCapabilityBySlug("roots")?.field.id).toBe(
       "capabilities.roots"
     );
+    // The UI extension row, first in the MCP Apps section.
+    expect(getCaniuseCapabilityBySlug("ui-extension")?.field.id).toBe(
+      "capabilities.uiExtension"
+    );
     expect(
       getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id
     ).toBe("appsCap.availableDisplayModes");
@@ -80,6 +84,32 @@ describe("caniuse capability catalog", () => {
       )
     ).toBe("unknown");
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+
+  it("reads a value a catalog row left out as not yet tested", () => {
+    // The page would otherwise show the client style's default, a guess.
+    const catalogRow = {
+      ...emptyHostConfigInputV2(),
+      hostStyle: "chatgpt",
+      rendersMcpApps: true,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { toolInputPartial: true } },
+      },
+    } as never;
+    expect(
+      getCaniuseSupportLevel(hostConfigField("appsCap.toolInputPartial"), catalogRow)
+    ).toBe("supported");
+    for (const id of [
+      "appsCap.toolCancelled",
+      "appsCap.widgetDisplayModeRequests",
+      "modelVisibleMcpToolResults.directContent.image",
+      "mcpToolResultImageRendering.directContent.image",
+    ]) {
+      expect(getCaniuseSupportLevel(hostConfigField(id), catalogRow), id).toBe(
+        "unknown"
+      );
+    }
   });
 
   it("publishes Event delivery, unknown until a client's modes are saved", () => {

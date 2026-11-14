@@ -21,13 +21,18 @@ import {
 } from "../../utils/harness/forwarding/approval.js";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
 import { createNativeRpcLogger } from "../../utils/harness/forwarding/native-rpc-logs.js";
-import { nativeToolCallId } from "../../utils/harness/forwarding/native-results.js";
+import {
+  nativeToolCallId,
+  withoutHostCorrelation,
+} from "../../utils/harness/forwarding/native-results.js";
 import { nativeApprovalResponse } from "../../utils/harness/forwarding/native-approval-response.js";
 import {
+  cancelledRequestId,
   parseNativeMessage,
   readNativeBody,
   NativeWireError,
 } from "../../utils/harness/forwarding/native-wire.js";
+import { sessionForwardingContext } from "../../utils/harness/forwarding/session-forwarding.js";
 import { readForwardingApprovalId } from "@/shared/forwarding-approval";
 import {
   toolApprovalClaimKey,
@@ -50,6 +55,10 @@ const contextSchema = z
     correlationKey: z.string().min(1).max(512).optional(),
   })
   .strict();
+/** A session envelope names the lane's owner; its turn comes from the grant. */
+type ForwardingContext = Omit<z.infer<typeof contextSchema>, "turnId"> & {
+  session?: true;
+};
 const userSchema = z.object({ _id: z.string() });
 const userQuery = makeFunctionReference<"query">("users:getCurrentUser");
 
@@ -64,8 +73,13 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
       serverId,
     );
     if (!sealed) return c.json({ error: "Unauthorized" }, 401);
-    const context = contextSchema.parse(JSON.parse(sealed.token));
-    if (context.owner.serverId !== serverId)
+    const session = sealed.session
+      ? sessionForwardingContext(sealed, serverId)
+      : undefined;
+    const context: ForwardingContext | undefined = sealed.session
+      ? session && { ...session, session: true }
+      : contextSchema.parse(JSON.parse(sealed.token));
+    if (!context || context.owner.serverId !== serverId)
       return c.json({ error: "Unauthorized" }, 401);
     const accountId = context.owner.connectionId ?? `server:${serverId}`;
     const header = `x-mcpjam-forwarding-${createHash("sha256")
@@ -259,8 +273,12 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
                   serverId,
                   request: c.req.raw,
                   signal,
-                  body: raw,
-                  message,
+                  ...(raw === undefined
+                    ? { body: raw, message }
+                    : withoutHostCorrelation(
+                        { body: raw, message },
+                        context.correlationKey,
+                      )),
                   trustedHeaders: config.requestInit?.headers,
                   fetch: config.baseFetch!,
                   onUnauthorized: config.onUnauthorized,
@@ -275,8 +293,16 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
           if (
             !message?.method ||
             (typeof message.id !== "string" && typeof message.id !== "number")
-          )
+          ) {
+            // A cancelled request must never run here, even if it is still
+            // waiting or has not arrived yet; the server still gets the cancel.
+            const cancelled = cancelledRequestId(message);
+            if (cancelled !== undefined)
+              await control
+                .cancel(caller.turnId, cancelled)
+                .catch(reportNativeFailure);
             return await send();
+          }
           const policy =
             context.delivery === "bridge"
               ? await enhancedToolPolicy(
@@ -292,7 +318,8 @@ export async function handleNativeForwarding(c: Context): Promise<Response> {
             control,
             operation: {
               invocationKey: randomUUID(),
-              ...(message.method === "tools/call"
+              // A session-stable runtime's requests name no tool call.
+              ...(message.method === "tools/call" && !context.session
                 ? { nativeToolCallId: nativeToolCallId(message.params, context.correlationKey) }
                 : {}),
               turnId: caller.turnId,

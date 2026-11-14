@@ -85,6 +85,21 @@ describe("native discovery admission", () => {
       required: true, harnessId, route: { ...route, ...version, delivery: "host-tools" },
     })).not.toThrow();
   });
+  it("refuses Claude Code 2.1.290 discovery until live HARN-2 requalification", () => {
+    expect(() =>
+      assertNativeDiscovery({
+        required: true,
+        harnessId: "claude-code",
+        route: {
+          ...route,
+          runtimeVersion: "2.1.290",
+          modelId: "anthropic/claude-haiku-4.5",
+          adapterVersion: "tool-search-auto-v1",
+          delivery: "host-tools",
+        },
+      }),
+    ).toThrow("not qualified");
+  });
   it("refuses a missing or emulated route", () => {
     expect(() => assertNativeDiscovery({ required: true })).toThrow(
       "requires a qualified harness",

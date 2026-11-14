@@ -51,6 +51,8 @@ import {
   type FirstRunOnboardingScreen,
 } from "@/lib/first-run-onboarding-analytics";
 import { FIRST_RUN_OAUTH_OVERLAY_READY_EVENT } from "@/lib/first-run-oauth-return";
+import type { GuestSessionRefusalReason } from "@/lib/guest-session";
+import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 
 /** Time the welcome splash remains visible before it advances to server choice. */
 export const FIRST_RUN_WELCOME_AUTO_ADVANCE_MS = 5_500;
@@ -169,7 +171,8 @@ interface FirstRunOnboardingOverlayProps {
   isOpeningPlayground?: boolean;
   onWelcomeShown: () => void;
   onSkip: () => void;
-  guestSessionRefused?: boolean;
+  /** Why the backend refused a guest session, or null while one is allowed. */
+  guestSessionRefusal?: GuestSessionRefusalReason | null;
   onSignIn?: () => void;
   organizationId?: string | null;
   isSignedIn?: boolean;
@@ -196,11 +199,12 @@ export function FirstRunOnboardingOverlay({
   isOpeningPlayground = false,
   onWelcomeShown,
   onSkip,
-  guestSessionRefused = false,
+  guestSessionRefusal = null,
   onSignIn,
   organizationId,
   isSignedIn,
 }: FirstRunOnboardingOverlayProps) {
+  const guestSessionRefused = guestSessionRefusal !== null;
   const prefersReducedMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<FirstRunOverlayStep>(() =>
@@ -945,8 +949,11 @@ export function FirstRunOnboardingOverlay({
                 </DialogDescription>
               </DialogHeader>
 
-              {guestSessionRefused ? (
-                <GuestSessionRefusalNotice onSignIn={onSignIn} />
+              {guestSessionRefusal ? (
+                <GuestSessionRefusalNotice
+                  reason={guestSessionRefusal}
+                  onSignIn={onSignIn}
+                />
               ) : null}
 
               <form className="mt-[18px]" onSubmit={connectWithInitialDefaults}>
@@ -1091,8 +1098,8 @@ export function FirstRunOnboardingOverlay({
                     : null}
                 </DialogTitle>
                 <DialogDescription className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-                  {guestSessionRefused
-                    ? "MCPJam couldn't create another guest session from this network today."
+                  {guestSessionRefusal
+                    ? guestSessionRefusalCopy(guestSessionRefusal).summary
                     : connectionState.status === "preparing"
                       ? "Getting your project ready to connect to an MCP server."
                       : "Checking the connection before MCPJam opens the playground."}
@@ -1316,7 +1323,14 @@ export function FirstRunOnboardingOverlay({
   );
 }
 
-function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
+function GuestSessionRefusalNotice({
+  reason,
+  onSignIn,
+}: {
+  reason: GuestSessionRefusalReason;
+  onSignIn?: () => void;
+}) {
+  const copy = guestSessionRefusalCopy(reason);
   return (
     <div
       role="alert"
@@ -1329,11 +1343,10 @@ function GuestSessionRefusalNotice({ onSignIn }: { onSignIn?: () => void }) {
         />
         <div className="min-w-0">
           <p className="text-[12px] font-semibold text-card-foreground">
-            Guest session limit reached
+            {copy.title}
           </p>
           <p className="mt-1 text-[11.5px] leading-[1.5] text-muted-foreground">
-            Too many guest sessions were created from this network today. Sign
-            in to continue setting up your server.
+            {copy.detail}
           </p>
         </div>
       </div>

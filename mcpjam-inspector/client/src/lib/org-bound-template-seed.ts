@@ -11,7 +11,7 @@ import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { storedModelChoice } from "@/components/chat-v2/shared/model-selection";
 import { harnessPickerModels } from "@/lib/harness-model-locks";
 import { HOST_MODEL_SELECTION_PURPOSE } from "@/lib/host-model-selection";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 
 export type OrgBoundTemplateSeed =
   | { kind: "unchanged"; input: HostConfigInputV2 }
@@ -49,7 +49,7 @@ export function bindTemplateSeedToOrg(
     selectionsSupported: boolean;
   },
 ): OrgBoundTemplateSeed {
-  if (!context.requireOrgKeys || isRuntimeChosenModelSentinel(seed.modelId)) {
+  if (!context.requireOrgKeys || isRuntimeAccountModel(seed.modelId)) {
     return { kind: "unchanged", input: seed };
   }
   // Without a stored selection an organization row saves only its bare id,

@@ -5871,7 +5871,10 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.user = null;
     // One stable object: the banner reads it as a useSyncExternalStore snapshot.
-    const refusal = { until: Date.now() + 540_000 };
+    const refusal = {
+      until: Date.now() + 540_000,
+      reason: "rate_limited" as const,
+    };
     vi.mocked(getGuestSessionRefusal).mockReturnValue(refusal);
 
     render(<App />);

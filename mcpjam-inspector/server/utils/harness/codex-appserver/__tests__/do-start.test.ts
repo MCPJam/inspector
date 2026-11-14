@@ -115,8 +115,8 @@ describe("codex app-server doStart", () => {
       permissionMode: "allow-edits",
     } as never);
 
-    const bootstrapDir = `${DEFAULT_DIR}/${CODEX_APPSERVER_BOOTSTRAP_DIR}`;
-    const sessionDataDir = `${DEFAULT_DIR}/.agent-runs/session-1`;
+    const bootstrapDir = `${HOME}/.ai-sdk-harness/${CODEX_APPSERVER_BOOTSTRAP_DIR}`;
+    const sessionDataDir = `${HOME}/.ai-sdk-harness/.agent-runs/session-1`;
     const bridgeStateDir = `${sessionDataDir}/bridge`;
 
     expect(box.spawns).toHaveLength(1);
@@ -146,6 +146,27 @@ describe("codex app-server doStart", () => {
       ),
     ).toBe(false);
 
+    await session.doDestroy();
+  });
+
+  it.each([
+    { home: "/home/from-live-probe", probes: 0, stateHome: "/home/from-live-probe" },
+    { home: "relative", probes: 1, stateHome: HOME },
+    { home: "/home/invalid\0", probes: 1, stateHome: HOME },
+    { home: undefined, probes: 1, stateHome: HOME },
+  ])("uses only a valid live HOME hint ($home)", async ({ home, probes, stateHome }) => {
+    const bridge = await fakeBridge();
+    const box = fakeSession({ port: bridge.port });
+    const session = await createCodexAppServer({ sandboxHomeDir: home }).doStart({
+      sessionId: "session-home",
+      sessionWorkDir: SESSION_WORK_DIR,
+      sandboxSession: box.session,
+      permissionMode: "allow-edits",
+    } as never);
+    expect(box.runs.filter(({ command }) => command.includes("$HOME"))).toHaveLength(probes);
+    expect(box.spawns[0]!.command).toContain(
+      ` --session-data-dir ${q(`${stateHome}/.ai-sdk-harness/.agent-runs/session-home`)}`,
+    );
     await session.doDestroy();
   });
 

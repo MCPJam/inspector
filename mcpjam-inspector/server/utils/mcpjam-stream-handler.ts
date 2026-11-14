@@ -36,7 +36,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -80,6 +80,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
@@ -138,7 +139,7 @@ import {
   shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   isRejectedToolCallMetadata,
   markRejectedToolCallMetadata,
@@ -209,14 +210,12 @@ function isModelVisibleImageOutput(value: unknown): boolean {
 /**
  * One decision per tool call, for the life of a turn.
  *
- * Keyed by `toolCallId` rather than by tool name because the SEP-2640
- * declaration is a FUNCTION WITH SIDE EFFECTS: it resolves the skill's
- * manifest and records the digest set the user is about to be asked about,
- * which `execute` then re-checks. This engine asks the same question about the
- * same call more than once — at the emit gate, then again on the unresolved
- * and auto-deny re-scans, which re-walk the whole history — and a second
- * evaluation would re-fetch the manifest and could overwrite the binding it
- * exists to check. The AI SDK evaluates once per call; so does this.
+ * Keyed by `toolCallId` rather than by tool name because a FUNCTION-form
+ * declaration answers per call, from that call's input and messages. This
+ * engine asks the same question about the same call more than once — at the
+ * emit gate, then again on the unresolved and auto-deny re-scans, which
+ * re-walk the whole history — and every one of those must get the answer the
+ * first ask got. The AI SDK evaluates once per call; so does this.
  *
  * Promises, not booleans, so two concurrent askers share one evaluation rather
  * than racing into two.
@@ -416,10 +415,12 @@ async function clientAcceptsBackendChunk(
   chunk: unknown,
   reported: Set<string>,
 ): Promise<boolean> {
-  const result = await safeValidateTypes({
-    value: chunk,
-    schema: uiMessageChunkSchema,
-  });
+  // Call the lazy schema's own validate. `safeValidateTypes` from the
+  // inspector's `@ai-sdk/provider-utils` cannot accept this schema: the
+  // harness pin brings a newer copy whose Schema brand does not overlap.
+  const validate = uiMessageChunkSchema().validate;
+  if (!validate) return true;
+  const result = await validate(chunk);
   if (result.success) return true;
 
   const record =
@@ -934,6 +935,8 @@ function applyToolRefresh(
 
 export interface MCPJamHandlerOptions {
   turnAuthorization?: TurnAuthorization;
+  /** The route's stage timing; a harness turn adds its stages and first text. */
+  turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -1059,34 +1062,22 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (Project Environments — env-based swarm targets
-   * only). When set — even EMPTY — the harness turn delivers exactly these
-   * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
-   * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
-   * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skillsSource` instead (which THROWS on
-   * harness+pinned — the two paths are deliberately disjoint).
+   * Pinned harness skills (eval runs and swarm targets). When set — even
+   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
+   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
+   * the emulated engine receives pinned skills via prepareChatV2's `skills`
+   * plan instead (which it refuses on a harness turn — the two paths are
+   * deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
-   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
-   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
-   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution) and
-   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
-   * place that precedence is written down. An empty override is semantic: the
-   * environment delivers no skills, which is not the same as "ask the project".
+   * The skills THIS turn's environment resolved to. When set — even EMPTY —
+   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution);
+   * see `harness/skill-delivery.ts` for the single place that precedence is
+   * written down. With neither, the turn leaves the box's skills as they are.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The Playground's HIDDEN environment, harness side: deliver the project's
-   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
-   * Selects the `live_plus` skill source explicitly — a turn that merely
-   * carries an environment's override and capability set never gets it. Only
-   * the web chat route sets it, and only for an environment target that asked
-   * for the project's skills.
-   */
-  includeProjectSkills?: boolean;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
@@ -1100,6 +1091,12 @@ export interface MCPJamHandlerOptions {
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * A client's or a study's turn: its servers are connected now, so their own
+   * MCP-server skills may be offered beside its skills. Unset for a named
+   * environment, whose server skills were captured with it.
+   */
+  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.
@@ -1234,6 +1231,11 @@ export interface MCPJamHandlerOptions {
    * `finalize-iteration` as the same policy blocks the in-process gate yields.
    */
   onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
+  /**
+   * What the box writer did with a harness turn's skills, once per turn: after
+   * its session is up, or when the turn stops before that.
+   */
+  onBoxSkillsWritten?: (result: BoxSkillsResult) => void;
   /**
    * The host's approval switch for this turn.
    *

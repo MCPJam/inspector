@@ -779,6 +779,12 @@ export type {
 } from "./directory-readiness/lazy-auth.js";
 export { probeLazyAuthentication } from "./directory-readiness/lazy-auth-probe.js";
 export type { ProbeLazyAuthenticationOptions } from "./directory-readiness/lazy-auth-probe.js";
+// Directory submission forms as data: flows, answer validation, placement.
+export * from "./directory-readiness/flows/index.js";
+// Directory test plans: drafting, validation, call outcomes per tool.
+export * from "./directory-readiness/test-plan/index.js";
+// The decision scan: question ids, rule candidates, the request, grading.
+export * from "./directory-readiness/decisions/index.js";
 
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
@@ -922,6 +928,7 @@ export { renderConformanceRunJUnitXml } from "./conformance-run-junit.js";
 export type {
   ConformanceRunProgress,
   RunConformanceConfig,
+  RunConformanceOAuthConfig,
 } from "./conformance-run.js";
 export {
   detectCiMetadata,
@@ -1237,6 +1244,38 @@ export {
 } from "./provider-tool-names.js";
 export type { ToolNameAliases } from "./provider-tool-names.js";
 
+// Progressive MCP tool discovery: the `search_mcp_tools` / `load_mcp_tools`
+// meta-tools, the tool catalog, the On / Auto / Off plan and the per-step
+// gating. `HostRunner` and the Inspector's hosted turns run the same code.
+export {
+  DEFAULT_TOOL_DISCOVERY_POLICY,
+  META_TOOL_LOAD,
+  META_TOOL_NAMES,
+  META_TOOL_SEARCH,
+  buildToolCatalog,
+  commitNewlyLoaded,
+  createDiscoveryState,
+  decideProgressivePlan,
+  gateToolsToActiveSubset,
+  hydrateDiscoveryStateFromHistory,
+  lookupToolIdByModelName,
+  parseProgressiveToolsEnv,
+  resolveActiveToolNames,
+  shouldForceInitialToolSearch,
+} from "./progressive-discovery/discovery.js";
+export type {
+  ProgressiveDiscoveryOptions,
+  ProgressiveToolPlan,
+  ToolCatalogEntry,
+  ToolDiscoveryState,
+} from "./progressive-discovery/discovery.js";
+export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
+export type {
+  LoadMcpToolsResult,
+  ProgressiveMetaToolsConfig,
+  SearchMcpToolsResult,
+} from "./progressive-discovery/meta-tools.js";
+
 // Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
 export {
   serializeForInlineScript,
@@ -1537,6 +1576,18 @@ export {
   CONFORMANCE_CHECK_METADATA,
   MCP_OAUTH_READINESS_IDS,
 } from "./oauth-conformance/index.js";
+export {
+  APPS_CHECK_SOURCES,
+  CONFORMANCE_CHECK_SOURCES,
+  OAUTH_CHECK_SOURCES,
+  PROTOCOL_CHECK_SOURCES,
+  TASKS_CHECK_SOURCES,
+  conformanceCheckSourceUrl,
+} from "./conformance-sources.js";
+export type {
+  ConformanceCheckSource,
+  ConformanceSourcedCheckId,
+} from "./conformance-sources.js";
 
 // MCP Operations (pure functions for common MCP workflows)
 export {

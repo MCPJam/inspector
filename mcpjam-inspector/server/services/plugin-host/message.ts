@@ -1,4 +1,4 @@
-import { modelApps } from "./model-apps.js";
+import { modelApps, readOwnedApp } from "./model-apps.js";
 import { messagePreparations } from "./message-preparations.js";
 import type { Context } from "hono";
 import type { UIMessage } from "ai";
@@ -105,27 +105,22 @@ export async function preparePluginMessageTurn(
       await runtime.release();
     }
   }
-  const model = modelApps.has(intent.instanceToken)
-    ? modelApps.get(intent.instanceToken, actor)
-    : undefined;
-  const instance = model
+  const owned = await readOwnedApp(intent.instanceToken, actor, c.req.raw.signal);
+  const model = owned.kind === "model" ? owned.app : undefined;
+  const instance = owned.kind === "model"
     ? {
-        ...model.owner,
+        ...owned.app.owner,
         messageEnabled: true,
         activation: {
-          toolName: model.toolName,
-          revision: model.revision,
+          toolName: owned.app.toolName,
+          revision: owned.app.revision,
           selector: {
             kind: "thread" as const,
             threadId: intent.sourceThreadId,
           },
         },
       }
-    : await pluginInstances.getPersistent(
-        intent.instanceToken,
-        actor,
-        c.req.raw.signal,
-      );
+    : owned.instance;
   const target = pluginMessageSendMode(intent.params).target;
   const message = options.messages.at(-1);
   const parts = pluginMessageParts(intent.params);
@@ -170,7 +165,8 @@ export async function preparePluginMessageTurn(
     if (options.prepareOnly) {
       if (target !== "new") throw deny();
       // Recheck source after the asynchronous admission before granting transfer.
-      if (model) modelApps.get(intent.instanceToken, actor);
+      if (model)
+        await modelApps.restore(intent.instanceToken, actor, c.req.raw.signal);
       else
         await pluginInstances.getPersistent(
           intent.instanceToken,
@@ -194,17 +190,27 @@ export async function preparePluginMessageTurn(
         intentDigest,
       });
     }
-    (model ? modelApps : pluginInstances).prepareMessage(
-      intent.instanceToken,
-      actor,
-      intent.operationId,
-      pluginBindingDigest([
-        options.threadId,
-        message.id,
-        intent.sourceThreadId,
-        intent.params,
-      ]),
-    );
+    const fingerprint = pluginBindingDigest([
+      options.threadId,
+      message.id,
+      intent.sourceThreadId,
+      intent.params,
+    ]);
+    if (model)
+      await modelApps.prepareMessage(
+        modelApps.get(intent.instanceToken, actor),
+        actor,
+        intent.operationId,
+        fingerprint,
+        c.req.raw.signal,
+      );
+    else
+      pluginInstances.prepareMessage(
+        intent.instanceToken,
+        actor,
+        intent.operationId,
+        fingerprint,
+      );
     return options.messages.map((entry) =>
       entry === message ? { ...entry, parts } : entry,
     );

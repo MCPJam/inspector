@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, screen } from "@testing-library/react";
 
 import { TraceTimeline } from "../internal/trace-timeline/trace-timeline";
 import type { TraceSpan } from "../internal/trace-timeline/eval-trace";
@@ -170,5 +170,25 @@ describe("TraceTimeline (recorded waterfall)", () => {
     const codeEl = getByTestId("trace-mcp-error-code");
     expect(codeEl.textContent).toContain("-32602");
     expect(codeEl.textContent).toContain("Invalid params");
+  });
+});
+
+
+describe("tool call identity", () => {
+  it("does not replace an earlier call's data with a later call of the same tool", () => {
+    render(<TraceTimeline recordedSpans={[
+      { id: "first", name: "record_write", category: "tool", startMs: 0, endMs: 1, toolCallId: "first", toolName: "record_write" },
+    ]} transcriptMessages={[
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "first", toolName: "record_write", input: { marker: "first-marker" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "first", toolName: "record_write", output: { type: "json", value: "first-output" } }] },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "second", toolName: "record_write", input: { marker: "second-marker" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "second", toolName: "record_write", output: { type: "json", value: "second-output" } }] },
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tool · record_write/ }));
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(pane.textContent).toContain("first-marker");
+    expect(pane.textContent).toContain("first-output");
+    expect(pane.textContent).not.toContain("second-marker");
+    expect(pane.textContent).not.toContain("second-output");
   });
 });

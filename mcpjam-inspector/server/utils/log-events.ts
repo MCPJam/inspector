@@ -547,12 +547,23 @@ export type SystemEventMap = {
   "model_catalog.refresh.failed": {
     reason: "fetch_failed" | "invalid_catalog";
   };
+  "mcp_app.resource_read.failed": import("./log-events/mcp-app-resource-read.js").McpAppResourceReadFailedEvent;
   "harness.timing": {
-    harnessId?: "claude-code" | "codex" | "cursor";
+    harnessId?: "claude-code" | "codex" | "copilot-cli" | "cursor" | "opencode";
     harnessBootstrap?: "baked" | "installed" | "install-failed" | "reused" | "none";
     harnessBakeExpected?: "baked" | "custom-workdir" | "unbaked-recipe" | "none";
     harnessBakeOnBox?: "present" | "absent" | "unknown" | "not-checked";
     harnessTurn?: "failed";
+    /**
+     * `TurnTiming` (`turn-timing.ts`), in whole milliseconds: each route stage
+     * before the model stream, and the request's time to its first text.
+     */
+    setupMs?: number;
+    turnAuthorizationMs?: number;
+    connectionsMs?: number;
+    toolsMs?: number;
+    streamPreparationMs?: number;
+    firstTextMs?: number;
   };
   "harness.bootstrap": Record<string, never>;
   "harness.turn.failed": Record<string, never>;
@@ -584,7 +595,7 @@ export type SystemEventMap = {
     surface: string;
     serverId: string;
     transport: "http" | "stdio";
-    configuredMode: "auto" | "modern-pin" | "legacy";
+    configuredMode: "auto" | "modern-pin" | "legacy" | "legacy-first";
     outcome: "connected" | "failed";
     negotiatedEra?: "legacy" | "modern";
     negotiatedProtocolVersion?: string;

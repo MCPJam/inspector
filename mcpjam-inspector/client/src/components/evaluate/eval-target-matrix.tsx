@@ -426,7 +426,7 @@ function EvalModelPicker({
     requireOrgKeys,
     onManageOrgProviders,
     onAddProvider,
-  } = useAvailableModels({ projectId });
+  } = useAvailableModels({ projectId, harnessTargets: [harness] });
   return (
     <EvalModelChoices
       {...{

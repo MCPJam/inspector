@@ -3,6 +3,7 @@ vi.mock("../../config.js", () => ({ get HOSTED_MODE() { return deployment.hosted
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { setRequestLocal } from "../../middleware/request-local.js";
 import { SignJWT, generateKeyPair } from "jose";
 
 const mocks = vi.hoisted(() => ({
@@ -90,6 +91,57 @@ afterEach(() => {
 });
 
 describe("browser authorization for detached runs", () => {
+  it("reuses only the same request's authorized project and bearer", async () => {
+    const { error, getBearer } = await authorize((c) => {
+      setRequestLocal(c, "authorizedProject", {
+        projectId: "project-1", organizationId: "verified-project-org", bearer: "browser-token",
+      });
+    });
+    expect(error).toBeUndefined();
+    expect(await getBearer!()).toBe("execution-token-1");
+    expect(mocks.verify).toHaveBeenCalledOnce();
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mint.mock.calls[0][1].headers).toMatchObject({
+      "x-mcpjam-acting-in-org": "verified-project-org",
+    });
+
+    const next = await authorize();
+    expect(next.error).toBeUndefined();
+    expect(mocks.query).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { projectId: "other-project", bearer: "browser-token" },
+    { projectId: "project-1", bearer: "other-token" },
+  ])("looks up the original bearer when cached authorization differs: %j", async (binding) => {
+    const { error } = await authorize((c) => {
+      setRequestLocal(c, "authorizedProject", {
+        ...binding, organizationId: "wrong-org",
+      });
+    });
+    expect(error).toBeUndefined();
+    expect(mocks.setAuth).toHaveBeenCalledWith("browser-token");
+    expect(mocks.query).toHaveBeenCalledOnce();
+    expect(mint.mock.calls[0][1].headers).toMatchObject({
+      "x-mcpjam-acting-in-org": "project-org",
+    });
+  });
+
+  it("refuses revoked sessions even with request-owned project authorization", async () => {
+    const cache = new RevokedSessionCache({ fetchPage: () => new Promise(() => {}) });
+    cache.markRevokedLocally("revoked-cached-session");
+    setRevokedSessionCacheForTests(cache);
+    mocks.verify.mockResolvedValueOnce({ sub: subject, sid: "revoked-cached-session" });
+    const { error } = await authorize((c) => {
+      setRequestLocal(c, "authorizedProject", {
+        projectId: "project-1", organizationId: "verified-project-org", bearer: "browser-token",
+      });
+    });
+    expect(error).toMatchObject({ status: 401, code: "SESSION_REVOKED" });
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
   it("accepts a real MCP resource token for a detached run", async () => {
     const { privateKey, publicKey } = await generateKeyPair("RS256");
     const issuer = "https://login.mcpjam.com";

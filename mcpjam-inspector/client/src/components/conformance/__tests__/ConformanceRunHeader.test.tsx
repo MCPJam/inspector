@@ -8,11 +8,11 @@ function renderHeader(
   const props = {
     serverName: "bart",
     startedAt: Date.UTC(2026, 10, 4, 12, 0),
+    backLabel: "Conformance",
     onBack: vi.fn(),
     busy: false,
     isConnecting: false,
     showHistory: true,
-    onShowHistory: vi.fn(),
     onOpenSettings: vi.fn(),
     showShare: false,
     onRunAgain: vi.fn(),
@@ -24,18 +24,15 @@ function renderHeader(
 }
 
 describe("ConformanceRunHeader", () => {
-  it("leads back to Conformance and switches to History from its tabs", () => {
+  it("leads back to Conformance and shows no Overview/History tabs", () => {
     const props = renderHeader();
 
     expect(screen.getByRole("heading", { name: "bart" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Conformance" }));
     expect(props.onBack).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
-    expect(props.onShowHistory).toHaveBeenCalledTimes(1);
-    // Overview is the run itself: choosing it again does nothing.
-    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
-    expect(props.onShowHistory).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 
   it("keeps Settings, Share and Run again on the right", () => {

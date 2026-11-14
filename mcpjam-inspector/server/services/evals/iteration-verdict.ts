@@ -179,12 +179,19 @@ export function buildEvalIterationVerdict(
   let passed = finalizePassedForEval({
     matchPassed: evaluation.passed,
     trace: input.trace,
-    // A failed per-turn cycle (`iterationError`) must not sneak through as a
-    // pass on negative / zero-expected-tool cases.
     iterationError: input.iterationError,
     failOnToolError: input.failOnToolError,
     predicateResults,
   });
+
+  // A failed per-turn cycle (`iterationError`) must not sneak through as a
+  // pass on negative / zero-expected-tool cases. Checked here on its own
+  // because the shared gate skips it whenever `failOnToolError` is false, and
+  // turning that off forgives a tool that answered with an error, not a turn
+  // that never finished.
+  if (passed && input.iterationError?.trim()) {
+    passed = false;
+  }
 
   // A pinned (model-free) tool call's error never enters the trace, so the
   // `failOnToolError` trace gate is blind to it — apply it explicitly.
