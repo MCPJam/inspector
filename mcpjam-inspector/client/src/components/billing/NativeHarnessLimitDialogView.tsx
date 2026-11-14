@@ -77,7 +77,22 @@ export function NativeHarnessLimitDialogView({
         if (!open) onDismiss();
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        onOpenAutoFocus={(event) => {
+          // Radix starts on the first button and passes over the request
+          // link, which would put a project admin who can't upgrade on the
+          // bulk switch. Start on the upgrade action, whichever it is, or on
+          // the dialog itself when there is none: never on the switch.
+          const content = event.currentTarget;
+          if (!(content instanceof HTMLElement)) return;
+          event.preventDefault();
+          const primary = content.querySelector<HTMLElement>(
+            '[data-native-harness-upgrade], [data-testid="request-upgrade-mail"]',
+          );
+          (primary ?? content).focus();
+        }}
+      >
         <JamIllustration />
         <DialogHeader>
           <DialogTitle>Keep using native harnesses</DialogTitle>
@@ -90,7 +105,11 @@ export function NativeHarnessLimitDialogView({
         </DialogHeader>
         <div className="flex flex-col gap-2">
           {canUpgrade ? (
-            <Button onClick={onUpgrade} disabled={isUpgrading}>
+            <Button
+              data-native-harness-upgrade
+              onClick={onUpgrade}
+              disabled={isUpgrading}
+            >
               Upgrade
             </Button>
           ) : (

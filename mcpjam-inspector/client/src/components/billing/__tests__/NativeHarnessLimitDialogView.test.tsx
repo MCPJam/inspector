@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   NativeHarnessLimitDialogView,
@@ -104,6 +104,24 @@ describe("NativeHarnessLimitDialogView", () => {
     expect(
       screen.getByRole("button", { name: "Switch 1 client to MCPJam Harness" }),
     ).toBeInTheDocument();
+  });
+
+  it("starts on the upgrade action, never on the bulk switch", async () => {
+    renderView({ canUpgrade: false, switchCount: 3 });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("request-upgrade-mail")).toHaveFocus(),
+    );
+  });
+
+  it("starts on the dialog itself when there is no one to ask", async () => {
+    renderView({ canUpgrade: false, requestRecipients: [], switchCount: 3 });
+
+    expect(screen.queryByTestId("request-upgrade-mail")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveFocus());
+    expect(
+      screen.getByRole("button", { name: "Switch 3 clients to MCPJam Harness" }),
+    ).not.toHaveFocus();
   });
 
   it("offers no switch without a handler, whatever the count", () => {

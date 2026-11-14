@@ -28,6 +28,14 @@ interface NativeHarnessLimitDialogState {
     dedupeKeys?: readonly string[],
   ) => void;
   close: () => void;
+  /**
+   * What runs once the dialog has switched the project's clients, set by the
+   * Playground while its own last turn is the refusal: a new chat with the
+   * refused message in the composer, since a chat stays on the harness it
+   * started on.
+   */
+  afterSwitch: (() => void) | null;
+  setAfterSwitch: (afterSwitch: (() => void) | null) => void;
 }
 
 export const useNativeHarnessLimitDialogStore =
@@ -46,4 +54,6 @@ export const useNativeHarnessLimitDialogStore =
         return { notice, notifiedKeys };
       }),
     close: () => set({ notice: null }),
+    afterSwitch: null,
+    setAfterSwitch: (afterSwitch) => set({ afterSwitch }),
   }));
