@@ -177,6 +177,7 @@ export function createDraftStore(render: () => void) {
   return {
     draft: () => draft,
     load,
+    adopt,
     /** Saves what waits for the submission open now, then opens another. */
     open(projectId: string, submissionId: string | null) {
       if (
@@ -334,6 +335,8 @@ export function useDirectorySubmission({
     saveNow: store.saveNow,
     reapply: store.reapply,
     keepSaved: store.keepSaved,
+    /** Shows a submission another write returned, such as the gate's. */
+    adopt: store.adopt,
   };
 }
 

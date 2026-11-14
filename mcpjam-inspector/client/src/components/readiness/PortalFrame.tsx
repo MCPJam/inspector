@@ -5,7 +5,7 @@
  * change. The last step is the portal's review page, where MCPJam's copy
  * button stands in for the portal's submit.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import type {
   DirectoryAnswer,
@@ -25,6 +25,8 @@ import type {
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
 import { ConflictNotice } from "./ConflictNotice";
+import { EvidenceDrawer } from "./EvidenceDrawer";
+import { GateChecklist } from "./GateChecklist";
 import { HandoffPanel } from "./HandoffPanel";
 import { McpjamChecks } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
@@ -32,6 +34,7 @@ import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
 import { PortalWidget } from "./PortalWidgets";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
+import { OpenEvidence } from "./ShowEvidence";
 
 function StepBody({
   flow,
@@ -157,6 +160,20 @@ function SaveNote({ session }: { session: DirectorySubmissionSession }) {
   return <>Draft saved at {time}</>;
 }
 
+/** The frame's outer box, which lets each result inside it open its evidence. */
+function FrameShell(props: {
+  onEvidence: (entry: PlacedFinding) => void;
+  overlays: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <OpenEvidence.Provider value={props.onEvidence}>
+      <div className="flex min-h-0 flex-1 flex-col">{props.children}</div>
+      {props.overlays}
+    </OpenEvidence.Provider>
+  );
+}
+
 export function PortalFrame({
   flow,
   view,
@@ -185,6 +202,8 @@ export function PortalFrame({
     (block) => block.widget === "submit",
   )?.text?.missing;
   const marked = portalMarks(left, active, last, Boolean(view.lastRunId));
+  const scope = { projectId: view.projectId, submissionId: view.id };
+  const [evidence, setEvidence] = useState<PlacedFinding | null>(null);
   const placed = (id: string) => view.steps.find((entry) => entry.step === id);
   const issuesOf = (id: string) =>
     session.issues.filter((issue) => issue.step === id);
@@ -207,8 +226,22 @@ export function PortalFrame({
     session.answers.map((answer) => [answer.key, answer]),
   );
 
+  const overlays = (
+    <>
+      {evidence ? (
+        <EvidenceDrawer
+          flow={flow}
+          scope={scope}
+          resultsRunId={view.resultsRunId}
+          entry={evidence}
+          onClose={() => setEvidence(null)}
+        />
+      ) : null}
+    </>
+  );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <FrameShell onEvidence={setEvidence} overlays={overlays}>
       <div className="flex shrink-0 items-center justify-between gap-4 px-10 py-3">
         <button
           type="button"
@@ -269,6 +302,12 @@ export function PortalFrame({
                   }
                 />
                 <McpjamChecks findings={placed(step.id)?.findings ?? []} />
+                <GateChecklist
+                  flow={flow}
+                  view={view}
+                  directory={directory}
+                  onSaved={session.adopt}
+                />
               </>
             ) : (
               <StepBody
@@ -324,6 +363,6 @@ export function PortalFrame({
           </div>
         </div>
       </div>
-    </div>
+    </FrameShell>
   );
 }

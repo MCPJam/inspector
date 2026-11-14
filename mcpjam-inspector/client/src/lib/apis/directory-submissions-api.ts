@@ -6,6 +6,7 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionFinding,
   PlatformDirectorySubmissionHandoff,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
@@ -17,6 +18,7 @@ export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
 export type SubmissionHandoff = PlatformDirectorySubmissionHandoff;
 export type SubmissionScope = { projectId: string; submissionId: string };
+export type StoredFinding = PlatformDirectorySubmissionFinding;
 
 /** The flow as served by the API that stamps its wording on each write. */
 export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
@@ -65,3 +67,11 @@ export const exportDirectorySubmission = (
   scope: SubmissionScope,
   format: "json" | "markdown",
 ) => client().exportDirectorySubmission({ ...scope, format });
+
+/** One check's stored result, with the observation behind it in `details`. */
+export const getSubmissionFinding = (
+  scope: SubmissionScope,
+  checkId: string,
+  signal?: AbortSignal,
+): Promise<StoredFinding> =>
+  client().getDirectorySubmissionFinding({ ...scope, checkId }, { signal });
