@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CLAUDE_CONNECTOR_FLOW,
+  buildDirectoryHandoff,
   placeDirectoryResults,
   withDirectoryFlowDefaults,
   type DirectoryAnswer,
@@ -65,6 +66,8 @@ const api = vi.hoisted(() => ({
   getDirectorySubmission: vi.fn(),
   updateDirectorySubmission: vi.fn(),
   startDirectorySubmissionRun: vi.fn(),
+  getDirectorySubmissionHandoff: vi.fn(),
+  exportDirectorySubmission: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
 
@@ -149,6 +152,18 @@ describe("ReadinessRoute", () => {
     api.createDirectorySubmission.mockResolvedValue(submission());
     api.getDirectorySubmission.mockResolvedValue(submission());
     api.updateDirectorySubmission.mockResolvedValue(submission());
+    const view = submission();
+    api.getDirectorySubmissionHandoff.mockResolvedValue(
+      buildDirectoryHandoff({
+        flow: CLAUDE_CONNECTOR_FLOW,
+        submission: view,
+        results: view.steps,
+        resultsRunId: view.resultsRunId,
+        latestRun: null,
+        events: [],
+        snapshots: {},
+      }),
+    );
     context.convexProjectId = "proj_1";
     context.selectedServerEntry = { name: "Sample server" };
     flag.value = true;
@@ -324,6 +339,13 @@ describe("ReadinessRoute", () => {
     await userEvent.click(rail.getByRole("button", { name: /Review/ }));
     expect(
       screen.getByRole("heading", { level: 1, name: "Review and submit" }),
+    ).toBeVisible();
+    // The handoff summary an agent reads, above the portal's review table.
+    const handoff = await screen.findByRole("region", {
+      name: "Handoff summary",
+    });
+    expect(
+      await within(handoff).findByText("1 blocker in 2 evaluated checks."),
     ).toBeVisible();
 
     // The rail counts seven missing listing answers and the blocker; the
