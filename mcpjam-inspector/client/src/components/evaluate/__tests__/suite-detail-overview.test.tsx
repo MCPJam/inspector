@@ -15,7 +15,7 @@ import { authoringRequest } from "@/lib/apis/eval-authoring-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
+import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type {
   EvalCase,
@@ -40,8 +40,8 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
 }));
 vi.mock("@/hooks/use-is-member-actor", () => ({ useIsMemberActor: () => true }));
 // Off unless a test turns the new Suite page on.
-vi.mock("@/hooks/useEvaluateNavEnabled", () => ({
-  useEvaluateNavEnabled: vi.fn(() => undefined),
+vi.mock("@/hooks/use-suite-results-page-enabled", () => ({
+  useSuiteResultsPageEnabled: vi.fn(() => undefined),
 }));
 // An imported draft opens in the step editor, which renders the model picker.
 vi.mock("@/hooks/use-available-models", () => ({
@@ -1440,7 +1440,7 @@ describe("SuiteDetailOverview run delete", () => {
   });
 });
 
-describe("SuiteDetailOverview — Runs card behind evaluate-nav-enabled", () => {
+describe("SuiteDetailOverview — Runs card behind eval-suite-results-page", () => {
   const run = makeRun({ _id: "run-1", runNumber: 1 });
   const rows = [
     makeIteration({ _id: "it-1", suiteRunId: "run-1", resultSource: "reported" }),
@@ -1467,7 +1467,7 @@ describe("SuiteDetailOverview — Runs card behind evaluate-nav-enabled", () => 
   }
 
   it("puts the health above a strip without its pass cell, with hints, and opens runs", async () => {
-    vi.mocked(useEvaluateNavEnabled).mockReturnValue(true);
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(true);
     const onRunClick = renderRunsCard();
     expect(screen.getByTestId("nav-suite-health")).toHaveTextContent(
       "average across the last run",
@@ -1490,18 +1490,18 @@ describe("SuiteDetailOverview — Runs card behind evaluate-nav-enabled", () => 
         }),
       );
     expect(onRunClick).toHaveBeenCalledWith("run-1");
-    vi.mocked(useEvaluateNavEnabled).mockReturnValue(undefined);
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
   });
 
   it.each([undefined, false])(
     "keeps today's Runs card while the flag is %s",
     (flag) => {
-      vi.mocked(useEvaluateNavEnabled).mockReturnValue(flag);
+      vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(flag);
       renderRunsCard();
       expect(screen.queryByTestId("nav-suite-health")).toBeNull();
       expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
-      vi.mocked(useEvaluateNavEnabled).mockReturnValue(undefined);
+      vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
     },
   );
 });

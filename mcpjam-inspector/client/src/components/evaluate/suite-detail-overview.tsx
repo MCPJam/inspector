@@ -98,7 +98,7 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
 import { resolveSuitePassThreshold } from "./run-compare-lanes-model";
-import { useEvaluateNavEnabled } from "@/hooks/useEvaluateNavEnabled";
+import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
 
@@ -273,9 +273,9 @@ export function SuiteDetailOverview({
   // Recent runs gain "Ran as" and "Accounts" once a listed run recorded them.
   const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
   // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
-  const navEnabled = useEvaluateNavEnabled() === true;
+  const resultsPageEnabled = useSuiteResultsPageEnabled() === true;
   const passThreshold = resolveSuitePassThreshold(suite);
-  const runsHealth = navEnabled
+  const runsHealth = resultsPageEnabled
     ? {
         threshold:
           passThreshold == null ? null : Math.round(passThreshold * 100),
