@@ -29,12 +29,17 @@ import {
 import { PluginIcon } from "@/components/plugins/PluginIcon";
 import { shortBundleHash } from "@/components/plugins/plugin-presentation";
 import type { DirectorySubmissionSession } from "@/hooks/use-directory-submission";
-import { useProjectPlugin, useProjectPlugins } from "@/hooks/usePluginImportApi";
+import {
+  usePluginVersion,
+  useProjectPlugin,
+  useProjectPlugins,
+} from "@/hooks/usePluginImportApi";
 import { usePluginsEnabledState } from "@/hooks/usePluginsEnabled";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
-import { McpjamChecks, openResult } from "./McpjamChecks";
+import { openResult } from "./McpjamChecks";
 import { Chip, OpenAiFindings } from "./OpenAiFindings";
-import { OpenAiMetadata } from "./OpenAiMetadata";
+import { allHold, CONNECTION, OpenAiMcp } from "./OpenAiMcp";
+import { OpenAiMetadata, OpenAiSkills } from "./OpenAiMetadata";
 import { McpjamNote } from "./PortalWidgets";
 
 /** Results and issues of every step but MCPs show on the first tab. */
@@ -135,12 +140,15 @@ export function OpenAiPortal({
   view,
   session,
   projectId,
+  serverUrl,
   onClose,
 }: {
   flow: DirectoryFlow;
   view: SubmissionView;
   session: DirectorySubmissionSession;
   projectId: string;
+  /** The saved server's URL, which a run grades. */
+  serverUrl?: string;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(LISTING);
@@ -149,6 +157,7 @@ export function OpenAiPortal({
   const live = useProjectPlugins(projectId);
   const listed = live?.some((entry) => entry.pluginId === view.pluginId);
   const plugin = useProjectPlugin(listed ? view.pluginId : null);
+  const version = usePluginVersion(view.pluginVersionId ?? null);
   if (!view.pluginId || (live && !listed)) {
     return (
       <PluginChoice projectId={projectId} session={session} gone={Boolean(view.pluginId)} />
@@ -168,6 +177,15 @@ export function OpenAiPortal({
   const otherVersion = Boolean(
     resultsRun?.pluginVersionId && resultsRun.pluginVersionId !== view.pluginVersionId,
   );
+  const checkedAt = resultsRun && !otherVersion ? resultsRun.updatedAt : undefined;
+  const configured = allHold(
+    results(MCP).filter((entry) => CONNECTION.test(entry.finding.id)),
+    checkedAt,
+  );
+  // The portal connects one server per plugin: the remote one mcp.json declares.
+  const server =
+    version?.servers.find((entry) => entry.placement === "remote") ?? version?.servers[0];
+  const mcp = step(MCP);
   const name = textOf(session.values["listing.displayName"]) ?? plugin?.displayName ?? "";
   const ready = plugin?.versions.filter((entry) => entry.status === "ready") ?? [];
   const panel = (id: string) => (
@@ -216,6 +234,11 @@ export function OpenAiPortal({
           </div>
         </div>
         <div className="flex gap-8">
+          <Status label="MCP configuration">
+            <Chip tone={configured ? "good" : "warn"}>
+              {configured ? "Configured" : "Configuration incomplete"}
+            </Chip>
+          </Status>
           <Status label="Review status">
             <Chip>Not submitted</Chip>
           </Status>
@@ -271,22 +294,51 @@ export function OpenAiPortal({
             </p>
           ) : null}
           <div className="flex px-8">
-            <div className="min-w-0 flex-1 py-6 pr-6">
+            <div className="min-w-0 flex-1 space-y-8 py-6 pr-6">
               {listing ? (
-                <OpenAiMetadata
-                  step={listing}
-                  values={session.values}
-                  findings={results(LISTING)}
-                />
+                <>
+                  <OpenAiMetadata
+                    step={listing}
+                    values={session.values}
+                    findings={results(LISTING)}
+                  />
+                  <OpenAiSkills
+                    step={listing}
+                    findings={results(LISTING)}
+                    skills={version?.skills}
+                    checkedAt={checkedAt}
+                  />
+                </>
               ) : null}
             </div>
             {panel(LISTING)}
           </div>
         </TabsContent>
         <TabsContent value={MCP}>
+          <div className="border-b border-border bg-muted px-8 py-3">
+            <span className="inline-block rounded-md border border-border bg-background px-3 py-1.5 text-sm">
+              {server?.componentKey ?? "—"}
+            </span>
+          </div>
           <div className="flex px-8">
             <div className="min-w-0 flex-1 py-6 pr-6">
-              <McpjamChecks findings={results(MCP)} />
+              {mcp ? (
+                <OpenAiMcp
+                  step={mcp}
+                  values={session.values}
+                  findings={results(MCP)}
+                  server={server}
+                  serverUrl={serverUrl}
+                  checkedAt={checkedAt}
+                  canRescan={
+                    Boolean(view.pluginVersionId) &&
+                    session.run.status !== "running" &&
+                    session.run.status !== "unavailable"
+                  }
+                  onRescan={() => void session.startRun()}
+                  onAnswer={session.setAnswer}
+                />
+              ) : null}
             </div>
             {panel(MCP)}
           </div>

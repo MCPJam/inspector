@@ -2,7 +2,8 @@
  * The copy of ChatGPT's plugin page for a `chatgpt-plugin` submission: the
  * stored plugin to choose when none is saved, then the plugin's page with
  * its version selector, the read-only package details with where the package
- * keeps each, and MCPJam's results under the fields they read.
+ * keeps each, the skills, the MCPs tab, and MCPJam's results under the fields
+ * they read.
  */
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -125,7 +126,11 @@ describe("OpenAiPortal", () => {
       screen.getByRole("heading", { level: 1, name: "Sample Plugin" }),
     ).toBeVisible();
     expect(screen.getByText("Checks sample servers")).toBeVisible();
-    for (const chip of ["Not submitted", "Not published"]) {
+    for (const chip of [
+      "Configuration incomplete",
+      "Not submitted",
+      "Not published",
+    ]) {
       expect(screen.getByText(chip)).toBeVisible();
     }
     expect(screen.getByRole("link", { name: /Submission guide/ })).toHaveAttribute(
@@ -195,6 +200,26 @@ describe("OpenAiPortal", () => {
     expect(panel.getByText("Login URL is required.")).toBeVisible();
   });
 
+  it("gives each skill the last run's status", () => {
+    renderPage(view({}, { findings: RESULTS }));
+    const row = (name: string) => screen.getByRole("row", { name: new RegExp(name) });
+    expect(within(row("run-checks")).getByText("Checks passed")).toBeVisible();
+    expect(within(row("run-checks")).getByText("4 minutes ago")).toBeVisible();
+    expect(
+      within(row("review-results")).getByText("Needs attention"),
+    ).toBeVisible();
+  });
+
+  it("reads the MCP configuration from the connection's checks", () => {
+    const connected = [
+      finding("openai.endpoint.https", "satisfied"),
+      finding("openai.auth.challenge", "satisfied"),
+      finding("openai.domain.challenge-served", "satisfied"),
+    ];
+    renderPage(view({}, { findings: connected }));
+    expect(screen.getByText("Configured")).toBeVisible();
+  });
+
   it("says when the results are another version's", () => {
     const submission = view({}, { findings: RESULTS });
     renderPage(submission, {
@@ -203,6 +228,8 @@ describe("OpenAiPortal", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "These results are for another version. Run checks to grade this one.",
     );
+    const row = screen.getByRole("row", { name: /run-checks/ });
+    expect(within(row).getByText("Not checked")).toBeVisible();
   });
 
   it("puts the MCPs results on their own tab with their own Findings", async () => {
@@ -222,6 +249,9 @@ describe("OpenAiPortal", () => {
     const listing = within(screen.getByRole("complementary", { name: "Findings" }));
     expect(listing.queryByText("Declare readOnlyHint on every tool.")).toBeNull();
     await userEvent.click(screen.getByRole("tab", { name: /MCPs/ }));
+    // The connect panel, with the key the version's mcp.json declares.
+    expect(screen.getByRole("heading", { name: "Connect MCP server" })).toBeVisible();
+    expect(screen.getAllByText("sample").length).toBeGreaterThan(0);
     const mcp = within(screen.getByRole("complementary", { name: "Findings" }));
     expect(mcp.getByText("Declare readOnlyHint on every tool.")).toBeVisible();
     expect(mcp.queryByText("Say how long you keep data.")).toBeNull();

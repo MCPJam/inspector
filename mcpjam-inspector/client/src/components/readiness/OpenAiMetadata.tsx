@@ -1,11 +1,13 @@
 /**
  * The ChatGPT portal's "Metadata & Skills" tab: the plugin's package details,
  * read only as the portal shows them, each with where the package keeps it
- * and MCPJam's results for the checks that read it.
+ * and MCPJam's results for the checks that read it; then the version's
+ * skills with the status the last run gives each.
  *
  * Nobody edits a package field here: its value is what an import from the
  * package stored, and the portal's answer to a wrong one is a new version.
  */
+import { formatDistanceToNow } from "date-fns";
 import type {
   DirectoryAnswerValue,
   DirectoryFlowField,
@@ -14,10 +16,15 @@ import type {
 } from "@mcpjam/sdk/browser";
 import { cn } from "@mcpjam/design-system/cn";
 import type { AnswerValues } from "@/hooks/use-directory-submission";
-import { McpjamChecks } from "./McpjamChecks";
+import type { PluginVersionSkillComponent } from "@/lib/plugins/plugin-api-types";
+import { McpjamChecks, openResult } from "./McpjamChecks";
+import { Chip, mentions } from "./OpenAiFindings";
 import { McpjamNote } from "./PortalWidgets";
 
 const BLANK = "—";
+export const TABLE_HEAD = "pb-2 text-xs font-normal text-muted-foreground";
+export const TABLE_CELL = "py-2.5 pr-4";
+const TONE = { passed: "good", attention: "warn", unchecked: undefined } as const;
 
 /** The file and key a package keeps a field under: `plugin.json: websiteURL`. */
 export function packageSource(path: string): string {
@@ -117,6 +124,71 @@ export function OpenAiMetadata({
         {column((field) => field.control !== "textarea" && !field.format)}
         {column((field) => field.control !== "textarea" && Boolean(field.format))}
       </div>
+    </section>
+  );
+}
+
+/** A skill needs attention when an open skill result names it, or names none. */
+function skillStatus(name: string, all: readonly string[], results: readonly PlacedFinding[]) {
+  const about = results.filter((entry) => /^openai\.(skills\.|package\.skills)/.test(entry.finding.id));
+  const current = (entry: PlacedFinding) =>
+    entry.evidenceStatus === "established" || entry.evidenceStatus === "inconclusive";
+  if (about.length === 0 || !about.every(current)) return "unchecked";
+  const names = (entry: PlacedFinding) =>
+    mentions(entry, name) || !all.some((other) => mentions(entry, other));
+  return about.some((entry) => openResult(entry) && names(entry)) ? "attention" : "passed";
+}
+
+/** The version's skills, each with the status the last run of it gives. */
+export function OpenAiSkills({
+  step,
+  findings,
+  skills,
+  checkedAt,
+}: {
+  step: DirectoryFlowStep;
+  findings: readonly PlacedFinding[];
+  skills: readonly PluginVersionSkillComponent[] | undefined;
+  /** When the run of this version finished; absent before one. */
+  checkedAt?: number;
+}) {
+  const block = step.layout?.blocks?.find((entry) => entry.widget === "skills");
+  if (!block) return null;
+  const names = (skills ?? []).map((skill) => skill.declaredName);
+  const words: Record<string, string | undefined> = { unchecked: "Not checked", ...block.text };
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xl font-semibold">{block.heading}</h2>
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr>
+            <th className={TABLE_HEAD}>Skill</th>
+            <th className={TABLE_HEAD}>Status</th>
+            <th className={TABLE_HEAD}>Last checked</th>
+          </tr>
+        </thead>
+        <tbody>
+          {names.map((name) => {
+            const state = checkedAt ? skillStatus(name, names, findings) : "unchecked";
+            return (
+              <tr key={name} className="border-t border-border">
+                <td className={TABLE_CELL}>{name}</td>
+                <td className={TABLE_CELL}>
+                  <Chip tone={TONE[state]}>{words[state]}</Chip>
+                </td>
+                <td className={cn(TABLE_CELL, "text-muted-foreground")}>
+                  {checkedAt && state !== "unchecked"
+                    ? formatDistanceToNow(checkedAt, { addSuffix: true })
+                    : BLANK}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {skills && names.length === 0 ? (
+        <p className="text-sm text-muted-foreground">This version has no skills.</p>
+      ) : null}
     </section>
   );
 }
