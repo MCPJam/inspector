@@ -11,6 +11,7 @@ import {
   draftDirectoryTestPlan,
   placeDirectoryResults,
   type DirectoryAnswer,
+  type DirectoryTestPlan,
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
@@ -187,20 +188,119 @@ describe("ReadinessRoute", () => {
 
   describe("confirming a test plan revision before a run uses it", () => {
     const KEY = "mcpjam-readiness-test-plan-confirmed:proj_1:sub_1";
-    const plan = (revision: number) => ({
+    const plan = (
+      revision: number,
+      content: DirectoryTestPlan = draftDirectoryTestPlan([
+        { name: "search_docs", annotations: { readOnlyHint: true } },
+        { name: "create_note", annotations: { destructiveHint: false } },
+        { name: "delete_note" },
+      ]),
+    ) => ({
       submissionId: "sub_1",
       revision,
       counts: { tools: 3, cases: 3, fixtures: 0, cleanup: 0 },
       savedBy: "user_2",
       savedAt: Date.now() - 3_600_000,
-      plan: draftDirectoryTestPlan([
-        { name: "search_docs", annotations: { readOnlyHint: true } },
-        { name: "create_note", annotations: { destructiveHint: false } },
-        { name: "delete_note" },
-      ]),
+      plan: content,
       issues: [],
       catalog: null,
     });
+    const note = { $fixture: "note", value: "id" };
+    /** Every part the dialog must show: nested arguments, fixtures, cleanup. */
+    const CALLS: DirectoryTestPlan = {
+      schemaVersion: 1,
+      fixtures: [
+        {
+          id: "note",
+          description: "A note the plan creates",
+          origin: "created",
+          capture: { id: "note.id" },
+        },
+        {
+          id: "project",
+          description: "The reviewer's sample project",
+          origin: "existing",
+          values: { id: "proj_sample" },
+        },
+      ],
+      tools: [
+        {
+          tool: "search_docs",
+          effect: "read",
+          openWorld: true,
+          action: "run",
+          writes: [],
+        },
+        {
+          tool: "list_projects",
+          effect: "read",
+          openWorld: false,
+          action: "excluded",
+          exclusion: { reason: "costly" },
+          writes: [],
+        },
+        {
+          tool: "create_note",
+          effect: "write",
+          openWorld: false,
+          action: "run",
+          writes: ["note", "project"],
+        },
+        {
+          tool: "delete_note",
+          effect: "destructive",
+          openWorld: false,
+          action: "run",
+          writes: ["note"],
+        },
+      ],
+      cases: [
+        {
+          id: "create_note#valid",
+          tool: "create_note",
+          kind: "valid",
+          arguments: {
+            title: "Sample note",
+            project: { $fixture: "project", value: "id" },
+            tags: ["a", "b"],
+          },
+          creates: ["note"],
+        },
+        {
+          id: "search_docs#valid",
+          tool: "search_docs",
+          kind: "valid",
+          arguments: {
+            query: "pricing",
+            filter: { owner: { email: "review@example.com" } },
+          },
+        },
+        {
+          id: "search_docs#missing-arguments",
+          tool: "search_docs",
+          kind: "negative",
+          arguments: {},
+          expectedError: "invalid-arguments",
+        },
+        {
+          id: "delete_note#valid",
+          tool: "delete_note",
+          kind: "valid",
+          arguments: { id: note },
+        },
+      ],
+      budget: { maxCalls: 4, concurrency: 1, callTimeoutMs: 30_000 },
+      cleanup: [
+        {
+          fixture: "note",
+          tool: "delete_note",
+          arguments: { id: note, hard: true },
+        },
+      ],
+    };
+    const shownJson = (dialog: HTMLElement) =>
+      [...dialog.querySelectorAll("pre")].map((block) => block.textContent);
+    const json = (value: unknown) => JSON.stringify(value, null, 2);
     const sentRevisions = () =>
       api.startDirectorySubmissionRun.mock.calls.map((call) => call[3]);
 
@@ -284,6 +384,65 @@ describe("ReadinessRoute", () => {
       await pressRun("Run checks with test plan revision 3");
       expect(screen.getByRole("alertdialog")).toBeVisible();
       expect(sentRevisions()).toEqual([3]);
+    });
+
+    it("shows every call in run order with its exact arguments, nested ones included", async () => {
+      plans.getTestPlan.mockResolvedValue(plan(3, CALLS));
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog");
+      const calls = within(dialog).getAllByRole("listitem");
+      expect(calls.map((call) => call.querySelector("p")?.textContent)).toEqual(
+        [
+          "create_note, valid input",
+          "search_docs, valid input, reaches outside the server",
+          "search_docs, negative case, reaches outside the server",
+          "delete_note, valid input",
+        ],
+      );
+      expect(shownJson(dialog).slice(0, 4)).toEqual(
+        CALLS.cases.map((testCase) => json(testCase.arguments)),
+      );
+      expect(calls[2]).toHaveTextContent(
+        "Expects an invalid-arguments refusal.",
+      );
+      expect(calls[0]).toHaveTextContent("Expects a result.");
+    });
+
+    it("shows the fixtures and the cleanup calls with their arguments, and names excluded tools", async () => {
+      plans.getTestPlan.mockResolvedValue(plan(3, CALLS));
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog).toHaveTextContent("note: A note the plan creates");
+      expect(dialog).toHaveTextContent("Created by create_note#valid.");
+      expect(dialog).toHaveTextContent(
+        "Tools allowed to change it: create_note and delete_note.",
+      );
+      expect(dialog).toHaveTextContent("Already in the reviewer's account.");
+      expect(dialog).toHaveTextContent("delete_note removes note");
+      expect(shownJson(dialog).slice(4)).toEqual([
+        json({ id: "proj_sample" }),
+        json(CALLS.cleanup[0].arguments),
+      ]);
+      expect(dialog).toHaveTextContent(
+        "list_projects is excluded and not called.",
+      );
+    });
+
+    it("shows nothing and sends nothing when the saved plan moves past the revision the run would send", async () => {
+      await pressRun("Run checks with test plan revision 3");
+      expect(screen.getByRole("alertdialog")).toBeVisible();
+      // Another session saves revision 4 while the dialog is open.
+      plans.getTestPlan.mockResolvedValue(plan(4));
+      api.getDirectorySubmission.mockResolvedValue({
+        ...submission(),
+        lastRunId: "run_9",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await screen.findByRole("button", {
+        name: "Run checks again with test plan revision 4",
+      });
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
     });
 
     it("sends no revision and asks nothing when no plan is saved", async () => {

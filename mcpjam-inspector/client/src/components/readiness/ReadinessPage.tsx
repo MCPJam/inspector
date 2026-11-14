@@ -241,8 +241,11 @@ export function ReadinessPage({
       : "",
   });
   const planRevision = plan.saved?.revision;
-  // The submission whose run waits on the person confirming its plan revision.
-  const [confirming, setConfirming] = useState<string | null>(null);
+  // The run waiting on the person, and the plan revision it would send.
+  const [confirming, setConfirming] = useState<{
+    submissionId: string;
+    revision: number;
+  } | null>(null);
   const scope =
     projectId && openId ? { projectId, submissionId: openId } : null;
   const startRun = () => {
@@ -251,11 +254,21 @@ export function ReadinessPage({
       planRevision !== undefined &&
       !isConfirmed(scope, planRevision)
     ) {
-      setConfirming(scope.submissionId);
+      setConfirming({ ...scope, revision: planRevision });
     } else {
       void session.startRun(planRevision);
     }
   };
+  // Shown only while the saved plan is the revision the run would send, so
+  // what the person reads is what runs. A newer save hides it unanswered.
+  const saved = plan.saved;
+  const pending =
+    scope &&
+    saved &&
+    confirming?.submissionId === scope.submissionId &&
+    saved.revision === confirming.revision
+      ? { scope, saved }
+      : null;
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -338,16 +351,14 @@ export function ReadinessPage({
       <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
         {body}
       </div>
-      {scope && plan.saved && confirming === scope.submissionId ? (
+      {pending ? (
         <TestPlanConsentDialog
-          saved={plan.saved}
+          saved={pending.saved}
           serverName={chosen?.server.name ?? ""}
           onConfirm={() => {
-            const revision = plan.saved?.revision;
             setConfirming(null);
-            if (revision === undefined) return;
-            recordConfirmed(scope, revision);
-            void session.startRun(revision);
+            recordConfirmed(pending.scope, pending.saved.revision);
+            void session.startRun(pending.saved.revision);
           }}
           onCancel={() => setConfirming(null)}
         />
