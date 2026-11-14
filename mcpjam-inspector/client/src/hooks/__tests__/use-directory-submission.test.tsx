@@ -85,6 +85,15 @@ async function openSubmission() {
   return hook;
 }
 
+/** A save the test answers when it chooses. */
+function heldSave() {
+  let answer: (view: SubmissionView) => void = () => undefined;
+  api.updateDirectorySubmission.mockImplementationOnce(
+    () => new Promise<SubmissionView>((resolve) => (answer = resolve)),
+  );
+  return (view: SubmissionView) => answer(view);
+}
+
 describe("useDirectorySubmission", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -225,6 +234,89 @@ describe("useDirectorySubmission", () => {
     });
     expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(2);
     expect(result.current.error).toBeNull();
+  });
+
+  it("keeps the revision of edits made while a save is out", async () => {
+    const { result } = await openSubmission();
+    const answer = heldSave();
+    act(() => result.current.setAnswer("listing.name", "Mine"));
+    await settle(800);
+    // Made on revision 3, while the name's save is out.
+    act(() => result.current.setAnswer("listing.slug", "mine"));
+    // Someone else saved revision 4, so the name's save lands as 5.
+    await act(async () => answer(viewAt(5, "Mine")));
+    await settle(800);
+
+    expect(api.updateDirectorySubmission).toHaveBeenLastCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "listing.slug": "mine" },
+    });
+  });
+
+  it("saveNow saves edits made during its save before it reports success", async () => {
+    const { result } = await openSubmission();
+    const answer = heldSave();
+    act(() => result.current.setAnswer("listing.name", "Mine"));
+    let saved: Promise<boolean> = Promise.resolve(false);
+    act(() => {
+      saved = result.current.saveNow();
+    });
+    act(() => result.current.setAnswer("listing.slug", "mine"));
+    await act(async () => answer(viewAt(4, "Mine")));
+
+    await act(async () => {
+      expect(await saved).toBe(true);
+    });
+    expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(2);
+    expect(api.updateDirectorySubmission).toHaveBeenLastCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "listing.slug": "mine" },
+    });
+  });
+
+  it.each([
+    [
+      "fails",
+      () =>
+        new PlatformApiError("The slug is not valid.", "VALIDATION_ERROR", {
+          status: 400,
+        }),
+    ],
+    ["conflicts", () => conflict(5, ["listing.name"], viewAt(5, "Theirs"))],
+  ])("starts no run when the save %s", async (_label, refusal) => {
+    api.updateDirectorySubmission.mockRejectedValueOnce(refusal());
+    const { result } = await openSubmission();
+    act(() => result.current.setAnswer("listing.name", "Mine"));
+    await act(async () => {
+      await result.current.startRun();
+    });
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("saves the edits made during a save after another submission opens", async () => {
+    const hook = renderHook(
+      ({ submissionId }) =>
+        useDirectorySubmission({
+          projectId: "proj_1",
+          submissionId,
+          server: { name: "Sample server" },
+        }),
+      { initialProps: { submissionId: "sub_1" } },
+    );
+    await settle();
+    const answer = heldSave();
+    act(() => hook.result.current.setAnswer("listing.name", "Mine"));
+    await settle(800);
+    act(() => hook.result.current.setAnswer("listing.slug", "mine"));
+
+    hook.rerender({ submissionId: "sub_2" });
+    await act(async () => answer(viewAt(4, "Mine")));
+    await settle(800);
+
+    expect(api.updateDirectorySubmission).toHaveBeenLastCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "listing.slug": "mine" },
+    });
   });
 
   it("saves what is waiting before it starts a run", async () => {
