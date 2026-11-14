@@ -66,6 +66,16 @@ vi.mock("../use-chat-history", () => ({
   useChatHistory: useChatHistoryMock,
 }));
 
+vi.mock("../use-multi-model-group-actions", () => ({
+  useMultiModelGroupActions: () => ({
+    rename: vi.fn(),
+    pin: vi.fn(),
+    unpin: vi.fn(),
+    archive: vi.fn(),
+    unarchive: vi.fn(),
+  }),
+}));
+
 vi.mock("../ChatHistoryRow", () => ({
   ChatHistoryRow: (props: Record<string, unknown>) => {
     const snapshot = { ...props } as Record<string, unknown>;
