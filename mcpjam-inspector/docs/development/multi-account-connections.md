@@ -1,11 +1,5 @@
 # Multi-account OAuth connections
 
-Behind the PostHog flag `multi-account-connections-enabled`, which gates the
-one write that creates a second connection (`lib/featureGates.ts`, key
-`multi-account-connections`) and the "Connect another account" control. Reads,
-relabel, set-default and remove stay ungated so a de-flagged org can still see
-and take down what it has. Its conditions must stay email-property-only.
-
 Personal OAuth servers support up to eight connections. Connection management is
 inside the server card/details: add, reconnect, relabel, change default, and remove.
 Shared OAuth servers remain single-account and keep administrator write checks.
