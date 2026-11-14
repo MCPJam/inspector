@@ -129,7 +129,8 @@ export interface ExecuteHostedReadinessOptions {
   reviewerAttemptId?: string;
   /**
    * The reviewer account the start authorized as itself: the only credential
-   * reviewer checks use. A submission run without one blocks them with why.
+   * reviewer checks and the test plan use. A submission run without one
+   * blocks them with why.
    */
   reviewer?: ReadinessReviewerAccount;
   /**
@@ -427,7 +428,8 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "blocked", terminalReason: "waiting_for_person" };
       return;
     }
-    const { result } = await runDirectoryReadiness({
+    const reviewer = options.reviewer ?? NO_REVIEWER_ACCOUNT;
+    const { result, reviewerPath } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
       submissionMode: options.submissionMode,
@@ -444,10 +446,7 @@ export async function executeHostedReadinessRun(
       ...(submission
         ? {
             submissionAnswers: submission.answers,
-            reviewer: {
-              ...submission,
-              account: options.reviewer ?? NO_REVIEWER_ACCOUNT,
-            },
+            reviewer: { ...submission, account: reviewer },
           }
         : {}),
       ...(runPackage ? { pluginPackage: runPackage } : {}),
@@ -465,7 +464,9 @@ export async function executeHostedReadinessRun(
           lease,
           target: options.target,
           fetchFn: options.fetchFn,
-          mcpHeaders: options.mcpHeaders,
+          // As the reviewer checks: the reviewer account, never `mcpHeaders`.
+          reviewer,
+          fixtures: reviewerPath?.fixtures,
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
           // The same opt-in: drafting sends the tools' text to a model.

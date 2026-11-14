@@ -66,6 +66,10 @@ export interface ExecuteTestPlanInput {
   cleanupBy: number;
   /** The server URL each call records. */
   endpoint?: string;
+  /** The reviewer account each call records. */
+  account?: string;
+  /** Fixtures not in the reviewer's account: no case that uses one is sent. */
+  missingFixtures?: readonly string[];
   now?: () => number;
 }
 
@@ -95,6 +99,8 @@ export async function executeDirectoryTestPlan(
   const entries = new Map(plan.tools.map((entry) => [entry.tool, entry]));
   const listed = new Map(input.tools.map((tool) => [tool.name, tool]));
   const values = fixtureValues(plan, input.ledger);
+  // With no values, a case that uses one never resolves, so it is not sent.
+  for (const fixture of input.missingFixtures ?? []) values.delete(fixture);
   const caseIds = new Set(plan.cases.map((testCase) => testCase.id));
   // The budget is the run's: calls an earlier execution made count too.
   let made = input.ledger.filter(
@@ -168,6 +174,7 @@ export async function executeDirectoryTestPlan(
       effect: entry.effect,
       inputDigest: directoryTestCaseDigest(plan, testCase, listed.get(tool)),
       ranBy: DIRECT_CALL,
+      ...(input.account ? { account: input.account } : {}),
       ...(input.endpoint ? { endpoint: input.endpoint } : {}),
     };
     if (!(await write({ ...base, phase: "started" }))) return;
@@ -203,7 +210,8 @@ export async function executeDirectoryTestPlan(
     if (!stopped && made >= plan.budget.maxCalls) stopped = { by: "budget" };
     if (stopped) return;
     const resolved = resolve(call.testCase.arguments ?? {}, values);
-    // A fixture value its creator never returned: the summary names it.
+    // A fixture value its creator never returned, or a fixture the reviewer's
+    // account lacks: the summary names it.
     if ("missing" in resolved) return;
     made += 1;
     await send(call, resolved.arguments);
