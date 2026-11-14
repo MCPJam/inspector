@@ -68,6 +68,9 @@ const api = vi.hoisted(() => ({
   startDirectorySubmissionRun: vi.fn(),
   getDirectorySubmissionHandoff: vi.fn(),
   exportDirectorySubmission: vi.fn(),
+  getSubmissionFinding: vi.fn(),
+  listSubmissionEvents: vi.fn(),
+  recordSubmissionEvent: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
 
@@ -164,6 +167,7 @@ describe("ReadinessRoute", () => {
         snapshots: {},
       }),
     );
+    api.listSubmissionEvents.mockResolvedValue([]);
     context.convexProjectId = "proj_1";
     context.selectedServerEntry = { name: "Sample server" };
     flag.value = true;
@@ -364,6 +368,9 @@ describe("ReadinessRoute", () => {
 
     expect(
       screen.getByRole("button", { name: "Copy for the portal" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: "Mark as submitted" }),
     ).toBeVisible();
     expect(
       screen.getByRole("link", { name: /Open the real Claude portal/ }),
