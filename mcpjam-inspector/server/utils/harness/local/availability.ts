@@ -22,7 +22,8 @@
  *   4. workspace grant — an opaque id resolved to a canonical path, re-checked
  *      against symlink replacement;
  *   5. runtime identity — the managed bundle re-digested, or the system
- *      executable re-hashed;
+ *      executable re-hashed (by the spawn gate instead, for a caller whose
+ *      every process starts through it);
  *   6. consent — a capability bound to every one of the identities above.
  *
  * Consent is verified LAST and against the identities the earlier steps
@@ -137,6 +138,15 @@ export interface LocalHarnessAvailabilityQuery {
    * desired pack.
    */
   runtimeDigest?: string;
+  /**
+   * Set by a caller that re-verifies the runtime itself, closer to where
+   * anything executes from it: a fresh turn, whose every process starts
+   * through the supervised provider and its check before each spawn
+   * (`supervised-provider.ts`), and an adoption, which re-verifies the parked
+   * process's own pack (`local-turn.ts`). The gate then does not run the same
+   * check a second time in the turn.
+   */
+  runtimeVerifiedAtSpawn?: boolean;
   /** Test seams. */
   localMachineId?: string;
   manifests?: Readonly<Record<string, LocalHarnessCompatibility>>;
@@ -311,10 +321,13 @@ export async function resolveLocalHarnessAvailability(
     return unavailable("runtime-unavailable", runtimeResolution.message);
   }
 
-  // Consent named a runtime; prove the thing on disk is still that runtime.
-  const revalidated = await revalidateRuntime(runtimeResolution.runtime);
-  if (!revalidated.ok) {
-    return unavailable("runtime-changed", revalidated.message);
+  // Consent named a runtime; prove the thing on disk is still that runtime,
+  // here or at the spawn that would execute it.
+  if (!query.runtimeVerifiedAtSpawn) {
+    const revalidated = await revalidateRuntime(runtimeResolution.runtime);
+    if (!revalidated.ok) {
+      return unavailable("runtime-changed", revalidated.message);
+    }
   }
   if (runtimeResolution.runtime.runtimeId !== target.runtimeId) {
     return unavailable(

@@ -189,7 +189,7 @@ describe("managed setup local runtime policy", () => {
     m.ensure.mockRejectedValue(new LocalAutoApproveConsentRequiredError());
     const { response } = await resolveSetup({ requireToolApproval: false });
     expect(m.ensure).toHaveBeenCalledWith(
-      expect.objectContaining({ requireToolApproval: false }),
+      expect.objectContaining({ requireToolApproval: false, reuseCredentials: true }),
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({

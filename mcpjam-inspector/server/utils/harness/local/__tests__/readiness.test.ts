@@ -4,9 +4,12 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn(), install: vi.fn(), register: vi.fn(),
   workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
   background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
+  refresh: vi.fn(async () => ({ state: "skipped", list: null })),
 }));
+vi.mock("../runtime-revocation.js", () => ({ refreshRevocations: mocks.refresh }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query = mocks.query; } }));
-vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
+const killSwitch = vi.hoisted(() => ({ enabled: true }));
+vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, get LOCAL_HARNESS_ENABLED() { return killSwitch.enabled; } }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: mocks.authorization, authorizeLocalHarness: vi.fn() }));
 vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout }));
@@ -14,17 +17,29 @@ vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.status
 vi.mock("../runtime-update-policy.js", () => ({ readLocalRuntimeUpdatePolicy: async () => ({ policy: mocks.policy(), source: null }) }));
 vi.mock("../runtime-identity.js", () => ({ resolveManagedBundle: async () => ({ ok: true, runtime: { runtimeId: "verified-runtime", adapterVersion: "1", digest: "sha256:verified" } }) }));
 vi.mock("../availability.js", () => ({ localHarnessManifestsForDevelopment: (value: unknown) => value }));
+type Verified = { ok: boolean; grantId?: string; reason?: string; message?: string };
+const grantStore = vi.hoisted(() => ({
+  verify: vi.fn(async (..._args: unknown[]): Promise<Verified> => ({ ok: true, grantId: "fresh-grant" })),
+}));
 vi.mock("../grants.js", () => ({
   getLocalMachineId: async () => "machine", grantLocalHarnessConsent: mocks.grant,
   localHarnessStateRoot: () => "/unused", registerWorkspaceGrant: mocks.workspace,
   resolveWorkspaceGrant: async () => ({ ok: true, canonicalPath: "/workspace" }),
+  hashGrantBinding: (binding: unknown) => JSON.stringify(binding),
+  verifyLocalHarnessGrant: grantStore.verify,
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
-import { ensureLocalHarnessTarget, localHarnessAccountEnabled, setupLocalHarness } from "../readiness.js";
+import { ensureLocalHarnessTarget, localHarnessAccountEnabled, resetLocalHarnessRolloutForTests, setupLocalHarness } from "../readiness.js";
+import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
+import { resetLaunchCredentialsForTests } from "../launch-credentials.js";
+import { setRegisteredKeyId } from "../instance-key.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
   vi.clearAllMocks();
+  killSwitch.enabled = true;
+  resetLocalHarnessRolloutForTests();
+  resetLaunchCredentialsForTests();
   vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
   mocks.actor.mockResolvedValue({ ok: true, actor });
   mocks.query.mockImplementation(async (name: string) => name === "projects:getMyProjects" ? [{ _id: "project" }] : { externalId: "user" });
@@ -40,6 +55,17 @@ describe("shared local readiness", () => {
     expect(ready.target).toMatchObject({ workspaceGrantId: "saved-workspace", runtimeId: "verified-runtime", grantToken: "fresh-token", permissionProfile: "workspace-edits" });
     expect(mocks.authorization).toHaveBeenCalledWith("authkit:user", "machine", "project", "claude-code");
     expect(mocks.install).not.toHaveBeenCalled();
+  });
+  it("hands the turn the runtime selection it resolved the target from, once", async () => {
+    const ready = await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.status).toHaveBeenCalledOnce();
+    expect(takeTurnRuntimeStatus(ready.target)).toEqual({ state: "ready", runtimeRoot: "/runtime", packVersion: "1" });
+    expect(takeTurnRuntimeStatus(ready.target)).toBeUndefined();
+  });
+  it("still refreshes the revocation list on every turn", async () => {
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
   });
   it("rechecks membership and refuses revoked authorization before minting a grant", async () => {
     mocks.query.mockResolvedValue([]);
@@ -66,6 +92,96 @@ it("refuses rollout removal before issuing a grant", async () => {
   mocks.rollout.mockResolvedValue(false);
   await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
   expect(mocks.grant).not.toHaveBeenCalled();
+});
+
+describe("a chat turn's registration and grant", () => {
+  const turn = (overrides: Record<string, unknown> = {}) =>
+    ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended", reuseCredentials: true, ...overrides });
+
+  it("are reused by the member's next turn on the same machine and workspace", async () => {
+    const first = await turn();
+    const second = await turn();
+    expect(mocks.register).toHaveBeenCalledOnce();
+    expect(mocks.grant).toHaveBeenCalledOnce();
+    expect(second.target.grantToken).toBe(first.target.grantToken);
+    // Each turn still gets its own target, and every other check runs again.
+    expect(second.target).not.toBe(first.target);
+    expect(setRegisteredKeyId).toHaveBeenLastCalledWith("registered");
+    expect(mocks.authorization).toHaveBeenCalledTimes(2);
+    expect(mocks.status).toHaveBeenCalledTimes(2);
+  });
+
+  it("are minted afresh for another workspace, and for a caller that does not reuse them", async () => {
+    await turn();
+    mocks.authorization.mockResolvedValue({ workspaceGrantId: "other-workspace" });
+    await turn();
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.register).toHaveBeenCalledTimes(3);
+    expect(mocks.grant).toHaveBeenCalledTimes(3);
+  });
+
+  it("never extend a grant: one about to expire is replaced", async () => {
+    mocks.grant.mockResolvedValueOnce({ grantId: "short", token: "short-token", expiresAt: new Date(Date.now() + 4 * 60_000).toISOString() });
+    await turn();
+    const next = await turn();
+    expect(mocks.grant).toHaveBeenCalledTimes(2);
+    expect(next.target.grantToken).toBe("fresh-token");
+  });
+
+  it("replace a grant that no longer verifies rather than hand it to a turn", async () => {
+    await turn();
+    grantStore.verify.mockResolvedValueOnce({ ok: false, reason: "absent", message: "no local harness grant matches the presented capability" });
+    mocks.grant.mockResolvedValueOnce({ grantId: "renewed", token: "renewed-token", expiresAt: "2099-01-01" });
+    const next = await turn();
+    expect(grantStore.verify).toHaveBeenCalledWith("fresh-token", expect.objectContaining({ workspaceGrantId: "saved-workspace", runtimeId: "verified-runtime" }), expect.any(Object));
+    expect(next.target.grantToken).toBe("renewed-token");
+    expect(mocks.register).toHaveBeenCalledTimes(2);
+  });
+
+  it("do not outlive a revoked authorization: the next turn is refused", async () => {
+    await turn();
+    mocks.authorization.mockResolvedValue(null);
+    await expect(turn()).rejects.toThrow(/Add client/);
+    expect(grantStore.verify).not.toHaveBeenCalled();
+    expect(mocks.grant).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the rollout answer", () => {
+  it("is asked at most once a minute per member while it says yes", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+      await localHarnessAccountEnabled("session", "project");
+      await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+      expect(mocks.rollout).toHaveBeenCalledOnce();
+      // Another member, or another harness's cohort, is its own answer.
+      mocks.actor.mockResolvedValueOnce({ ok: true, actor: { ...actor, subject: "other", userId: "authkit:other" } });
+      await localHarnessAccountEnabled("session", "project");
+      await localHarnessAccountEnabled("session", "project", "codex");
+      expect(mocks.rollout).toHaveBeenCalledTimes(3);
+      now.mockReturnValue(1_000_000 + 60_000);
+      await localHarnessAccountEnabled("session", "project");
+      expect(mocks.rollout).toHaveBeenCalledTimes(4);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("keeps no answer but yes, so a refusal or a failed request is asked again", async () => {
+    mocks.rollout.mockResolvedValueOnce(false);
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/not available/);
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    expect(mocks.rollout).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not outlive the kill switch, which is read on every turn", async () => {
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    killSwitch.enabled = false;
+    await expect(ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" })).rejects.toThrow(/unavailable on this server/);
+    await expect(localHarnessAccountEnabled("session", "project")).resolves.toBe(false);
+    expect(mocks.grant).toHaveBeenCalledOnce();
+  });
 });
 
 it("preserves local intent on rollout or verification failure after authorization", async () => {

@@ -1,9 +1,10 @@
 import { createPublicKey, verify } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { Agent, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   isAllowedPath,
   isLoopbackHost,
@@ -404,6 +405,113 @@ describe("what the gateway refuses", () => {
     expect(response.status).toBe(200);
   });
 
+  it("looks up who is calling once per connection, and asks if it belongs on every request", async () => {
+    const resolvePeerPid = vi.fn(async () => 4_242);
+    const isSupervisedPid = vi.fn(() => true);
+    const g = await gateway({ resolvePeerPid, isSupervisedPid });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      const second = await postOn(kept, g);
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(second.localPort).toBe(first.localPort);
+      expect(resolvePeerPid).toHaveBeenCalledOnce();
+      expect(isSupervisedPid.mock.calls).toEqual([[4_242], [4_242]]);
+    } finally {
+      kept.destroy();
+    }
+    // A new connection is a new caller, and is asked again.
+    const fresh = new Agent({ keepAlive: false });
+    try {
+      expect((await postOn(fresh, g)).status).toBe(200);
+    } finally {
+      fresh.destroy();
+    }
+    expect(resolvePeerPid).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses every request on a connection from outside the process tree", async () => {
+    const resolvePeerPid = vi.fn(async () => 12_345);
+    const g = await gateway({
+      resolvePeerPid,
+      isSupervisedPid: (pid) => pid === 999_999,
+    });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      const second = await postOn(kept, g);
+      expect([first.status, second.status]).toEqual([403, 403]);
+      expect(second.localPort).toBe(first.localPort);
+      expect(resolvePeerPid).toHaveBeenCalledOnce();
+    } finally {
+      kept.destroy();
+    }
+  });
+
+  it("refuses a kept-alive connection once the session's processes have gone", async () => {
+    // A descendant left behind after every root exited still holds the
+    // socket it opened while it belonged; from then on it is refused.
+    let rootsAlive = true;
+    const g = await gateway({
+      resolvePeerPid: async () => 4_242,
+      isSupervisedPid: () => rootsAlive,
+    });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      rootsAlive = false;
+      const second = await postOn(kept, g);
+      expect(second.localPort).toBe(first.localPort);
+      expect([first.status, second.status]).toEqual([200, 403]);
+    } finally {
+      kept.destroy();
+    }
+  });
+
+  it("does not lock a connection out for one failed membership check", async () => {
+    // `ownsPid` answers no when it cannot read a process group; it is asked
+    // again on the next request rather than remembered.
+    const isSupervisedPid = vi
+      .fn<(pid: number) => boolean>()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    const resolvePeerPid = vi.fn(async () => 4_242);
+    const g = await gateway({ resolvePeerPid, isSupervisedPid });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      const second = await postOn(kept, g);
+      expect(second.localPort).toBe(first.localPort);
+      expect([first.status, second.status]).toEqual([403, 200]);
+      expect(resolvePeerPid).toHaveBeenCalledOnce();
+    } finally {
+      kept.destroy();
+    }
+  });
+
+  it("asks again on the same connection when the platform could not answer", async () => {
+    // No opinion is not an answer worth keeping: the next request on the
+    // connection is checked as if nothing had been asked.
+    const resolvePeerPid = vi
+      .fn<() => Promise<number | null>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(12_345);
+    const g = await gateway({
+      resolvePeerPid,
+      isSupervisedPid: () => false,
+    });
+    const kept = new Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const first = await postOn(kept, g);
+      const second = await postOn(kept, g);
+      expect(second.localPort).toBe(first.localPort);
+      expect([first.status, second.status]).toEqual([200, 403]);
+      expect(resolvePeerPid).toHaveBeenCalledTimes(2);
+    } finally {
+      kept.destroy();
+    }
+  });
+
   it("refuses a body past the ceiling on its declared length alone", async () => {
     // Refused before a byte of it is read. Raw HTTP again: undici validates
     // content-length against the body it is given, so it cannot send the
@@ -541,6 +649,39 @@ describe("what the gateway does while a generation is streaming", () => {
     expect(state.cancelled).toBe(true);
   });
 });
+
+/**
+ * One model request through `agent`, read to the end so a kept-alive socket
+ * goes back to the agent for the next request. `localPort` names the
+ * connection it travelled on.
+ */
+function postOn(
+  agent: Agent,
+  g: LocalModelGateway,
+): Promise<{ status: number; localPort: number }> {
+  return new Promise((resolvePromise, reject) => {
+    const req = httpRequest(
+      `${g.baseUrl}/v1/messages`,
+      {
+        method: "POST",
+        agent,
+        headers: {
+          "x-api-key": g.sessionCapability,
+          "content-type": "application/json",
+        },
+      },
+      (res) => {
+        const localPort = res.socket.localPort ?? 0;
+        res.resume();
+        res.on("end", () =>
+          resolvePromise({ status: res.statusCode ?? 0, localPort }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.end("{}");
+  });
+}
 
 /**
  * A request built by hand on a socket.
