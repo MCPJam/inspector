@@ -98,6 +98,7 @@ export function useLocalHarnessRollouts(): Readonly<Record<LocalHarnessId, boole
     "claude-code": useFeatureFlagEnabled("local-harness-enabled") === true,
     codex: useFeatureFlagEnabled("local-codex-enabled") === true,
     "copilot-cli": useFeatureFlagEnabled("local-copilot-cli-enabled") === true,
+    cursor: useFeatureFlagEnabled("local-cursor-enabled") === true,
   };
 }
 
