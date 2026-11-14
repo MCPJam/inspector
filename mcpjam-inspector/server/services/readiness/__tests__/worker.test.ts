@@ -46,6 +46,7 @@ vi.mock("../backend-client.js", () => ({
   failReadinessRun: (...args: unknown[]) => failReadinessRun(...args),
   requestManagedObservations: (...args: unknown[]) =>
     requestManagedObservations(...args),
+  requestReadinessDecisions: async () => ({ status: "off", detail: "test" }),
   getReadinessRunSubmission: (...args: unknown[]) =>
     getReadinessRunSubmission(...args),
   joinReviewerAttempt: (...args: unknown[]) => joinReviewerAttempt(...args),
