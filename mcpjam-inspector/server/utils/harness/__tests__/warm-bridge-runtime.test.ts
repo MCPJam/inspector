@@ -10,6 +10,9 @@ import {
   WARM_RETENTION_TIMEOUT_MS,
 } from "../warm-bridge-runtime.js";
 
+/** The box's idle window, as the backend sends it. */
+const WINDOW_MS = 5 * 60_000;
+
 const unused = async (): Promise<never> => {
   throw new Error("Unexpected test operation");
 };
@@ -81,18 +84,20 @@ describe("warm runtime lifecycle", () => {
       sessionId,
       sandboxSession: { ...f.options.sandboxSession, defaultWorkingDirectory: workspace },
     };
-    const session = await withWarmBridgeRuntime(f.factory, "configuration").doStart(options);
+    const session = await withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart(options);
     await session.doDetach();
     expect(f.run).toHaveBeenCalledTimes(2);
     for (const [{ command }] of f.run.mock.calls) {
       expect(command).toContain(`.ai-sdk-harness/.agent-runs/${segment}/bridge`);
       expect(command).not.toContain(workspace);
+      // The window rides the command line; nothing in the box decides it.
+      expect(command).toMatch(new RegExp(`'${WINDOW_MS}'$`));
     }
   });
 
   it("attaches without dispatching a prompt and refreshes retention on detach", async () => {
     const f = fixture();
-    const runtime = withWarmBridgeRuntime(f.factory, "configuration");
+    const runtime = withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS);
     const session = await runtime.doStart(f.options);
     expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, "/home/user");
     expect(f.start).toHaveBeenCalledTimes(1);
@@ -107,7 +112,7 @@ describe("warm runtime lifecycle", () => {
     "does not forward an invalid sandbox HOME: %s", async (home) => {
       const f = fixture();
       f.run.mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify({ ready: true, home }), stderr: "" });
-      await withWarmBridgeRuntime(f.factory, "configuration").doStart(f.options);
+      await withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart(f.options);
       expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, undefined);
     },
   );
@@ -115,14 +120,14 @@ describe("warm runtime lifecycle", () => {
   it("does not accept HOME from saved session state", async () => {
     const f = fixture();
     f.options.resumeFrom = { ...state, data: { ...state.data, home: "/untrusted" } };
-    await withWarmBridgeRuntime(f.factory, "configuration").doStart(f.options);
+    await withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart(f.options);
     expect(f.factory).toHaveBeenLastCalledWith(WARM_ATTACH_TIMEOUT_MS, "/home/user");
   });
 
   it("uses disk continuity when the identity or configuration probe refuses reuse", async () => {
     const f = fixture();
     f.run.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "" });
-    await withWarmBridgeRuntime(f.factory, "changed").doStart(f.options);
+    await withWarmBridgeRuntime(f.factory, "changed", WINDOW_MS).doStart(f.options);
     expect(f.start).toHaveBeenCalledTimes(1);
     expect(f.start.mock.calls[0][0].resumeFrom?.data).toEqual({
       threadId: "thread",
@@ -133,7 +138,7 @@ describe("warm runtime lifecycle", () => {
     vi.useFakeTimers();
     const f = fixture();
     f.run.mockImplementationOnce(() => new Promise(() => undefined));
-    const pending = withWarmBridgeRuntime(f.factory, "configuration").doStart(
+    const pending = withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart(
       f.options,
     );
     await vi.advanceTimersByTimeAsync(WARM_ATTACH_TIMEOUT_MS);
@@ -150,7 +155,7 @@ describe("warm runtime lifecycle", () => {
       await options.sandboxSession.spawn({ command: "must-not-run" });
       return f.session;
     });
-    await withWarmBridgeRuntime(f.factory, "configuration").doStart(f.options);
+    await withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart(f.options);
     expect(f.spawn).not.toHaveBeenCalled();
     expect(f.start).toHaveBeenCalledTimes(2);
     expect(f.start.mock.calls[1][0].resumeFrom?.data).toEqual({
@@ -163,7 +168,7 @@ describe("warm runtime lifecycle", () => {
     const f = fixture();
     const abort = new AbortController();
     f.run.mockImplementationOnce(() => new Promise(() => undefined));
-    const pending = withWarmBridgeRuntime(f.factory, "configuration").doStart({
+    const pending = withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart({
       ...f.options,
       abortSignal: abort.signal,
     });
@@ -184,6 +189,7 @@ describe("warm runtime lifecycle", () => {
     const result = await withWarmBridgeRuntime(
       f.factory,
       "configuration",
+      WINDOW_MS,
     ).doStart(continuing);
     expect(f.run).not.toHaveBeenCalled();
     expect(f.start).toHaveBeenCalledWith(continuing);
@@ -203,7 +209,7 @@ describe("warm runtime lifecycle", () => {
           resolveAttach = resolve;
         }),
     );
-    const pending = withWarmBridgeRuntime(f.factory, "configuration").doStart({
+    const pending = withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS).doStart({
       ...f.options,
       abortSignal: abort.signal,
     });
@@ -224,6 +230,7 @@ describe("warm runtime lifecycle", () => {
     const session = await withWarmBridgeRuntime(
       f.factory,
       "configuration",
+      WINDOW_MS,
     ).doStart(f.options);
     f.run.mockImplementationOnce(() => new Promise(() => undefined));
     const detached = session.doDetach();

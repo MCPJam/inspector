@@ -120,3 +120,27 @@ describe("Task owner metadata", () => {
     ).toBe("New");
   });
 });
+describe("managerAccountsAtRun", () => {
+  it("lists a group's accounts, or the one credential a server connected on", async () => {
+    const { managerAccountsAtRun, setManagerAuthorizedCredentials } =
+      await import("../mcp-connections.js");
+    const dummy = "b".repeat(32);
+    const live = "a".repeat(32);
+    const manager = {
+      listServers: () => ["asana", `asana#${live}`, "linear", "xaa-server"],
+    } as any;
+    setManagerConnections(manager, {
+      asana: [
+        { serverId: "asana", connectionId: dummy, key: "asana", label: "Dummy", isDefault: true },
+        { serverId: "asana", connectionId: live, key: `asana#${live}`, label: "Live", isDefault: false },
+      ],
+    });
+    setManagerAuthorizedCredentials(manager, { asana: dummy, linear: "linear-default" });
+
+    expect(managerAccountsAtRun(manager)).toEqual([
+      { serverId: "asana", connectionIds: [dummy, live] },
+      { serverId: "linear", connectionIds: ["linear-default"] },
+      { serverId: "xaa-server", connectionIds: [] },
+    ]);
+  });
+});

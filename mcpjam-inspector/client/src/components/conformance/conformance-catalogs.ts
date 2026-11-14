@@ -76,6 +76,9 @@ export const OAUTH_ADVICE_CATALOG: CatalogEntry[] = MCP_OAUTH_READINESS_IDS.map(
   (id) => ({ id, ...OAUTH_READINESS_CATALOG[id] }),
 );
 
+// Catalog rows carry no spec link: `CatalogRow` builds it from the id and the
+// revision of the list it sits in (`ConformanceSourceVersion`), so a saved
+// run's rows and a pinned pre-run list link the pages they are graded against.
 export const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
   id,
   ...APPS_CHECK_CATALOG[id],

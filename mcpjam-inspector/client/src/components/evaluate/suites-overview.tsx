@@ -458,7 +458,7 @@ function RowRunControl({
       className="h-7 gap-1.5 px-2.5"
       data-testid="evals-suites-overview-run"
       aria-label={
-        hasServers ? `Setup Run ${suiteTitle}` : "No servers configured"
+        hasServers ? `Run ${suiteTitle}` : "No servers configured"
       }
       title={hasServers ? undefined : "No servers configured"}
       disabled={!hasServers}
@@ -468,7 +468,7 @@ function RowRunControl({
       }}
     >
       <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      Setup Run
+      Run
     </Button>
   );
 }

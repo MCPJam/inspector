@@ -32,6 +32,12 @@ const ALLOWED: Record<string, string> = {
     "removing both is its own commit. Listed so the guard states what is " +
     "true now, not what was true when it was written.",
 
+  "components/evals/suite-accounts-row.tsx":
+    "Suite settings' Accounts row: one row per server the suite already " +
+    "runs on, with a checkbox per connected account. It chooses which of the " +
+    "person's accounts a run uses on each server, never which servers the " +
+    "suite uses, so it is an account choice, not a server picker.",
+
   "components/ActiveServerSelector.tsx":
     "The header's connection strip: multi-select by server NAME over runtime " +
     "state, with reconnect / hide / transport per tab and an Add Server entry. " +

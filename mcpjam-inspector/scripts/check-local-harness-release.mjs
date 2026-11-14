@@ -2,8 +2,8 @@ import { computeHarnessPackInputs, computePackInputs } from "./check-local-harne
 import { packAssetStem, packReleaseBaseUrl } from "./local-harness-pack-harnesses.mjs";
 import {
   advertisedTargetsOf,
-  parseManifestFacts,
   parsePackTables,
+  readManifestFacts,
   RUNTIME_COMPAT_PATH,
   TARGETS_BY_PLATFORM,
 } from "./local-harness-pack-tables.mjs";
@@ -41,7 +41,9 @@ import {
  *      by our key, it was built by our workflow from a reviewed commit;
  *   4. (with `--evidence <dir>`) conformance evidence exists for THIS commit's
  *      Inspector layer digest × each pack it selects × every advertised
- *      target. That replaces the old check that each pack carried the bridge
+ *      target, recorded at this commit or at one with the same conformance
+ *      inputs digest (`conformance-inputs-digest.mjs`). That replaces the old
+ *      check that each pack carried the bridge
  *      this checkout builds: the bridge is the Inspector layer now, shipped
  *      with the Inspector, so what a release has to prove is that THIS layer
  *      was run against each pack — not that a pack contains a copy of it;
@@ -88,8 +90,9 @@ const inspectorRoot = join(scriptDir, "..");
 /**
  * The pins and the conformance stamp come from the generated JSON record
  * (`runtime-compat.generated.json`); the reviewed POLICY (native platforms and
- * targets) is parsed out of `compatibility.ts`. Both are read as COMMITTED,
- * not as a build step could have rewritten them on the way past.
+ * targets) is parsed out of each runtime's definition (`runtimes/<id>.ts`).
+ * Both are read as COMMITTED, not as a build step could have rewritten them on
+ * the way past.
  *
  * Returns one entry per harness that has a manifest entry or a record entry:
  * `{ [harnessId]: { expectedVersion, records, permitted, conformance,
@@ -97,12 +100,8 @@ const inspectorRoot = join(scriptDir, "..");
  */
 async function readCommittedFacts() {
   const compatRecord = await readFile(RUNTIME_COMPAT_PATH, "utf8");
-  const compatSource = await readFile(
-    join(inspectorRoot, "server/utils/harness/local/compatibility.ts"),
-    "utf8",
-  );
   const tables = parsePackTables(compatRecord);
-  const manifests = parseManifestFacts(compatSource);
+  const manifests = readManifestFacts(join(inspectorRoot, "server/utils/harness/local/runtimes"));
   const facts = {};
   for (const harnessId of [...new Set([...Object.keys(manifests), ...Object.keys(tables)])].sort()) {
     facts[harnessId] = {
@@ -194,21 +193,24 @@ export function fingerprintAcceptance({ harnessId, target, ref, manifestFingerpr
 async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expectedFingerprint, equivalences = [], attest = null, publicKeys, blockers }) {
   const label = `${harnessId} ${target} ${role} ${ref.packVersion}`;
   const stem = packAssetStem(harnessId, target, ref.packVersion);
-  let manifestBytes;
-  let signature;
-  let archive;
-  try {
-    manifestBytes = await fetchAsset(baseUrl, `${stem}.manifest.json`);
-    signature = (await fetchAsset(baseUrl, `${stem}.manifest.json.sig`)).toString("utf8");
-    archive = await fetchAsset(baseUrl, `${stem}.tar.gz`);
-  } catch (error) {
+  // Fetched together; a failure is reported for the first asset in this
+  // order, whichever request happened to fail first.
+  const fetched = await Promise.allSettled([
+    fetchAsset(baseUrl, `${stem}.manifest.json`),
+    fetchAsset(baseUrl, `${stem}.manifest.json.sig`),
+    fetchAsset(baseUrl, `${stem}.tar.gz`),
+  ]);
+  const missing = fetched.find((result) => result.status === "rejected");
+  if (missing !== undefined) {
     blockers.push(
       `the ${label} pack assets are not published: ${
-        error instanceof Error ? error.message : String(error)
+        missing.reason instanceof Error ? missing.reason.message : String(missing.reason)
       }`,
     );
     return;
   }
+  const [manifestBytes, signatureBytes, archive] = fetched.map((result) => result.value);
+  const signature = signatureBytes.toString("utf8");
   const signed = publicKeys.some((pem) => {
     try {
       return edVerify(null, manifestBytes, createPublicKey(pem), Buffer.from(signature.trim(), "base64"));
@@ -267,26 +269,51 @@ async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expec
     // pack workflow on main. Verified from the bytes this check downloaded.
     const dir = await mkdtemp(join(tmpdir(), "mcpjam-attest-"));
     try {
-      for (const [suffix, bytes] of [[".manifest.json", manifestBytes], [".tar.gz", archive]]) {
-        const path = join(dir, `${stem}${suffix}`);
-        await writeFile(path, bytes);
-        const failure = await attest.verify(path, { repo: attest.repo, workflow: PACK_SIGNER_WORKFLOW });
-        if (failure !== null) {
-          blockers.push(`the published ${label} ${suffix.slice(1)} has no verifiable build provenance from ${PACK_SIGNER_WORKFLOW} on main: ${failure}`);
+      const assets = [[".manifest.json", manifestBytes], [".tar.gz", archive]];
+      const failures = await Promise.all(
+        assets.map(async ([suffix, bytes]) => {
+          const path = join(dir, `${stem}${suffix}`);
+          await writeFile(path, bytes);
+          return attest.verify(path, { repo: attest.repo, workflow: PACK_SIGNER_WORKFLOW });
+        }),
+      );
+      assets.forEach(([suffix], index) => {
+        if (failures[index] !== null) {
+          blockers.push(`the published ${label} ${suffix.slice(1)} has no verifiable build provenance from ${PACK_SIGNER_WORKFLOW} on main: ${failures[index]}`);
         }
-      }
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-    if (accepted?.kind === "equivalent" && !attest.verifiedRecords.has(accepted.record.file)) {
-      const failure = await attest.verify(accepted.record.file, { repo: attest.repo, workflow: EQUIVALENCE_SIGNER_WORKFLOW });
+    // One verification per record, however many packs rely on it; the pack
+    // check that started it is the one that reports a failure.
+    if (accepted?.kind === "equivalent" && !attest.recordChecks.has(accepted.record.file)) {
+      const check = attest.verify(accepted.record.file, { repo: attest.repo, workflow: EQUIVALENCE_SIGNER_WORKFLOW });
+      attest.recordChecks.set(accepted.record.file, check);
+      const failure = await check;
       if (failure !== null) {
         blockers.push(`the ${harnessId} equivalence record ${accepted.record.file} has no verifiable provenance from ${EQUIVALENCE_SIGNER_WORKFLOW} on main: ${failure}`);
-      } else {
-        attest.verifiedRecords.add(accepted.record.file);
       }
     }
   }
+}
+
+// Each pack is a download of tens of megabytes and two `gh attestation
+// verify` calls; one at a time, the twenty or so a release pins took two and
+// a half minutes of preflight.
+const PACK_CHECK_CONCURRENCY = 4;
+
+/** Runs `tasks` with at most `limit` in flight. */
+async function runLimited(tasks, limit) {
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const task = tasks[next];
+      next += 1;
+      await task();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
 }
 
 /**
@@ -294,8 +321,12 @@ async function checkPublishedPack({ harnessId, target, role, ref, baseUrl, expec
  * build may select × every advertised target, from the records
  * `write-conformance-evidence.mjs` wrote in passing legs. Returns the evidence
  * keyed `harness/target/digest` for the contract.
+ *
+ * A record counts when it was written at `commit`, or at a commit whose
+ * conformance inputs digest equals `conformanceInputs`: nothing a leg loads
+ * differs between the two, so the run proves the same thing for both.
  */
-async function checkEvidence({ facts, dir, layers, commit, blockers, harnessFilter }) {
+async function checkEvidence({ facts, dir, layers, commit, conformanceInputs, blockers, harnessFilter }) {
   const records = [];
   for (const name of (await readdir(dir, { recursive: true })).map(String)) {
     if (!name.endsWith(".json") || !/conformance-evidence-/.test(name)) continue;
@@ -326,7 +357,9 @@ async function checkEvidence({ facts, dir, layers, commit, blockers, harnessFilt
             record.target === target &&
             record.pack?.treeDigest === ref.treeDigest &&
             (record.layerDigest ?? null) === layerDigest &&
-            (commit === null || record.commit === commit),
+            (commit === null ||
+              record.commit === commit ||
+              (conformanceInputs !== null && record.conformanceInputs === conformanceInputs)),
         );
         if (match === undefined) {
           blockers.push(
@@ -355,7 +388,7 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
     notShipped.push(
       `${harnessId} records no lifecycleConformanceVersion, so local execution ` +
         "is offered on no platform. Run the lifecycle conformance suite on " +
-        "every advertised platform and record its version in compatibility.ts " +
+        "every advertised platform and record its version in the runtime record " +
         "— a green run on one platform is not evidence for the others.",
     );
   }
@@ -374,8 +407,8 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
     const targets = TARGETS_BY_PLATFORM[platform];
     if (targets === undefined) {
       blockers.push(
-        `compatibility.ts advertises an unknown platform ${platform} for ` +
-          `${harnessId}; this check does not know which pack targets it needs.`,
+        `runtimes/${harnessId}.ts advertises an unknown platform ${platform}; ` +
+          `this check does not know which pack targets it needs.`,
       );
       continue;
     }
@@ -417,10 +450,14 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
     // of the advertised targets out would hide its failure. Without
     // `nativeTargets`, every target, as before.
     const releaseTargets = facts.nativeTargets ?? Object.values(TARGETS_BY_PLATFORM).flat();
+    // The packs are checked concurrently, but their blockers are reported in
+    // the order the loop meets them.
+    const reports = [];
+    const checks = [];
     for (const target of releaseTargets) {
       const entry = facts.records[target];
       if (!entry || entry.packVersion !== version || !/^sha256:[0-9a-f]{64}$/.test(entry.treeDigest)) {
-        blockers.push(`Missing or inconsistent pinned ${harnessId} pack record for ${target}`);
+        reports.push([`Missing or inconsistent pinned ${harnessId} pack record for ${target}`]);
         continue;
       }
       const selectable = [
@@ -433,25 +470,31 @@ async function checkHarness({ harnessId, facts, args, publicKeys, attest, blocke
           notShipped.push(`${harnessId} ${target}: the permitted ${ref.packVersion} pack is not checked against --base-url`);
           continue;
         }
-        await checkPublishedPack({
-          harnessId,
-          target,
-          role,
-          ref,
-          baseUrl:
-            typeof args["base-url"] === "string"
-              ? args["base-url"]
-              : packReleaseBaseUrl(harnessId, ref.packVersion),
-          // Only the DESIRED pack has to be what this checkout's inputs build:
-          // a permitted previous pack is older by definition.
-          expectedFingerprint: role === "desired" ? fingerprint : undefined,
-          equivalences: readEquivalenceRecords(harnessId),
-          attest: typeof args["base-url"] === "string" ? null : attest,
-          publicKeys,
-          blockers,
-        });
+        const report = [];
+        reports.push(report);
+        checks.push(() =>
+          checkPublishedPack({
+            harnessId,
+            target,
+            role,
+            ref,
+            baseUrl:
+              typeof args["base-url"] === "string"
+                ? args["base-url"]
+                : packReleaseBaseUrl(harnessId, ref.packVersion),
+            // Only the DESIRED pack has to be what this checkout's inputs build:
+            // a permitted previous pack is older by definition.
+            expectedFingerprint: role === "desired" ? fingerprint : undefined,
+            equivalences: readEquivalenceRecords(harnessId),
+            attest: typeof args["base-url"] === "string" ? null : attest,
+            publicKeys,
+            blockers: report,
+          }),
+        );
       }
     }
+    await runLimited(checks, PACK_CHECK_CONCURRENCY);
+    for (const report of reports) blockers.push(...report);
   }
   return advertisedTargets;
 }
@@ -490,7 +533,7 @@ async function main() {
       attest = {
         repo: process.env.GITHUB_REPOSITORY || "MCPJam/inspector",
         verify: verifyAttestation,
-        verifiedRecords: new Set(),
+        recordChecks: new Map(),
       };
     }
   }
@@ -508,11 +551,13 @@ async function main() {
     layers = await computeInspectorLayerDigests();
   }
   if (typeof args.evidence === "string") {
+    const { computeConformanceInputsDigest } = await import("./conformance-inputs-digest.mjs");
     evidence = await checkEvidence({
       facts,
       dir: args.evidence,
       layers,
       commit: typeof args.commit === "string" ? args.commit : (process.env.GITHUB_SHA ?? null),
+      conformanceInputs: computeConformanceInputsDigest(),
       blockers,
       harnessFilter,
     });

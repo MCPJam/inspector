@@ -88,7 +88,6 @@ vi.mock("../../../utils/harness/e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../../../utils/harness/runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));

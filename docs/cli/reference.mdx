@@ -1238,6 +1238,102 @@ Cancel a pending connection request, releasing the concurrent-connection slot it
 
 Cancelling is idempotent — calling it twice on the same request is safe. Use this when an authorization was abandoned (link opened in the wrong browser, consent screen closed) and you want to free the slot before starting over.
 
+### `cloud projects servers revisions`
+
+List a saved server's stored revisions, newest first. A revision is a capture of the server's tools and server info, recorded whenever they change. These read stored data and never connect to the server, so they work for stdio servers too.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--limit <n>` | No | Revisions per page, 1 to 200 (default 50) |
+| `--cursor <cursor>` | No | `nextCursor` from the previous page |
+
+### `cloud projects servers revision`
+
+Read one stored revision: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | Revision number |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `cloud projects servers revision-diff`
+
+Compare two stored revisions: tools added, removed and changed with both definitions, and server info changes with both values. A field listed in `droppedFields.from` or `droppedFields.to` was not stored on that side, so a change to it is unknown.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <id-or-name>` | Yes | Server ID or name |
+| `--revision <number>` | Yes | The later revision |
+| `--from <number>` | No | The revision to compare against (default: the one before) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
+## `cloud server-accounts` commands
+
+The accounts a saved server signs in with for hosted runs, addressed by account ID or name. Every command takes `--server <id-or-name>` (required) and `--project <id-or-name>`. No command prints a token. See [Server accounts](/reference/public-api#server-accounts) for what an upload stores and how runs choose an account.
+
+### `cloud server-accounts list`
+
+List the server's accounts: each one's ID, name, whether runs use it by default, whether it needs reconnecting, and whether it is for hosted runs only.
+
+### `cloud server-accounts show`
+
+Show one account.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--account <id-or-name>` | Yes | Account ID or name |
+
+### `cloud server-accounts set`
+
+Upload an access token to an account. A name no account has creates the account; otherwise its token is replaced and its ID stays. Accounts uploaded this way are for hosted runs only. Nothing checks who a token belongs to: the name is your own label.
+
+The token comes from a file, an environment variable or stdin. A token typed on the command line is refused, because shell history keeps it and other processes can see it. Whitespace around a token is dropped.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--account <id-or-name>` | Yes | Account ID or name |
+| `--client-id <id>` | Yes | The OAuth client the token was issued to |
+| `--access-token-file <path>` | One of three | Read the access token from a file |
+| `--access-token-env <VAR>` | One of three | Read the access token from an environment variable |
+| `--access-token -` | One of three | Read the access token from stdin |
+| `--refresh-token-file <path>` | No | Read a refresh token from a file, or `-` for stdin. Leave it out when you upload a fresh token before each run, or when the issuer rejects refreshes: stored, it only adds a long-lived credential |
+| `--expires-in <seconds>` | No | Seconds until the access token expires |
+
+```bash
+./sign-in-test-user | mcpjam cloud server-accounts set --server my-server \
+  --account test-automation-1 --client-id my-client --access-token -
+```
+
+### `cloud server-accounts rename`
+
+Rename an account.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--account <id-or-name>` | Yes | Account ID or name |
+| `--name <name>` | Yes | The new name: letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters |
+
+### `cloud server-accounts default`
+
+Make an account the default. Runs with no saved account choice sign in as the default, so set it before you start a run, and don't start runs that need different defaults at the same time.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--account <id-or-name>` | Yes | Account ID or name |
+
+### `cloud server-accounts delete`
+
+Delete an account and its stored token, and ask the token's issuer to revoke it where the issuer supports that. The default account can't be deleted while other accounts exist: make another account the default first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--account <id-or-name>` | Yes | Account ID or name |
+
 ---
 
 ## `inspector` commands

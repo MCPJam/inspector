@@ -37,6 +37,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
   gateMcpToolResultImageRenderingByModelVisibility,
@@ -247,6 +248,12 @@ export type ScorecardTabContext = {
   scoresSection: ReactNode | null;
 };
 
+export type IterationReportMode =
+  | TraceViewMode
+  | "browser"
+  | "steps"
+  | "scorecard";
+
 export function IterationDetails({
   hostSnapshot,
   iteration,
@@ -261,6 +268,9 @@ export function IterationDetails({
   trialVerdictWord,
   syncedStepId,
   onSyncStep,
+  traceDetailPlacement,
+  activeTab,
+  onTabChange,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -318,6 +328,11 @@ export function IterationDetails({
    */
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
+  /** Forwarded to the trace timeline; the iteration page passes "auto". */
+  traceDetailPlacement?: TraceDetailPlacement;
+  /** Controls the tab; the reset on iteration change then stays off. */
+  activeTab?: IterationReportMode;
+  onTabChange?: (mode: IterationReportMode) => void;
 }) {
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
@@ -390,10 +405,13 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
-  type PreviewTraceMode = TraceViewMode | "browser" | "steps" | "scorecard";
-  const [previewTraceMode, setPreviewTraceMode] = useState<PreviewTraceMode>(
+  const [ownTraceMode, setOwnTraceMode] = useState<IterationReportMode>(
     scorecard ? "scorecard" : "chat",
   );
+  const setPreviewTraceMode = (mode: IterationReportMode) => {
+    setOwnTraceMode(mode);
+    onTabChange?.(mode);
+  };
 
   // The authored steps this run executed (from its snapshot), so the replay can
   // offer the same step-aligned "Steps" tab the live preview does. Falls back to
@@ -488,19 +506,19 @@ export function IterationDetails({
     getBlob,
   ]);
 
+  // Step-aligned cases (any interact/assert step) open on the Steps replay —
+  // the 1:1 mirror of the authored steps — matching the live preview default;
+  // pure prompt+grade cases keep Chat.
+  const defaultTraceMode: IterationReportMode = scorecard
+    ? "scorecard"
+    : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+    ? "steps"
+    : "chat";
   useEffect(() => {
     if (layoutMode !== "full") return;
     setToolCallsSectionOpen(iteration.result !== "passed");
-    // Step-aligned cases (any interact/assert step) open on the Steps replay —
-    // the 1:1 mirror of the authored steps — matching the live preview default;
-    // pure prompt+grade cases keep Chat.
-    setPreviewTraceMode(
-      scorecard
-        ? "scorecard"
-        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
-        ? "steps"
-        : "chat",
-    );
+    if (activeTab) return;
+    setOwnTraceMode(defaultTraceMode);
   }, [layoutMode, iteration._id, iteration.result, snapshotSteps]);
 
   useEffect(() => {
@@ -738,6 +756,22 @@ export function IterationDetails({
   // this pane exists to fix. Missing trace views explain their unavailable data.
   /** The tabs that read the trace blob, and therefore wait for it. */
   const traceTabsReady = hasTrace && !loading && !error;
+  // A tab named by a link but not shown for this iteration falls back to the
+  // default, so the panel is never blank with no tab selected.
+  const tabShown: Record<IterationReportMode, boolean> = {
+    timeline: true,
+    chat: true,
+    raw: true,
+    tools: Boolean(scorecard) || (hasEvalToolCalls && traceTabsReady),
+    browser: hasBrowserArtifacts && traceTabsReady,
+    steps: hasSteps && (Boolean(scorecard) || traceTabsReady),
+    scorecard: Boolean(scorecard),
+  };
+  const previewTraceMode = !activeTab
+    ? ownTraceMode
+    : tabShown[activeTab]
+      ? activeTab
+      : defaultTraceMode;
   const previewTraceToolbar =
     layoutMode === "full" &&
     (scorecard || (hasTrace && !loading && !error)) ? (
@@ -1171,6 +1205,7 @@ export function IterationDetails({
               traceInsight={caseInsightSlot}
               chromeDensity={layoutMode === "full" ? "compact" : "default"}
               fillContent={layoutMode === "full"}
+              traceDetailPlacement={traceDetailPlacement}
               frame={layoutMode === "full" ? "none" : "inset"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
@@ -1242,7 +1277,7 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} variant="inline" />}
+      {iterationError && <ErrorCard key={iteration._id} error={iterationError} />}
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"

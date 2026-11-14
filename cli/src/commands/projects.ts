@@ -33,6 +33,7 @@ import {
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
+import { registerServerRevisionCommands } from "./server-revisions.js";
 
 type PlatformOptions = SharedPlatformOptions & {
   project?: string;
@@ -337,6 +338,8 @@ export function registerProjectsCommands(program: Command): void {
     );
     writeResult(result, globalOptions.format);
   });
+
+  registerServerRevisionCommands(servers);
 
       servers
       .command("update")

@@ -284,7 +284,7 @@ export interface PersistedTurnTrace {
   /**
    * Which skills and which environment this turn ran with, echoed from the
    * backend's per-entry `provenance` rows (see
-   * `services/environments/runtime.ts` `turnSkillProvenance`).
+   * `services/environments/live-turn-skills.ts` `turnSkillProvenance`).
    *
    * Carried INSIDE the turn trace, not beside it, for two reasons. The binding
    * is per-TURN — a session live-follows Latest, so an edit changes what the

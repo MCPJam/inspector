@@ -106,6 +106,15 @@ Do not point `GUEST_JWKS_URL` anywhere: a development deployment verifies guest
 tokens with its own `/guest/jwks` by default. (The shared OSS deployment's
 pairing with the hosted guest authority is managed by operators.)
 
+Hosted Claude Code and Codex turns boot the deployment's `E2B_TEMPLATE_ID`.
+Unset, that is E2B's `base` image, which has no agent baked in, so every new
+conversation installs Claude Code or Codex first (about 11 s and 5 s on dev
+boxes, November 2026) and its first-message timings are not comparable with
+production's. To time or demo first messages, set it to a baked computer
+template your deployment's E2B team can boot
+(`npx convex env set E2B_TEMPLATE_ID <template>`). How templates are built, and
+which one staging runs, is in mcpjam-backend `templates/computer/README.md`.
+
 ### Guest sessions
 
 The Inspector never writes configuration to a backend while it runs. Guests come

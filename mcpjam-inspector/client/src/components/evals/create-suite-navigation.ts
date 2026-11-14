@@ -1,4 +1,4 @@
-import type { EvalRoute } from "@/lib/eval-route-types";
+import type { EvalRoute, SuiteSettingsTab } from "@/lib/eval-route-types";
 import {
   buildEvalsRunsPath,
   buildEvalsPath,
@@ -11,6 +11,23 @@ function applyPlaygroundEvalsPath(
   options?: { replace?: boolean }
 ) {
   navigateApp(buildEvalsPath(route), { replace: options?.replace });
+}
+
+/**
+ * The Suite settings route every navigation shares, so `/evaluate`, `/evals`
+ * and CI all keep the tab and the case to return to.
+ */
+export function suiteEditRoute(
+  suiteId: string,
+  fromCaseChecks?: string,
+  tab?: SuiteSettingsTab,
+): EvalRoute {
+  return {
+    type: "suite-edit",
+    suiteId,
+    ...(fromCaseChecks ? { fromCaseChecks } : {}),
+    ...(tab === "evaluators" ? { tab } : {}),
+  };
 }
 
 function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
@@ -66,9 +83,11 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
         { replace: options?.replace }
       );
     },
-    toSuiteEdit: (suiteId) => {
-      applyPlaygroundEvalsPath({ type: "suite-edit", suiteId });
-    },
+    toSuiteEdit: (suiteId, fromCaseChecks, tab, options) =>
+      applyPlaygroundEvalsPath(
+        suiteEditRoute(suiteId, fromCaseChecks, tab),
+        options,
+      ),
   };
 }
 
@@ -113,6 +132,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         },
         { replace: options?.replace }
       ),
-    toSuiteEdit: (suiteId) => applyCiEvalsPath({ type: "suite-edit", suiteId }),
+    toSuiteEdit: (suiteId, fromCaseChecks, tab, options) =>
+      applyCiEvalsPath(suiteEditRoute(suiteId, fromCaseChecks, tab), options),
   };
 }

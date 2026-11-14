@@ -100,6 +100,7 @@ import {
 } from "./case-spine-model";
 import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
 import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
+import { ToolErrorSwitch } from "../tool-error-switch";
 
 export type CaseSpineProps = {
   onDraftValidityChange?: (invalid: boolean) => void;
@@ -133,6 +134,9 @@ export type CaseSpineProps = {
   ) => void;
   suiteJudgeConfig?: EvalJudgeConfig;
   suiteJudgeRubric?: EvalJudgeRubric;
+  /** Whether a tool error fails this case; the switch shows with a handler. */
+  failOnToolError?: boolean;
+  onFailOnToolErrorChange?: (next: boolean) => void;
   capabilities?: SuiteCapabilities | null;
   onOpenSuiteSettings?: () => void;
   evalValidationBorderClass?: string;
@@ -192,6 +196,8 @@ export function CaseSpine({
   recordEntryPrimary = false,
   suiteJudgeConfig,
   suiteJudgeRubric,
+  failOnToolError = true,
+  onFailOnToolErrorChange,
   capabilities,
   evalValidationBorderClass,
   autoFocusPrompt,
@@ -1183,6 +1189,12 @@ export function CaseSpine({
                   Skip the judge for this case
                 </Label>
               </div>
+            ) : null}
+            {!readOnly && onFailOnToolErrorChange ? (
+              <ToolErrorSwitch
+                checked={failOnToolError}
+                onCheckedChange={onFailOnToolErrorChange}
+              />
             ) : null}
           </section>
 

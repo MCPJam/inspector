@@ -13,6 +13,11 @@
  * token the check is `not-evaluated` naming the input, never a pass on the
  * strength of "something answered".
  *
+ * The same token decides what a 404 means. The portal issues it during a
+ * submission, so a server that has not been through the challenge has nothing
+ * to serve yet: without a token the 404 is not evaluated, with the next step;
+ * with one it is a failure.
+ *
  * Pure data. No transport — the fetch happens in discovery.
  */
 
@@ -106,6 +111,20 @@ export function runOpenAIDomainVerificationChecks(
         status: evidence.status,
       }),
     );
+  } else if (evidence.status === 404 && !declaredToken) {
+    findings.push({
+      ...notEvaluated(
+        CHALLENGE_SERVED,
+        stamp,
+        "the challenge path answered 404 and this run has no verification token, so the domain has not been through the portal's challenge yet",
+        missingInput(OPENAI_READINESS_INPUTS.submissionProfile, {
+          field: "domainVerificationToken",
+          url: evidence.url,
+          status: evidence.status,
+        })
+      ),
+      remediation: `When the portal shows your verification token, serve exactly that token as plain text at ${OPENAI_DOMAIN_VERIFICATION_PATH} on the server's origin, then add the token to this run.`,
+    });
   } else {
     findings.push(
       violated(

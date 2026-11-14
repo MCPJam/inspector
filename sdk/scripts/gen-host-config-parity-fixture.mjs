@@ -358,6 +358,91 @@ const inputs = [
       },
     },
   },
+  // ── Plugin extension behavior (`pluginExtensions.behavior`) ──
+  // The canonical setting is `{ behavior?, capabilities?, enabled }` in that
+  // key order. A setting without `behavior` keeps its bytes; an empty one
+  // collapses to absent.
+  {
+    label: "plugin-extensions-claude-no-behavior",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { pluginExtensions: { enabled: true } },
+      },
+    },
+  },
+  {
+    label: "plugin-extensions-behavior-empty-omitted",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { pluginExtensions: { behavior: {}, enabled: true } },
+      },
+    },
+  },
+  {
+    label: "plugin-extensions-claude-behavior-display-start",
+    input: {
+      ...base(),
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            enabled: true,
+            behavior: { displayStart: "hint-first" },
+          },
+        },
+      },
+    },
+  },
+  {
+    // Keys given out of order at both levels, beside capabilities.
+    label: "plugin-extensions-claude-desktop-behavior-and-capabilities",
+    input: {
+      ...base(),
+      hostStyle: "claude-desktop",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            enabled: true,
+            capabilities: { sidebarApps: true, forms: false },
+            behavior: {
+              entrypointNames: "any",
+              displayHints: "openai/ui",
+              displayStart: "hint-first",
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    // Every field with Claude's value, on a ChatGPT client switched off.
+    label: "plugin-extensions-chatgpt-every-behavior-field",
+    input: {
+      ...base(),
+      hostStyle: "chatgpt",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          pluginExtensions: {
+            behavior: {
+              entrypointQuickActions: "hide",
+              entrypointWithoutFullscreen: "inline",
+              entrypointVisibility: "require-model",
+              entrypointNames: "no-double-separators",
+              displayStart: "inline-then-move",
+              displayHints: "ui",
+            },
+            enabled: false,
+          },
+        },
+      },
+    },
+  },
   {
     label: "host-capabilities-override-explicit-empty",
     input: { ...base(), hostCapabilitiesOverride: {}, chatUiOverride: { logo: "x" } },

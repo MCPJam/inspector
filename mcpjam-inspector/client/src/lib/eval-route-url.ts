@@ -1,6 +1,11 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
-import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import {
+  ITERATION_TABS,
+  type EvalRoute,
+  type IterationTab,
+  type SuiteOverviewView,
+} from "./eval-route-types";
 import { stripProjectFromPath } from "./project-route";
 
 /**
@@ -94,10 +99,19 @@ export function parseEvalRouteFromUrl(
     };
   }
 
-  if (rest.length === 1 && rest[0] === "edit") {
+  // `edit` is the old address; the router redirects it to `settings`.
+  if (
+    (rest.length === 1 && (rest[0] === "edit" || rest[0] === "settings")) ||
+    (rest.length === 2 && rest[0] === "settings" && rest[1] === "evaluators")
+  ) {
     return {
       type: "suite-edit",
       suiteId,
+      // An old `edit` link with `fromCaseChecks` came from a case's evaluators.
+      ...(rest[1] === "evaluators" ||
+      (rest[0] === "edit" && params.get("fromCaseChecks"))
+        ? { tab: "evaluators" as const }
+        : {}),
       ...(params.get("fromCaseChecks")
         ? { fromCaseChecks: params.get("fromCaseChecks")! }
         : {}),
@@ -121,6 +135,31 @@ export function parseEvalRouteFromUrl(
       ...(params.get("compareTo")
         ? { compareToRunId: params.get("compareTo") || undefined }
         : {}),
+    };
+  }
+
+  // Evaluate only: `runs/R/cases/C` and `runs/R/cases/C/iterations/I`.
+  if (
+    prefix === "/evaluate" &&
+    rest[0] === "runs" &&
+    rest[1] &&
+    rest[2] === "cases" &&
+    rest[3] &&
+    (rest.length === 4 ||
+      (rest.length === 6 && rest[4] === "iterations" && rest[5]))
+  ) {
+    const tab = params.get("tab");
+    const target = params.get("target");
+    return {
+      type: "run-detail",
+      suiteId,
+      runId: decodePathSegment(rest[1]),
+      resultPage: {
+        caseKey: decodePathSegment(rest[3]),
+        ...(target ? { target } : {}),
+        ...(rest[5] ? { iterationId: decodePathSegment(rest[5]) } : {}),
+        ...(isIterationTab(tab) ? { tab } : {}),
+      },
     };
   }
 
@@ -209,6 +248,10 @@ function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
     value === "cross-host"
     ? value
     : "runs";
+}
+
+function isIterationTab(value: string | null): value is IterationTab {
+  return ITERATION_TABS.some((tab) => tab === value);
 }
 
 function parseTruthyParam(value: string | null): boolean {

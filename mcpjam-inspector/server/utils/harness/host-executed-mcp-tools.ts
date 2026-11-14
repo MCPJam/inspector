@@ -66,6 +66,7 @@ import {
   type ToolPolicySnapshot,
 } from "@mcpjam/sdk/contract";
 import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
+import { serverToolName } from "../../services/evals/account-routing.js";
 import { logger } from "../logger.js";
 import { harnessServerKeyToName } from "./mcp-config.js";
 import {
@@ -306,7 +307,14 @@ export async function projectSelectedMcpServersAsHostTools(args: {
         });
       }
       if (snapshot) {
-        projected = withToolPolicyGate({ tool: projected, toolName, snapshot });
+        projected = withToolPolicyGate({
+          tool: projected,
+          toolName,
+          // The snapshot is keyed by the server's tool names, and a
+          // multi-account variant holds one under another key.
+          policyName: serverToolName(tool, toolName),
+          snapshot,
+        });
       }
       tools[harnessMcpToolName(key, toolName)] = withServerSource(
         projected,
@@ -496,7 +504,10 @@ function withScopeStepUpObserver(args: {
  */
 function withToolPolicyGate(args: {
   tool: unknown;
+  /** The name the call was made under, reported on the block. */
   toolName: string;
+  /** The server's name for the tool, which the snapshot decides. */
+  policyName: string;
   snapshot: ToolPolicySnapshot;
 }): unknown {
   const tool = args.tool as {
@@ -509,7 +520,7 @@ function withToolPolicyGate(args: {
     execute: async (input: unknown, options: unknown) => {
       const decision = decideToolPolicyFromSnapshot({
         snapshot: args.snapshot,
-        toolName: args.toolName,
+        toolName: args.policyName,
       });
       if (decision.allowed) return originalExecute(input, options);
       const marker: HarnessPolicyBlockMarker = {

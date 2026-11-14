@@ -20,8 +20,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ReadinessLeaseLostError,
+  ReadinessSubmissionUnreadableError,
+  claimReadinessRun,
+  confirmReadinessLease,
   failReadinessRun,
   finalizeReadinessRun,
+  getReadinessRunSubmission,
   heartbeatReadinessRun,
   requestManagedObservations,
 } from "../backend-client.js";
@@ -82,6 +86,81 @@ describe("heartbeatReadinessRun", () => {
     );
     expect(init.headers["x-inspector-service-token"]).toBe("service-token");
     expect(JSON.parse(init.body)).toEqual(LEASE);
+  });
+});
+
+describe("confirmReadinessLease", () => {
+  it.each([
+    ["owned", { ok: true, alive: true }],
+    ["lost", { ok: true, alive: false }],
+  ])("reports %s when the backend answers", async (answer, body) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(body)),
+    );
+    expect(await confirmReadinessLease(LEASE)).toBe(answer);
+  });
+
+  it.each([
+    ["a transport failure", () => Promise.reject(new Error("ECONNRESET"))],
+    ["a 500", async () => new Response("boom", { status: 500 })],
+    [
+      "an unreadable body",
+      async () => new Response("not json", { status: 200 }),
+    ],
+  ])("never reads %s as ownership", async (_label, responder) => {
+    // A caller about to start work on the lease must not start it on a guess.
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    expect(await confirmReadinessLease(LEASE)).toBe("unanswered");
+  });
+});
+
+describe("claimReadinessRun", () => {
+  it("claims with the lease and the service token", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ ok: true, claimed: true }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await claimReadinessRun(LEASE)).toEqual({ status: "claimed" });
+
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/claim",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+    expect(JSON.parse(init.body)).toEqual(LEASE);
+  });
+
+  it.each([
+    [409, "already_claimed"],
+    [409, "lease_lost"],
+    [404, "not_found"],
+  ] as const)("reports a %s %s as a refusal", async (status, error) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error }, status)),
+    );
+    expect(await claimReadinessRun(LEASE)).toEqual({
+      status: "refused",
+      reason: error,
+    });
+  });
+
+  it.each([
+    ["a transport failure", () => Promise.reject(new Error("ECONNRESET"))],
+    ["a 500", async () => new Response("boom", { status: 500 })],
+    // A backend without the route answers its router's own 404.
+    [
+      "a 404 with no refusal",
+      async () => new Response("No matching routes found", { status: 404 }),
+    ],
+    [
+      "a refusal it does not know",
+      async () => jsonResponse({ ok: false, error: "unauthorized" }, 401),
+    ],
+  ])("reports %s as unanswered, which is not a refusal", async (_label, responder) => {
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    expect((await claimReadinessRun(LEASE)).status).toBe("unanswered");
   });
 });
 
@@ -295,5 +374,54 @@ describe("failReadinessRun", () => {
     expect(await failReadinessRun(LEASE, "runner_error")).toEqual({
       applied: false,
     });
+  });
+});
+
+describe("getReadinessRunSubmission", () => {
+  const FROZEN = {
+    submissionId: "sub_1",
+    submissionRevision: 3,
+    flowId: "claude-connector",
+    flowVersion: "2026-11-13",
+    answers: [{ key: "listing.name", value: "Acme", origin: "set", revision: 3 }],
+  };
+
+  it("reads the frozen answers behind the lease, and keeps only their fields", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, ...FROZEN }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await getReadinessRunSubmission(LEASE)).toEqual(FROZEN);
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/submission?runId=run_1&jobId=job_1",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+  });
+
+  it("throws a lost lease on 409, so the worker stops without writing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error: "lease_lost" }, 409)),
+    );
+    await expect(getReadinessRunSubmission(LEASE)).rejects.toBeInstanceOf(
+      ReadinessLeaseLostError,
+    );
+  });
+
+  it.each([
+    ["a 404", () => jsonResponse({ ok: false, error: "no_submission" }, 404), /were not found/],
+    ["a 500", () => jsonResponse({ ok: false, error: "boom" }, 500), /HTTP 500/],
+    ["a body that is not JSON", () => new Response("oops", { status: 200 }), /could not be read/],
+    [
+      "an answer with no key",
+      () => jsonResponse({ ok: true, ...FROZEN, answers: [{ value: "x", origin: "set" }] }),
+      /could not be read/,
+    ],
+    ["an unreachable backend", () => Promise.reject(new Error("ECONNRESET")), /could not be read/],
+  ])("refuses %s with a reason the run can carry", async (_label, responder, reason) => {
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    const failure = getReadinessRunSubmission(LEASE);
+    await expect(failure).rejects.toBeInstanceOf(ReadinessSubmissionUnreadableError);
+    await expect(failure).rejects.toThrow(reason);
   });
 });

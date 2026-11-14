@@ -77,7 +77,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
   createE2BHarnessSandboxProvider: vi.fn(() => ({ sandboxId: "sandbox-1" })),
 }));
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));

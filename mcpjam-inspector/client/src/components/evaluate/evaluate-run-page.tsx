@@ -17,6 +17,7 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
+import { RunServerGroups } from "./run-server-groups";
 import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
@@ -43,8 +44,11 @@ import type {
   EvalSuiteRunListItem,
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
+import { trackRunViewed } from "./run-result-pages/run-view-events";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
+import { RunAccountFacts } from "./run-account-facts";
+import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   Tooltip,
@@ -145,6 +149,9 @@ export function EvaluateRunPage({
   useEffect(() => {
     setReviewing(false);
   }, [run._id]);
+  useEffect(() => {
+    trackRunViewed({ suiteId: run.suiteId, runId: run._id }, "grid");
+  }, [run.suiteId, run._id]);
   const targets = launchRuns<EvalSuiteRunListItem>(
     run,
     relatedRuns ?? otherRuns,
@@ -160,6 +167,7 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
+  const accountsEnabled = useEvalAccountSelectionEnabled();
 
   return (
     <HeaderActionsContext.Provider value={setHeaderActions}>
@@ -194,6 +202,11 @@ export function EvaluateRunPage({
                   {scope}
                 </p>
               ) : null}
+              <RunServerGroups
+                targets={targets}
+                hostNamesById={hostNamesById}
+              />
+              {accountsEnabled ? <RunAccountFacts runs={targets} /> : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (

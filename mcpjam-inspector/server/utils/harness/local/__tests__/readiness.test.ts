@@ -9,7 +9,7 @@ vi.mock("convex/browser", () => ({ ConvexHttpClient: class { setAuth() {} query 
 vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, LOCAL_HARNESS_ENABLED: true }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: mocks.authorization, authorizeLocalHarness: vi.fn() }));
-vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout, LOCAL_HARNESS_ROLLOUT_FLAG: { "claude-code": "local-harness-enabled", codex: "local-codex-enabled" } }));
+vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout }));
 vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.status, installRuntimePack: mocks.install, startRuntimeInstall: vi.fn(), startBackgroundRuntimeUpdate: mocks.background, MANUAL_UPDATES_MESSAGE: "managed by your administrator", manifestWithExpectedBundleDigest: (value: unknown) => value }));
 vi.mock("../runtime-update-policy.js", () => ({ readLocalRuntimeUpdatePolicy: async () => ({ policy: mocks.policy(), source: null }) }));
 vi.mock("../runtime-identity.js", () => ({ resolveManagedBundle: async () => ({ ok: true, runtime: { runtimeId: "verified-runtime", adapterVersion: "1", digest: "sha256:verified" } }) }));

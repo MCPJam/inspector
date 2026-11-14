@@ -1,4 +1,9 @@
-export const WARM_BRIDGE_WINDOW_MS = 15 * 60_000;
+/**
+ * The environment variable a warm bridge reads its idle window from. Set at
+ * spawn from the box's `idleMs`, never written into the bridge's source, so
+ * changing the window never changes the baked agent install.
+ */
+export const WARM_BRIDGE_WINDOW_ENV = "MCPJAM_WARM_WINDOW_MS";
 
 /** Linux field 22 follows a comm field that can itself contain spaces or ')'. */
 export function processBirthIdentity(stat: string): string | undefined {

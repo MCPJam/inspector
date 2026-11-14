@@ -60,6 +60,9 @@ export type HarnessMcpPlanFacts = {
   evalIterationId?: string;
   journeyRunId?: string;
   localExecution: boolean;
+  /** The client tests the runtime's own MCP client: a turn with servers that
+   *  cannot pass through is refused instead of taking another route. */
+  requiredForwarding?: "pass-through";
   /** The capability check, run once and only for a forwarding candidate. */
   admit: () => HarnessForwardingAdmission;
 };
@@ -74,6 +77,9 @@ export type HarnessMcpPlan = {
   candidate: boolean;
   gaps: string[];
   reasons: HarnessMcpPlanReason[];
+  /** A forward-only turn with servers that cannot pass through. The runner
+   *  stops before minting any credential or starting the runtime. */
+  refused?: true;
 };
 
 /** Hosted chat turns only: scenarios, evals, journeys and local runs never forward. */
@@ -131,6 +137,10 @@ export function resolveHarnessMcpPlan(
       : delivery === "bridge"
         ? "profiled"
         : undefined;
+  const refused =
+    facts.requiredForwarding === "pass-through" &&
+    facts.selectedServerCount > 0 &&
+    forwardingKind !== "pass-through";
   return {
     upstream: forwardingKind === "pass-through" ? "harness" : "mcpjam",
     delivery:
@@ -142,7 +152,37 @@ export function resolveHarnessMcpPlan(
     candidate,
     gaps: admission.gaps,
     reasons,
+    ...(refused ? { refused: true as const } : {}),
   };
+}
+
+const REFUSAL_NEXT_STEP: Partial<Record<HarnessMcpPlanReason, string>> = {
+  "plane is not web-authorized":
+    "Open this client in the signed-in hosted Playground.",
+  "scenario turn":
+    "Use this client with MCP servers in the signed-in hosted Playground.",
+  "eval iteration":
+    "Use this client with MCP servers in the signed-in hosted Playground.",
+  "journey run":
+    "Use this client with MCP servers in the signed-in hosted Playground.",
+  "local execution target":
+    "Open this client in the signed-in hosted Playground.",
+  "no host id": "Open this client in the signed-in hosted Playground.",
+  "account routing": "Choose one account for each server, then try again.",
+};
+
+/** Why a forward-only turn was refused, with the step that unblocks it. */
+export function requiredForwardingRefusal(
+  plan: Pick<HarnessMcpPlan, "reasons" | "gaps">,
+  runtimeName: string,
+): string {
+  const reason = plan.reasons[0];
+  const next =
+    reason === "forwarding not admitted; configured route retained"
+      ? `Change these server settings or choose another client: ${plan.gaps.join(", ")}.`
+      : ((reason && REFUSAL_NEXT_STEP[reason]) ??
+        "Ask an admin to turn on native forwarding for your organization, or choose another client.");
+  return `${runtimeName} calls MCP servers only through its own client, and this turn cannot forward them. ${next}`;
 }
 
 /** The label the discovery evidence table records routes under. */

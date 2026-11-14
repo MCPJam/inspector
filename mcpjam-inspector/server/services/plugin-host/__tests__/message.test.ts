@@ -11,10 +11,15 @@ const calls = vi.hoisted(() => ({
 }));
 vi.mock("../model-apps.js", () => ({
   modelApps: {
-    has: calls.modelHas,
     get: calls.modelGet,
+    restore: async () => calls.modelGet(),
     prepareMessage: calls.modelPrepare,
   },
+  // The durable control decides the registry; here, `modelHas` stands in.
+  readOwnedApp: async (...args: unknown[]) =>
+    calls.modelHas()
+      ? { kind: "model", app: calls.modelGet() }
+      : { kind: "instance", instance: await calls.get(...args) },
 }));
 vi.mock("../instances.js", () => ({
   pluginInstances: { getPersistent: calls.get, prepareMessage: calls.prepare },
@@ -192,13 +197,22 @@ it("admits an original model App message without minting a generic instance", as
   });
   // Use the same exact saved identity as the ordinary message fixture.
   const ordinary = await calls.get();
-  calls.modelGet.mockReturnValue({
+  const app = {
     owner: { hostId: ordinary.hostId, owner: ordinary.owner },
     toolName: ordinary.activation.toolName,
     revision: ordinary.activation.revision,
-  });
+  };
+  calls.modelGet.mockReturnValue(app);
   calls.get.mockClear();
   expect(await preparePluginMessageTurn(input)).toEqual(input.messages);
   expect(calls.get).not.toHaveBeenCalled();
-  expect(calls.modelPrepare).toHaveBeenCalledOnce();
+  expect(calls.prepare).not.toHaveBeenCalled();
+  // The binding goes to the App's durable receipts, not this process.
+  expect(calls.modelPrepare).toHaveBeenCalledWith(
+    app,
+    expect.objectContaining({ actorId: "actor", subject: "subject" }),
+    input.intent && (input.intent as { operationId: string }).operationId,
+    expect.stringMatching(/^[0-9a-f]{64}$/),
+    expect.any(AbortSignal),
+  );
 });

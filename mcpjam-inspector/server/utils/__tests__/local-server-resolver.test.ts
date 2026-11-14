@@ -1793,3 +1793,19 @@ it("keeps synthesized local defaults additive rather than pinning an exact set",
   const exact = { elicitation: { form: {} } };
   expect(toMCPServerConfig(httpHeaderOnlyAuth, { clientCapabilities: exact }).clientCapabilities).toMatchObject(exact);
 });
+
+it("follows the client's own Skills over MCP declaration when it passes capabilities", () => {
+  const skillsPath = ["extensions", "io.modelcontextprotocol/skills"];
+  const off = toMCPServerConfig(httpHeaderOnlyAuth, {
+    clientCapabilities: { elicitation: { form: {} } },
+  });
+  expect(off.clientCapabilities).not.toHaveProperty(skillsPath);
+  expect(off.capabilities).not.toHaveProperty(skillsPath);
+
+  const on = toMCPServerConfig(httpHeaderOnlyAuth, {
+    clientCapabilities: {
+      extensions: { "io.modelcontextprotocol/skills": {} },
+    },
+  });
+  expect(on.clientCapabilities).toHaveProperty(skillsPath);
+});

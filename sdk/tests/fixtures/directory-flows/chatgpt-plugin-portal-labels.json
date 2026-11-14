@@ -1,0 +1,211 @@
+{
+  "flowId": "chatgpt-plugin",
+  "capturedAt": "2026-11-13",
+  "checkedAgainstScreenshots": false,
+  "note": "The ChatGPT plugin portal's screens as text: OpenAI's submission docs and their screenshots, read on 2026-11-13, and captures of the live portal from 2026-10-29 for the Findings panel, the Review information drawer's five steps and the Submit for review dialog. Where the two disagree (the docs number Reviewer credentials as the drawer's first step; the live portal puts Countries and translations first), the live portal wins. Display name, Short description and Starter prompts are the names the portal's own error messages use; Domain verification token is MCPJam's field. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures.",
+  "title": "Upload new or existing plugin",
+  "steps": [
+    {
+      "id": "upload",
+      "title": "Upload your plugin ZIP",
+      "intro": "Compress your plugin folder into a .zip file before uploading"
+    },
+    {
+      "id": "listing",
+      "title": "Metadata & Skills",
+      "intro": "Package details are read-only here; edit them in your source package."
+    },
+    {
+      "id": "mcp",
+      "title": "MCPs",
+      "intro": "Your package can declare multiple MCP servers, but only one MCP server can be connected per plugin."
+    },
+    {
+      "id": "reviewer",
+      "title": "Review information",
+      "intro": "Read-only fields are managed by your plugin ZIP. To change read-only information, update your plugin ZIP and upload it again."
+    },
+    {
+      "id": "submit",
+      "title": "Submit for review",
+      "intro": "Complete the required policy attestations."
+    },
+    {
+      "id": "publish",
+      "title": "Publish your approved plugin",
+      "intro": "Open the approved package version and select Publish plugin."
+    }
+  ],
+  "reviewInformationSteps": [
+    "Countries and translations",
+    "Reviewer credentials",
+    "Test cases",
+    "Negative test cases",
+    "Supporting content"
+  ],
+  "fields": {
+    "listing.displayName": {
+      "label": "Display name",
+      "errors": {
+        "required": "Display name is required, non-empty, and single-line.",
+        "tooLong": "Display name must be 30 characters or fewer."
+      }
+    },
+    "listing.shortDescription": {
+      "label": "Short description",
+      "errors": {
+        "required": "Short description is required, non-empty, and single-line.",
+        "tooLong": "Short description must be 30 characters or fewer."
+      }
+    },
+    "listing.description": {
+      "label": "About",
+      "errors": {
+        "required": "Long description is required and must be non-empty. Line breaks are allowed.",
+        "tooLong": "Long description must be 4,000 characters or fewer."
+      }
+    },
+    "listing.developer": {
+      "label": "Developer",
+      "errors": {
+        "required": "Developer name is required.",
+        "tooLong": "Developer name must be 80 characters or fewer."
+      }
+    },
+    "listing.name": {
+      "label": "Package name"
+    },
+    "listing.category": {
+      "label": "Category",
+      "options": [
+        [
+          "Productivity"
+        ],
+        [
+          "Creativity"
+        ],
+        [
+          "Developer Tools"
+        ],
+        [
+          "Business & Operations"
+        ],
+        [
+          "Data & Analytics"
+        ],
+        [
+          "Communication"
+        ],
+        [
+          "Education & Research"
+        ],
+        [
+          "Security"
+        ],
+        [
+          "Finance"
+        ],
+        [
+          "Healthcare"
+        ],
+        [
+          "Travel"
+        ],
+        [
+          "Entertainment"
+        ],
+        [
+          "Other"
+        ]
+      ]
+    },
+    "listing.capabilities": {
+      "label": "Capabilities"
+    },
+    "listing.website": {
+      "label": "Website",
+      "errors": {
+        "required": "Website URL is required."
+      }
+    },
+    "listing.support": {
+      "label": "Support"
+    },
+    "listing.privacyPolicy": {
+      "label": "Privacy policy"
+    },
+    "listing.terms": {
+      "label": "Terms of service"
+    },
+    "listing.starterPrompts": {
+      "label": "Starter prompts"
+    },
+    "mcp.serverUrl": {
+      "label": "MCP Server URL"
+    },
+    "mcp.verificationToken": {
+      "label": "Domain verification token",
+      "helper": "The portal issues this token in its MCP step."
+    },
+    "reviewer.loginUrl": {
+      "label": "Login URL"
+    },
+    "reviewer.tenant": {
+      "label": "Tenant",
+      "placeholder": "Choose an organization"
+    },
+    "reviewer.username": {
+      "label": "Username"
+    },
+    "reviewer.passwordSecret": {
+      "label": "Password",
+      "placeholder": "Demo account password"
+    },
+    "reviewer.signInSteps": {
+      "label": "Sign-in steps",
+      "placeholder": "Steps for this account"
+    },
+    "reviewer.testCases": {
+      "label": "Test cases"
+    },
+    "reviewer.negativeTestCases": {
+      "label": "Negative test cases"
+    },
+    "reviewer.demoRecordingUrl": {
+      "label": "Video walkthrough URL"
+    },
+    "reviewer.releaseNotes": {
+      "label": "Release notes"
+    },
+    "submit.developerIdentity": {
+      "label": "Developer identity"
+    },
+    "submit.attestations": {
+      "label": "Policy attestations",
+      "options": [
+        [
+          "I have reviewed and agree to OpenAI's Terms and Plugin Guidelines. I confirm that my plugin is in compliance with those Terms and Guidelines."
+        ],
+        [
+          "I confirm that my plugin complies with all laws and regulations applicable to the industry it operates in. I understand that I am responsible for that compliance."
+        ],
+        [
+          "I confirm that my plugin does not initiate or execute money transfers, crypto transfers, or investment trades on behalf of users."
+        ],
+        [
+          "I confirm that I have all necessary rights to any third-party content or API endpoints accessed, displayed, or used by my plugin."
+        ],
+        [
+          "I confirm that my plugin is suitable for individuals under 18 and does not include mature or adult content."
+        ],
+        [
+          "I confirm that my plugin does not target children under 13 or share their personal information with OpenAI."
+        ]
+      ]
+    },
+    "submit.additionalContext": {
+      "label": "Additional Submission Context",
+      "helper": "Add any additional information that might be useful for the review team, including justification for any findings. This optional note is private to the review."
+    }
+  }
+}

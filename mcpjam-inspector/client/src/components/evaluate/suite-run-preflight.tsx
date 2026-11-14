@@ -28,6 +28,7 @@ import {
   type PreflightSelection,
 } from "./suite-run-preflight-org-keys";
 import { useOrgHarnessKeys } from "./use-org-harness-keys";
+import { AccountPreflightNotices, useSuiteAccountPreflight, type AccountPreflight } from "./suite-run-account-preflight";
 import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
@@ -70,7 +71,7 @@ export type RunPreflight = {
    * Absent when there are none.
    */
   orgKeyProblems?: string[];
-};
+} & AccountPreflight;
 
 export type RunPreflightState = RunPreflight & {
   /** Every model the launch runs is out of MCPJam credits: why it cannot start. */
@@ -457,6 +458,7 @@ export function useSuiteRunPreflight({
   });
   const orgConfig = useHostedOrgModelConfig({ projectId, organizationId });
   const harnessKeys = useOrgHarnessKeys(projectId, orgConfig, hosts);
+  const accounts = useSuiteAccountPreflight({ suite, projectServers, planned });
   const manageModels = useOrgModelsHandoff(organizationId);
   const environment = useEnvironmentResolutions(
     projectId,
@@ -513,6 +515,7 @@ export function useSuiteRunPreflight({
     }).models;
   return {
     ...preflight,
+    ...accounts,
     outOfCreditsReason: creditsReasonFor(targets.models),
     // Planned cells are already what launches; otherwise the sheet picks
     // environments, and only theirs count.
@@ -628,7 +631,7 @@ export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(
     preflight?.removed.length ||
     preflight?.refused.length ||
-    preflight?.orgKeyProblems?.length,
+    preflight?.orgKeyProblems?.length || preflight?.accountProblems?.length,
   );
 }
 
@@ -664,7 +667,7 @@ export function RunPreflightNotices({
     !removed.length &&
     !refused.length &&
     !disabledProviders.length &&
-    !orgKeyProblems.length
+    !orgKeyProblems.length && !preflight.accountProblems?.length
   )
     return null;
   const openServers = (
@@ -698,6 +701,7 @@ export function RunPreflightNotices({
       aria-label="Before you run"
       className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
     >
+      <AccountPreflightNotices {...{ preflight, disabled, onEditSettings }} />
       {orgKeyProblems.length > 0 && (
         <div className="space-y-1" data-testid="preflight-org-key-problems">
           {orgKeyProblems.map((message) => (

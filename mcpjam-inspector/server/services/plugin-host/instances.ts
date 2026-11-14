@@ -354,6 +354,8 @@ export class PluginInstanceRegistry {
           ),
           expiresAt: control.expiresAt,
           ...(control.instance.contextEnabled ? { contextToken: token } : {}),
+          // Any replica that restores a Settings App reads its document here.
+          ...(activation.selector.kind === "settings" ? { settings: true } : {}),
         },
         signal,
       );
@@ -391,6 +393,26 @@ export class PluginInstanceRegistry {
     const saved = await port.read(token, signal, known);
     signal.throwIfAborted();
     return this.restoreRead(token, identity, saved, known, port, signal);
+  }
+
+  /** Whether this process holds `token`'s control or its close. */
+  holds(token: string) {
+    return this.records.has(token) || this.closed.has(token);
+  }
+
+  /** `getPersistent` for a control the caller already read with `port`. */
+  async getPersistentFrom(
+    token: string,
+    identity: PluginInstanceIdentity,
+    saved: DurablePluginInstanceControl | null,
+    signal: AbortSignal,
+    port: PluginInstanceControlPort,
+  ) {
+    signal.throwIfAborted();
+    if (this.closed.has(token))
+      throw new PluginInvocationError("INSTANCE_UNAVAILABLE");
+    this.sweep();
+    return this.restoreRead(token, identity, saved, undefined, port, signal);
   }
 
   /** `restore` a reply that left out the context at `known`. If this

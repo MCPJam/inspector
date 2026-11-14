@@ -87,15 +87,8 @@ vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
     },
   }),
 }));
-vi.mock("../../../utils/computers/cloud-skill-tools.js", () => ({
-  listCloudRuntimeSkills: async () => [],
-}));
 vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
-}));
-vi.mock("../../../services/environments/effective-capabilities.js", () => ({
-  resolveEffectiveCapabilities: () => undefined,
-  buildLiveEffectiveCapabilities: () => undefined,
 }));
 vi.mock("../../../utils/analytics.js", () => ({
   captureServerEvent: () => {},

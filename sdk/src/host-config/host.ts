@@ -294,7 +294,12 @@ export class Host {
   requireToolApproval: boolean;
   requireNativeToolDiscovery?: boolean;
 
-  /** Opt into progressive MCP tool discovery (search/load meta-tools). */
+  /**
+   * Progressive MCP tool discovery (the search/load meta-tools). `true` on,
+   * `false` off. `HostRunner` reads unset as off; a saved client or host
+   * template means Auto by it, which `runWithClient` and `mcpjam test --host`
+   * apply: on once the tools reach 30 or about 10k tokens of definitions.
+   */
   progressiveToolDiscovery?: boolean;
 
   /**

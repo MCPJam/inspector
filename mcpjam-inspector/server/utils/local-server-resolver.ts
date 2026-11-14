@@ -745,17 +745,20 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
-  // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
-  // client, and it ships the fulfiller: the verified read path in
-  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
-  // advertise = enforce is satisfied unconditionally here, and the declaration
-  // is not gated on the `skills-enabled` product flag — that flag controls UI
-  // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
-  // make the wire depend on a hidden switch (and would be unreadable from the
-  // server anyway). Hosted connections get the declaration from the host's
-  // stored `clientCapabilities` instead, which is why only the MCPJam persona
-  // advertises there.
-  const skillsMerged = withSkillsExtensionCapability(xaaMerged);
+  // Skills over MCP (SEP-2640). A host's capabilities are an exact set that
+  // already says whether this client declares the extension (its "Skills over
+  // MCP" switch), so nothing is added to them here: an emulated client that
+  // does not declare it must not advertise it, the same as on a hosted
+  // connection.
+  // With no host capabilities at all this connection is MCPJam's own client,
+  // which ships the fulfiller (the verified read path in `server-skills.ts`
+  // plus the agent's skill tools that load through it), so it declares the
+  // extension. Neither case reads the `skills-enabled` product flag: that flag
+  // controls UI rollout, and a protocol declaration must not depend on a
+  // hidden switch.
+  const skillsMerged = baseClientCapabilities
+    ? xaaMerged
+    : withSkillsExtensionCapability(xaaMerged);
   // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
   // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
   // bridge) is form-only. So `elicitation.url` — which the host toggle writes —

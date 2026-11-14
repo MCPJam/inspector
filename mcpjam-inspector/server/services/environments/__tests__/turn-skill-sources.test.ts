@@ -1,0 +1,289 @@
+import { describe, expect, it } from "vitest";
+import { resolveTurnSkills, type TurnSkills } from "../turn-skills";
+import type { ResolvedEnvironmentRuntime } from "../runtime";
+import type { RuntimeLocalSkill } from "../effective-capabilities";
+import {
+  agentReceives,
+  evalEnvironment,
+  personalSkill,
+} from "../../../test/support/skill-delivery";
+
+const AGENT = { kind: "agent" } as const;
+const harness = (harnessId: string) =>
+  ({ kind: "harness", harnessId }) as const;
+
+const refs = (skills: TurnSkills) => skills.delivered.map((ref) => ref.ref);
+const names = (skills: TurnSkills) => skills.delivered.map((ref) => ref.name);
+const reasons = (skills: TurnSkills) =>
+  skills.excluded.map(({ ref, reason }) => [ref.ref, reason]);
+
+/** A skill on the machine the local app runs on. */
+function machineSkill(name: string): RuntimeLocalSkill {
+  return {
+    skillId: `local:${name}`,
+    ref: `local/${name}`,
+    name,
+    description: `The ${name} skill.`,
+    content: `# ${name}`,
+    aggregateHash: `agg-${name}`,
+    files: [],
+    directory: `/machine/${name}`,
+  };
+}
+
+/** An environment whose only skill is `docs`. */
+function docsEnvironment(): ResolvedEnvironmentRuntime {
+  const { spec } = evalEnvironment();
+  return {
+    ...spec,
+    skills: [
+      {
+        skillId: "sk_docs",
+        name: "docs",
+        description: "Read the docs.",
+        content: "# Docs",
+        aggregateHash: "agg-docs",
+        channels: ["environment"],
+      },
+    ],
+    serverSkills: [],
+    pluginVersions: [],
+  };
+}
+
+describe("resolveTurnSkills for an environment", () => {
+  it("reports a skill the turn's plugin narrowing switched off, on every engine", () => {
+    const { spec, attribution } = evalEnvironment();
+    const summarize = spec.skills!.find((skill) => skill.name === "summarize")!;
+    for (const runtime of [AGENT, harness("claude-code"), harness("cursor")]) {
+      const skills = resolveTurnSkills({
+        source: {
+          kind: "environment",
+          spec: {
+            ...spec,
+            skills: spec.skills!.filter((s) => s !== summarize),
+          },
+          attribution,
+          pluginDisabled: [summarize],
+        },
+        runtime,
+      });
+      expect(skills.excluded[0]).toMatchObject({
+        ref: { ref: "acme/summarize" },
+        reason: "plugin-disabled",
+      });
+      expect(skills.delivered.map((ref) => ref.skillId)).not.toContain(
+        summarize.skillId,
+      );
+    }
+  });
+
+  it("hands this machine's skills to MCPJam's agent alone on a client's turn", async () => {
+    const source = {
+      kind: "environment",
+      spec: docsEnvironment(),
+      attribution: null,
+      liveExtras: { localSkills: [machineSkill("review")] },
+    } as const;
+    const agent = resolveTurnSkills({ source, runtime: AGENT });
+    expect(refs(agent)).toEqual(["docs", "local/review"]);
+    expect((await agentReceives(agent)).listed.sort()).toEqual([
+      "docs",
+      "local/review",
+    ]);
+    // A harness running on this machine reads its skill folders itself.
+    const box = resolveTurnSkills({ source, runtime: harness("claude-code") });
+    expect(names(box)).toEqual(["docs"]);
+    expect(box.excluded).toEqual([]);
+  });
+
+  it("keeps the environment's skill when a local skill wants its ref", () => {
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: docsEnvironment(),
+        attribution: null,
+        liveExtras: { localSkills: [{ ...machineSkill("docs"), ref: "docs" }] },
+      },
+      runtime: AGENT,
+    });
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_docs"]);
+    expect(reasons(skills)).toEqual([["docs", "name-collision"]]);
+  });
+
+  it("names a skill a harness's adapter refuses", () => {
+    const spec = docsEnvironment();
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            { ...spec.skills![0]!, skillId: "sk_bad", name: "Deploy_Tool" },
+          ],
+        },
+        attribution: null,
+      },
+      runtime: harness("codex"),
+    });
+    expect(names(skills)).toEqual(["docs"]);
+    expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
+  });
+
+  it("gives a name's box folder to its first copy", () => {
+    const { spec, attribution } = evalEnvironment();
+    const server = spec.serverSkills![0]!;
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            {
+              ...docsEnvironment().skills![0]!,
+              skillId: "sk_own_search",
+              name: server.name,
+            },
+          ],
+        },
+        attribution,
+        frozen: true,
+      },
+      runtime: harness("claude-code"),
+    });
+    // A run writes a captured server skill under its plain name, which the
+    // environment's own skill before it already holds.
+    expect(skills.delivered.map((ref) => ref.skillId)).toContain(
+      "sk_own_search",
+    );
+    expect(reasons(skills)).toEqual([[server.ref, "name-collision"]]);
+  });
+
+  it("leaves out a skill the backend left out of the environment, on every engine", () => {
+    const spec = {
+      ...docsEnvironment(),
+      skillScopeExclusions: [
+        {
+          skillId: "sk_extra",
+          name: "extra",
+          description: "",
+          reason: "over-cap",
+        },
+        {
+          skillId: "sk_twin",
+          name: "docs",
+          description: "",
+          reason: "name-collision",
+        },
+        // A reason this Inspector doesn't know is skipped, not mislabeled.
+        {
+          skillId: "sk_later",
+          name: "later",
+          description: "",
+          reason: "newer",
+        },
+      ],
+    };
+    for (const runtime of [AGENT, harness("claude-code"), harness("cursor")]) {
+      const skills = resolveTurnSkills({
+        source: { kind: "environment", spec, attribution: null },
+        runtime,
+      });
+      expect(reasons(skills).slice(0, 2)).toEqual([
+        ["extra", "over-cap"],
+        ["docs", "name-collision"],
+      ]);
+      expect(skills.excluded.map(({ ref }) => ref.skillId)).not.toContain(
+        "sk_later",
+      );
+    }
+  });
+
+  it("keeps a skill the turn takes another way, though a scope left it out", () => {
+    // Beside its environment, a client's turn takes only this machine's skills.
+    const mine = { ...machineSkill("mine"), skillId: "sk_mine" };
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...docsEnvironment(),
+          skillScopeExclusions: [
+            {
+              skillId: "sk_mine",
+              name: mine.name,
+              description: "",
+              reason: "over-cap",
+            },
+          ],
+        },
+        attribution: null,
+        liveExtras: { localSkills: [mine] },
+      },
+      runtime: AGENT,
+    });
+    expect(skills.delivered.map((ref) => ref.skillId)).toContain("sk_mine");
+    expect(skills.excluded).toEqual([]);
+  });
+
+  it("takes nothing live into an eval run's plan", async () => {
+    const { spec, attribution } = evalEnvironment();
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec,
+        attribution,
+        frozen: true,
+        liveExtras: { localSkills: [machineSkill("review")] },
+      },
+      runtime: AGENT,
+    });
+    expect(skills.agent).toEqual({ kind: "frozen" });
+    expect(refs(skills)).toEqual([
+      "release-notes",
+      "acme/summarize",
+      "docs/search",
+    ]);
+    expect(skills.excluded).toEqual([]);
+    expect((await agentReceives(skills)).listed.sort()).toEqual([
+      "acme/summarize",
+      "docs/search",
+      "release-notes",
+    ]);
+  });
+
+  it("tells a named environment's turn from a client's", () => {
+    const { spec, attribution } = evalEnvironment();
+    const named = resolveTurnSkills({
+      source: { kind: "environment", spec, attribution },
+      runtime: AGENT,
+    });
+    const client = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec,
+        attribution,
+        liveExtras: {},
+      },
+      runtime: AGENT,
+    });
+    // A client's servers are connected now, so their own skills join when its
+    // prompt is built; a named environment's were captured with it.
+    expect(named.agent).toEqual({ kind: "environment" });
+    expect(client.agent).toEqual({ kind: "live" });
+  });
+});
+
+describe("resolveTurnSkills for a client with no environment", () => {
+  it("plans the client's own skills alone, on either engine", async () => {
+    const source = { kind: "live", projectSkills: [personalSkill()] } as const;
+    const agent = resolveTurnSkills({ source, runtime: AGENT });
+    expect(agent.agent).toEqual({ kind: "live" });
+    expect(refs(agent)).toEqual(["my-notes"]);
+    expect((await agentReceives(agent)).listed).toEqual(["my-notes"]);
+    const box = resolveTurnSkills({ source, runtime: harness("claude-code") });
+    expect(names(box)).toEqual(["my-notes"]);
+    expect(box.serverSkillsVia).toBe("none");
+  });
+});

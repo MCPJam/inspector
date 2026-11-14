@@ -42,6 +42,7 @@ import {
   disabledPluginFeatures,
 } from "@mcpjam/sdk/internal/plugin-host";
 import {
+  resolvePluginExtensionBehavior,
   resolvePluginExtensions,
   type PluginExtensionCapabilities,
   type ResolvedPluginExtensions,
@@ -888,6 +889,8 @@ export function createPluginRequestRuntime(
       messageEnabled:
         pluginMessageEnabled(config) && extensions.capabilities.messages,
       extensions,
+      /** How the client's entry points are listed and opened. */
+      behavior: resolvePluginExtensionBehavior(config),
       runtime:
         pluginRuntimeProfile(config),
       transport:

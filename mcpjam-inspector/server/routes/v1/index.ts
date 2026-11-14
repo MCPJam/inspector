@@ -54,6 +54,7 @@ import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
+import serverAccounts from "./server-accounts.js";
 import catalog from "./catalog.js";
 import chatSessions from "./chat-sessions.js";
 import widgets from "./widgets.js";
@@ -70,6 +71,7 @@ import hostCatalog from "./host-catalog.js";
 import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
+import directorySubmissions from "./directory-submissions.js";
 import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
@@ -181,6 +183,10 @@ v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
+// Directory submissions and the directory flows they rehearse. Guest-DENIED
+// by default (no GUEST_ALLOWED_V1_RULES entry): writes need a project member,
+// and a run started here dials the submission's server.
+v1.route("/", directorySubmissions);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
@@ -283,6 +289,10 @@ v1.route("/", agent);
 // GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
+// SERVER ACCOUNTS — the accounts a saved server signs in with. Tokens are
+// WRITE-ONLY: nothing here returns one. Guest-DENIED: `guest-allowed-paths.ts`
+// is default-deny and there is deliberately NO entry for `/accounts`.
+v1.route("/", serverAccounts);
 // Agent Playground — the conversational turn plus the trace/detail reads.
 // MOUNTED BEFORE `catalog`, and the order is load-bearing rather than
 // stylistic: `catalog` owns the `GET /chat-sessions` LISTING, and these are
