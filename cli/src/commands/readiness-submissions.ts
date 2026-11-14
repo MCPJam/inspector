@@ -61,11 +61,20 @@ type SetOptions = Options & {
   answer: string[];
   unset: string[];
   confirm: string[];
+  plugin?: string;
+  pluginVersion?: string;
+  clearPlugin?: boolean;
+  attempt?: number;
+  clearAttempt?: boolean;
   expectedRevision?: number;
   retryOnConflict?: boolean;
 };
 
-type RunOptions = Options & { wait?: boolean; aiObservations?: boolean };
+type RunOptions = Options & {
+  wait?: boolean;
+  aiObservations?: boolean;
+  pluginVersion?: string;
+};
 
 type GateOptions = Options & { failOn: string[]; warnOnly: string[]; clear?: boolean };
 
@@ -92,6 +101,27 @@ function jsonOrText(text: string): unknown {
   }
 }
 
+/** `--plugin`, `--plugin-version` and `--attempt`, or their `--clear-*`, as the operation takes them. */
+function subjectOf(
+  options: SetOptions,
+): Pick<UpdateDirectorySubmissionInput, "plugin" | "attempt"> {
+  const { plugin: pluginId, pluginVersion: pluginVersionId, attempt } = options;
+  const named = pluginId !== undefined || pluginVersionId !== undefined;
+  if (options.clearPlugin && named) {
+    throw usageError(
+      "Pass --clear-plugin, or --plugin and --plugin-version, not both.",
+    );
+  }
+  if (options.clearAttempt && attempt !== undefined) {
+    throw usageError("Pass --attempt or --clear-attempt, not both.");
+  }
+  const plugin = named ? { pluginId, pluginVersionId } : undefined;
+  return {
+    plugin: options.clearPlugin ? null : plugin,
+    attempt: options.clearAttempt ? null : attempt,
+  };
+}
+
 /**
  * `--answer key=value`, `--unset key` and `--confirm key`, checked with the
  * operation's own schema so a value of the wrong kind is a usage error that
@@ -109,14 +139,21 @@ function parseSetInput(options: SetOptions, submission: string): UpdateDirectory
     add(pair.slice(0, split).trim(), jsonOrText(pair.slice(split + 1)));
   }
   for (const key of options.unset) add(key.trim(), null);
-  if (answers.size === 0 && options.confirm.length === 0 && options.title === undefined) {
-    throw usageError("Nothing to save. Pass --answer, --unset, --confirm or --title.");
+  const subject = subjectOf(options);
+  const unchanged = [options.title, subject.plugin, subject.attempt].every(
+    (value) => value === undefined,
+  );
+  if (answers.size === 0 && options.confirm.length === 0 && unchanged) {
+    throw usageError(
+      "Nothing to save. Pass --answer, --unset, --confirm, --title, --plugin-version or --attempt.",
+    );
   }
   const parsed = updateDirectorySubmissionOperation.inputSchema.safeParse({
     ...scoped(options, submission),
     ...(answers.size > 0 ? { answers: Object.fromEntries(answers) } : {}),
     ...(options.confirm.length > 0 ? { confirm: options.confirm } : {}),
     title: options.title,
+    ...subject,
     expectedRevision: options.expectedRevision,
     idempotencyKey: options.idempotencyKey,
   });
@@ -195,6 +232,7 @@ async function runSubmission(submission: string, command: Command): Promise<void
     ...scoped(options, submission),
     includeLlmObservations: options.aiObservations ? true : undefined,
     idempotencyKey: options.idempotencyKey,
+    pluginVersionId: options.pluginVersion,
   };
   const start = startDirectorySubmissionRunOperation;
   const started = await runPlatformOperation(options, globals.timeout, (context) => start.execute(input, context), extras);
@@ -296,6 +334,13 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     .option("--unset <key>", "Remove a field's answer. Repeatable.", collectRepeated, [])
     .option("--confirm <key>", "Confirm a declaration as the portal words it now. Repeatable.", collectRepeated, [])
     .option("--title <title>", "Rename the submission")
+    .option("--plugin <id>", "A ChatGPT plugin submission's stored plugin")
+    .option("--plugin-version <id>", "The plugin version to submit. It names its plugin, so --plugin can be left out")
+    .option("--clear-plugin", "Remove the submission's plugin and version")
+    .option("--attempt <n>", "Which submission this is: 1, then one more per resubmission", (value: string) =>
+      parsePositiveInteger(value, "--attempt")
+    )
+    .option("--clear-attempt", "Remove the submission's attempt number")
     .option(
       "--expected-revision <n>",
       "The revision you read. Without it, the current revision is read first.",
@@ -331,6 +376,7 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     verb("run", "Grade a submission's server and answers on the platform")
       .option("--wait", "Wait for the run to end, then exit 0 ready, 1 not ready or 3 incomplete")
       .option("--ai-observations", "Add optional model observations, included with MCPJam")
+      .option("--plugin-version <id>", "The stored plugin version to grade. Required for a ChatGPT plugin submission")
       .option("--idempotency-key <key>", "Replay guard: a retry returns the run already started")
   );
   run.action((id: string, _options: RunOptions, command: Command) =>

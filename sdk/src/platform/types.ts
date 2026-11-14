@@ -6038,6 +6038,8 @@ export interface PlatformReadinessRun {
   submissionId: string | null;
   /** The submission's revision when the run was requested: the answers it graded. */
   submissionRevision: number | null;
+  /** The stored plugin version a ChatGPT plugin submission's run grades; `null` otherwise. */
+  pluginVersionId: string | null;
   createdAt: number;
   updatedAt: number;
 }

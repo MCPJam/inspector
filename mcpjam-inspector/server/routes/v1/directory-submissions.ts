@@ -74,6 +74,8 @@ const fn = {
 };
 
 const idempotencyKey = z.string().trim().min(1).max(200).optional();
+const optionalId = z.string().trim().min(1).max(100).optional();
+const VERSION_NOT_FOUND = "Plugin version not found";
 
 const createSchema = z.strictObject({
   flowId: z.string().trim().min(1).max(100),
@@ -94,6 +96,13 @@ const updateSchema = z.strictObject({
   answers: z.record(z.string().min(1).max(100), answerValue).optional(),
   confirm: z.array(z.string().min(1).max(100)).max(200).optional(),
   title: z.string().max(200).optional(),
+  /** A plugin flow's stored plugin, replaced whole. `null` clears it. */
+  plugin: z
+    .strictObject({ pluginId: optionalId, pluginVersionId: optionalId })
+    .nullable()
+    .optional(),
+  /** Which attempt at the directory this rehearses. `null` clears it. */
+  attempt: z.number().int().min(1).nullable().optional(),
   /** Which checks fail a run. The backend checks the ids; `null` clears it. */
   checkGate: z
     .strictObject({ failOn: checkIds.optional(), warnOnly: checkIds.optional() })
@@ -106,6 +115,8 @@ const startSchema = z.strictObject({
   idempotencyKey,
   /** The one field that can spend. Off unless sent, as on the readiness starts. */
   includeLlmObservations: z.boolean().optional(),
+  /** The stored plugin version a ChatGPT plugin submission's run grades. */
+  pluginVersionId: optionalId,
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -156,6 +167,69 @@ function flowOf(row: Submission): DirectoryFlow {
 async function viewOf(convex: ConvexHttpClient, row: Submission) {
   const flow = flowOf(row);
   return toSubmissionView(flow, row, await latestResults(convex, row));
+}
+
+/**
+ * The plugin and attempt a write sets, each id checked before Convex sees it.
+ * The backend checks that the plugin is in the project and the version ready.
+ */
+function subjectChange({ plugin, attempt }: z.infer<typeof updateSchema>) {
+  const named = plugin && {
+    ...(plugin.pluginId
+      ? {
+          pluginId: idParam(
+            plugin.pluginId,
+            "plugin.pluginId",
+            "Plugin not found",
+          ),
+        }
+      : {}),
+    ...(plugin.pluginVersionId
+      ? {
+          pluginVersionId: idParam(
+            plugin.pluginVersionId,
+            "plugin.pluginVersionId",
+            VERSION_NOT_FOUND,
+          ),
+        }
+      : {}),
+  };
+  return {
+    ...(plugin !== undefined ? { plugin: named } : {}),
+    ...(attempt !== undefined ? { attempt } : {}),
+  };
+}
+
+function refuseRun(message: string): WebRouteError {
+  return new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    `pluginVersionId: ${message}`,
+  );
+}
+
+/**
+ * What a run grades beside the saved server. ChatGPT reviews a plugin as a
+ * package, so its run grades a stored version of it: the one the caller
+ * names, never one read off the submission. The shapes without a package are
+ * not offered for a plugin submission.
+ */
+function packageOf(
+  flow: DirectoryFlow,
+  pluginVersionId: string | undefined,
+): { submissionMode?: "mcp-uploaded-skills"; pluginVersionId?: string } {
+  if (flow.directory !== "openai") {
+    if (pluginVersionId === undefined) return {};
+    throw refuseRun(
+      "Only a ChatGPT plugin submission grades a plugin version. Leave it out.",
+    );
+  }
+  if (pluginVersionId === undefined) {
+    throw refuseRun(
+      "A ChatGPT plugin submission's run grades a stored version of its plugin. Send the version to grade.",
+    );
+  }
+  return { submissionMode: "mcp-uploaded-skills", pluginVersionId };
 }
 
 directorySubmissions.get("/directory-flows", (c) =>
@@ -254,6 +328,7 @@ directorySubmissions.patch(ONE, async (c) => {
       submissionId,
       expectedRevision: body.expectedRevision,
       ...change,
+      ...subjectChange(body),
       ...(body.checkGate !== undefined ? { checkGate: body.checkGate } : {}),
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(label ? { actorLabel: label } : {}),
@@ -294,8 +369,9 @@ directorySubmissions.delete(ONE, async (c) => {
 
 /**
  * Grade the submission's saved server with its answers frozen at this
- * revision. The server is authorized exactly as the readiness start does, and
- * the directory comes from the submission's flow, never the body.
+ * revision, and for a ChatGPT plugin the stored version the body names. The
+ * server is authorized exactly as the readiness start does, and the directory
+ * comes from the submission's flow, never the body.
  */
 directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const { projectId, submissionId } = scopeOf(c);
@@ -304,6 +380,12 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const convex = createConvexClient(convexAuthToken);
   const row = await readSubmission(convex, projectId, submissionId);
   const flow = flowOf(row);
+  const graded = packageOf(
+    flow,
+    body.pluginVersionId === undefined
+      ? undefined
+      : idParam(body.pluginVersionId, "pluginVersionId", VERSION_NOT_FOUND),
+  );
   if (!row.serverId) {
     throw new WebRouteError(
       400,
@@ -319,6 +401,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
+    ...graded,
     authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
     analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>
@@ -326,7 +409,7 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
   });
   captureServerEvent(c, "directory_readiness_run_started_server", {
     readiness_kind: flow.directory,
-    submission_mode: null,
+    submission_mode: graded.submissionMode ?? null,
     flow_id: flow.id,
     include_llm_observations: body.includeLlmObservations === true,
     deduped: receipt.deduped,

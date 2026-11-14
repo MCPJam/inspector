@@ -38,10 +38,22 @@ export interface PlatformDirectorySubmission {
   revision: number;
   createdBy: string;
   lastRunId?: string;
+  /** A plugin flow's plugin, stored in the project. */
+  pluginId?: string;
+  /** The version of that plugin chosen for the submission. */
+  pluginVersionId?: string;
+  /** Which attempt at the directory this rehearses: 1, then one per resubmission. */
+  attempt?: number;
   /** Which checks fail a run. Absent: the directory's blocking checks. */
   checkGate?: DirectoryCheckGate;
   createdAt: number;
   updatedAt: number;
+}
+
+/** The stored plugin a ChatGPT plugin submission is about. A version alone brings its plugin. */
+export interface PlatformDirectorySubmissionPlugin {
+  pluginId?: string;
+  pluginVersionId?: string;
 }
 
 export type PlatformDirectorySubmissionSummary = Omit<
@@ -88,6 +100,10 @@ export interface PlatformDirectorySubmissionUpdateBody {
   /** Field keys to confirm as true under the wording the flow shows now. */
   confirm?: string[];
   title?: string;
+  /** Replaces the plugin whole, on a ChatGPT plugin submission. `null` clears it. */
+  plugin?: PlatformDirectorySubmissionPlugin | null;
+  /** `null` clears it. */
+  attempt?: number | null;
   /** Replaces the gate, guarded like an answer. `null` restores the default. */
   checkGate?: DirectoryCheckGate | null;
   idempotencyKey?: string;
@@ -96,6 +112,11 @@ export interface PlatformDirectorySubmissionUpdateBody {
 export interface PlatformDirectorySubmissionRunBody {
   idempotencyKey?: string;
   includeLlmObservations?: boolean;
+  /**
+   * The stored plugin version a ChatGPT plugin submission's run grades,
+   * required there. It is never read from the submission.
+   */
+  pluginVersionId?: string;
 }
 
 export interface PlatformDirectorySubmissionDeleted {

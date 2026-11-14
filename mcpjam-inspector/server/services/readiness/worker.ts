@@ -60,8 +60,13 @@ import {
   type ReadinessPublisher,
 } from "./runner.js";
 import {
+  ReadinessPackageUnreadableError,
+  readRunPackage,
+} from "./run-package.js";
+import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
+  OPENAI_SUBMISSION_MODE_SHAPES,
   getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
@@ -204,6 +209,20 @@ async function readSubmissionAnswers(
 }
 
 /**
+ * Whether the run's declared shape includes an uploaded package. A hosted
+ * run has one only as a stored plugin version, frozen with its answers, and
+ * fails with the reason when that version cannot be read.
+ */
+function gradesPackage(options: ExecuteHostedReadinessOptions): boolean {
+  const mode = options.submissionMode;
+  return (
+    options.publisher === "openai" &&
+    mode !== undefined &&
+    OPENAI_SUBMISSION_MODE_SHAPES[mode].hasUploadedPackage
+  );
+}
+
+/**
  * Claim the run this node started. Returns why it must not execute, or
  * nothing when it may.
  */
@@ -290,6 +309,9 @@ export async function executeHostedReadinessRun(
     const submissionAnswers = options.submissionId
       ? await readSubmissionAnswers(options)
       : undefined;
+    const runPackage = gradesPackage(options)
+      ? await readRunPackage(lease)
+      : undefined;
     const { result } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
@@ -305,6 +327,7 @@ export async function executeHostedReadinessRun(
         : {}),
       // As stored: the grader merges the flow's defaults itself.
       ...(submissionAnswers ? { submissionAnswers } : {}),
+      ...(runPackage ? { pluginPackage: runPackage } : {}),
       // The requester's opt-in decides whether a requester exists AT ALL. A
       // runner with no requester structurally cannot spend, which is a
       // stronger guarantee than one that checks a flag before asking.
@@ -337,7 +360,13 @@ export async function executeHostedReadinessRun(
       // mostly challenges and metadata documents anyone can fetch. The point
       // is that neither of those facts is guaranteed to hold for the next
       // check somebody adds.
-      redactConformanceReportForSharing(result),
+      //
+      // A graded package adds which stored version the findings are about:
+      // its ids and the hash its bytes were checked against.
+      {
+        ...redactConformanceReportForSharing(result),
+        ...(runPackage ? { gradedPluginVersion: runPackage.version } : {}),
+      },
     );
 
     terminal = {
@@ -381,7 +410,9 @@ export async function executeHostedReadinessRun(
     const terminalReason =
       error instanceof ReadinessSubmissionUnreadableError
         ? "submission_unreadable"
-        : "runner_error";
+        : error instanceof ReadinessPackageUnreadableError
+          ? error.reason
+          : "runner_error";
     logger.error("[readiness] hosted run failed", error, {
       runId: lease.runId,
       terminalReason,

@@ -248,6 +248,37 @@ test("set refuses a malformed or repeated answer before any request", async () =
   assert.deepEqual(requests, []);
 });
 
+test("set names a plugin version and an attempt, and clears them", async () => {
+  const requests = stubFetch({
+    [`PATCH ${BASE}/sub-1`]: [{ body: VIEW }, { body: VIEW }],
+  });
+  const set = (...args: string[]) =>
+    run(["submission", "set", "sub-1", "--expected-revision", "4", ...args]);
+  await set("--plugin-version", "pv-1", "--attempt", "2");
+  await set("--clear-plugin", "--clear-attempt");
+
+  const [named, cleared] = requests.map((request) => request.body as Record<string, unknown>);
+  assert.deepEqual(named!.plugin, { pluginVersionId: "pv-1" });
+  assert.equal(named!.attempt, 2);
+  assert.equal(cleared!.plugin, null);
+  assert.equal(cleared!.attempt, null);
+});
+
+test("set refuses a plugin or attempt both named and cleared before any request", async () => {
+  const requests = stubFetch({});
+  const set = (...args: string[]) => run(["submission", "set", "sub-1", ...args]);
+  await assert.rejects(
+    set("--clear-plugin", "--plugin-version", "pv-1"),
+    rejectsWith("USAGE_ERROR", /--clear-plugin/)
+  );
+  await assert.rejects(
+    set("--attempt", "2", "--clear-attempt"),
+    rejectsWith("USAGE_ERROR", /--clear-attempt/)
+  );
+  await assert.rejects(set("--attempt", "0"), rejectsWith("USAGE_ERROR", /--attempt/));
+  assert.deepEqual(requests, []);
+});
+
 const CONFLICT: Reply = {
   status: 409,
   body: {
@@ -346,6 +377,14 @@ test("run without --wait prints the receipt and polls nothing", async () => {
   assert.deepEqual(started.printed.run, RECEIPT);
   assert.equal(requests.length, 1);
   assert.equal(process.exitCode, 0);
+});
+
+test("run sends the plugin version a ChatGPT plugin submission's run grades", async () => {
+  const requests = stubFetch({
+    [`POST ${BASE}/sub-1/runs`]: [{ status: 202, body: RECEIPT }],
+  });
+  await run(["submission", "run", "sub-1", "--plugin-version", "pv-1"]);
+  assert.deepEqual(requests[0]!.body, { pluginVersionId: "pv-1" });
 });
 
 test("run --wait exits 1 when a check in the gate failed, and names the gate", async () => {
