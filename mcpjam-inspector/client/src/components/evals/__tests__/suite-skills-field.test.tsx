@@ -220,13 +220,11 @@ describe("Skills field", () => {
       "Mixed skills",
     );
     expect(screen.getByTestId("suite-skills-mixed-hint")).toHaveTextContent(
-      "These clients use different skills or versions. Checking a skill here sets it at Latest on every client, and clearing one removes it from every client.",
+      "These clients use different skills or versions. Check a skill to set it to Latest on every client.",
     );
     expect(await openSkills()).toHaveAttribute("aria-checked", "true");
     expect(
-      screen.getByText(
-        "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client.",
-      ),
+      screen.getByText("Check a skill to set it to Latest on every client."),
     ).toBeInTheDocument();
     const reply = screen.getByLabelText("reply");
     expect(reply).toHaveAttribute("aria-checked", "mixed");

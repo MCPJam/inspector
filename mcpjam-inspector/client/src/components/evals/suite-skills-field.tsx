@@ -51,7 +51,7 @@ export function SuiteSkillsField({
             !editable
               ? SKILLS_READ_ONLY_REASON
               : across.partialIds.size
-                ? "Checking a skill here sets it at Latest on every client, and clearing one removes it from every client."
+                ? "Check a skill to set it to Latest on every client."
                 : undefined
           }
           // With no client yet there is no environment to hold a skill.
@@ -190,9 +190,8 @@ export function SuiteSkillsHints({
       ) : null}
       {mixed ? (
         <p data-testid="suite-skills-mixed-hint">
-          These clients use different skills or versions. Checking a skill here
-          sets it at Latest on every client, and clearing one removes it from
-          every client.
+          These clients use different skills or versions. Check a skill to set
+          it to Latest on every client.
         </p>
       ) : null}
     </div>
