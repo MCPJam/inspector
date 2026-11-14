@@ -33,7 +33,6 @@ import {
 import {
   acquireHarnessBox,
   canProvisionHarnessBoxes,
-  type AcquireHarnessBoxResult,
   type HarnessBox,
 } from "./harness-box.js";
 import {
@@ -96,6 +95,11 @@ export async function playgroundCredentialRefusal(args: {
   }
 }
 
+/** A held box, and `prepared` when this call took one prepared before Send. */
+export type AcquiredPlaygroundBox =
+  | { ok: true; box: HarnessBox; prepared?: true }
+  | { ok: false; refusal: PlaygroundBoxRefusal };
+
 /**
  * Hold this conversation's box for the turn. The heartbeat keeps its idle
  * clock running for as long as the turn does; `release()` stops it, sends the
@@ -111,8 +115,10 @@ export async function acquirePlaygroundHarnessBox(args: {
   /** The turn's harness id; the backend gates the box on its own flag. */
   harness?: string;
   signal?: AbortSignal;
-}): Promise<AcquireHarnessBoxResult<PlaygroundBoxRefusal>> {
-  return acquireHarnessBox<PlaygroundBoxRefusal>({
+}): Promise<AcquiredPlaygroundBox> {
+  // The backend says it once, on the call that takes a prepared box.
+  let prepared = false;
+  const acquired = await acquireHarnessBox<PlaygroundBoxRefusal>({
     surface: "playground",
     // The turn's signal: a stopped or abandoned turn stops beating, and the
     // box idles out on its own clock (it is never torn down by the turn).
@@ -155,6 +161,7 @@ export async function acquirePlaygroundHarnessBox(args: {
           },
         };
       }
+      prepared = result.value.prepared === true;
       return {
         ok: true as const,
         box: {
@@ -169,6 +176,7 @@ export async function acquirePlaygroundHarnessBox(args: {
       };
     },
   });
+  return acquired.ok && prepared ? { ...acquired, prepared: true } : acquired;
 }
 
 /** Can this server hold the box at all? Null when it can. */

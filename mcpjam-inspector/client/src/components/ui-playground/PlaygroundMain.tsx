@@ -338,6 +338,7 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useHarnessBoxPreparation } from "@/hooks/use-harness-box-preparation";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getAppDraftInteractivity,
@@ -1450,6 +1451,7 @@ export function PlaygroundMain({
     hiddenEnvironmentActive,
     outOfCreditsReason,
     harnessStartupPhase,
+    harnessBoxPreparation,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
@@ -2926,6 +2928,8 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  // A new hosted harness chat's computer is set up while its first message is typed.
+  useHarnessBoxPreparation(harnessBoxPreparation, composer.input);
   // Project Environments (Phase 2). Selecting an environment activates the new
   // `executionTarget` synchronously, but the things that must agree with it do
   // not land in the same tick: the chat scope re-keys on the new target, and

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  preparePlaygroundTerminalSandbox,
   provisionPlaygroundTerminalSandbox,
   touchSandbox,
 } from "../control-plane-client.js";
@@ -84,6 +85,27 @@ describe("provisionPlaygroundTerminalSandbox", () => {
     }
   });
 
+  it("prepares on its own route, sending no purpose to the turn's", async () => {
+    respond = () => json(404, { error: "Not found" });
+    const result = await preparePlaygroundTerminalSandbox({
+      bearer: "token",
+      projectId: "p1",
+      chatSessionId: "c1",
+      harness: "claude-code",
+    });
+    // A backend without the route answers 404, which reads as switched off.
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(
+      "https://example.convex.site/playground/sandbox/terminal/prepare",
+    );
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      projectId: "p1",
+      chatSessionId: "c1",
+      harness: "claude-code",
+    });
+  });
+
   it("omits the environment when none is chosen", async () => {
     respond = () => json(200, { sandboxRowId: "row", sandboxId: "sbx" });
     await provisionPlaygroundTerminalSandbox({
@@ -95,6 +117,25 @@ describe("provisionPlaygroundTerminalSandbox", () => {
       projectId: "p1",
       chatSessionId: "c1",
     });
+  });
+
+  it("says the box was prepared before Send only when the backend answers true", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx" };
+    const provision = () =>
+      provisionPlaygroundTerminalSandbox({
+        bearer: "token",
+        projectId: "p1",
+        chatSessionId: "c1",
+      });
+    respond = () => json(200, { ...box, prepared: true });
+    expect(await provision()).toEqual({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    for (const other of [false, "true", 1, null, {}]) {
+      respond = () => json(200, { ...box, prepared: other });
+      expect(await provision()).toEqual({ ok: true, value: box });
+    }
   });
 
   it("hands a cap refusal back with its status and code, never retrying it", async () => {

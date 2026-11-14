@@ -29,6 +29,7 @@ import tasksWeb from "./tasks.js";
 import eventsWeb from "./events.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
+import chatPrepare from "./chat-prepare.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import { platformAgentGate } from "../../middleware/platform-agent-gate.js";
@@ -108,6 +109,13 @@ web.use(
   guestRateLimitMiddleware,
   // A plugin onboarding turn records its phases; any other passes through.
   onboardingTurnTraceMiddleware,
+);
+// Setting up a chat's computer before its first message is for members only.
+web.use(
+  "/chat/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Setting up a computer"),
 );
 // MCPJAM_PLATFORM_AGENT=off answers every agent route here, ahead of auth.
 web.use("/mcpjam-agent", platformAgentGate);
@@ -311,6 +319,7 @@ web.route("/org-gateway-test", orgGatewayTest);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat", chatPrepare);
 web.route("/chat-persistence", chatPersistence);
 web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like

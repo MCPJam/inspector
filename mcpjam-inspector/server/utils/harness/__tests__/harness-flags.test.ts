@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   harnessKeepAgentThroughPause,
+  harnessPrepareBoxEnabled,
+  harnessPrepareBoxSwitchedOn,
   hostedWarmAgentEnabled,
 } from "../harness-flags.js";
 
@@ -48,4 +50,26 @@ it("keeps an agent through its box's pause when switched on, read per call", () 
   expect(harnessKeepAgentThroughPause()).toBe(true);
   vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "false");
   expect(harnessKeepAgentThroughPause()).toBe(false);
+});
+
+it.each([undefined, "", "0", "false", "yes"])("keeps box preparation off unless switched on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", value);
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", undefined);
+  expect(harnessPrepareBoxSwitchedOn()).toBe(false);
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(false);
+});
+
+it.each(["1", "true", " TRUE "])("prepares boxes for every organization once on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", value);
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", undefined);
+  expect(harnessPrepareBoxSwitchedOn()).toBe(true);
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
+  expect(harnessPrepareBoxEnabled(undefined)).toBe(false);
+});
+
+it("limits box preparation to the listed organizations", () => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", "true");
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", " organization-a, ,organization-b ");
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
+  expect(harnessPrepareBoxEnabled("organization-c")).toBe(false);
 });

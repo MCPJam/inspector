@@ -8,8 +8,11 @@ import type { TurnTiming } from "../../utils/turn-timing.js";
 import type { TurnResources } from "./resources.js";
 
 type BoxArgs = Parameters<typeof acquirePlaygroundHarnessBox>[0] & {
-  /** The turn's recorder: creating or waking the box counts as its wake. */
-  timing?: Pick<TurnTiming, "timeBoxAcquisition">;
+  /**
+   * The turn's recorder: creating or waking the box counts as its wake, and a
+   * box prepared before Send makes the session's start `prepared`.
+   */
+  timing?: Pick<TurnTiming, "timeBoxAcquisition" | "markBoxPrepared">;
 };
 type Acquired = Awaited<ReturnType<typeof acquirePlaygroundHarnessBox>>;
 
@@ -26,6 +29,7 @@ export async function acquireOwnedPlaygroundHarnessBox(
   const acquire = () => acquirePlaygroundHarnessBox(args);
   const acquired = await (timing ? timing.timeBoxAcquisition(acquire) : acquire());
   if (!acquired.ok) return acquired;
+  if (acquired.prepared) timing?.markBoxPrepared();
   try {
     resources.own(() => acquired.box.release());
   } catch (error) {

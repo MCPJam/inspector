@@ -322,6 +322,26 @@ describe("acquirePlaygroundHarnessBox", () => {
     expect(releaseMock).not.toHaveBeenCalled();
   });
 
+  it("says the call took a box prepared before Send, and nothing when the backend did not say so", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    const prepared = await acquirePlaygroundHarnessBox(args);
+    expect(prepared).toMatchObject({ ok: true, prepared: true });
+    if (!prepared.ok) throw new Error("expected a box");
+    // The box itself is the same box either way.
+    expect(prepared.box.binding).not.toHaveProperty("prepared");
+    await prepared.box.release();
+
+    provisionMock.mockResolvedValueOnce({ ok: true, value: box });
+    const plain = await acquirePlaygroundHarnessBox(args);
+    expect(plain.ok).toBe(true);
+    expect(plain).not.toHaveProperty("prepared");
+    if (plain.ok) await plain.box.release();
+  });
+
   it("returns the control plane's refusal untouched", async () => {
     provisionMock.mockResolvedValue({
       ok: false,
