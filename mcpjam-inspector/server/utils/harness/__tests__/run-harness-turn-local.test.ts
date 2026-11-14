@@ -1492,6 +1492,7 @@ describe("runHarnessTurn local continuity", () => {
     it.each([
       "configuration_changed", "superseded", "lifetime", "process_died",
       "runtime_update", "authorization_revoked", "renewal_failed",
+      "idle_expired", "evicted", "shutdown", "switched_off",
     ])("reports a runtime it did not adopt (%s) as a resume from saved files that says why", async (reason) => {
       committed(4);
       harnessState.keptOutcome = reason;

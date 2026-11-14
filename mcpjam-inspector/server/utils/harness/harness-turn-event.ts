@@ -75,6 +75,10 @@ export type KeptRuntimeOutcome =
       | "runtime_update"
       | "authorization_revoked"
       | "renewal_failed"
+      | "idle_expired"
+      | "evicted"
+      | "shutdown"
+      | "switched_off"
     >;
 
 /** The `[harness][timing]` line's marks, in the order a turn reaches them. */

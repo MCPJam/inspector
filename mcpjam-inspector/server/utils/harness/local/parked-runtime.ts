@@ -10,10 +10,12 @@ import {
   startLoopbackModelBroker,
 } from "../harness-model-broker.js";
 import type { KeptRuntimeOutcome } from "../harness-turn-event.js";
+import { localKeepAgentEnabled } from "../harness-flags.js";
 import {
   claimLocalTurnPark,
   claimParkedLocalSession,
   invalidateParkedLocalSession,
+  takeKeptRuntimeEnd,
   type ParkedLocalSession,
   type ParkInvalidationReason,
   type TurnParkRefusal,
@@ -86,20 +88,18 @@ export async function adoptParkedLocalTurn(
   return adoptParkedRuntime(args, harnessId, claim.parked, false);
 }
 
-/** How adopting a parked runtime can end it instead. */
-type AdoptionEnd = Extract<
-  ParkInvalidationReason,
-  | "superseded"
-  | "configuration-changed"
-  | "lifetime"
-  | "process-died"
-  | "runtime-update"
-  | "authorization-revoked"
-  | "renewal-failed"
->;
-
-/** Each end of a runtime kept for the next turn, as that turn's event says it. */
-const KEPT_FALLBACK: Record<AdoptionEnd, Exclude<KeptRuntimeOutcome, "adopted">> = {
+/**
+ * Each end of a runtime kept for the next turn, as that turn's event says
+ * it. A Stop is the person's own choice, and a runtime whose turn did not
+ * commit is not the one any lane names, so neither is reported.
+ */
+const KEPT_FALLBACK: Record<ParkInvalidationReason, Exclude<KeptRuntimeOutcome, "adopted"> | undefined> = {
+  stopped: undefined,
+  "continuation-failed": undefined,
+  "idle-expired": "idle_expired",
+  evicted: "evicted",
+  shutdown: "shutdown",
+  "switched-off": "switched_off",
   superseded: "superseded",
   "configuration-changed": "configuration_changed",
   lifetime: "lifetime",
@@ -109,7 +109,33 @@ const KEPT_FALLBACK: Record<AdoptionEnd, Exclude<KeptRuntimeOutcome, "adopted">>
   "renewal-failed": "renewal_failed",
 };
 
-const TURN_PARK_ENDS: Record<Exclude<TurnParkRefusal, "absent" | "terminal">, AdoptionEnd> = {
+type KeptRuntimeReport = Pick<PrepareLocalHarnessTurnArgs, "sessionId" | "keptRuntime" | "onKeptRuntime">;
+
+/**
+ * Tell the turn's event why the runtime its lane's last turn kept ended, and
+ * forget it, so no later turn tells it again. When this turn's adoption ended
+ * it (`refused`) it is always this turn's; otherwise only when it is the one
+ * the lane's committed state names.
+ */
+function reportKeptRuntimeEnd(args: KeptRuntimeReport, refused: boolean): void {
+  const ended = takeKeptRuntimeEnd(args.sessionId);
+  if (ended === undefined) return;
+  const fallback = KEPT_FALLBACK[ended.reason];
+  if (fallback && (refused || ended.generation === args.keptRuntime?.committed?.generation)) {
+    args.onKeptRuntime?.(fallback);
+  }
+}
+
+/**
+ * A turn with no kept runtime to adopt hears why the one its lane names
+ * ended before it came: its idle window or lifetime ran out, another took its
+ * slot, its pack was replaced, or Inspector shut down.
+ */
+export function reportEndedKeptRuntime(args: KeptRuntimeReport): void {
+  reportKeptRuntimeEnd(args, false);
+}
+
+const TURN_PARK_ENDS: Record<Exclude<TurnParkRefusal, "absent" | "terminal">, ParkInvalidationReason> = {
   "not-idle": "superseded",
   "actor-mismatch": "superseded",
   stale: "superseded",
@@ -123,13 +149,18 @@ const TURN_PARK_ENDS: Record<Exclude<TurnParkRefusal, "absent" | "terminal">, Ad
  * for the generation and state version the lane's committed state names, and
  * the same configuration. A refusal ends the park (the registry logs why) and
  * is not for display: the caller starts the turn fresh, as before. The turn's
- * event hears either way (`onKeptRuntime`); a park already gone reports
- * nothing, as there was nothing to adopt.
+ * event hears either way (`onKeptRuntime`); a park already gone is left to
+ * `reportEndedKeptRuntime`. With the switch off, it ends instead.
  */
 export async function adoptKeptLocalTurn(
   args: PrepareLocalHarnessTurnArgs,
   harnessId: SupportedLocalHarnessId,
 ): Promise<LocalHarnessTurnPreparation> {
+  if (!localKeepAgentEnabled()) {
+    await invalidateParkedLocalSession(args.sessionId, "switched-off");
+    reportKeptRuntimeEnd(args, true);
+    return { ok: false, status: "kept-switched-off", message: "The kept runtime was not adopted." };
+  }
   const kept = args.keptRuntime;
   const claim = kept?.committed === undefined
     ? ({ ok: false, reason: "stale" } as const)
@@ -143,9 +174,8 @@ export async function adoptKeptLocalTurn(
       });
   if (!claim.ok) {
     if (claim.reason !== "absent" && claim.reason !== "terminal") {
-      const end = TURN_PARK_ENDS[claim.reason];
-      await invalidateParkedLocalSession(args.sessionId, end);
-      args.onKeptRuntime?.(KEPT_FALLBACK[end]);
+      await invalidateParkedLocalSession(args.sessionId, TURN_PARK_ENDS[claim.reason]);
+      reportKeptRuntimeEnd(args, true);
     }
     return { ok: false, status: `kept-${claim.reason}`, message: "The kept runtime was not adopted." };
   }
@@ -174,12 +204,12 @@ async function adoptParkedRuntime(
     kept ? "The agent kept for this chat stopped before it could answer. Send your message again." : undefined,
   );
   const fail = async (
-    reason: AdoptionEnd,
+    reason: ParkInvalidationReason,
     status: string,
     message: string,
   ): Promise<LocalHarnessTurnPreparation> => {
     await invalidateParkedLocalSession(args.sessionId, reason);
-    if (kept) args.onKeptRuntime?.(KEPT_FALLBACK[reason]);
+    if (kept) reportKeptRuntimeEnd(args, true);
     return { ok: false, status, message };
   };
   const verifyStartedAt = Date.now();

@@ -70,6 +70,7 @@ import {
 import {
   adoptKeptLocalTurn,
   adoptParkedLocalTurn,
+  reportEndedKeptRuntime,
   revokeLease,
   runtimeStillSelected,
   type LiveLocalRuntime,
@@ -327,6 +328,8 @@ export async function prepareLocalHarnessTurn(
   if (hasParkedLocalSession(args.sessionId)) {
     await invalidateParkedLocalSession(args.sessionId, "superseded");
   }
+  // Nothing was adopted: say why the runtime the lane names is gone, if it was kept.
+  reportEndedKeptRuntime(args);
   if (autoApproveRefused) {
     return { ok: false, status: "auto-approve-consent-required", message: "Allow commands without asking before turning Tool Approval off on this computer." };
   }

@@ -34,6 +34,9 @@ import { ensureLocalHarnessTarget, localHarnessAccountEnabled, resetLocalHarness
 import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
 import { resetLaunchCredentialsForTests } from "../launch-credentials.js";
 import { parkLocalTurn, resetApprovalParkForTests } from "../approval-park.js";
+import { reportEndedKeptRuntime } from "../parked-runtime.js";
+import { HarnessTurnRecord } from "../../harness-turn-event.js";
+import { TurnTiming } from "../../../turn-timing.js";
 import { setRegisteredKeyId } from "../instance-key.js";
 const actor = { credential: "authkit" as const, subject: "user", userId: "authkit:user" };
 beforeEach(() => {
@@ -169,6 +172,25 @@ describe("runtimes kept on a pack this build no longer selects", () => {
     await vi.waitFor(() => expect(onOld).toHaveBeenCalledWith("runtime-update"));
     expect(onCurrent).not.toHaveBeenCalled();
     expect(otherHarness).not.toHaveBeenCalled();
+  });
+
+  it("tell the next turn's event that an update ended the runtime its lane names", async () => {
+    keptOn("old", "sha256:old");
+    mocks.status.mockResolvedValue({ state: "ready", runtimeRoot: "/runtime", packVersion: "2", digest: "sha256:current" });
+    // Readiness runs before the turn's own preparation, and ends the kept runtime there.
+    await ensureLocalHarnessTarget({ bearer: "session", projectId: "project", scope: "attended" });
+    const sink = { surface: "web" as const, capture: vi.fn() };
+    const record = new HarnessTurnRecord(new TurnTiming({ harnessTurnEvent: sink }), "codex", true);
+    reportEndedKeptRuntime({
+      sessionId: "old",
+      keptRuntime: { fingerprint: "config", committed: { generation: "gen-1", stateVersion: 1 } },
+      onKeptRuntime: record.keptRuntime,
+    });
+    record.sessionStarted({ approval: false, resumed: true, resetReason: undefined });
+    record.close({ aborted: false, completed: true, bootstrap: undefined });
+    expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+      surface: "local", start: "disk_resume", fallback_reason: "runtime_update",
+    });
   });
 
   it("end when readiness finds their pack revoked", async () => {

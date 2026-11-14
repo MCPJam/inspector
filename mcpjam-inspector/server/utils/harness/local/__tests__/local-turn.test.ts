@@ -162,6 +162,11 @@ const {
   resetApprovalParkForTests,
   describeParkedLocalSession,
   endParkIfWaiting,
+  parkLocalTurn,
+  shutdownLocalTurnParks,
+  DEFAULT_TURN_PARK_TTL_MS,
+  KEPT_END_RETENTION_MS,
+  MAX_TURN_PARKS,
   TURN_PARK_LIFETIME_MS,
 } = await import("../approval-park.js");
 // Real, not mocked: whether a reservation is still held is the subject here.
@@ -884,6 +889,9 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
 });
 
 describe("a local Codex runtime kept between turns", () => {
+  // As in production: nothing is kept, or adopted, with the switch off.
+  beforeEach(() => vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "true"));
+  afterEach(() => vi.unstubAllEnvs());
   const CONFIG = { fingerprint: "config-a" };
   const READY = {
     state: "ready" as const,
@@ -1151,7 +1159,7 @@ describe("a local Codex runtime kept between turns", () => {
       ["its process died", () => {
         supervisorFixture.live = 0;
       }, {}, "process_died"],
-      ["an update replaced its pack", () => {
+      ["an update replaced its pack after readiness let the turn in", () => {
         readRuntimeInstallStatus.mockResolvedValueOnce({
           ...READY, packVersion: "test-pack-2", digest: `sha256:${"b".repeat(64)}`,
         } as never);
@@ -1170,7 +1178,7 @@ describe("a local Codex runtime kept between turns", () => {
       expect(event).toMatchObject({ surface: "local", start: "disk_resume", fallback_reason: reason });
     });
 
-    it("that the kept runtime reached its lifetime", async () => {
+    it("that a claim came past the kept runtime's lifetime, before its timer ended it", async () => {
       let now = Date.now();
       resetApprovalParkForTests({ now: () => now });
       await keptSession();
@@ -1184,17 +1192,145 @@ describe("a local Codex runtime kept between turns", () => {
       await keptSession();
       const refused = { available: false, status: "server-disabled", message: "Local execution is off." };
       resolveLocalHarnessAvailability.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(refused as never);
-      const onKeptRuntime = vi.fn();
-      const next = await prepareLocalHarnessTurn(nextTurn({ onKeptRuntime }));
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      const record = new HarnessTurnRecord(new TurnTiming({ harnessTurnEvent: sink }), "codex", true);
+      const next = await prepareLocalHarnessTurn(nextTurn({ onKeptRuntime: record.keptRuntime }));
       expect(next).toMatchObject({ ok: false, status: "server-disabled" });
-      expect(onKeptRuntime.mock.calls).toEqual([["authorization_revoked"]]);
+      // The turn fails before any session starts, as `runHarnessTurn` closes it.
+      record.close({ aborted: false, completed: false, bootstrap: undefined });
+      const event = sink.capture.mock.calls[0]![0] as HarnessTurnEventProperties;
+      expect(event).toMatchObject({ surface: "local", outcome: "failed", fallback_reason: "authorization_revoked" });
+      expect(event).not.toHaveProperty("start");
     });
 
-    it("nothing about a runtime that was already gone", async () => {
+    it("nothing about a kept runtime the person stopped", async () => {
       await keptSession();
       await endLocalHarnessSession("s_local_1");
       const { event } = await reported();
       expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "none" });
+    });
+
+    describe("why the kept runtime ended before the turn came", () => {
+      /** The registry's clock, whose timers fire only when the test moves it on. */
+      function parkClock() {
+        let now = Date.now();
+        const due = new Map<ReturnType<typeof setTimeout>, { at: number; fire: () => void }>();
+        resetApprovalParkForTests({
+          now: () => now,
+          setTimer: (fire, ms) => {
+            const handle = setTimeout(() => {}, 0);
+            clearTimeout(handle);
+            due.set(handle, { at: now + ms, fire });
+            return handle;
+          },
+          clearTimer: (handle) => {
+            due.delete(handle);
+          },
+        });
+        return {
+          /** Time passes with nothing happening: no timer fires. */
+          skip: (ms: number) => {
+            now += ms;
+          },
+          /** Time passes and every timer that comes due fires. */
+          async advance(ms: number) {
+            now += ms;
+            for (const [handle, timer] of [...due]) {
+              if (timer.at > now) continue;
+              due.delete(handle);
+              timer.fire();
+            }
+            await vi.waitFor(() => expect(supervisorFixture.stopCalls).toBeGreaterThan(0));
+          },
+        };
+      }
+
+      it("its idle window ran out", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "idle-expired" });
+        const { event } = await reported();
+        expect(event).toMatchObject({ surface: "local", start: "disk_resume", fallback_reason: "idle_expired" });
+      });
+
+      it("its lifetime ran out", async () => {
+        const clock = parkClock();
+        const { prepared } = await keptSession();
+        // Kept again, by later turns, until shortly before the end of its life:
+        // its timer is now the lifetime's.
+        clock.skip(TURN_PARK_LIFETIME_MS - 5 * 60_000);
+        expect(await prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls: [] })).not.toBeNull();
+        await clock.advance(5 * 60_000);
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "lifetime" });
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "lifetime" });
+      });
+
+      it("another conversation's runtime took its slot", async () => {
+        const clock = parkClock();
+        await keptSession();
+        for (let other = 1; other <= MAX_TURN_PARKS; other += 1) {
+          clock.skip(1);
+          parkLocalTurn({
+            sessionId: `s_other_${other}`, generation: `gen-other-${other}`, userId: "user_1", projectId: "proj_1",
+            harnessId: "codex", runtimeDigest: READY.digest, stateVersion: 1, fingerprint: "config-other",
+            resources: {}, end: async () => {}, isAlive: () => true, holdModelTraffic: () => {},
+          });
+        }
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "evicted" });
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "evicted" });
+      });
+
+      it("Inspector shut down", async () => {
+        await keptSession();
+        await shutdownLocalTurnParks();
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "shutdown" });
+      });
+
+      it("keeping local runtimes was turned off, which ends it at the next turn", async () => {
+        await keptSession();
+        vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "false");
+        // With the switch off a turn asks to adopt nothing.
+        const { event } = await reported({ keptRuntime: undefined });
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "switched-off" });
+        expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "switched_off" });
+      });
+
+      it("only when it is the runtime the lane's committed state names", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        const { event } = await reported({
+          keptRuntime: { ...CONFIG, committed: { generation: "gen-2", stateVersion: 3 } },
+        });
+        expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "none" });
+      });
+
+      it("to one turn only", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        expect((await reported()).event).toMatchObject({ fallback_reason: "idle_expired" });
+        expect((await reported()).event).toMatchObject({ fallback_reason: "none" });
+      });
+
+      it("to a turn that comes after its tombstone is gone", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        // The tombstone's minute passes, and with it the registry's record.
+        await clock.advance(2 * 60_000);
+        expect(describeParkedLocalSession("s_local_1")).toBeNull();
+        expect((await reported()).event).toMatchObject({ fallback_reason: "idle_expired" });
+      });
+
+      it("to no turn once its end is forgotten", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        clock.skip(KEPT_END_RETENTION_MS);
+        expect((await reported()).event).toMatchObject({ fallback_reason: "none" });
+      });
     });
   });
 

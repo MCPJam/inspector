@@ -28,6 +28,8 @@
  * conversation's next turn, after its lane claim, for the generation and
  * state version that turn's committed state names and the same configuration
  * (`claimLocalTurnPark`); anything else ends it and the turn starts fresh.
+ * Why one ended is kept a while after its tombstone (`takeKeptRuntimeEnd`),
+ * so the next turn's event can say why there was nothing to adopt.
  *
  * ── The state machine (D7) ───────────────────────────────────────────────
  *
@@ -88,7 +90,9 @@ export type ParkInvalidationReason =
   | "evicted"
   | "lifetime"
   | "shutdown"
-  | "runtime-update";
+  | "runtime-update"
+  /** `MCPJAM_LOCAL_KEEP_AGENT` was turned off while it was kept. */
+  | "switched-off";
 
 /** What a claim gets back: everything needed to hand the live runtime to the
  *  continuing turn. Opaque to this module. */
@@ -174,7 +178,49 @@ export function resetApprovalParkForTests(testClock?: Partial<Clock>): void {
     if (entry.timer) clock.clearTimer(entry.timer);
   }
   parked.clear();
+  keptEnds.clear();
   clock = { ...realClock, ...testClock };
+}
+
+/**
+ * How long why a kept runtime ended stays for its conversation's next turn:
+ * past the keep's idle window, so a turn that comes soon after an idle
+ * expiry still hears it, and far past the tombstone's minute.
+ */
+export const KEPT_END_RETENTION_MS = DEFAULT_TURN_PARK_TTL_MS + 15 * 60 * 1000;
+/** The most sessions whose kept runtime's end is remembered at once. */
+export const MAX_KEPT_ENDS = 64;
+
+export interface KeptRuntimeEnd {
+  reason: ParkInvalidationReason;
+  /** The bridge token of the process that ended. */
+  generation: string;
+  endedAt: number;
+}
+
+/** Each session's last kept-runtime end, oldest first. */
+const keptEnds = new Map<string, KeptRuntimeEnd>();
+
+function noteKeptRuntimeEnd(entry: ParkedLocalSession, reason: ParkInvalidationReason): void {
+  if (entry.kept === undefined) return;
+  const now = clock.now();
+  keptEnds.delete(entry.sessionId);
+  keptEnds.set(entry.sessionId, { reason, generation: entry.generation, endedAt: now });
+  for (const [sessionId, end] of keptEnds) {
+    if (keptEnds.size <= MAX_KEPT_ENDS && now - end.endedAt < KEPT_END_RETENTION_MS) break;
+    keptEnds.delete(sessionId);
+  }
+}
+
+/**
+ * Why this session's kept runtime last ended, handed out once: the turn that
+ * asks reports it, and no later turn reports it again. Undefined when none
+ * is remembered, or it is older than {@link KEPT_END_RETENTION_MS}.
+ */
+export function takeKeptRuntimeEnd(sessionId: string): KeptRuntimeEnd | undefined {
+  const end = keptEnds.get(sessionId);
+  keptEnds.delete(sessionId);
+  return end !== undefined && clock.now() - end.endedAt < KEPT_END_RETENTION_MS ? end : undefined;
 }
 
 export interface ParkLocalSessionArgs<R> {
@@ -384,6 +430,7 @@ export async function invalidateParkedLocalSession(
   entry.state = "terminal";
   entry.invalidatedBy = reason;
   entry.pending.clear();
+  noteKeptRuntimeEnd(entry, reason);
   if (entry.timer) clock.clearTimer(entry.timer);
   entry.timer = null;
   logger.info("[local-harness] parked session ended", { sessionId, reason });
@@ -412,6 +459,7 @@ export function noteParkedLocalSessionEnded(sessionId: string): void {
   entry.state = "terminal";
   entry.invalidatedBy = "stopped";
   entry.pending.clear();
+  noteKeptRuntimeEnd(entry, "stopped");
   if (entry.timer) clock.clearTimer(entry.timer);
   // The same tombstone window as an invalidation, so a Stop never leaves a
   // record behind for good.

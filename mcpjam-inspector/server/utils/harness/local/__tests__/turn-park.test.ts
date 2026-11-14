@@ -2,10 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimLocalTurnPark,
   claimParkedLocalSession,
+  DEFAULT_TURN_PARK_TTL_MS,
   describeParkedLocalSession,
   endParkIfWaiting,
   hasLocalTurnPark,
   invalidateLocalTurnParks,
+  invalidateParkedLocalSession,
+  KEPT_END_RETENTION_MS,
+  MAX_KEPT_ENDS,
   MAX_TURN_PARKS,
   noteParkedLocalSessionEnded,
   parkLocalSession,
@@ -13,6 +17,7 @@ import {
   releaseParkedLocalSession,
   resetApprovalParkForTests,
   shutdownLocalTurnParks,
+  takeKeptRuntimeEnd,
   TURN_PARK_LIFETIME_MS,
 } from "../approval-park.js";
 
@@ -285,5 +290,61 @@ describe("ending kept runtimes together", () => {
     expect(hasLocalTurnPark("s1")).toBe(true);
     releaseParkedLocalSession("s1", resources);
     expect(hasLocalTurnPark("s1")).toBe(false);
+  });
+});
+
+describe("why a kept runtime ended, kept for its conversation's next turn", () => {
+  it("is handed, with the generation that ended, to one asker only", () => {
+    keep();
+    advance(DEFAULT_TURN_PARK_TTL_MS);
+    expect(takeKeptRuntimeEnd("s1")).toEqual({ reason: "idle-expired", generation: "gen-1", endedAt: now });
+    expect(takeKeptRuntimeEnd("s1")).toBeUndefined();
+  });
+
+  it("outlives the tombstone, and is forgotten after its retention", async () => {
+    keep();
+    advance(DEFAULT_TURN_PARK_TTL_MS);
+    // The tombstone's minute starts once the runtime's teardown settles.
+    await new Promise((settled) => setImmediate(settled));
+    advance(2 * MINUTE);
+    expect(describeParkedLocalSession("s1")).toBeNull();
+    expect(takeKeptRuntimeEnd("s1")).toMatchObject({ reason: "idle-expired" });
+
+    keep({ sessionId: "s2" });
+    advance(DEFAULT_TURN_PARK_TTL_MS);
+    advance(KEPT_END_RETENTION_MS);
+    expect(takeKeptRuntimeEnd("s2")).toBeUndefined();
+  });
+
+  it("is kept for every way one ends before its next turn", async () => {
+    keep({ sessionId: "timed-out" });
+    advance(DEFAULT_TURN_PARK_TTL_MS);
+    keep({ sessionId: "shut-down" });
+    await shutdownLocalTurnParks();
+    keep({ sessionId: "replaced" });
+    await invalidateLocalTurnParks("runtime-update");
+    expect(takeKeptRuntimeEnd("timed-out")?.reason).toBe("idle-expired");
+    expect(takeKeptRuntimeEnd("shut-down")?.reason).toBe("shutdown");
+    expect(takeKeptRuntimeEnd("replaced")?.reason).toBe("runtime-update");
+  });
+
+  it("is not kept for a runtime parked on an approval", async () => {
+    parkLocalSession({
+      sessionId: "approval", generation: "g", userId: "u1", projectId: "p1",
+      pendingApprovalIds: ["a1"], resources: {}, end: async () => {}, isAlive: () => true, holdModelTraffic: vi.fn(),
+    });
+    await invalidateParkedLocalSession("approval", "superseded");
+    expect(takeKeptRuntimeEnd("approval")).toBeUndefined();
+  });
+
+  it("is kept for a bounded number of sessions, dropping the oldest first", async () => {
+    for (let session = 0; session <= MAX_KEPT_ENDS; session += 1) {
+      keep({ sessionId: `s-${session}`, generation: `gen-${session}` });
+      await invalidateParkedLocalSession(`s-${session}`, "shutdown");
+      advance(1);
+    }
+    expect(takeKeptRuntimeEnd("s-0")).toBeUndefined();
+    expect(takeKeptRuntimeEnd("s-1")).toMatchObject({ generation: "gen-1" });
+    expect(takeKeptRuntimeEnd(`s-${MAX_KEPT_ENDS}`)).toMatchObject({ generation: `gen-${MAX_KEPT_ENDS}` });
   });
 });
