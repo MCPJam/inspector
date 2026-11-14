@@ -155,7 +155,10 @@ export function startSessionSnapshotRestore(args: {
       const bytes = armed;
       armed = null;
       if (!bytes) return;
-      const home = await boxHome(session);
+      // The turn's own signal only: the download timeout would cut off a box
+      // whose cold start outlasted it.
+      const turnSignal = args.abortSignal;
+      const home = await boxHome(session, turnSignal);
       const spec = sessionFileSpec({
         harnessId: owner.harnessId,
         harnessSessionId: state.harnessSessionId,
@@ -173,7 +176,12 @@ export function startSessionSnapshotRestore(args: {
       if (bundle.workDir && bundle.workDir !== workDir) {
         throw new Error("The saved session belongs to another working folder.");
       }
-      await writeSessionFiles({ session, home, files: bundle.files });
+      await writeSessionFiles({
+        session,
+        home,
+        files: bundle.files,
+        ...(turnSignal ? { abortSignal: turnSignal } : {}),
+      });
       logger.info(
         `[harness][snapshot] restored ${bundle.files.length} files after ${Date.now() - startedAt}ms`,
         { harnessId: owner.harnessId },
