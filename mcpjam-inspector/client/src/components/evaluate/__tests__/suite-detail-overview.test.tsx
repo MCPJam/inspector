@@ -1656,13 +1656,28 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     ).toBeNull();
   });
 
-  it("shows the no-runs panel in place of the Runs card", () => {
+  it("shows the no-runs panel, with its own Run, in place of the Runs card", async () => {
     renderSuitePage({ runs: [] });
-    expect(screen.getByText("No runs yet")).toBeVisible();
-    expect(
-      screen.getByText("Run the suite once to start a trend."),
-    ).toBeVisible();
+    const panel = screen.getByTestId("nav-suite-no-runs");
+    expect(panel).toHaveTextContent("No runs yet");
+    expect(panel).toHaveTextContent("Run the suite once to start a trend.");
     expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(panel).getByRole("button", { name: "Run" }));
+    expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
+  });
+
+  it("blocks the no-runs Run for the same reason as the header's", () => {
+    renderSuitePage({
+      runs: [],
+      evalRunsDisabledReason: "Runs are paused for this organization.",
+    });
+    for (const scope of ["suite-page-header", "nav-suite-no-runs"]) {
+      expect(
+        within(screen.getByTestId(scope)).getByRole("button", { name: "Run" }),
+      ).toBeDisabled();
+    }
   });
 
   it("keeps the Runs as you line under the name", () => {
