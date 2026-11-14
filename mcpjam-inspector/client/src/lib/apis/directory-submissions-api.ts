@@ -8,6 +8,8 @@ import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
   PlatformDirectorySubmissionEvent,
   PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionHandoff,
   PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
@@ -18,9 +20,11 @@ import { readinessPlatformClient as client } from "@/lib/apis/directory-readines
 export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
 export type SubmissionPlugin = PlatformDirectorySubmissionPlugin;
+export type SubmissionHandoff = PlatformDirectorySubmissionHandoff;
 export type SubmissionScope = { projectId: string; submissionId: string };
 export type SubmissionEvent = PlatformDirectorySubmissionEvent;
 export type SubmissionEventBody = PlatformDirectorySubmissionEventBody;
+export type StoredFinding = PlatformDirectorySubmissionFinding;
 
 /** The flow as served by the API that stamps its wording on each write. */
 export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
@@ -69,6 +73,40 @@ export const startDirectorySubmissionRun = (
     pluginVersionId,
     testPlanRevision,
   });
+
+/** Where to resume, built from the record on every read, as an agent reads it. */
+export const getDirectorySubmissionHandoff = (
+  scope: SubmissionScope,
+  signal?: AbortSignal,
+): Promise<SubmissionHandoff> =>
+  client().getDirectorySubmissionHandoff(scope, { signal });
+
+/** The pack as a file. `content` is its exact bytes: save it as it is. */
+export const exportDirectorySubmission = (
+  scope: SubmissionScope,
+  format: "json" | "markdown",
+) => client().exportDirectorySubmission({ ...scope, format });
+
+/** One check's stored result, with the observation behind it in `details`. */
+export const getSubmissionFinding = (
+  scope: SubmissionScope,
+  checkId: string,
+  signal?: AbortSignal,
+): Promise<StoredFinding> =>
+  client().getDirectorySubmissionFinding({ ...scope, checkId }, { signal });
+
+/** One kind of recorded event, newest first. */
+export async function listSubmissionEvents(
+  scope: SubmissionScope,
+  kind: SubmissionEvent["kind"],
+  signal?: AbortSignal,
+): Promise<SubmissionEvent[]> {
+  const page = await client().listDirectorySubmissionEvents(
+    { ...scope, kind },
+    { signal },
+  );
+  return page.items;
+}
 
 /** A retry with the same `idempotencyKey` is answered from the first write. */
 export const recordSubmissionEvent = (

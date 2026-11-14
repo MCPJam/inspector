@@ -5,16 +5,16 @@
  * change. The last step is the portal's review page, where MCPJam's copy
  * button stands in for the portal's submit.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import {
-  directoryFlowField,
-  type DirectoryFieldIssue,
-  type DirectoryFlow,
-  type DirectoryFlowField,
-  type DirectoryFlowStep,
-  type DirectoryLayoutBlock,
-  type PlacedFinding,
+import type {
+  DirectoryAnswer,
+  DirectoryFieldIssue,
+  DirectoryFlow,
+  DirectoryFlowField,
+  DirectoryFlowStep,
+  DirectoryLayoutBlock,
+  PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
@@ -23,33 +23,49 @@ import type {
   DirectorySubmissionSession,
 } from "@/hooks/use-directory-submission";
 import type { DirectoryTestPlanSession } from "@/hooks/use-directory-test-plan";
+import { useSubmissionEvents } from "@/hooks/use-submission-events";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
-import { McpjamChecks, McpjamMark } from "./McpjamChecks";
+import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
+import { ConflictNotice } from "./ConflictNotice";
+import { EvidenceDrawer } from "./EvidenceDrawer";
+import { GateChecklist } from "./GateChecklist";
+import { HandoffPanel } from "./HandoffPanel";
+import { McpjamChecks } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
 import { CopyForPortal, PortalReview, portalText } from "./PortalReview";
 import { portalMarks, PortalStepRail } from "./PortalStepRail";
 import { PortalWidget } from "./PortalWidgets";
+import { RecordStatusDialog } from "./RecordStatusDialog";
 import { DIRECTORY_NAMES } from "./RehearsalBar";
 import { ReviewerPath } from "./ReviewerSection";
+import { OpenEvidence } from "./ShowEvidence";
+import { StatusPanel } from "./SubmissionStatus";
 import { TestPlanSection } from "./TestPlanSection";
 
 function StepBody({
   flow,
   step,
   values,
+  answers,
   issues,
   findings,
   server,
+  people,
   onAnswer,
+  onConfirm,
 }: {
   flow: DirectoryFlow;
   step: DirectoryFlowStep;
   values: AnswerValues;
+  /** Each answer with where it came from, for the mark under its field. */
+  answers: ReadonlyMap<string, DirectoryAnswer>;
   /** Only once the step is marked, as the portal shows them. */
   issues: readonly DirectoryFieldIssue[];
   findings: readonly PlacedFinding[];
   server: { url?: string; name?: string };
+  people: People;
   onAnswer: (key: string, value: AnswerValues[string]) => void;
+  onConfirm: (key: string) => void;
 }) {
   const blocks: DirectoryLayoutBlock[] =
     step.layout?.blocks ??
@@ -57,19 +73,31 @@ function StepBody({
   const shown = new Set(blocks.flatMap((block) => block.fields ?? []));
   const fieldsOf = (block: DirectoryLayoutBlock) =>
     step.fields.filter((field) => block.fields?.includes(field.key));
-  const renderField = (field: DirectoryFlowField, label?: string) => (
-    <PortalField
-      key={field.key}
-      field={field}
-      label={label}
-      value={values[field.key]}
-      issue={issues.find((issue) => issue.key === field.key)}
-      findings={findings.filter((entry) => entry.field === field.key)}
-      serverUrl={server.url}
-      serverName={server.name}
-      onChange={(value) => onAnswer(field.key, value)}
-    />
-  );
+  const renderField = (field: DirectoryFlowField, label?: string) => {
+    const issue = issues.find((entry) => entry.key === field.key);
+    return (
+      <PortalField
+        key={field.key}
+        field={field}
+        label={label}
+        value={values[field.key]}
+        issue={issue}
+        findings={findings.filter((entry) => entry.field === field.key)}
+        serverUrl={server.url}
+        serverName={server.name}
+        mark={
+          <AnswerOrigin
+            field={field}
+            answer={answers.get(field.key)}
+            issue={issue}
+            people={people}
+            onConfirm={() => onConfirm(field.key)}
+          />
+        }
+        onChange={(value) => onAnswer(field.key, value)}
+      />
+    );
+  };
   return (
     <div className="space-y-7">
       {blocks.map((block, index) => (
@@ -138,38 +166,17 @@ export function SaveNote({ session }: { session: DirectorySubmissionSession }) {
   return <>Draft saved at {time}</>;
 }
 
-function ConflictNotice({
-  flow,
-  session,
-}: {
-  flow: DirectoryFlow;
-  session: DirectorySubmissionSession;
+/** The frame's outer box, which lets each result inside it open its evidence. */
+function FrameShell(props: {
+  onEvidence: (entry: PlacedFinding) => void;
+  overlays: ReactNode;
+  children: ReactNode;
 }) {
-  const keys = Object.keys(session.conflict ?? {});
-  if (keys.length === 0) return null;
-  const labels = keys.map((key) => directoryFlowField(flow, key)?.label ?? key);
   return (
-    <div
-      role="alert"
-      className="mx-10 mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm"
-    >
-      <McpjamMark />
-      <span className="min-w-0 flex-1">
-        {labels.join(", ")} changed while you were editing. The form shows the
-        saved {keys.length === 1 ? "value" : "values"}.
-      </span>
-      <Button type="button" size="sm" onClick={session.reapply}>
-        Reapply my change
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        onClick={session.keepSaved}
-      >
-        Keep saved values
-      </Button>
-    </div>
+    <OpenEvidence.Provider value={props.onEvidence}>
+      <div className="flex min-h-0 flex-1 flex-col">{props.children}</div>
+      {props.overlays}
+    </OpenEvidence.Provider>
   );
 }
 
@@ -180,6 +187,7 @@ export function PortalFrame({
   testPlan,
   serverUrl,
   serverName,
+  people = NO_PEOPLE,
   onClose,
 }: {
   flow: DirectoryFlow;
@@ -189,6 +197,8 @@ export function PortalFrame({
   testPlan?: DirectoryTestPlanSession;
   serverUrl?: string;
   serverName?: string;
+  /** Who wrote each answer, by name; ids alone read as "a project member". */
+  people?: People;
   onClose: () => void;
 }) {
   const [active, setActive] = useState(0);
@@ -201,6 +211,12 @@ export function PortalFrame({
     (block) => block.widget === "submit",
   )?.text?.missing;
   const marked = portalMarks(left, active, last, Boolean(view.lastRunId));
+  const scope = { projectId: view.projectId, submissionId: view.id };
+  const [evidence, setEvidence] = useState<PlacedFinding | null>(null);
+  // "first" is Mark as submitted; "next" records a later status.
+  const [recording, setRecording] = useState<"first" | "next" | null>(null);
+  // The status lives on the review page, so only that page reads it.
+  const events = useSubmissionEvents(scope, review);
   const placed = (id: string) => view.steps.find((entry) => entry.step === id);
   const issuesOf = (id: string) =>
     session.issues.filter((issue) => issue.step === id);
@@ -219,9 +235,34 @@ export function PortalFrame({
       notChecked: counts?.notChecked ?? 0,
     };
   });
+  const answers = new Map(
+    session.answers.map((answer) => [answer.key, answer]),
+  );
+
+  const overlays = (
+    <>
+      {evidence ? (
+        <EvidenceDrawer
+          flow={flow}
+          scope={scope}
+          resultsRunId={view.resultsRunId}
+          entry={evidence}
+          onClose={() => setEvidence(null)}
+        />
+      ) : null}
+      {recording ? (
+        <RecordStatusDialog
+          directory={directory}
+          first={recording === "first"}
+          onRecord={events.record}
+          onClose={() => setRecording(null)}
+        />
+      ) : null}
+    </>
+  );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <FrameShell onEvidence={setEvidence} overlays={overlays}>
       <div className="flex shrink-0 items-center justify-between gap-4 px-10 py-3">
         <button
           type="button"
@@ -240,7 +281,7 @@ export function PortalFrame({
           </Button>
         </div>
       </div>
-      <ConflictNotice flow={flow} session={session} />
+      <ConflictNotice flow={flow} session={session} people={people} />
       <div className="flex min-h-0 flex-1 gap-10 px-10 pb-6">
         <PortalStepRail
           label={`${directory} submission steps`}
@@ -265,6 +306,20 @@ export function PortalFrame({
             </header>
             {review ? (
               <>
+                <StatusPanel
+                  flowId={flow.id}
+                  directory={directory}
+                  people={people}
+                  events={events}
+                  onRecord={() => setRecording("next")}
+                />
+                <HandoffPanel
+                  flow={flow}
+                  scope={{ projectId: view.projectId, submissionId: view.id }}
+                  // A recorded event changes the summary but not the record.
+                  version={`${view.revision}:${view.resultsRunId}:${view.lastRunId}:${events.version}`}
+                  people={people}
+                />
                 <PortalReview
                   flow={flow}
                   step={step}
@@ -276,16 +331,25 @@ export function PortalFrame({
                   }
                 />
                 <McpjamChecks findings={placed(step.id)?.findings ?? []} />
+                <GateChecklist
+                  flow={flow}
+                  view={view}
+                  directory={directory}
+                  onSaved={session.adopt}
+                />
               </>
             ) : (
               <StepBody
                 flow={flow}
                 step={step}
                 values={session.values}
+                answers={answers}
                 issues={marked(active) ? issuesOf(step.id) : []}
                 findings={placed(step.id)?.findings ?? []}
                 server={{ url: serverUrl, name: serverName }}
+                people={people}
                 onAnswer={session.setAnswer}
+                onConfirm={session.confirm}
               />
             )}
             <ReviewerPath
@@ -317,6 +381,15 @@ export function PortalFrame({
                       text={() => portalText(flow, session.values)}
                     />
                   ) : null}
+                  {review && events.loaded && events.status.length === 0 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setRecording("first")}
+                    >
+                      Mark as submitted
+                    </Button>
+                  ) : null}
                   <a
                     href={view.submissionUrl}
                     target="_blank"
@@ -337,6 +410,6 @@ export function PortalFrame({
           </div>
         </div>
       </div>
-    </div>
+    </FrameShell>
   );
 }

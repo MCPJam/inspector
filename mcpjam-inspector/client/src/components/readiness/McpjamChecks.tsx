@@ -7,28 +7,19 @@
  * answer reads as a likely flag, never as a blocker.
  */
 import type { ReactNode } from "react";
-import type {
-  DirectoryEvidenceStatus,
-  PlacedFinding,
-} from "@mcpjam/sdk/browser";
+import type { PlacedFinding } from "@mcpjam/sdk/browser";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@mcpjam/design-system/cn";
+import { EvidenceNote, EvidenceStatusBadge } from "./EvidenceStatus";
+import { ShowEvidence } from "./ShowEvidence";
 
-const SOURCE: Record<string, string> = {
+export const SOURCE: Record<string, string> = {
   wire: "Verified on your server",
   browser: "Seen in a browser",
   static: "Checked without calling your server",
   declared: "From your answers",
   manual: "Recorded by a person",
   llm: "Read by a model, not verified",
-};
-
-const EVIDENCE: Record<DirectoryEvidenceStatus, string> = {
-  established: "Established",
-  inconclusive: "Inconclusive",
-  stale: "Stale",
-  "not-tested": "Not tested",
-  blocked: "Blocked",
 };
 
 type Tone = "fail" | "flag" | "pass" | "idle";
@@ -41,7 +32,7 @@ const TONE: Record<Tone, string> = {
 };
 
 /** The directory's severity, in the words its portal would use. */
-function severityOf({ finding }: PlacedFinding): {
+export function severityOf({ finding }: PlacedFinding): {
   label?: string;
   tone: Tone;
 } {
@@ -84,13 +75,36 @@ export function McpjamMark({ children }: { children?: ReactNode }) {
   );
 }
 
+/** A dashed block marked "MCPJam" for what MCPJam adds to the copied page. */
+export function McpjamBlock(props: {
+  title: string;
+  note: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2 rounded-lg border border-dashed border-border px-4 py-3">
+      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <McpjamMark />
+        <span className="text-sm font-medium text-foreground">
+          {props.title}
+        </span>
+        {props.note}
+      </p>
+      {props.children}
+    </section>
+  );
+}
+
 export function CheckResult({ entry }: { entry: PlacedFinding }) {
   const { finding, evidenceStatus } = entry;
   const severity = severityOf(entry);
+  // A result without a verdict says why in its evidence note instead.
   const detail =
     finding.status === "violated"
       ? finding.remediation
-      : finding.notEvaluatedReason;
+      : finding.status === "not-evaluated"
+        ? undefined
+        : finding.notEvaluatedReason;
   return (
     <li className={cn("rounded-md text-sm", TONE[severity.tone])}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -98,23 +112,14 @@ export function CheckResult({ entry }: { entry: PlacedFinding }) {
         {severity.label ? (
           <Badge variant="outline">{severity.label}</Badge>
         ) : null}
-        <Badge
-          variant="outline"
-          className={cn(evidenceStatus !== "established" && "border-dashed")}
-        >
-          {EVIDENCE[evidenceStatus]}
-        </Badge>
+        <EvidenceStatusBadge status={evidenceStatus} />
       </div>
       <p className="text-xs text-muted-foreground">
         {SOURCE[finding.provenance] ?? finding.provenance}
+        <ShowEvidence entry={entry} />
       </p>
       {detail ? <p className="mt-1">{detail}</p> : null}
-      {evidenceStatus === "stale" ? (
-        <p className="mt-1 text-xs text-muted-foreground">
-          An answer it read changed after this run. Run checks again to update
-          it.
-        </p>
-      ) : null}
+      <EvidenceNote entry={entry} />
     </li>
   );
 }

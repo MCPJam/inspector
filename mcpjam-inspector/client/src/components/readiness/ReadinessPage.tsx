@@ -4,10 +4,11 @@
  * screen and the server's saved rehearsals, then Claude's form or ChatGPT's
  * plugin page.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Blocks, Plug, Upload } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { directoryFlowField } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
 import { ConformanceServerPicker } from "@/components/conformance/ConformancePageChrome";
@@ -15,6 +16,8 @@ import { ScopedNavigate } from "@/components/routing/scoped-navigate";
 import type { DirectoryReadinessState } from "@/hooks/use-directory-readiness-run";
 import { useDirectorySubmission } from "@/hooks/use-directory-submission";
 import { useDirectoryTestPlan } from "@/hooks/use-directory-test-plan";
+import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
+import { useProjectMembers } from "@/hooks/useProjects";
 import { useProjectServers } from "@/hooks/useViews";
 import { routePaths } from "@/lib/app-navigation";
 import { useAppRouteContext } from "@/lib/app-route-context";
@@ -24,6 +27,8 @@ import {
   type SubmissionSummary,
 } from "@/lib/apis/directory-submissions-api";
 import type { ServerWithName } from "@/state/app-types";
+import { NO_PEOPLE, type People } from "./AnswerOrigin";
+import { FieldLabels } from "./EvidenceStatus";
 import { McpjamMark } from "./McpjamChecks";
 import { OpenAiPortal } from "./OpenAiPortal";
 import { PortalFrame } from "./PortalFrame";
@@ -292,17 +297,35 @@ function PortalStart({
   );
 }
 
+/** Answers and events name a signed-in principal by id; the page shows names. */
+function usePeople(isAuthenticated: boolean, projectId: string | null) {
+  const you = useTaskOwnerId();
+  const { members } = useProjectMembers({ isAuthenticated, projectId });
+  return useMemo((): People => {
+    const names = new Map(
+      members.flatMap((member) =>
+        member.userId && member.user?.name
+          ? [[member.userId, member.user.name] as const]
+          : [],
+      ),
+    );
+    return { you, nameOf: (id) => names.get(id) };
+  }, [you, members]);
+}
+
 export function ReadinessPage({
   projectId,
   servers,
   loading = false,
   selected,
+  people = NO_PEOPLE,
   onSelect,
 }: {
   projectId: string | null;
   servers: readonly SavedServer[];
   loading?: boolean;
   selected: string | null;
+  people?: People;
   onSelect: (name: string) => void;
 }) {
   const chosen = servers.find((entry) => entry.server.name === selected);
@@ -408,16 +431,21 @@ export function ReadinessPage({
       />
     );
   } else if (flow && view) {
+    const labelOf = (key: string) =>
+      directoryFlowField(flow, key)?.label ?? key;
     body = (
-      <PortalFrame
-        flow={flow}
-        view={view}
-        session={session}
-        testPlan={plan}
-        serverUrl={serverUrl}
-        serverName={chosen.server.name}
-        onClose={() => setOpen(null)}
-      />
+      <FieldLabels.Provider value={labelOf}>
+        <PortalFrame
+          flow={flow}
+          view={view}
+          session={session}
+          testPlan={plan}
+          serverUrl={serverUrl}
+          serverName={chosen.server.name}
+          people={people}
+          onClose={() => setOpen(null)}
+        />
+      </FieldLabels.Provider>
     );
   } else if (session.error) {
     body = (
@@ -495,6 +523,7 @@ export function ReadinessRoute() {
     isAuthenticated,
     projectId: convexProjectId,
   });
+  const people = usePeople(isAuthenticated, convexProjectId ?? null);
   // Only an explicit `false` leaves: the flag is `undefined` until PostHog
   // hydrates, and leaving then would strand a member who cold-loads the page.
   if (enabled === false)
@@ -513,6 +542,7 @@ export function ReadinessRoute() {
       servers={servers}
       loading={isLoading}
       selected={selectedServerEntry?.name ?? null}
+      people={people}
       onSelect={setSelectedServer}
     />
   );

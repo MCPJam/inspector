@@ -462,9 +462,10 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // attempt, and resuming or cancelling it.
   /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
   // The /readiness page: the flows it copies, and a project's directory
-  // submissions with their runs, results and recorded events.
+  // submissions with their runs, results, handoff summary, findings (one
+  // check's under its id), export, events and snapshots.
   /^\/api\/v1\/directory-flows(\/[^/]+)?$/,
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|events))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions(\/[^/]+(\/(runs|results|handoff|export|events|snapshots|findings(\/[^/]+)?))?)?$/,
   // The /readiness page's test plan: the saved plan, a draft, and what a
   // run's calls showed.
   /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/(test-plan(\/draft)?|tool-tests)$/,
