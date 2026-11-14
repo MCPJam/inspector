@@ -5585,8 +5585,17 @@ export function useChatSession(
       // that merely awaits this promise cannot tell "sent" from "swallowed" —
       // `rewindToMessage` needs that distinction to avoid announcing a branch
       // whose turn never ran. Callers that fire-and-forget are unaffected.
-      const startTurn = async (): Promise<boolean> => {
-        if (!sendIsCurrent()) return false;
+      const startTurn = async (waited: boolean): Promise<boolean> => {
+        if (!sendIsCurrent()) {
+          // Stopped, or the chat or its settings changed while this waited.
+          if (waited) {
+            toast.error(
+              "A message waiting for the reply wasn't sent. Send it again if you need it.",
+              { id: "chat-turn-dropped" },
+            );
+          }
+          return false;
+        }
         // These belong to this turn, so they wait until the previous one ends.
         savedClientSendGuard.begin();
         chatToolCallRequestIdsRef.current.clear();
@@ -5806,7 +5815,7 @@ export function useChatSession(
         return true;
       };
       return runTurn(
-        async () => ({ result: await startTurn(), turn }),
+        async (waited) => ({ result: await startTurn(waited), turn }),
         idleGate,
       );
     },

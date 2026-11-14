@@ -34,6 +34,18 @@ const mockState = vi.hoisted(() => ({
   idCounter: 0,
 }));
 
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), {
+    error: toastError,
+    success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    message: vi.fn(),
+    dismiss: vi.fn(),
+  }),
+}));
+
 const mcpJamModel = {
   id: "openai/gpt-5-mini",
   name: "GPT-5 Mini",
@@ -239,6 +251,7 @@ function useHarness() {
 }
 
 beforeEach(() => {
+  toastError.mockClear();
   scenario.bodies = [];
   scenario.releases = [];
   scenario.onConflict.mockClear();
@@ -269,5 +282,30 @@ describe("one chat turn at a time (real AI SDK)", () => {
     await act(async () => scenario.releases[1]());
     await waitFor(() => expect(result.current.resumedVersion).toBe(6));
     expect(scenario.onConflict).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued send when the user stops the running turn, with one notice", async () => {
+    const { result } = renderHook(useHarness);
+    act(() => result.current.syncResumedVersion(4));
+    await act(async () => {
+      void result.current.sendMessage({ text: "count to 150" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+
+    let queued: Promise<boolean> | undefined;
+    await act(async () => {
+      queued = result.current.sendMessage({ text: "App follow-up" });
+    });
+    await act(async () => result.current.stop());
+    await act(async () => scenario.releases[0]());
+
+    await expect(queued).resolves.toBe(false);
+    await act(async () => {});
+    expect(scenario.bodies).toHaveLength(1);
+    expect(
+      toastError.mock.calls.filter(
+        ([, options]) => options?.id === "chat-turn-dropped",
+      ),
+    ).toHaveLength(1);
   });
 });

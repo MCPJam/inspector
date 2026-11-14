@@ -15,15 +15,16 @@ export interface IdleGate {
  * One chat turn at a time for a session. `run` starts its task at once when
  * nothing is queued and the status is idle; otherwise it waits for every
  * earlier turn to settle and for the turn to end, including an approval or App
- * round the user still has to answer. The task returns its result and, when it
- * started a request, that request's promise: the AI SDK settles it once the
- * reply and its automatic follow-up requests have ended.
+ * round the user still has to answer. The task learns whether it waited, and
+ * returns its result and, when it started a request, that request's promise:
+ * the AI SDK settles it once the reply and its automatic follow-up requests
+ * have ended.
  */
 export function createChatTurnQueue() {
   let tail: Promise<void> = Promise.resolve();
   let unsettled = 0;
   return function run<T>(
-    task: () => Promise<{ result: T; turn?: Promise<unknown> }>,
+    task: (waited: boolean) => Promise<{ result: T; turn?: Promise<unknown> }>,
     gate: IdleGate,
   ): Promise<T> {
     const previous = tail;
@@ -44,7 +45,7 @@ export function createChatTurnQueue() {
           await previous;
           await gate.waitForTurnEnd();
         }
-        const started = await task();
+        const started = await task(!startNow);
         turn = started.turn;
         return started.result;
       } finally {
