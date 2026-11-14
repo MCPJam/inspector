@@ -42,6 +42,12 @@ const UNGATHERED = [
   "openai.ui.output-schema",
   "openai.ui.useful-without-ui",
 ];
+/** The decision checks, listed apart the same way while the scan is off. */
+const DECISIONS = [
+  "both.decision.annotation-matches-behaviour",
+  "openai.decision.fair-play",
+  "openai.decision.secret-seeking",
+];
 
 function run(overrides: Partial<OpenAIReadinessEvidence> = {}) {
   return gradeOpenAIReadiness({
@@ -158,7 +164,9 @@ describe("the UI checks no run gathers evidence for", () => {
         failing: [],
         undetermined: [],
       });
-      expect(verdict.notCheckedOnPath, path).toEqual(UNGATHERED);
+      expect(verdict.notCheckedOnPath, path).toEqual(
+        [...UNGATHERED, ...DECISIONS].sort()
+      );
       for (const id of UNGATHERED) {
         expect(verdict.notCheckedReasons[id]).toBe(
           byId(result, id).notEvaluatedReason

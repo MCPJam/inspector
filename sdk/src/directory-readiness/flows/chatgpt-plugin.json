@@ -651,7 +651,24 @@
         "openai.experience.tool-overlap",
         "openai.experience.naming-inconsistent",
         "openai.experience.destructive-tool-underexplained",
-        "openai.experience.auth-story-unclear"
+        "openai.experience.auth-story-unclear",
+        "both.decision.annotation-matches-behaviour"
+      ]
+    },
+    {
+      "step": "mcp",
+      "needs": [
+        "model"
+      ],
+      "reads": [
+        "mcp.serverUrl",
+        "listing.displayName",
+        "listing.shortDescription",
+        "listing.description"
+      ],
+      "checks": [
+        "openai.decision.fair-play",
+        "openai.decision.secret-seeking"
       ]
     },
     {

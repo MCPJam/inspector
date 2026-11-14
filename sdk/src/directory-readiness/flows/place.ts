@@ -171,14 +171,20 @@ function statusOf(
       ? "blocked"
       : "not-tested";
   }
-  // A model's observation is a flag, never a verdict, and one it was unsure
-  // of has to read as unsure.
-  const unsure =
+  return isUnsureModelFlag(finding) ? "inconclusive" : "established";
+}
+
+/**
+ * A model's flag it was unsure of. A model's flag is never a verdict, and an
+ * unsure one reads as inconclusive: a warning, never a pass.
+ */
+export function isUnsureModelFlag(finding: DirectoryReadinessFinding): boolean {
+  return (
     finding.provenance === "llm" &&
     finding.class === "heuristic" &&
     finding.status === "informational" &&
-    finding.details?.confidence === "low";
-  return unsure ? "inconclusive" : "established";
+    finding.details?.confidence === "low"
+  );
 }
 
 /** Answer keys whose value or wording revision differs between two sets of stored answers. */

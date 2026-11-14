@@ -395,7 +395,8 @@ function sourceCheckIds(): { ids: string[]; families: string[] } {
   return {
     ids: [
       ...new Set([
-        ...found(/\bid: "(openai\.[a-z0-9.-]+)"/g),
+        // `both.` names a decision question both directories ask.
+        ...found(/\bid: "((?:openai|both)\.[a-z0-9.-]+)"/g),
         ...OPENAI_OBSERVATION_IDS,
       ]),
     ].sort(),
