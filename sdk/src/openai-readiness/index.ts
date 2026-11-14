@@ -124,6 +124,12 @@ export type {
   OpenAIPortalRule,
   OpenAIPortalValueType,
 } from "./portal-codes/define.js";
+export { OPENAI_PORTAL_LISTING_CATEGORIES } from "./portal-codes/listing.js";
+export { validateOpenAIPortalDocument } from "./portal-codes/validate.js";
+export type {
+  OpenAIPortalCodeViolation,
+  ValidateOpenAIPortalDocumentOptions,
+} from "./portal-codes/validate.js";
 
 export {
   readImageDimensions,

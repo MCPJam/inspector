@@ -1,5 +1,5 @@
 /**
- * The portal's code table: every code of the page's tables it holds, once,
+ * The portal's code table: every code on its submission-errors page, once,
  * with the page's words, and with limits, fields and files that agree with
  * those words.
  */
@@ -11,6 +11,7 @@ import {
   OPENAI_PORTAL_CODE_TABLES,
   OPENAI_PORTAL_CODES_SOURCE,
 } from "../../src/openai-readiness/portal-codes/define.js";
+import { OPENAI_PORTAL_LISTING_CATEGORIES } from "../../src/openai-readiness/portal-codes/listing.js";
 import {
   OPENAI_PORTAL_CODES,
   OPENAI_PORTAL_CODES_BY_CODE,
@@ -25,19 +26,25 @@ const PAGE_COUNTS = {
   "ZIP structure and limit errors": 19,
   "Plugin root errors": 4,
   "Plugin manifest errors": 40,
+  "Listing and interface errors": 62,
   "Plugin content errors": 16,
   "MCP manifest errors": 7,
+  "Skill errors": 23,
+  "Skill agent metadata errors": 26,
+  "Asset path errors": 9,
+  "Image errors": 17,
   "MCP server reference errors": 12,
+  "Package warnings": 7,
 };
 
 const tokensOf = (message: string) =>
   [...message.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
 
 describe("the code table", () => {
-  it("holds the 125 codes of those tables, each once", () => {
+  it("holds the page's 269 codes, each once", () => {
     const codes = OPENAI_PORTAL_CODES.map((definition) => definition.code);
-    expect(codes).toHaveLength(125);
-    expect(new Set(codes).size).toBe(125);
+    expect(codes).toHaveLength(269);
+    expect(new Set(codes).size).toBe(269);
     for (const code of codes) {
       expect(code).toMatch(/^[a-z0-9_]+$/);
       expect(isOpenAIPortalCode(code)).toBe(true);
@@ -54,9 +61,7 @@ describe("the code table", () => {
     }
     expect(counts).toEqual(PAGE_COUNTS);
     const order = [...new Set(OPENAI_PORTAL_CODES.map((row) => row.table))];
-    expect(order).toEqual(
-      OPENAI_PORTAL_CODE_TABLES.filter((table) => table in PAGE_COUNTS)
-    );
+    expect(order).toEqual([...OPENAI_PORTAL_CODE_TABLES]);
   });
 
   it("gives every code a severity, a stage, a message and the source", () => {
@@ -80,7 +85,7 @@ describe("the code table", () => {
     expect(OPENAI_PORTAL_CODES_SOURCE.capturedOn).toBe("2026-11-13");
   });
 
-  it("marks the upload codes that ask for confirmation as warnings", () => {
+  it("marks the package warnings and the upload codes that ask for confirmation as warnings", () => {
     const warnings = OPENAI_PORTAL_CODES.filter(
       (definition) => definition.severity === "warning"
     ).map((definition) => definition.code);
@@ -90,6 +95,13 @@ describe("the code table", () => {
       "claude_format_normalized",
       "manifest_normalized",
       "developer_name_defaulted",
+      "duplicate_app_reference",
+      "undeclared_app_manifest_ignored",
+      "undeclared_mcp_manifest_ignored",
+      "skill_file_ignored",
+      "skill_symlink_ignored",
+      "skill_frontmatter_adjusted",
+      "skill_metadata_ignored",
     ]);
   });
 
@@ -99,6 +111,12 @@ describe("the code table", () => {
     );
     expect(OPENAI_PORTAL_CODES_BY_CODE.mcp_configuration_excluded.message).toBe(
       "MCP configuration is excluded unless your organization is approved for local MCP submissions. For a local MCP plugin, ask your OpenAI representative to confirm the submitting organization is allowlisted. Submit remote MCP servers through **With MCP**."
+    );
+    expect(
+      OPENAI_PORTAL_CODES_BY_CODE.declared_asset_path_has_control_character
+        .message
+    ).toBe(
+      "The named asset field must not contain characters U+0000–U+001F or U+007F."
     );
   });
 
@@ -139,7 +157,7 @@ describe("what each code is about", () => {
 
   it("names a field the message names, in a document", () => {
     const withField = OPENAI_PORTAL_CODES.filter((row) => row.field);
-    expect(withField.length).toBeGreaterThan(70);
+    expect(withField.length).toBeGreaterThan(150);
     for (const { code, field = "", document, message } of withField) {
       expect(document, code).toBeDefined();
       if (NAMED_IN_WORDS.has(code)) continue;
@@ -159,7 +177,7 @@ describe("what each code is about", () => {
 
   it("names a file the message names", () => {
     const withPath = OPENAI_PORTAL_CODES.filter((row) => row.path);
-    expect(withPath.length).toBeGreaterThan(15);
+    expect(withPath.length).toBeGreaterThan(30);
     for (const { code, path = "", message } of withPath) {
       expect(
         tokensOf(message).some((token) => path.endsWith(token)),
@@ -168,12 +186,40 @@ describe("what each code is about", () => {
     }
   });
 
-  it("states every length limit its message states", () => {
+  it("states every length and count limit its message states", () => {
+    // The listing URLs' limits are in the table's note, not their messages.
+    const NOTED =
+      /^plugin_(website|privacy_policy|terms_of_service|support)_url_too_long$/;
     for (const { code, message, rules = [] } of OPENAI_PORTAL_CODES) {
       for (const rule of rules) {
-        if (rule.kind !== "length") continue;
+        if (rule.kind !== "length" && rule.kind !== "count") continue;
+        if (NOTED.test(code)) {
+          expect(rule).toEqual({
+            kind: "length",
+            max: 2048,
+            submissionMax: 1024,
+          });
+          continue;
+        }
+        if (code === "plugin_default_prompt_too_many") {
+          expect(message).toContain("at most three prompts");
+          expect(rule).toEqual({ kind: "count", max: 3 });
+          continue;
+        }
         expect(message, code).toContain(rule.max.toLocaleString("en-US"));
+        if (rule.kind === "length" && rule.submissionMax !== undefined) {
+          expect(message, code).toContain(
+            rule.submissionMax.toLocaleString("en-US")
+          );
+        }
       }
     }
+  });
+
+  it("lists the categories plugin_category_unknown names, in its order", () => {
+    const message = OPENAI_PORTAL_CODES_BY_CODE.plugin_category_unknown.message;
+    expect(tokensOf(message).slice(1)).toEqual([
+      ...OPENAI_PORTAL_LISTING_CATEGORIES,
+    ]);
   });
 });
