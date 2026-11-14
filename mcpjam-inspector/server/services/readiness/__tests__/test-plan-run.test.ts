@@ -5,8 +5,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DirectoryTestCallRecord } from "@mcpjam/sdk";
+import {
+  directoryTestCaseDigest,
+  type DirectoryReviewerFixtureEvidence,
+  type DirectoryTestCallRecord,
+} from "@mcpjam/sdk";
 import { ReadinessLeaseLostError } from "../runner.js";
+import type { TestArgumentRequester } from "../test-argument-drafts.js";
 import {
   TOOLS,
   memoryLedger,
@@ -40,7 +45,9 @@ interface ToolCall {
 /** An MCP server that lists `tools` and answers each call as the sample does. */
 function wire(tools = TOOLS) {
   const calls: ToolCall[] = [];
+  const credentials: Array<string | null> = [];
   const fetchFn = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    credentials.push(new Headers(init?.headers).get("authorization"));
     const body = JSON.parse(String(init?.body ?? "{}"));
     const reply = (result: unknown, headers: Record<string, string> = {}) =>
       Response.json({ jsonrpc: "2.0", id: body.id, result }, { headers });
@@ -71,7 +78,7 @@ function wire(tools = TOOLS) {
       isError: refused,
     });
   });
-  return { fetchFn: fetchFn as unknown as typeof fetch, calls };
+  return { fetchFn: fetchFn as unknown as typeof fetch, calls, credentials };
 }
 
 let journal: Journal;
@@ -83,14 +90,21 @@ function arrange(calls: DirectoryTestCallRecord[] = []) {
   recordRunCall.mockImplementation((_lease, call) => ledger.record(call));
 }
 
-function run(fetchFn: typeof fetch) {
+function run(
+  fetchFn: typeof fetch,
+  extra: Partial<Parameters<typeof runDirectoryTestPlan>[0]> = {},
+) {
   return runDirectoryTestPlan({
     lease: LEASE,
     target: TARGET,
     fetchFn,
-    mcpHeaders: { authorization: "Bearer saved-token" },
+    reviewer: {
+      accountId: "acct_reviewer",
+      mcpHeaders: { authorization: "Bearer reviewer-token" },
+    },
     signal: new AbortController().signal,
     deadlineAt: Date.now() + 15 * 60_000,
+    ...extra,
   });
 }
 
@@ -250,5 +264,255 @@ describe("runDirectoryTestPlan", () => {
     const { fetchFn } = wire();
     await expect(run(fetchFn)).rejects.toBeInstanceOf(ReadinessLeaseLostError);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("runDirectoryTestPlan as the reviewer", () => {
+  const BLOCKED =
+    "demoProject was not found in the reviewer's account. Add it there, or update the fixture.";
+
+  /** The reviewer path's lookup, with one resource it did or did not find. */
+  const lookup = (
+    name: string,
+    status: "found" | "missing" = "missing",
+  ): DirectoryReviewerFixtureEvidence => ({
+    fixtures: [{ name, tool: "list_projects", status }],
+    blockedCases: [],
+  });
+
+  it("lists and calls as the reviewer account only, and records it with every call", async () => {
+    const { fetchFn, credentials } = wire();
+    const report = await run(fetchFn);
+
+    expect(report?.status).toBe("completed");
+    expect(new Set(credentials)).toEqual(new Set(["Bearer reviewer-token"]));
+    // The cleanup call as well as the cases.
+    expect(ledger.writes.map((write) => write.callKey)).toContain(
+      "cleanup:scratchProject",
+    );
+    expect(
+      ledger.writes.every((write) => write.account === "acct_reviewer"),
+    ).toBe(true);
+  });
+
+  it("reads no plan and lists nothing without a reviewer account", async () => {
+    const reason =
+      "No reviewer account is connected for this submission. Rehearse the reviewer sign-in, then run again.";
+    const { fetchFn } = wire();
+    const report = await run(fetchFn, { reviewer: { missing: reason } });
+
+    expect(report).toEqual({
+      planRevision: 3,
+      status: "not-run",
+      reason,
+      ambiguous: [],
+      tools: [],
+      cleanup: [],
+    });
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(readRunTestPlan).not.toHaveBeenCalled();
+    expect(recordRunCall).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["one of its values", lookup("proj_demo"), true],
+    ["its id, in another case and with spaces", lookup(" DEMOPROJECT "), true],
+    ["a resource the lookup found", lookup("proj_demo", "found"), false],
+    ["a fixture the sweep creates", lookup("scratchProject"), false],
+    ["a resource the plan does not use", lookup("proj_other"), false],
+  ])(
+    "matches a missing resource named by %s to the plan's fixture",
+    async (_label, fixtures, blocks) => {
+      const { fetchFn, calls } = wire();
+      const report = await run(fetchFn, { fixtures });
+
+      const sent = calls.filter(
+        (call) => call.name === "get_project" && call.arguments.projectId,
+      );
+      expect(sent).toHaveLength(blocks ? 0 : 1);
+      const results = report?.tools.flatMap((tool) => tool.cases) ?? [];
+      const blocked = results.filter((result) => result.status === "blocked");
+      expect(blocked).toEqual(
+        blocks
+          ? [
+              {
+                caseId: "get_project#valid",
+                kind: "valid",
+                status: "blocked",
+                reason: BLOCKED,
+              },
+            ]
+          : [],
+      );
+      // The sweep still ran, with the scratch project created and removed.
+      expect(report?.status).toBe("completed");
+      expect(calls.map((call) => call.name)).toContain("create_project");
+    },
+  );
+
+  it("never reports a fixture the sweep creates as missing from the account", async () => {
+    // The creator fails, so the cases that use its fixture are not sent.
+    const { fetchFn: serve } = wire();
+    const fetchFn: typeof fetch = async (url, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.params?.name !== "create_project") return serve(url, init);
+      const result = { content: [], isError: true };
+      return Response.json({ jsonrpc: "2.0", id: body.id, result });
+    };
+    const report = await run(fetchFn, { fixtures: lookup("scratchProject") });
+
+    const rename = report?.tools.find((tool) => tool.tool === "rename_project");
+    expect(rename?.cases[0]).toMatchObject({
+      status: "blocked",
+      reason:
+        "scratchProject was not created: case create_project#valid is failed.",
+    });
+  });
+
+  it("names the missing fixture when the plan does not match the tools either", async () => {
+    const { fetchFn } = wire([...TOOLS, { name: "archive_project" }]);
+    const report = await run(fetchFn, { fixtures: lookup("proj_demo") });
+
+    const getProject = report?.tools.find(
+      (tool) => tool.tool === "get_project",
+    );
+    expect(getProject?.cases[0]).toMatchObject({
+      caseId: "get_project#valid",
+      status: "blocked",
+      reason: BLOCKED,
+    });
+  });
+
+  it("reports a call made as another reviewer account as stale", async () => {
+    const plan = samplePlan();
+    const testCase = plan.cases[0]!;
+    const tool = TOOLS.find((entry) => entry.name === testCase.tool);
+    arrange([
+      storedCall(
+        testCase.id,
+        testCase.tool,
+        directoryTestCaseDigest(plan, testCase, tool),
+        { phase: "succeeded", outcome: "result", account: "acct_other" },
+      ),
+    ]);
+    const { fetchFn } = wire();
+    const report = await run(fetchFn);
+
+    expect(
+      report?.tools.find((entry) => entry.tool === testCase.tool),
+    ).toMatchObject({
+      status: "stale",
+      reason: `${testCase.id}: It ran as another reviewer account. Run it again.`,
+    });
+  });
+});
+
+describe("runDirectoryTestPlan on a server that needs no sign-in", () => {
+  const NO_SIGN_IN = { reviewer: { noSignIn: true as const } };
+
+  /** A finished `list_projects#valid`, made as `account` or with none. */
+  function madeAs(account?: string) {
+    const plan = samplePlan();
+    const testCase = plan.cases[0]!;
+    const tool = TOOLS.find((entry) => entry.name === testCase.tool);
+    const digest = directoryTestCaseDigest(plan, testCase, tool);
+    arrange([
+      storedCall(testCase.id, testCase.tool, digest, {
+        phase: "succeeded",
+        outcome: "result",
+        ...(account ? { account } : {}),
+      }),
+    ]);
+  }
+
+  it("lists and calls with no credential, and records no account", async () => {
+    const { fetchFn, credentials } = wire();
+    const report = await run(fetchFn, NO_SIGN_IN);
+
+    expect(report?.status).toBe("completed");
+    expect(new Set(credentials)).toEqual(new Set([null]));
+    expect(ledger.writes.length).toBeGreaterThan(0);
+    expect(ledger.writes.every((write) => !("account" in write))).toBe(true);
+    const calls = (report?.tools ?? []).flatMap((tool) =>
+      tool.cases.flatMap((result) => (result.call ? [result.call] : [])),
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.account === undefined)).toBe(true);
+  });
+
+  it.each([
+    [
+      "made as a reviewer account, once the server needs no sign-in",
+      "acct_other",
+      NO_SIGN_IN,
+      "It ran as a reviewer account, and the submission now says the server needs no sign-in. Run it again.",
+    ],
+    [
+      "made with no account, once there is a reviewer account",
+      undefined,
+      {},
+      "It ran with no account, and tests now run as the reviewer account. Run it again.",
+    ],
+  ])("reports a result %s as stale", async (_label, account, extra, words) => {
+    madeAs(account);
+    const { fetchFn } = wire();
+    const report = await run(fetchFn, extra);
+
+    expect(
+      report?.tools.find((tool) => tool.tool === "list_projects"),
+    ).toMatchObject({
+      status: "stale",
+      reason: `list_projects#valid: ${words}`,
+    });
+  });
+
+  it.each([
+    [
+      "with no sign-in, names the mismatch",
+      NO_SIGN_IN,
+      "The server refused a connection with no credential (HTTP 401), but the submission says it needs no sign-in, so no tool was called. Correct the authentication answer, or let the server accept calls without sign-in, then start a new run.",
+    ],
+    [
+      "as the reviewer, says the list could not be read",
+      {},
+      "The server's tool list could not be read in full (Sign in first), so no tool was called. Check that the server is reachable, then start a new run.",
+    ],
+  ])(
+    "calls no tool when the server refuses the connection: %s",
+    async (_label, extra, reason) => {
+      const refused = { code: -32001, message: "Sign in first" };
+      const fetchFn = vi.fn(async () =>
+        Response.json(
+          { jsonrpc: "2.0", id: 1, error: refused },
+          { status: 401 },
+        ),
+      );
+      const report = await run(fetchFn as unknown as typeof fetch, extra);
+
+      expect(report).toMatchObject({ status: "not-run", reason, tools: [] });
+      expect(report?.reason).not.toMatch(/rehears/i);
+      expect(recordRunCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it("drafts missing arguments with no sign-in, but not without the reviewer account", async () => {
+    const plan = samplePlan();
+    plan.cases = plan.cases.map(({ arguments: args, ...testCase }) =>
+      testCase.id === "get_project#valid"
+        ? testCase
+        : { ...testCase, arguments: args },
+    );
+    readRunTestPlan.mockResolvedValue({ revision: 3, plan });
+    const requestDrafts = vi.fn<TestArgumentRequester>(async () => undefined);
+
+    await run(wire().fetchFn, { ...NO_SIGN_IN, requestDrafts });
+    expect(requestDrafts).toHaveBeenCalledTimes(1);
+    expect(requestDrafts.mock.calls[0]?.[0]).toMatchObject({
+      items: [expect.objectContaining({ caseId: "get_project#valid" })],
+    });
+
+    const missing = { missing: "No reviewer account is connected." };
+    await run(wire().fetchFn, { reviewer: missing, requestDrafts });
+    expect(requestDrafts).toHaveBeenCalledTimes(1);
   });
 });

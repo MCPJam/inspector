@@ -76,6 +76,7 @@ import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
   OPENAI_SUBMISSION_MODE_SHAPES,
+  directoryDeclaresNoSignIn,
   getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
@@ -129,7 +130,8 @@ export interface ExecuteHostedReadinessOptions {
   reviewerAttemptId?: string;
   /**
    * The reviewer account the start authorized as itself: the only credential
-   * reviewer checks use. A submission run without one blocks them with why.
+   * reviewer checks and the test plan use. A submission run without one
+   * blocks them with why.
    */
   reviewer?: ReadinessReviewerAccount;
   /**
@@ -247,6 +249,8 @@ const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
   missing:
     "This run was started without the reviewer account. Start a new run from the submission.",
 };
+
+const NO_SIGN_IN = { noSignIn: true } as const;
 
 /**
  * Whether the run's declared shape includes an uploaded package. A hosted
@@ -427,7 +431,8 @@ export async function executeHostedReadinessRun(
       terminal = { outcome: "blocked", terminalReason: "waiting_for_person" };
       return;
     }
-    const { result } = await runDirectoryReadiness({
+    const reviewer = options.reviewer ?? NO_REVIEWER_ACCOUNT;
+    const { result, reviewerPath } = await runDirectoryReadiness({
       publisher: options.publisher,
       target: options.target,
       submissionMode: options.submissionMode,
@@ -444,10 +449,7 @@ export async function executeHostedReadinessRun(
       ...(submission
         ? {
             submissionAnswers: submission.answers,
-            reviewer: {
-              ...submission,
-              account: options.reviewer ?? NO_REVIEWER_ACCOUNT,
-            },
+            reviewer: { ...submission, account: reviewer },
           }
         : {}),
       ...(runPackage ? { pluginPackage: runPackage } : {}),
@@ -465,7 +467,12 @@ export async function executeHostedReadinessRun(
           lease,
           target: options.target,
           fetchFn: options.fetchFn,
-          mcpHeaders: options.mcpHeaders,
+          // As the reviewer checks: the reviewer account, never `mcpHeaders`.
+          // With no sign-in, as a directory's reviewer: with no credential,
+          // and with no reviewer account's fixtures either.
+          ...(directoryDeclaresNoSignIn(submission?.answers ?? [])
+            ? { reviewer: NO_SIGN_IN }
+            : { reviewer, fixtures: reviewerPath?.fixtures }),
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
           // The same opt-in: drafting sends the tools' text to a model.

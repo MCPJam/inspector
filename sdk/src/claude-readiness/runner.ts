@@ -35,7 +35,10 @@ import type { DirectoryLazyAuthProbeEvidence } from "../directory-readiness/lazy
 import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import type { DirectoryAnswer } from "../directory-readiness/flows/types.js";
 import { CLAUDE_CONNECTOR_FLOW } from "../directory-readiness/flows/claude-connector.js";
-import type { DirectoryReviewerRunInput } from "../directory-readiness/reviewer/evidence.js";
+import {
+  directoryDeclaresNoSignIn,
+  type DirectoryReviewerRunInput,
+} from "../directory-readiness/reviewer/evidence.js";
 import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
 import { claudeSubmissionEvidenceFromAnswers } from "./answers.js";
 import { runClaudeAnswerStepChecks } from "./checks/answer-steps.js";
@@ -360,7 +363,8 @@ export function gradeClaudeReadiness(
     holdToReviewerAccount(
       graded,
       CLAUDE_CONNECTOR_FLOW,
-      input.reviewerPath?.account
+      input.reviewerPath?.account,
+      directoryDeclaresNoSignIn(input.submissionAnswers ?? [])
     ),
     input.serverFailure
   );
