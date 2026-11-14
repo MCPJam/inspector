@@ -34,8 +34,8 @@ const FENCE_CLOSE = "<<<END UNTRUSTED>>>";
  * producer already clipped these; this is the render-time backstop. */
 function sanitizeFenced(text: string, max = 600): string {
   const flattened = text
-    .replace(/<<<[^>]*>>>/g, "[…]")
     .replace(/\r/g, "")
+    .replace(/<{3,}|>{3,}/g, "[…]")
     .trim();
   return flattened.length > max ? `${flattened.slice(0, max - 1)}…` : flattened;
 }
@@ -51,7 +51,7 @@ function sanitizeFenced(text: string, max = 600): string {
  */
 export function sanitizeIdentifier(value: string, max = 120): string {
   const flattened = value
-    .replace(/<<<[^>]*>>>/g, "")
+    .replace(/<{3,}|>{3,}/g, "")
     .replace(/[`\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();

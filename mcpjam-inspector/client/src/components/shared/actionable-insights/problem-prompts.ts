@@ -47,8 +47,8 @@ const PROPOSAL_CLOSE = "<<<END PROPOSAL>>>";
 
 const proposalBody = (text: string) =>
   text
-    .replace(/<<<[^>]*>>>/g, "[…]")
     .replace(/\r/g, "")
+    .replace(/<{3,}|>{3,}/g, "[…]")
     .trim();
 
 /** One section of analysis text: the work to do, not server data. */
