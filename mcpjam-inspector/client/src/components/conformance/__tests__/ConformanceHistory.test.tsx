@@ -112,7 +112,9 @@ describe("ConformanceHistory", () => {
       screen.getByRole("img", { name: "19 passed, 2 failed of 21" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("FAILED")).toBeNull();
-    const header = screen.getByText("SERVER").parentElement;
+    const header = screen.getByTestId(
+      "conformance-history-sort-server",
+    ).parentElement;
     expect(header?.textContent).toBe(
       "SERVERPROTOCOLSCORECHECKSRESULTDATESOURCE",
     );
@@ -381,7 +383,7 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(screen.queryByTestId("conformance-history-row")).toBeNull();
   });
 
-  it("sorts by server name, each server's runs newest first", async () => {
+  it("sorts by server name from its header, each server's runs newest first", async () => {
     const page: Page = {
       page: [
         run("b_new", "srv_beta", "2025-11-25", 4),
@@ -396,7 +398,9 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
     expect(rowTexts()[0]).toContain("Beta");
 
-    await choose("conformance-history-sort", "Server name");
+    await userEvent.setup().click(
+      screen.getByTestId("conformance-history-sort-server"),
+    );
 
     await waitFor(() => expect(rowTexts()[0]).toContain("Alpha"));
     expect(
@@ -499,7 +503,9 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
 
     await choose("conformance-history-server-filter", "Alpha");
     await waitFor(() => expect(rowTexts()[0]).toContain("Alpha"));
-    await choose("conformance-history-sort", "Server name");
+    await userEvent.setup().click(
+      screen.getByTestId("conformance-history-sort-server"),
+    );
 
     // Every row is Alpha's: the sort changes nothing, so nothing more loads.
     expect(
@@ -556,5 +562,88 @@ describe("ConformanceHistory — search, filter and sort (CQT-113)", () => {
     expect(
       (await screen.findByText("No runs for Alpha yet.")).getAttribute("role"),
     ).toBe("status");
+  });
+
+  it("sorts from the column headers, not a sort dropdown", () => {
+    const page: Page = {
+      page: [run("a1", "srv_alpha", "2025-11-25", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages(() => page);
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+
+    expect(screen.queryByTestId("conformance-history-sort")).toBeNull();
+    // Newest first is the default, and Date says so.
+    expect(
+      screen
+        .getByTestId("conformance-history-sort-date")
+        .getAttribute("data-sort-direction"),
+    ).toBe("desc");
+    expect(
+      screen
+        .getByTestId("conformance-history-sort-server")
+        .getAttribute("data-sort-direction"),
+    ).toBeNull();
+  });
+
+  it("flips Date to oldest first, reading every run to do it", async () => {
+    const first: Page = {
+      page: [
+        run("a3", "srv_alpha", "2025-11-25", 3),
+        run("b2", "srv_beta", "2025-11-25", 2),
+      ],
+      isDone: false,
+      continueCursor: "cursor_2",
+    };
+    const second: Page = {
+      page: [run("a1", "srv_alpha", "2025-06-18", 1)],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages((args) =>
+      args.paginationOpts.cursor === "cursor_2" ? second : first,
+    );
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    expect(rowTexts()).toHaveLength(2);
+
+    const date = screen.getByTestId("conformance-history-sort-date");
+    await userEvent.setup().click(date);
+
+    // The oldest run was on the second page: the sort loaded it and leads.
+    await waitFor(() => expect(rowTexts()).toHaveLength(3));
+    expect(rowTexts()[0]).toContain("2025-06-18");
+    expect(date.getAttribute("data-sort-direction")).toBe("asc");
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("sorts Score highest first, then lowest, runs without a score last", async () => {
+    const scored = (id: string, score: number | null, createdAt: number) =>
+      makeRun({ ...run(id, "srv_alpha", id, createdAt), score });
+    const page: Page = {
+      page: [
+        scored("none", null, 4),
+        scored("mid", 50, 3),
+        scored("high", 98, 2),
+        scored("low", 5, 1),
+      ],
+      isDone: true,
+      continueCursor: "",
+    };
+    servePages(() => page);
+    render(<ConformanceHistory projectId="proj_1" serverNames={serverNames} />);
+    const user = userEvent.setup();
+    const score = screen.getByTestId("conformance-history-sort-score");
+    // The protocol column shows each run's id here.
+    const order = () =>
+      rowTexts().map(
+        (text) => ["none", "mid", "high", "low"].find((id) => text?.includes(id))!,
+      );
+
+    await user.click(score);
+    await waitFor(() => expect(order()).toEqual(["high", "mid", "low", "none"]));
+
+    await user.click(score);
+    await waitFor(() => expect(order()).toEqual(["low", "mid", "high", "none"]));
   });
 });
