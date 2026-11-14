@@ -6,6 +6,7 @@ const store = () => useNativeHarnessLimitDialogStore.getState();
 beforeEach(() => {
   useNativeHarnessLimitDialogStore.setState({
     notice: null,
+    noticeKeys: [],
     notifiedKeys: new Set(),
   });
 });
@@ -60,5 +61,38 @@ describe("useNativeHarnessLimitDialogStore", () => {
 
     store().open({ organizationId: "org_2" }, ["run:run_2"]);
     expect(store().notice).toEqual({ organizationId: "org_2" });
+  });
+
+  it("takes the organization a later report of the open notice's run names", () => {
+    store().open({}, ["run:run_1"]);
+    store().open({ organizationId: "org_1" }, ["run:run_1", "wave:wave_1"]);
+    expect(store().notice).toEqual({ organizationId: "org_1" });
+
+    // Once named, the notice keeps its organization.
+    store().open({ organizationId: "org_2" }, ["run:run_1"]);
+    expect(store().notice).toEqual({ organizationId: "org_1" });
+  });
+
+  it("neither reopens a closed notice nor names it after another run", () => {
+    store().open({}, ["run:run_1"]);
+    store().close();
+    store().open({ organizationId: "org_1" }, ["run:run_1"]);
+    expect(store().notice).toBeNull();
+
+    store().open({}, ["run:run_2"]);
+    store().open({ organizationId: "org_1" }, ["run:run_1"]);
+    expect(store().notice).toEqual({});
+  });
+
+  it("closes a notice by its serial only until another replaces it", () => {
+    store().open({}, ["run:run_1"]);
+    const first = store().noticeSerial;
+    store().open({ organizationId: "org_2" }, ["run:run_2"]);
+
+    store().closeNotice(first);
+    expect(store().notice).toEqual({ organizationId: "org_2" });
+
+    store().closeNotice(store().noticeSerial);
+    expect(store().notice).toBeNull();
   });
 });

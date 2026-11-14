@@ -104,8 +104,11 @@ function NativeHarnessUpgradeDialog({
     });
   };
   const startUpgrade = async () => {
+    // Checkout can outlast its notice: one that replaced it stays open.
+    const { noticeSerial } = useNativeHarnessLimitDialogStore.getState();
     const result = await upgrade.start();
-    if (result.shouldDismiss) onClose();
+    if (result.shouldDismiss)
+      useNativeHarnessLimitDialogStore.getState().closeNotice(noticeSerial);
   };
 
   return (
