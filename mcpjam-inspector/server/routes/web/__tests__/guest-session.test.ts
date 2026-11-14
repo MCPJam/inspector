@@ -342,6 +342,51 @@ describe("POST /guest-session", () => {
     );
   });
 
+  // A hosted Inspector authority's revoke body ends in a period, so the
+  // header is the only thing that names it.
+  it("relays a revoke a hosted Inspector authority names in its header", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "FORBIDDEN",
+          message: "Guest session revoked.",
+        }),
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json",
+            "x-mcpjam-guest-refusal": "GUEST_SESSION_REVOKED",
+          },
+        },
+      ),
+    ) as typeof fetch;
+
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "10.0.98.3" },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-mcpjam-guest-refusal")).toBe(
+      "GUEST_SESSION_REVOKED",
+    );
+  });
+
+  it("answers a hosted revoke body without the header as a 503", async () => {
+    const body = { code: "FORBIDDEN", message: "Guest session revoked." };
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ) as typeof fetch;
+
+    const res = await app.request(`${HOSTED}/guest-session`, {
+      method: "POST",
+      headers: { "x-forwarded-for": "10.0.98.4" },
+    });
+    expect(res.status).toBe(503);
+  });
+
   // The browser treats a revoke as final and drops the guest's promotion
   // marker; a 403 that says nothing about the guest must not look like one.
   it("answers a 403 that is not a revoke as a 503", async () => {
