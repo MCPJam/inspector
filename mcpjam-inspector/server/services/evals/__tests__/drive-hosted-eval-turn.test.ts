@@ -646,6 +646,21 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
     warn.mockRestore();
   });
 
+  it("logs a refused model with no private provider as a warning", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith("policy_no_zdr_endpoint");
+
+    await driveHostedEvalTurn(baseParams());
+
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=policy_no_zdr_endpoint"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
   it("keeps every other failed turn on logger.error", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
     failWith("provider_error");

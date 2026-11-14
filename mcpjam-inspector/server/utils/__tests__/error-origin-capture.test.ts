@@ -130,6 +130,20 @@ describe("mcpjam_internal boundary", () => {
     expect(decision.captured).toBe(false);
     expect(captureException).not.toHaveBeenCalled();
   });
+
+  it("does not page a model with no private provider at this hop", () => {
+    const decision = maybeCaptureOriginError(
+      new Error("policy_no_zdr_endpoint"),
+      normalizedFor("provider/no_zdr_endpoint"),
+      {
+        source: "route:mcp.chat-v2.backend-stream",
+        boundary: "mcpjam_internal",
+      },
+    );
+
+    expect(decision.captured).toBe(false);
+    expect(captureException).not.toHaveBeenCalled();
+  });
 });
 
 describe("mcpjam_request_construction boundary", () => {
