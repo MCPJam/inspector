@@ -165,11 +165,11 @@ export function markFirstRunServerChoiceStarted(
 }
 
 /**
- * Records that the one-time welcome was rendered. A completed state
+ * Records that first-run onboarding was rendered. A completed state
  * without this marker came from an older automatic flow, so it must not hide
- * the explicit welcome screen.
+ * the explicit onboarding page.
  */
-export function markFirstRunServerChoiceWelcomeShown(): void {
+export function markFirstRunServerChoiceShown(): void {
   const current = readFirstRunServerChoiceState();
   if (
     (current?.status === "completed" && current.shownAt) ||
@@ -273,8 +273,8 @@ export function isFirstRunServerChoiceEligible(
 
   if (persisted?.status === "dismissed") return false;
 
-  // A completion written before the explicit welcome existed (or before the
-  // visitor reached its choice step) must not make the welcome disappear.
+  // A completion written before the explicit onboarding page existed (or
+  // before the visitor saw it) must not hide the page.
   if (persisted?.status === "completed" && persisted.shownAt) return false;
 
   // Once the explicit flow is visibly underway, a server record arriving

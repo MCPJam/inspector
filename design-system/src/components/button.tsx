@@ -38,6 +38,8 @@ const buttonVariants = cva(
         default: "h-9 px-4 py-2 text-sm has-[>svg]:px-3",
         sm: "h-8 rounded-md gap-1.5 px-3 text-xs has-[>svg]:px-2.5",
         lg: "h-10 rounded-md px-6 text-base has-[>svg]:px-4",
+        // Page-level calls to action, such as the full-page first-run flow.
+        xl: "h-12 rounded-md px-6 text-base has-[>svg]:px-5",
         icon: "size-9",
       },
     },

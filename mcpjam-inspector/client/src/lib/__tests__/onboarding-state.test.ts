@@ -12,7 +12,7 @@ import {
   markFirstRunPlaygroundPromptPending,
   markFirstRunServerChoiceDismissed,
   markFirstRunServerChoiceStarted,
-  markFirstRunServerChoiceWelcomeShown,
+  markFirstRunServerChoiceShown,
   markFirstRunServerChoiceCompleted,
   markFirstRunServerChoiceConnected,
   readFirstRunServerChoiceState,
@@ -230,7 +230,7 @@ describe("onboarding-state", () => {
 
   describe("isFirstRunServerChoiceEligible", () => {
     it("records the welcome as shown before the user interacts", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
 
       expect(readFirstRunServerChoiceState()).toEqual(
         expect.objectContaining({
@@ -241,7 +241,7 @@ describe("onboarding-state", () => {
     });
 
     it("keeps a visibly started flow eligible when a server row hydrates", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
 
       expect(
         isFirstRunServerChoiceEligible(
@@ -253,7 +253,7 @@ describe("onboarding-state", () => {
     });
 
     it("records the server associated with a connection attempt", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
       markFirstRunServerChoiceStarted("Personal server");
 
       expect(readFirstRunServerChoiceState()).toEqual(
@@ -265,7 +265,7 @@ describe("onboarding-state", () => {
     });
 
     it("keeps the attempted server and starter prompt across completion", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
       markFirstRunServerChoiceStarted("Excalidraw (App)");
       markFirstRunServerChoiceCompleted();
       markFirstRunPlaygroundPromptPending();
@@ -289,7 +289,7 @@ describe("onboarding-state", () => {
     });
 
     it("keeps a successful connection resumable until completion", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
       markFirstRunServerChoiceStarted("Excalidraw (App)");
       markFirstRunServerChoiceConnected("demo", 6);
 
@@ -348,7 +348,7 @@ describe("onboarding-state", () => {
         JSON.stringify({ status: "completed", completedAt: Date.now() }),
       );
 
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
       expect(readFirstRunServerChoiceState()).toEqual(
         expect.objectContaining({
           status: "started",
@@ -361,7 +361,7 @@ describe("onboarding-state", () => {
     });
 
     it("stays hidden after an explicit welcome and successful connection", () => {
-      markFirstRunServerChoiceWelcomeShown();
+      markFirstRunServerChoiceShown();
       markFirstRunServerChoiceStarted();
       markFirstRunServerChoiceCompleted();
 
