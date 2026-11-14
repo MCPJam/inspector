@@ -565,6 +565,9 @@ async function prepareWithReservedRuntime(outer: {
       scopedEnv: {
         ...(args.scopedEnv ?? {}),
         ...(args.scope === "unattended" ? { GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hooksPath, GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" } : {}),
+        // Last, so nothing above can replace it: a runtime login. Project
+        // secrets may not use its names (`reservedSecretEnv`).
+        ...listening.env,
       },
     });
 
@@ -680,7 +683,8 @@ async function prepareWithReservedRuntime(outer: {
         return mcpPlane;
       },
       sandbox,
-      // Named the way this runtime's CLI reads it. A lease never reaches it.
+      // Named the way this runtime's CLI reads it. Neither a lease nor a
+      // runtime login reaches the adapter.
       auth: listening.auth,
       sandboxWorkDir: "project",
       homeDir: toAdapterPath(join(sessionStateDir, "home")),

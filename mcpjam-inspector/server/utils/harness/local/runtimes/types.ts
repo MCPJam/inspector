@@ -119,9 +119,16 @@ export interface LocalRuntimeLogin {
  *   runtime-login  The CLI reaches its own vendor on the organization's
  *                  account (Cursor), so no gateway can stand in front of it.
  *                  The backend exchanges the org key for a short-lived login,
- *                  and the child holds it in memory only. The org key never
- *                  leaves the backend.
+ *                  and the supervised process starts with it in its
+ *                  environment; the CLI keeps it in memory only. The adapter,
+ *                  which runs in this Inspector, gets an explicit environment
+ *                  instead, so it never looks for a login of the member's own
+ *                  on this machine. The org key never leaves the backend.
  */
 export type LocalRuntimeCredential =
   | { kind: "gateway"; childAuth(gateway: LocalModelGatewayEndpoint): HarnessAuth }
-  | { kind: "runtime-login"; childAuth(login: LocalRuntimeLogin): HarnessAuth };
+  | {
+      kind: "runtime-login";
+      adapterAuth: HarnessAuth;
+      childEnv(login: LocalRuntimeLogin): Readonly<Record<string, string>>;
+    };

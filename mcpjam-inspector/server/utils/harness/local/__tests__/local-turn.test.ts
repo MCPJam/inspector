@@ -143,7 +143,7 @@ const login = vi.hoisted(() => ({ on: false, install: vi.fn(), clear: vi.fn(asyn
 vi.mock("../runtime-login.js", () => ({ installRuntimeLogin: login.install, clearRuntimeLogin: login.clear }));
 vi.mock("../runtimes/index.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../runtimes/index.js")>();
-  const credential = { kind: "runtime-login", childAuth: (issued: { accessToken: string }) => ({ VENDOR_TOKEN: issued.accessToken }) };
+  const credential = { kind: "runtime-login", adapterAuth: { VENDOR_KEY: "" }, childEnv: (issued: { accessToken: string }) => ({ VENDOR_TOKEN: issued.accessToken }) };
   return { ...real, localRuntime: (id: never) => ({ ...real.localRuntime(id), ...(login.on ? { credential } : {}) }) };
 });
 
@@ -822,13 +822,13 @@ describe("a local turn on a runtime login", () => {
   const issued = { ok: true, installId: "install_1", login: { accessToken: "vendor-login", expiresAt: Date.now() + 3_600_000 } };
   beforeEach(() => { login.on = true; });
 
-  it("takes no lease and no gateway, and clears the login once, closing the MCP relay with it", async () => {
+  it("takes no lease and no gateway, starts the process with the login, and clears it once with the MCP relay", async () => {
     login.install.mockResolvedValueOnce(issued);
     const result = await prepareLocalHarnessTurn(turnArgs());
     if (!result.ok) throw new Error(result.message);
-    expect(result.prepared).toMatchObject({ auth: { VENDOR_TOKEN: "vendor-login" }, brokerRunId: null });
-    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
-    expect(startLocalModelGateway).not.toHaveBeenCalled();
+    expect(result.prepared).toMatchObject({ auth: { VENDOR_KEY: "" }, brokerRunId: null });
+    expect(createSupervisedLocalHarnessProvider).toHaveBeenCalledWith(expect.objectContaining({ scopedEnv: expect.objectContaining({ VENDOR_TOKEN: "vendor-login" }) }));
+    expect([startLoopbackModelBroker.mock.calls.length, startLocalModelGateway.mock.calls.length]).toEqual([0, 0]);
     const { strategy } = await result.prepared.bindMcpPlane({ manager: new MCPClientManager({}), serverIds: [], turnId: "t" });
     await result.prepared.teardown();
     expect(login.clear.mock.calls).toEqual([[expect.objectContaining({ installId: "install_1" })]]);

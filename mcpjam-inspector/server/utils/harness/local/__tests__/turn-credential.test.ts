@@ -1,6 +1,6 @@
 /**
  * A turn on a runtime login (Cursor): no lease and no gateway, the login only
- * in the child's auth, cleared once when the turn ends. The gateway half is
+ * in the supervised process's environment, cleared once when the turn ends. The gateway half is
  * `local-turn.test.ts`'s, through the turn it serves.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,7 +31,8 @@ const EXPIRES_AT = Date.now() + 3_600_000;
 const args = (): OpenTurnCredentialArgs => ({
   credential: {
     kind: "runtime-login",
-    childAuth: (login) => ({
+    adapterAuth: { CURSOR_API_KEY: "" },
+    childEnv: (login) => ({
       CURSOR_AUTH_TOKEN: login.accessToken,
       AGENT_CLI_CREDENTIAL_STORE: "memory",
     }),
@@ -53,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("a runtime login", () => {
-  it("takes no lease and starts no gateway, and puts the login only in the child's auth", async () => {
+  it("takes no lease and starts no gateway, and hands the login to the child, not the adapter", async () => {
     vi.mocked(installRuntimeLogin).mockResolvedValue({
       ok: true,
       installId: "install-1",
@@ -69,7 +70,8 @@ describe("a runtime login", () => {
     });
     await expect(credential.listen()).resolves.toEqual({
       ok: true,
-      auth: {
+      auth: { CURSOR_API_KEY: "" },
+      env: {
         CURSOR_AUTH_TOKEN: "cursor-access",
         AGENT_CLI_CREDENTIAL_STORE: "memory",
       },

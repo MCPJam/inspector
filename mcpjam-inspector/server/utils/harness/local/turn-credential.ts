@@ -87,8 +87,11 @@ export interface OpenTurnCredentialArgs {
 export type ListenResult =
   | {
       ok: true;
-      /** What the child is handed, named the way its CLI reads it. */
+      /** What the adapter is handed, named the way its CLI reads it. */
       auth: HarnessAuth;
+      /** What the supervised process starts with besides the session's own
+       *  environment: a runtime login, named the way its CLI reads it. */
+      env?: Readonly<Record<string, string>>;
       /** How long the gateway took to listen, for timing telemetry (0 without one). */
       readyMs: number;
     }
@@ -244,7 +247,8 @@ async function openRuntimeLogin(
       gateway: null,
       listen: async () => ({
         ok: true,
-        auth: credential.childAuth(installed.login),
+        auth: credential.adapterAuth,
+        env: credential.childEnv(installed.login),
         readyMs: 0,
       }),
       hold() {
