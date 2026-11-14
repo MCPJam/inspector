@@ -110,6 +110,10 @@ const KEPT_REFUSALS = [
   "runtime_update",
   "authorization_revoked",
   "renewal_failed",
+  "idle_expired",
+  "evicted",
+  "shutdown",
+  "switched_off",
 ] as const satisfies readonly KeptRuntimeOutcome[];
 
 beforeEach(() => {

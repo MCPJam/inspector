@@ -483,6 +483,19 @@ describe.skipIf(!canOwnProcesses)("supervised processes", () => {
     await sup.stopSession("s-clock");
   }, 20_000);
 
+  it("gives a kept runtime's next turn a fresh wall-clock budget", async () => {
+    const sup = supervisor({ maxWallClockMs: 1_500 });
+    const handle = await sup.spawnSupervised(request("s-budget", "idle.js"));
+    await new Promise((r) => setTimeout(r, 1_000));
+    sup.restartWallClock("s-budget");
+    // Past the first turn's budget, well inside the second's.
+    await new Promise((r) => setTimeout(r, 900));
+    expect(await readProcessBirthIdentity(handle.pid)).not.toBeNull();
+    // The second budget still ends it.
+    expect(await waitForExit(handle.pid)).toBe(true);
+    await sup.stopSession("s-budget");
+  }, 20_000);
+
   it("refuses to exceed the per-session process ceiling", async () => {
     const sup = supervisor({ maxConcurrentProcesses: 1 });
     await sup.spawnSupervised(request("s-cap", "idle.js"));

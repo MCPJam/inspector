@@ -84,6 +84,7 @@ import {
 import { isPackRevoked, readCachedRevocations, refreshRevocations, revocationFor } from "./runtime-revocation.js";
 import { probeRuntimeCandidate } from "./runtime-probe.js";
 import { emitLocalRuntimeEvent } from "./runtime-metrics.js";
+import { invalidateLocalTurnParks } from "./approval-park.js";
 import {
   isBackgroundTrigger,
   readLocalRuntimeUpdatePolicy,
@@ -1125,6 +1126,9 @@ export async function startRuntimeInstall(
     }),
   };
   active.set(keyString, record);
+  // A runtime kept idle between turns must not hold a pack this install may
+  // replace; a turn in progress is not kept again while it runs.
+  void invalidateLocalTurnParks("runtime-update", { which: (kept) => kept.harnessId === options.harnessId });
   emitLocalRuntimeEvent("local_runtime_install_started", {
     harness_id: options.harnessId,
     pack_version: expected.packVersion,

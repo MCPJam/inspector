@@ -40,13 +40,17 @@ export const HARNESS_TURN_STARTS = [
  * ran out of time (`attach_timeout`).
  *
  * A local turn that did not adopt the runtime its conversation's last turn
- * kept, and started another, says why, in the words that end the kept one:
- * it is not the runtime the lane's committed state names, or not this
- * person's (`superseded`); it reached its lifetime (`lifetime`); its process
- * had stopped (`process_died`); its pack is no longer the one a turn would
+ * kept, and started another, says why, in the words that end the kept one,
+ * whether its adoption ended it or it ended before the turn came: it is not
+ * the runtime the lane's committed state names, or not this person's
+ * (`superseded`); it reached its lifetime (`lifetime`); its process had
+ * stopped (`process_died`); its pack is no longer the one a turn would
  * select, or an install is in flight (`runtime_update`); the checks a turn
- * re-runs no longer allow it (`authorization_revoked`); or a new model lease
- * could not be bound to it (`renewal_failed`).
+ * re-runs no longer allow it (`authorization_revoked`); a new model lease
+ * could not be bound to it (`renewal_failed`); it waited past the keep's idle
+ * window (`idle_expired`); another conversation's runtime took its slot at
+ * the cap (`evicted`); Inspector shut down (`shutdown`); or keeping local
+ * runtimes was turned off (`switched_off`).
  */
 export const HARNESS_TURN_FALLBACK_REASONS = [
   "none",
@@ -62,6 +66,10 @@ export const HARNESS_TURN_FALLBACK_REASONS = [
   "runtime_update",
   "authorization_revoked",
   "renewal_failed",
+  "idle_expired",
+  "evicted",
+  "shutdown",
+  "switched_off",
 ] as const;
 
 /**

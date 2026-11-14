@@ -8,11 +8,16 @@ const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToSe
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));
-const parkRegistry = vi.hoisted(() => ({ invalidate: vi.fn(async (_id: string, _reason: string) => {}) }));
-vi.mock("../local/approval-park.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../local/approval-park.js")>()),
-  invalidateParkedLocalSession: parkRegistry.invalidate,
+// The registry is real; `endIfWaiting` records what a turn asks it to end.
+const parkRegistry = vi.hoisted(() => ({
+  endIfWaiting: vi.fn<typeof import("../local/approval-park.js").endParkIfWaiting>(),
+  park: { sessionId: "local-session" },
 }));
+vi.mock("../local/approval-park.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../local/approval-park.js")>();
+  parkRegistry.endIfWaiting.mockImplementation(actual.endParkIfWaiting);
+  return { ...actual, endParkIfWaiting: parkRegistry.endIfWaiting };
+});
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -34,7 +39,11 @@ const harnessState = vi.hoisted(() => ({
   discardState: vi.fn(async () => {}),
   liveApprovalRuntime: false,
   adapterOverrides: {} as Record<string, unknown>,
-  park: vi.fn((_args: unknown) => true),
+  park: vi.fn((_args: unknown): object | null => parkRegistry.park),
+  parkTurn: vi.fn(async (_args: unknown): Promise<object | null> => parkRegistry.park),
+  keptRuntime: false,
+  /** What the preparation tells the turn's event about a kept runtime. */
+  keptOutcome: undefined as string | undefined,
   unpark: vi.fn(() => {}),
   session: {
     sessionId: "session-1",
@@ -184,24 +193,30 @@ import {
 import { claimHarnessSessionState, commitHarnessSessionState, heartbeatHarnessSessionState, releaseHarnessSessionState } from "../harness-session-state.js";
 import { markServerVerifiedApproval } from "../../tool-approval-token.js";
 import { prepareLocalHarnessTurn } from "../local/local-turn.js";
+import { claimLocalTurnPark, describeParkedLocalSession, parkLocalTurn, resetApprovalParkForTests } from "../local/approval-park.js";
 import { reserveHarnessBox, renewHarnessBoxReservation, startHarnessModelBroker } from "../harness-model-broker.js";
 
 vi.mock("../local/local-turn.js", () => ({
-  prepareLocalHarnessTurn: vi.fn(async () => ({
-    ok: true,
-    prepared: {
-      plan: { runtime: { runtimeId: "runtime-1" } },
-      timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
-      sandbox: {}, auth: {}, sandboxWorkDir: "project",
-      homeDir: "/private/local/home",
-      permissionMode: "allow-reads",
-      sessionStateExists: harnessState.stateExists,
-      teardown: harnessState.teardown,
-      discardState: harnessState.discardState,
-      park: harnessState.park,
-      unpark: harnessState.unpark,
-    },
-  })),
+  prepareLocalHarnessTurn: vi.fn(async (args: { onKeptRuntime?: (outcome: string) => void }) => {
+    if (harnessState.keptOutcome) args.onKeptRuntime?.(harnessState.keptOutcome);
+    return {
+      ok: true,
+      prepared: {
+        plan: { runtime: { runtimeId: "runtime-1" } },
+        timings: { localRuntimeVerifyMs: 0, localGatewayReadyMs: 0 },
+        sandbox: {}, auth: {}, sandboxWorkDir: "project",
+        homeDir: "/private/local/home",
+        permissionMode: "allow-reads",
+        sessionStateExists: harnessState.stateExists,
+        teardown: harnessState.teardown,
+        discardState: harnessState.discardState,
+        park: harnessState.park,
+        parkTurn: harnessState.parkTurn,
+        ...(harnessState.keptRuntime ? { keptRuntime: true } : {}),
+        unpark: harnessState.unpark,
+      },
+    };
+  }),
 }));
 
 vi.mock("../local/evidence.js", () => ({
@@ -299,7 +314,10 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.holdStream = null;
     harnessState.liveApprovalRuntime = false;
     harnessState.adapterOverrides = {};
-    harnessState.park.mockReset().mockReturnValue(true);
+    harnessState.park.mockReset().mockReturnValue(parkRegistry.park);
+    harnessState.parkTurn.mockReset().mockResolvedValue(parkRegistry.park);
+    harnessState.keptRuntime = false;
+    harnessState.keptOutcome = undefined;
     harnessState.unpark.mockReset();
     harnessState.session.suspendTurn.mockImplementation(async () => ({ type: "continue-turn" }));
     harnessState.discardState.mockImplementation(async () => {
@@ -962,20 +980,19 @@ describe("runHarnessTurn local continuity", () => {
       // The pause won the race: the runtime parked, then the Stop arrived
       // before the response closed. Ignored, the parked process (and its
       // still-running command) lived on until the idle TTL.
-      parkRegistry.invalidate.mockClear();
       const stop = new AbortController();
       harnessState.park.mockImplementation(() => {
         stop.abort();
-        return true;
+        return parkRegistry.park;
       });
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: stop.signal }) as any, "none");
       expect(harnessState.park).toHaveBeenCalled();
-      expect(parkRegistry.invalidate).toHaveBeenCalledWith(expect.any(String), "stopped");
+      // Its own park: one a newer turn has since adopted is not its to end.
+      expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(parkRegistry.park, "stopped");
     });
 
     it("leaves a parked session alone once its response has closed", async () => {
-      parkRegistry.invalidate.mockClear();
       const socket = new AbortController();
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex", abortSignal: socket.signal }) as any, "none");
@@ -983,11 +1000,11 @@ describe("runHarnessTurn local continuity", () => {
       // A later disconnect is not a Stop of this turn: the session is waiting
       // for a decision and must stay parked.
       socket.abort();
-      expect(parkRegistry.invalidate).not.toHaveBeenCalled();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
     });
 
     it("tears down as usual when the session was ended before it could park", async () => {
-      harnessState.park.mockReturnValue(false);
+      harnessState.park.mockReturnValue(null);
       harnessState.streamParts = [{ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "call-1" }];
       await runHarnessTurn(baseOptions({ harness: "codex" }) as any, "none");
       expect(harnessState.teardown).toHaveBeenCalledOnce();
@@ -1342,6 +1359,164 @@ describe("runHarnessTurn local continuity", () => {
       expect(prepareLocalHarnessTurn).toHaveBeenCalledOnce();
       expect(harnessState.create).not.toHaveBeenCalled();
       expect(events.at(-1)?.message).toMatch(/key was replaced/);
+    });
+  });
+
+  describe("a local Codex runtime kept between turns", () => {
+    const BRIDGE = { type: "resume-session", harnessId: "codex", data: { thread: "t-1", bridge: { port: 4100, token: "gen-7", sandboxId: "local-session" } } };
+    const codexTurn = (overrides: Record<string, unknown> = {}) =>
+      baseOptions({ harness: "codex", agentLoop: "codex", ...overrides });
+    const committed = (stateVersion = 4) =>
+      vi.mocked(claimHarnessSessionState).mockResolvedValue({
+        ok: true, leaseId: "lease-1", stateVersion, fingerprintChanged: false,
+        state: { harnessSessionId: "local-session", computerId: "machine-1:runtime-1", resumeState: BRIDGE },
+      } as any);
+    beforeEach(() => {
+      vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "true");
+      harnessState.adapterOverrides = { id: "codex" };
+    });
+
+    it("asks to adopt the runtime the committed state names, and keeps its own at the end", async () => {
+      committed(4);
+      harnessState.session.detach.mockResolvedValueOnce(BRIDGE as never);
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(prepareLocalHarnessTurn).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: "local-session",
+        keptRuntime: { fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/), committed: { generation: "gen-7", stateVersion: 4 } },
+      }));
+      const asked = vi.mocked(prepareLocalHarnessTurn).mock.calls[0]![0].keptRuntime!;
+      // Kept for the state version this turn's commit produces, judged on the
+      // tool calls the turn made (none here).
+      expect(harnessState.parkTurn).toHaveBeenCalledWith({ kept: asked, resumeState: BRIDGE, stateVersion: 5, toolCalls: [] });
+      expect(harnessState.teardown).not.toHaveBeenCalled();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
+    });
+
+    it("hands the keep decision every tool call the turn made", async () => {
+      committed(4);
+      harnessState.streamParts = [
+        { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "sleep 600" } },
+        { type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "started" },
+        { type: "finish", finishReason: "stop" },
+      ];
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(harnessState.parkTurn).toHaveBeenCalledWith(expect.objectContaining({
+        toolCalls: [expect.objectContaining({ toolCallId: "call-1", toolName: "bash" })],
+      }));
+    });
+
+    it("asks to adopt only a runtime kept under the same Tool Approval setting", async () => {
+      committed(4);
+      await runHarnessTurn(codexTurn({ requireToolApproval: false }) as never, "none");
+      await runHarnessTurn(codexTurn({ requireToolApproval: true }) as never, "none");
+      const [off, on] = vi.mocked(prepareLocalHarnessTurn).mock.calls.map(([args]) => args.keptRuntime!.fingerprint);
+      expect(off).not.toBe(on);
+    });
+
+    it("resumes an adopted runtime from its live bridge, not from disk", async () => {
+      committed(4);
+      harnessState.keptRuntime = true;
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(harnessState.create).toHaveBeenLastCalledWith({ sessionId: "local-session", resumeFrom: BRIDGE });
+    });
+
+    it("resumes from disk as before when nothing was kept", async () => {
+      committed(4);
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(harnessState.create).toHaveBeenLastCalledWith({
+        sessionId: "local-session",
+        resumeFrom: { ...BRIDGE, data: { thread: "t-1" } },
+      });
+    });
+
+    it("ends the kept runtime when the turn's commit did not land", async () => {
+      committed(4);
+      await runHarnessTurn(codexTurn({
+        onConversationComplete: vi.fn(async () => ({ outcome: "failed", failureKind: "exception" })),
+      }) as never, "none");
+      expect(harnessState.parkTurn).toHaveBeenCalledOnce();
+      expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(parkRegistry.park, "continuation-failed");
+    });
+
+    it("is not ended by its turn's late Stop once the next turn adopted it", async () => {
+      // Turn N commits and keeps its runtime; turn N+1 adopts it while N's
+      // response is still open; then N's request aborts. N+1 keeps running.
+      committed(4);
+      const end = vi.fn(async (_reason: string) => {});
+      const parkedFor = { sessionId: "local-session", generation: "gen-7", userId: "user-1", projectId: "project-1" };
+      harnessState.parkTurn.mockImplementationOnce(async () => parkLocalTurn({
+        ...parkedFor, harnessId: "codex", runtimeDigest: "sha256:pack", stateVersion: 5,
+        fingerprint: "config", resources: {}, end, isAlive: () => true, holdModelTraffic: () => {},
+      }));
+      const stop = new AbortController();
+      try {
+        await runHarnessTurn(codexTurn({
+          abortSignal: stop.signal,
+          onConversationComplete: vi.fn(async () => {
+            expect(claimLocalTurnPark({ ...parkedFor, stateVersion: 5, fingerprint: "config" }).ok).toBe(true);
+            stop.abort();
+            return { outcome: "saved" };
+          }),
+        }) as never, "none");
+        expect(parkRegistry.endIfWaiting).toHaveBeenCalledWith(expect.objectContaining(parkedFor), "stopped");
+        expect(end).not.toHaveBeenCalled();
+        expect(describeParkedLocalSession("local-session")?.state).toBe("continuing");
+      } finally {
+        resetApprovalParkForTests();
+      }
+    });
+
+    it("tears down as before when the runtime was not kept", async () => {
+      committed(4);
+      harnessState.parkTurn.mockResolvedValueOnce(null);
+      await runHarnessTurn(codexTurn() as never, "none");
+      expect(harnessState.teardown).toHaveBeenCalledOnce();
+      expect(parkRegistry.endIfWaiting).not.toHaveBeenCalled();
+    });
+
+    it("reports an adopted runtime to the turn's event as a warm start on this machine", async () => {
+      committed(4);
+      harnessState.keptRuntime = true;
+      harnessState.keptOutcome = "adopted";
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      await runHarnessTurn(codexTurn({
+        turnTiming: new TurnTiming({ harnessTurnEvent: sink }),
+      }) as never, "none");
+      expect(sink.capture).toHaveBeenCalledOnce();
+      expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+        surface: "local", harness_id: "codex", kind: "follow_up", outcome: "completed",
+        start: "warm", fallback_reason: "none",
+      });
+    });
+
+    it.each([
+      "configuration_changed", "superseded", "lifetime", "process_died",
+      "runtime_update", "authorization_revoked", "renewal_failed",
+      "idle_expired", "evicted", "shutdown", "switched_off",
+    ])("reports a runtime it did not adopt (%s) as a resume from saved files that says why", async (reason) => {
+      committed(4);
+      harnessState.keptOutcome = reason;
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      await runHarnessTurn(codexTurn({
+        turnTiming: new TurnTiming({ harnessTurnEvent: sink }),
+      }) as never, "none");
+      expect(sink.capture.mock.calls[0]![0]).toMatchObject({
+        surface: "local", start: "disk_resume", fallback_reason: reason,
+      });
+    });
+
+    it("asks for nothing and keeps nothing with the switch off, or for Claude Code", async () => {
+      committed(4);
+      vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "false");
+      await runHarnessTurn(codexTurn() as never, "none");
+      vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "true");
+      harnessState.adapterOverrides = { id: "claude-code" };
+      await runHarnessTurn(baseOptions() as never, "none");
+      for (const [args] of vi.mocked(prepareLocalHarnessTurn).mock.calls) {
+        expect(args).not.toHaveProperty("keptRuntime");
+      }
+      expect(harnessState.parkTurn).not.toHaveBeenCalled();
+      expect(harnessState.teardown).toHaveBeenCalledTimes(2);
     });
   });
 });

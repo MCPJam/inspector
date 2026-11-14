@@ -489,15 +489,12 @@ async function collectStream(
 
 export function createSupervisedLocalHarnessProvider(
   opts: SupervisedLocalHarnessProviderOptions,
-): HarnessV1SandboxProvider & { forbidNewProcesses: () => void } {
-  let processesForbidden = false;
+): HarnessV1SandboxProvider & { forbidNewProcesses: (refusal?: string) => void } {
+  // Set once a parked runtime is adopted, with what a spawn attempt then says.
+  let processesForbidden: string | null = null;
   const assertCanStart = async (): Promise<void> => {
     const assertNotAdopted = () => {
-      if (processesForbidden) {
-        throw new Error(
-          "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.",
-        );
-      }
+      if (processesForbidden !== null) throw new Error(processesForbidden);
     };
     assertNotAdopted();
     const result = await revalidateRuntime(opts.runtime);
@@ -1217,7 +1214,9 @@ export function createSupervisedLocalHarnessProvider(
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "mcpjam-local-supervised",
-    forbidNewProcesses: () => { processesForbidden = true; },
+    forbidNewProcesses: (refusal = "The client waiting for approval could not be reached. The pending action will not run. Send a new message to continue.") => {
+      processesForbidden = refusal;
+    },
     // `bridgePorts` is gone from the stable contract: port discovery is the
     // adapter's job now, reading `session.ports` and resolving through
     // `getPortEndpoint`.

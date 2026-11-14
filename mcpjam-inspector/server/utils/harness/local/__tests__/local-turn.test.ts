@@ -8,6 +8,9 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HarnessTurnEventProperties } from "@/shared/harness-turn-event";
+import { HarnessTurnRecord } from "../../harness-turn-event.js";
+import { TurnTiming } from "../../../turn-timing.js";
 
 // Everything a local turn reaches for, stubbed at the module boundary. The
 // subject here is the ORDER these are torn down in when one of them fails —
@@ -73,6 +76,8 @@ const readRuntimeInstallStatus = vi.hoisted(() => vi.fn(async () => ({
 })));
 vi.mock("../runtime-install.js", () => ({
   readRuntimeInstallStatus: () => readRuntimeInstallStatus(),
+  isTerminalInstallStatus: (status: { state: string }) =>
+    status.state !== "downloading" && status.state !== "verifying",
   // The INSTALL root must be writable, though — the reservation is a real file
   // in a real directory. Pointing it at `/nonexistent` made every test in this
   // file fail with EACCES on any machine that is not root, which is what CI
@@ -131,6 +136,7 @@ const supervisorFixture = vi.hoisted(() => ({
   stopOutcome: { stopped: true } as { stopped: boolean; escaped?: number },
   stopCalls: 0,
   live: 1,
+  wallClockRestarts: [] as string[],
 }));
 vi.mock("../supervisor.js", () => ({
   LocalHarnessSupervisor: class {
@@ -144,14 +150,25 @@ vi.mock("../supervisor.js", () => ({
     liveProcessCount() {
       return supervisorFixture.live;
     }
+    restartWallClock(sessionId: string) {
+      supervisorFixture.wallClockRestarts.push(sessionId);
+    }
   },
 }));
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
 const { noteTurnRuntimeStatus } = await import("../turn-runtime-status.js");
-const { resetApprovalParkForTests, describeParkedLocalSession } = await import(
-  "../approval-park.js"
-);
+const {
+  resetApprovalParkForTests,
+  describeParkedLocalSession,
+  endParkIfWaiting,
+  parkLocalTurn,
+  shutdownLocalTurnParks,
+  DEFAULT_TURN_PARK_TTL_MS,
+  KEPT_END_RETENTION_MS,
+  MAX_TURN_PARKS,
+  TURN_PARK_LIFETIME_MS,
+} = await import("../approval-park.js");
 // Real, not mocked: whether a reservation is still held is the subject here.
 const { runtimeUseState } = await import("../runtime-lifecycle.js");
 const { localPackTarget } = await import("../targets.js");
@@ -196,6 +213,7 @@ beforeEach(async () => {
   supervisorFixture.stopOutcome = { stopped: true };
   supervisorFixture.stopCalls = 0;
   supervisorFixture.live = 1;
+  supervisorFixture.wallClockRestarts = [];
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
@@ -329,7 +347,7 @@ describe("a local setup that succeeds", () => {
     const manager = new MCPClientManager({});
     const plane = await result.prepared.bindMcpPlane({ manager, serverIds: [], turnId: "first" });
     const strategy = { ...plane.strategy };
-    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).toBe(true);
+    expect(result.prepared.park({ generation: "generation", pendingApprovalIds: ["approval"] })).not.toBeNull();
     const request = () => fetch(`${strategy.baseUrl}/selected`, {
       method: "POST", headers: { "x-mcpjam-proxy-token": strategy.token },
     });
@@ -663,7 +681,7 @@ describe.each(["codex", "claude-code"] as const)("a local %s runtime parked on a
     if (!first.ok) throw new Error(first.message);
     expect(
       first.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] }),
-    ).toBe(true);
+    ).not.toBeNull();
     return first.prepared;
   }
 
@@ -833,7 +851,7 @@ it("verifies a fresh turn's runtime once, at the spawn, and an adopted runtime's
   if (!fresh.ok) throw new Error(fresh.message);
   expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(expect.objectContaining({ runtimeVerifiedAtSpawn: true }));
   expect(revalidateRuntime).not.toHaveBeenCalled();
-  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).not.toBeNull();
   const adopted = await prepareLocalHarnessTurn(codexArgs({
     approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
   }));
@@ -846,7 +864,7 @@ it("verifies a fresh turn's runtime once, at the spawn, and an adopted runtime's
 it("refuses to hand an approval to a runtime whose pack changed while it waited", async () => {
   const fresh = await prepareLocalHarnessTurn(codexArgs());
   if (!fresh.ok) throw new Error(fresh.message);
-  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).toBe(true);
+  expect(fresh.prepared.park({ generation: "gen-1", pendingApprovalIds: ["approval-1"] })).not.toBeNull();
   revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed after consent was granted" });
   const adopted = await prepareLocalHarnessTurn(codexArgs({
     approvalContinuation: { generation: "gen-1", approvalIds: ["approval-1"] },
@@ -868,4 +886,516 @@ it.each([true, false])("keeps attended ask mode with Tool Approval=%s", async re
   if (!result.ok) throw new Error(result.message);
   expect(result.prepared.permissionMode).toBe("allow-reads");
   await result.prepared.teardown();
+});
+
+describe("a local Codex runtime kept between turns", () => {
+  // As in production: nothing is kept, or adopted, with the switch off.
+  beforeEach(() => vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "true"));
+  afterEach(() => vi.unstubAllEnvs());
+  const CONFIG = { fingerprint: "config-a" };
+  const READY = {
+    state: "ready" as const,
+    packVersion: "test-pack-1",
+    digest: `sha256:${"a".repeat(64)}`,
+    runtimeRoot: "/nonexistent/runtime-root",
+  };
+  const bridge = (token = "gen-1") => ({
+    type: "resume-session",
+    data: { bridge: { port: 4100, token } },
+  });
+  const nextTurn = (overrides: Record<string, unknown> = {}) =>
+    codexArgs({
+      keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 2 } },
+      reasoningEffort: "high",
+      ...overrides,
+    });
+  const lease = (runId: string, extra: Record<string, unknown> = {}) => ({
+    ok: true as const,
+    runId,
+    expiresAt: Date.now() + 60_000,
+    protocol: "openai" as never,
+    proxyBaseUrl: "https://api.example.test/proxy",
+    delivery: "inspector-loopback-gateway" as const,
+    lease: `lease.${runId}.value`,
+    ...extra,
+  });
+
+  /** A first turn that completed, committed state version 2, and kept its runtime. */
+  async function keptSession(
+    overrides: Record<string, unknown> = {},
+    toolCalls: readonly { toolName: string; serverId?: string }[] = [],
+  ) {
+    const first = await prepareLocalHarnessTurn(codexArgs({ keptRuntime: CONFIG, ...overrides }));
+    if (!first.ok) throw new Error(first.message);
+    const park = await first.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls });
+    return { prepared: first.prepared, park, kept: park !== null };
+  }
+
+  it("holds model traffic and revokes the lease while it waits, so it makes no model call", async () => {
+    const { kept } = await keptSession();
+    expect(kept).toBe(true);
+    expect(gatewayHold).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId: "run_1" })),
+    );
+    // Still registered (stop-all reaches it) and running, with no lease of its own.
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it("is adopted by the next turn: the same process and gateway, a fresh lease and wall-clock budget", async () => {
+    const { prepared: parked } = await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBe(true);
+    expect(next.prepared.sandbox).toBe(parked.sandbox);
+    expect(next.prepared.auth).toEqual(parked.auth);
+    expect(next.prepared.sessionStateExists).toBe(true);
+    // A dead bridge is never respawned under the adopted provider.
+    expect(parked.sandbox.forbidNewProcesses).toHaveBeenCalledWith(expect.stringMatching(/Send your message again/));
+    expect(startLocalModelGateway).toHaveBeenCalledOnce();
+    expect(gatewayRebind).toHaveBeenCalledWith("lease.run_2.value");
+    expect(startLoopbackModelBroker).toHaveBeenLastCalledWith(expect.objectContaining({ reasoningEffort: "high" }));
+    expect(next.prepared.brokerRunId).toBe("run_2");
+    expect(supervisorFixture.wallClockRestarts).toEqual(["s_local_1"]);
+    // Re-authorized with this turn's grant, and its own pack re-verified.
+    expect(resolveLocalHarnessAvailability).toHaveBeenLastCalledWith(
+      expect.objectContaining({ grantToken: "grant-token" }),
+    );
+    expect(revalidateRuntime).toHaveBeenCalledWith(parked.plan.runtime);
+    // Kept again at its end, for the state version the next commit produces.
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).not.toBeNull();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it("keeps running for the turn that adopted it when the turn that kept it aborts late", async () => {
+    // N commits and keeps its runtime, N+1 adopts it, then N's request aborts:
+    // N's Stop (and its finalizer) reach only the park N made, while it waits.
+    const { park } = await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBe(true);
+    await endParkIfWaiting(park!, "stopped");
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("continuing");
+    // N+1 keeps it again; N's park is still not the one held.
+    expect(await next.prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 3, toolCalls: [] })).not.toBeNull();
+    await endParkIfWaiting(park!, "continuation-failed");
+    expect(supervisorFixture.stopCalls).toBe(0);
+    expect(describeParkedLocalSession("s_local_1")?.state).toBe("idle");
+  });
+
+  it.each([
+    ["another configuration", { keptRuntime: { fingerprint: "config-b", committed: { generation: "gen-1", stateVersion: 2 } } }, "configuration-changed"],
+    ["a state version another Inspector's turn moved on", { keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 3 } } }, "superseded"],
+    ["another bridge generation", { keptRuntime: { ...CONFIG, committed: { generation: "gen-2", stateVersion: 2 } } }, "superseded"],
+    ["a lane that names no runtime", { keptRuntime: CONFIG }, "superseded"],
+    ["a turn that asks for nothing", { keptRuntime: undefined }, "superseded"],
+  ])("is ended, and the turn starts fresh, for %s", async (_label, overrides, reason) => {
+    await keptSession();
+    const next = await prepareLocalHarnessTurn(nextTurn(overrides));
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ state: "terminal", invalidatedBy: reason });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(supervisorFixture.stopCalls).toBe(1);
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await next.prepared.teardown();
+  });
+
+  it("is ended, and the turn starts fresh, when its process died", async () => {
+    await keptSession();
+    supervisorFixture.live = 0;
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "process-died" });
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    await next.prepared.teardown();
+  });
+
+  it.each([
+    ["an install is in flight", { ...READY, role: "permitted", update: { state: "downloading", packVersion: "test-pack-2", percent: 10 } }],
+    ["a fresh turn would select another pack", { ...READY, packVersion: "test-pack-2", digest: `sha256:${"b".repeat(64)}` }],
+  ])("is ended, and the turn starts fresh, when %s", async (_label, status) => {
+    await keptSession();
+    readRuntimeInstallStatus.mockResolvedValueOnce(status as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "runtime-update" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is ended when the availability gate refuses (the kill switch, a revoked grant), and so is the turn", async () => {
+    await keptSession();
+    const refused = { available: false, status: "server-disabled", message: "Local execution is off." };
+    resolveLocalHarnessAvailability.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(refused as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    expect(next).toMatchObject({ ok: false, status: "server-disabled" });
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "authorization-revoked" });
+    // Neither the kept runtime nor a fresh one got a lease.
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the installation is no longer registered", () => { identityFixture.keyId = null; }, "authorization-revoked"],
+    ["the grant now names another runtime", () => {
+      resolveLocalHarnessAvailability.mockImplementationOnce(async () => {
+        const result = await resolveLocalHarnessAvailability.getMockImplementation()!({});
+        return { ...result, plan: { ...result.plan, runtime: { ...result.plan.runtime, runtimeId: "rt_2" } } };
+      });
+    }, "authorization-revoked"],
+    ["the renewed lease cannot be bound", () => {
+      gatewayRebind.mockImplementationOnce(() => { throw new Error("unusable lease"); });
+    }, "renewal-failed"],
+  ] as const)("is ended when %s", async (_label, arrange, reason) => {
+    await keptSession();
+    arrange();
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: reason });
+    if (next.ok) {
+      expect(next.prepared.keptRuntime).toBeUndefined();
+      await next.prepared.teardown();
+    }
+  });
+
+  it("is ended when its pack changed while it waited, and the turn starts fresh", async () => {
+    await keptSession();
+    revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed after consent was granted" });
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "authorization-revoked" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+    await next.prepared.teardown();
+  });
+
+  it("is ended when its renewed lease is refused, and the turn starts fresh", async () => {
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce({ ok: false, error: "lease refused" } as never);
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "renewal-failed" });
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is ended when the organization's key was replaced while it waited", async () => {
+    const orgUpstream = (credentialRevision: string) => ({
+      credentialSource: "org" as const,
+      profile: "openai-native" as const,
+      nativeModelId: "gpt-5.5",
+      credentialRevision,
+    });
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_1", { orgUpstream: orgUpstream("rev-1") }));
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2", { orgUpstream: orgUpstream("rev-2") }));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "renewal-failed" });
+    // The lease minted on the replaced key is revoked, never bound.
+    expect(revokeHarnessModelBroker).toHaveBeenCalledWith(expect.objectContaining({ runId: "run_2" }));
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    await next.prepared.teardown();
+  });
+
+  it("is not adopted by a turn that may not run, which ends it", async () => {
+    await keptSession();
+    // Tool Approval off without the "Run without asking" acknowledgement.
+    vi.mocked(readLocalHarnessAuthorization).mockResolvedValueOnce(null);
+    const next = await prepareLocalHarnessTurn(nextTurn({ requireToolApproval: false }));
+    expect(next).toMatchObject({ ok: false, status: "auto-approve-consent-required" });
+    expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "superseded" });
+    expect(startLoopbackModelBroker).toHaveBeenCalledOnce();
+    expect(gatewayRebind).not.toHaveBeenCalled();
+  });
+
+  describe("tells the turn's event", () => {
+    /**
+     * The next turn, through the event record a real turn hands it, and
+     * started from the committed state as `runHarnessTurn` starts it.
+     */
+    async function reported(overrides: Record<string, unknown> = {}) {
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      const record = new HarnessTurnRecord(
+        new TurnTiming({ harnessTurnEvent: sink }),
+        "codex",
+        true,
+      );
+      const next = await prepareLocalHarnessTurn(
+        nextTurn({ onKeptRuntime: record.keptRuntime, ...overrides }),
+      );
+      if (!next.ok) throw new Error(next.message);
+      record.sessionStarted({ approval: false, resumed: true, resetReason: undefined });
+      record.close({ aborted: false, completed: true, bootstrap: undefined });
+      await next.prepared.teardown();
+      return {
+        next: next.prepared,
+        event: sink.capture.mock.calls[0]![0] as HarnessTurnEventProperties,
+      };
+    }
+
+    it("that it adopted the kept runtime: a warm start on this machine", async () => {
+      await keptSession();
+      startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+      const { next, event } = await reported();
+      expect(next.keptRuntime).toBe(true);
+      expect(event).toMatchObject({ surface: "local", start: "warm", fallback_reason: "none" });
+    });
+
+    it.each<[string, () => void, Record<string, unknown>, string]>([
+      ["it runs another configuration", () => {}, {
+        keptRuntime: { fingerprint: "config-b", committed: { generation: "gen-1", stateVersion: 2 } },
+      }, "configuration_changed"],
+      ["the lane moved past it", () => {}, {
+        keptRuntime: { ...CONFIG, committed: { generation: "gen-1", stateVersion: 3 } },
+      }, "superseded"],
+      ["its process died", () => {
+        supervisorFixture.live = 0;
+      }, {}, "process_died"],
+      ["an update replaced its pack after readiness let the turn in", () => {
+        readRuntimeInstallStatus.mockResolvedValueOnce({
+          ...READY, packVersion: "test-pack-2", digest: `sha256:${"b".repeat(64)}`,
+        } as never);
+      }, {}, "runtime_update"],
+      ["its pack changed on disk", () => {
+        revalidateRuntime.mockResolvedValueOnce({ ok: false, message: "the codex runtime bundle changed" });
+      }, {}, "authorization_revoked"],
+      ["no new lease could be had for it", () => {
+        startLoopbackModelBroker.mockResolvedValueOnce({ ok: false, error: "lease refused" } as never);
+      }, {}, "renewal_failed"],
+    ])("why it started from saved files when %s", async (_label, arrange, overrides, reason) => {
+      await keptSession();
+      arrange();
+      const { next, event } = await reported(overrides);
+      expect(next.keptRuntime).toBeUndefined();
+      expect(event).toMatchObject({ surface: "local", start: "disk_resume", fallback_reason: reason });
+    });
+
+    it("that a claim came past the kept runtime's lifetime, before its timer ended it", async () => {
+      let now = Date.now();
+      resetApprovalParkForTests({ now: () => now });
+      await keptSession();
+      now += TURN_PARK_LIFETIME_MS;
+      const { event } = await reported();
+      expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "lifetime" });
+      expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "lifetime" });
+    });
+
+    it("why it ended the kept runtime, when the turn itself is then refused", async () => {
+      await keptSession();
+      const refused = { available: false, status: "server-disabled", message: "Local execution is off." };
+      resolveLocalHarnessAvailability.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(refused as never);
+      const sink = { surface: "web" as const, capture: vi.fn() };
+      const record = new HarnessTurnRecord(new TurnTiming({ harnessTurnEvent: sink }), "codex", true);
+      const next = await prepareLocalHarnessTurn(nextTurn({ onKeptRuntime: record.keptRuntime }));
+      expect(next).toMatchObject({ ok: false, status: "server-disabled" });
+      // The turn fails before any session starts, as `runHarnessTurn` closes it.
+      record.close({ aborted: false, completed: false, bootstrap: undefined });
+      const event = sink.capture.mock.calls[0]![0] as HarnessTurnEventProperties;
+      expect(event).toMatchObject({ surface: "local", outcome: "failed", fallback_reason: "authorization_revoked" });
+      expect(event).not.toHaveProperty("start");
+    });
+
+    it("nothing about a kept runtime the person stopped", async () => {
+      await keptSession();
+      await endLocalHarnessSession("s_local_1");
+      const { event } = await reported();
+      expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "none" });
+    });
+
+    describe("why the kept runtime ended before the turn came", () => {
+      /** The registry's clock, whose timers fire only when the test moves it on. */
+      function parkClock() {
+        let now = Date.now();
+        const due = new Map<ReturnType<typeof setTimeout>, { at: number; fire: () => void }>();
+        resetApprovalParkForTests({
+          now: () => now,
+          setTimer: (fire, ms) => {
+            const handle = setTimeout(() => {}, 0);
+            clearTimeout(handle);
+            due.set(handle, { at: now + ms, fire });
+            return handle;
+          },
+          clearTimer: (handle) => {
+            due.delete(handle);
+          },
+        });
+        return {
+          /** Time passes with nothing happening: no timer fires. */
+          skip: (ms: number) => {
+            now += ms;
+          },
+          /** Time passes and every timer that comes due fires. */
+          async advance(ms: number) {
+            now += ms;
+            for (const [handle, timer] of [...due]) {
+              if (timer.at > now) continue;
+              due.delete(handle);
+              timer.fire();
+            }
+            await vi.waitFor(() => expect(supervisorFixture.stopCalls).toBeGreaterThan(0));
+          },
+        };
+      }
+
+      it("its idle window ran out", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "idle-expired" });
+        const { event } = await reported();
+        expect(event).toMatchObject({ surface: "local", start: "disk_resume", fallback_reason: "idle_expired" });
+      });
+
+      it("its lifetime ran out", async () => {
+        const clock = parkClock();
+        const { prepared } = await keptSession();
+        // Kept again, by later turns, until shortly before the end of its life:
+        // its timer is now the lifetime's.
+        clock.skip(TURN_PARK_LIFETIME_MS - 5 * 60_000);
+        expect(await prepared.parkTurn({ kept: CONFIG, resumeState: bridge(), stateVersion: 2, toolCalls: [] })).not.toBeNull();
+        await clock.advance(5 * 60_000);
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "lifetime" });
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "lifetime" });
+      });
+
+      it("another conversation's runtime took its slot", async () => {
+        const clock = parkClock();
+        await keptSession();
+        for (let other = 1; other <= MAX_TURN_PARKS; other += 1) {
+          clock.skip(1);
+          parkLocalTurn({
+            sessionId: `s_other_${other}`, generation: `gen-other-${other}`, userId: "user_1", projectId: "proj_1",
+            harnessId: "codex", runtimeDigest: READY.digest, stateVersion: 1, fingerprint: "config-other",
+            resources: {}, end: async () => {}, isAlive: () => true, holdModelTraffic: () => {},
+          });
+        }
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "evicted" });
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "evicted" });
+      });
+
+      it("Inspector shut down", async () => {
+        await keptSession();
+        await shutdownLocalTurnParks();
+        expect((await reported()).event).toMatchObject({ start: "disk_resume", fallback_reason: "shutdown" });
+      });
+
+      it("keeping local runtimes was turned off, which ends it at the next turn", async () => {
+        await keptSession();
+        vi.stubEnv("MCPJAM_LOCAL_KEEP_AGENT", "false");
+        // With the switch off a turn asks to adopt nothing.
+        const { event } = await reported({ keptRuntime: undefined });
+        expect(describeParkedLocalSession("s_local_1")).toMatchObject({ invalidatedBy: "switched-off" });
+        expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "switched_off" });
+      });
+
+      it("only when it is the runtime the lane's committed state names", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        const { event } = await reported({
+          keptRuntime: { ...CONFIG, committed: { generation: "gen-2", stateVersion: 3 } },
+        });
+        expect(event).toMatchObject({ start: "disk_resume", fallback_reason: "none" });
+      });
+
+      it("to one turn only", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        expect((await reported()).event).toMatchObject({ fallback_reason: "idle_expired" });
+        expect((await reported()).event).toMatchObject({ fallback_reason: "none" });
+      });
+
+      it("to a turn that comes after its tombstone is gone", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        // The tombstone's minute passes, and with it the registry's record.
+        await clock.advance(2 * 60_000);
+        expect(describeParkedLocalSession("s_local_1")).toBeNull();
+        expect((await reported()).event).toMatchObject({ fallback_reason: "idle_expired" });
+      });
+
+      it("to no turn once its end is forgotten", async () => {
+        const clock = parkClock();
+        await keptSession();
+        await clock.advance(DEFAULT_TURN_PARK_TTL_MS);
+        clock.skip(KEPT_END_RETENTION_MS);
+        expect((await reported()).event).toMatchObject({ fallback_reason: "none" });
+      });
+    });
+  });
+
+  it("stops being adoptable the moment Stop ends it", async () => {
+    await keptSession();
+    await endLocalHarnessSession("s_local_1");
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    expect(next.prepared.keptRuntime).toBeUndefined();
+    expect(startLocalModelGateway).toHaveBeenCalledTimes(2);
+    await next.prepared.teardown();
+  });
+
+  it("goes with the teardown of a turn that does not keep it again", async () => {
+    await keptSession();
+    startLoopbackModelBroker.mockResolvedValueOnce(lease("run_2"));
+    const next = await prepareLocalHarnessTurn(nextTurn());
+    if (!next.ok) throw new Error(next.message);
+    // A key replaced mid-turn (`org-key-preparation.ts`) tears the adopted runtime down.
+    await next.prepared.teardown();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+    expect(supervisorFixture.stopCalls).toBe(1);
+  });
+
+  it.each([
+    ["a command", [{ toolName: "bash" }]],
+    ["a patch, which runs through the shell", [{ toolName: "webSearch" }, { toolName: "fileChange" }]],
+  ])("is never kept after a turn that ran %s, approved or not", async (_label, toolCalls) => {
+    // Anything it started (a shell `exec_command` left running) would reach
+    // the next turn, which could drive it without asking.
+    const { kept } = await keptSession({}, toolCalls);
+    expect(kept).toBe(false);
+    expect(gatewayHold).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is kept after a turn that only searched, viewed images or called MCP tools", async () => {
+    const { kept } = await keptSession({}, [
+      { toolName: "webSearch" },
+      { toolName: "imageView" },
+      // An MCP server's own tool, whatever it is called, runs outside this runtime.
+      { toolName: "bash", serverId: "srv_terminal" },
+    ]);
+    expect(kept).toBe(true);
+  });
+
+  it("is never kept with materialized secrets in its environment", async () => {
+    const { kept } = await keptSession({ scopedEnv: { STRIPE_API_KEY: "sk_test_secret" } });
+    expect(kept).toBe(false);
+    expect(gatewayHold).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is not kept while an install may replace its pack", async () => {
+    readRuntimeInstallStatus
+      .mockResolvedValueOnce(READY)
+      .mockResolvedValueOnce({ ...READY, role: "permitted", update: { state: "verifying", packVersion: "test-pack-2" } } as never);
+    const { kept } = await keptSession();
+    expect(kept).toBe(false);
+    expect(describeParkedLocalSession("s_local_1")).toBeNull();
+  });
+
+  it("is not kept when the runtime selection cannot be read", async () => {
+    readRuntimeInstallStatus.mockResolvedValueOnce(READY).mockRejectedValueOnce(new Error("EACCES"));
+    const { kept } = await keptSession();
+    expect(kept).toBe(false);
+  });
 });
