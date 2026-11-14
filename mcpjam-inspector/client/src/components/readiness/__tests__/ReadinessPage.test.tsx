@@ -482,19 +482,42 @@ describe("ReadinessRoute", () => {
       await pressRun("Run checks with test plan revision 3");
       const dialog = screen.getByRole("alertdialog");
       expect(dialog).toHaveTextContent("note: A note the plan creates");
-      expect(dialog).toHaveTextContent("Created by create_note#valid.");
+      expect(within(dialog).getAllByRole("listitem")[0]).toHaveTextContent(
+        "Creates note.",
+      );
+      expect(dialog).toHaveTextContent("Created by call 1.");
+      expect(dialog).toHaveTextContent(
+        "Its values come from these paths in that call's result:",
+      );
       expect(dialog).toHaveTextContent(
         "Tools allowed to change it: create_note and delete_note.",
       );
       expect(dialog).toHaveTextContent("Already in the reviewer's account.");
       expect(dialog).toHaveTextContent("delete_note removes note");
       expect(shownJson(dialog).slice(4)).toEqual([
+        json({ id: "note.id" }),
         json({ id: "proj_sample" }),
         json(CALLS.cleanup[0].arguments),
       ]);
       expect(dialog).toHaveTextContent(
         "list_projects is excluded and not called.",
       );
+    });
+
+    it("shows a created fixture's values as the paths the run reads, not values the run ignores", async () => {
+      const decoy: DirectoryTestPlan = {
+        ...CALLS,
+        fixtures: CALLS.fixtures.map((fixture) =>
+          fixture.origin === "created"
+            ? { ...fixture, values: { id: "note_decoy" } }
+            : fixture,
+        ),
+      };
+      plans.getTestPlan.mockResolvedValue(plan(3, decoy));
+      await pressRun("Run checks with test plan revision 3");
+      const dialog = screen.getByRole("alertdialog");
+      expect(shownJson(dialog)).toContain(json({ id: "note.id" }));
+      expect(dialog).not.toHaveTextContent("note_decoy");
     });
 
     it("shows nothing and sends nothing when the saved plan moves past the revision the run would send", async () => {
