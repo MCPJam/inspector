@@ -98,10 +98,7 @@ import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 import { SUITE_COLUMN_HINTS } from "./nav-suite/suite-page-hints";
 import { SuitePageHeader } from "./nav-suite/suite-page-header";
-import {
-  SuiteNoCasesEmpty,
-  SuiteNoRunsEmpty,
-} from "./nav-suite/suite-runs-health";
+import { SuiteNoRunsEmpty } from "./nav-suite/suite-runs-health";
 import { SuitePageTabs, type SuitePageTab } from "./nav-suite/suite-page-tabs";
 import { useSuitePageViewed } from "./nav-suite/use-suite-page-viewed";
 import { newestLaunchPills } from "./nav-suite/newest-launch-pills";
@@ -686,6 +683,15 @@ export function SuiteDetailOverview({
   const tab = resultsPageEnabled ? view : null;
   const emptyTab =
     (tab === "runs" && !showRunHistory) || (tab === "test-cases" && !hasCases);
+  // Adding the first cases ends on Test cases: Generate and Import finish on
+  // this page, and Back from Describe's editor returns to this address.
+  const fromEmpty = (start?: () => void) =>
+    start && tab === "runs"
+      ? () => {
+          onViewChange?.("test-cases");
+          start();
+        }
+      : start;
 
   const runButton = (
     <Button
@@ -1030,23 +1036,29 @@ export function SuiteDetailOverview({
         </section>
       ) : null}
 
-      {tab === "runs" ? (
+      {tab && !hasCases && (tab === "test-cases" || !showRunHistory) ? (
+        <SuiteEmptyCasesHero
+          readOnly={readOnlyConfig || configLocked}
+          onDescribe={fromEmpty(onDescribeCases ?? onEditCases)}
+          onGenerate={fromEmpty(() => void handleGenerateCases())}
+          canGenerate={canGenerate}
+          generateDisabledReason={generateTestCasesDisabledReason}
+          isGenerating={
+            isGeneratingTestCases || generation?.status === "running"
+          }
+          onImport={fromEmpty(onImportCases)}
+          fillRemaining
+        />
+      ) : tab === "runs" ? (
         showRunHistory ? null : (
           <SuiteNoRunsEmpty
+            caseCount={cases.length}
             runBlockedReason={runBlockedReason}
             runBusy={isRerunning}
             onRun={() => setReviewRun(true)}
+            onViewCases={() => onViewChange?.("test-cases")}
           />
         )
-      ) : tab === "test-cases" && !hasCases ? (
-        <SuiteNoCasesEmpty
-          onBuildCase={
-            readOnlyConfig || configLocked
-              ? undefined
-              : (onDescribeCases ?? onEditCases)
-          }
-          onOpenSettings={openSettings}
-        />
       ) : !tab && showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
           readOnly={readOnlyConfig || configLocked}

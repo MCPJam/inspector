@@ -4,7 +4,7 @@
  * the two states a suite has before that: no cases, and cases but no runs.
  */
 import type { ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { ListChecks } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { SuiteHealthBars } from "../suite-health";
@@ -122,65 +122,48 @@ function SuiteEmptyPanel({
   );
 }
 
-/** The Runs tab of a suite that has never run. */
+/**
+ * The Runs tab of a suite with cases that has never run: a nudge to run them,
+ * or to go back to the cases just added.
+ */
 export function SuiteNoRunsEmpty({
+  caseCount,
   runBlockedReason,
   runBusy,
   onRun,
+  onViewCases,
 }: {
+  caseCount: number;
   runBlockedReason: string | null;
   runBusy: boolean;
   onRun: () => void;
+  onViewCases: () => void;
 }) {
   return (
     <SuiteEmptyPanel testId="nav-suite-no-runs">
       <h3 className="text-base font-semibold text-foreground">No runs yet</h3>
       <p className="max-w-md text-sm text-muted-foreground">
-        Run the suite once to start a trend.
+        Run your {caseCount} test {caseCount === 1 ? "case" : "cases"} to start
+        a trend.
       </p>
-      <div className="mt-2">
+      <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
         <SuiteRunButton
           large
           blockedReason={runBlockedReason}
           busy={runBusy}
           onRun={onRun}
         />
-      </div>
-    </SuiteEmptyPanel>
-  );
-}
-
-/** The Test cases tab of a suite with no cases. Each action is absent when the reader cannot take it. */
-export function SuiteNoCasesEmpty({
-  onBuildCase,
-  onOpenSettings,
-}: {
-  onBuildCase?: () => void;
-  onOpenSettings?: () => void;
-}) {
-  return (
-    <SuiteEmptyPanel testId="nav-suite-empty">
-      <h3 className="text-base font-semibold text-foreground">
-        No test cases yet
-      </h3>
-      <p className="max-w-md text-sm text-muted-foreground">
-        Add your first test case, then run the suite.
-      </p>
-      {onBuildCase ? (
-        <Button size="lg" className="mt-2 gap-2" onClick={onBuildCase}>
-          <Plus className="size-4" aria-hidden />
-          Build a test case
-        </Button>
-      ) : null}
-      {onOpenSettings ? (
-        <button
+        <Button
           type="button"
-          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-          onClick={onOpenSettings}
+          size="lg"
+          variant="outline"
+          className="gap-2"
+          onClick={onViewCases}
         >
-          or open Suite settings
-        </button>
-      ) : null}
+          <ListChecks className="size-4" aria-hidden />
+          View test cases
+        </Button>
+      </div>
     </SuiteEmptyPanel>
   );
 }
