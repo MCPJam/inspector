@@ -430,6 +430,9 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
+  // A multi-model session's first send. `rebuilt` says the same first prompt
+  // already ran side by side in the last 14 days; no prompt text is sent.
+  playground_multi_model_started: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },
   playground_tool_run_clicked: { source: "client" },

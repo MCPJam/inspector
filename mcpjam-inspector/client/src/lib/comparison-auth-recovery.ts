@@ -42,6 +42,15 @@ export function registerComparisonColumn(
     if (!group.size) columns.delete(id);
   };
 }
+/** The chat each mounted column of a comparison writes to, by `kind:compareId`. */
+export function comparisonColumnSessions(id: string): Map<string, string> {
+  return new Map(
+    [...(columns.get(id)?.entries() ?? [])].map(([key, column]) => [
+      key,
+      column.chatSessionId,
+    ]),
+  );
+}
 export function prepareComparisonAuthRecovery(
   id: string,
   clickedColumn: string,
