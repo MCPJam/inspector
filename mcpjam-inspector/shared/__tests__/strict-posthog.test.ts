@@ -210,6 +210,8 @@ describe("strict app launches", () => {
       is_authenticated: true,
       platform: "web",
       deployment: "hosted",
+      launch_trigger: "timeout",
+      policy_wait_ms: 10_000,
       user_agent: secret,
       version: secret,
     },
@@ -231,6 +233,8 @@ describe("strict app launches", () => {
         is_authenticated: true,
         platform: "web",
         deployment: "hosted",
+        launch_trigger: "timeout",
+        policy_wait_ms: 10_000,
       },
     });
     expect(JSON.stringify(result)).not.toContain("SENTINEL");
@@ -249,12 +253,16 @@ describe("strict app launches", () => {
         is_authenticated: "true",
         platform: secret,
         deployment: secret,
+        launch_trigger: secret,
+        policy_wait_ms: 1.5,
       },
     });
     expect(result?.properties).not.toHaveProperty("location");
     expect(result?.properties).not.toHaveProperty("is_authenticated");
     expect(result?.properties).not.toHaveProperty("platform");
     expect(result?.properties).not.toHaveProperty("deployment");
+    expect(result?.properties).not.toHaveProperty("launch_trigger");
+    expect(result?.properties).not.toHaveProperty("policy_wait_ms");
     expect(JSON.stringify(result)).not.toContain("SENTINEL");
   });
 });
