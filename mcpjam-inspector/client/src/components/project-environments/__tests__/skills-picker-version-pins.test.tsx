@@ -101,11 +101,14 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
     await screen.findByText("v1");
 
     fireEvent.change(control, { target: { value: "ver-1" } });
-    expect(onChange).toHaveBeenCalledWith({
-      mode: "explicit",
-      skillIds: ["skill-refunds"],
-      versionPins: [{ skillId: "skill-refunds", versionId: "ver-1" }],
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      {
+        mode: "explicit",
+        skillIds: ["skill-refunds"],
+        versionPins: [{ skillId: "skill-refunds", versionId: "ver-1" }],
+      },
+      { kind: "pin", skillId: "skill-refunds", versionId: "ver-1" },
+    );
   });
 
   it("omits versionPins entirely when going back to Latest", async () => {
@@ -126,10 +129,10 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
 
     const control = await screen.findByLabelText("Version for skill-refunds");
     fireEvent.change(control, { target: { value: "" } });
-    expect(onChange).toHaveBeenCalledWith({
-      mode: "explicit",
-      skillIds: ["skill-refunds"],
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      { mode: "explicit", skillIds: ["skill-refunds"] },
+      { kind: "pin", skillId: "skill-refunds", versionId: null },
+    );
   });
 
   it("drops a skill's pin when the skill is deselected", async () => {
@@ -154,10 +157,10 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
 
     const refundsCheckbox = await screen.findByLabelText("refunds");
     fireEvent.click(refundsCheckbox);
-    expect(onChange).toHaveBeenCalledWith({
-      mode: "explicit",
-      skillIds: ["skill-tone"],
-    });
+    expect(onChange).toHaveBeenCalledWith(
+      { mode: "explicit", skillIds: ["skill-tone"] },
+      { kind: "remove", skillId: "skill-refunds" },
+    );
   });
 
   it("stays usable when the history request fails", async () => {
@@ -230,6 +233,33 @@ describe("ProjectEnvironmentSkillsPicker — version pins", () => {
       await screen.findByLabelText("Version for skill-refunds"),
     ).toBeDisabled();
     expect(screen.getByLabelText("refunds")).not.toBeDisabled();
+  });
+
+  it("offers Latest and lists each version once while a pin is set", async () => {
+    // A pinned control still needs a way back to Latest, and must not list
+    // the pinned version twice.
+    render(
+      <ProjectEnvironmentSkillsPicker
+        projectId="proj-1"
+        value={{
+          mode: "explicit",
+          skillIds: ["skill-refunds"],
+          versionPins: [{ skillId: "skill-refunds", versionId: "ver-1" }],
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    const control = await screen.findByLabelText("Version for skill-refunds");
+    fireEvent.focus(control);
+    await screen.findByText("v4 (current)");
+    expect(
+      Array.from(
+        control.querySelectorAll("option"),
+        (option) => option.textContent,
+      ),
+    ).toEqual(["Latest (v4)", "v4 (current)", "v1"]);
+    expect(control).toHaveValue("ver-1");
   });
 
   it("keeps a pin selectable before its history has loaded", async () => {
