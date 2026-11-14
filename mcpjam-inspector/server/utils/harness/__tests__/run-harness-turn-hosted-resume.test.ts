@@ -19,6 +19,7 @@ const harnessState = vi.hoisted(() => ({
   finalText: "",
   claimedState: null as unknown,
   approvalContinuations: [] as unknown[],
+  streamCalls: [] as unknown[],
   createSession: vi.fn(async (_opts?: unknown) => ({
     sessionId: "harness-session-0",
     stop: vi.fn(async () => ({})),
@@ -27,10 +28,26 @@ const harnessState = vi.hoisted(() => ({
   })),
 }));
 
+const snapshotSave = vi.hoisted(() => ({ run: vi.fn(), saver: vi.fn() }));
+vi.mock("../session-snapshot/save-session-snapshot.js", () => ({
+  sessionSnapshotSaver: snapshotSave.saver,
+}));
+const snapshotRestore = vi.hoisted(() => ({
+  available: false,
+  apply: vi.fn(async () => {}),
+  start: vi.fn(),
+}));
+vi.mock("../session-snapshot/restore-session-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../session-snapshot/restore-session-snapshot.js")
+  >()),
+  startSessionSnapshotRestore: snapshotRestore.start,
+}));
+
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
     createSession = harnessState.createSession;
-    stream = vi.fn(async () => ({
+    stream = vi.fn(async (opts: unknown) => (harnessState.streamCalls.push(opts), {
       fullStream: (async function* () {
         for (const part of harnessState.streamParts) {
           yield part;
@@ -172,6 +189,15 @@ describe("runHarnessTurn hosted resume", () => {
     ];
     harnessState.finalText = "Hi.";
     harnessState.createSession.mockClear();
+    snapshotSave.run.mockReset();
+    snapshotSave.saver.mockReset().mockImplementation(() => snapshotSave.run);
+    harnessState.streamCalls = [];
+    snapshotRestore.available = false;
+    snapshotRestore.apply.mockClear();
+    snapshotRestore.start.mockReset().mockImplementation(() => ({
+      ready: async () => snapshotRestore.available,
+      apply: snapshotRestore.apply,
+    }));
   });
 
   afterEach(() => {
@@ -204,6 +230,120 @@ describe("runHarnessTurn hosted resume", () => {
         data: { claudeSessionId: "claude-1" },
       },
     });
+  });
+
+  describe("on a replaced box", () => {
+    const replaced = {
+      harnessSessionId: "harness-session-0",
+      computerId: "computer-0",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "claude-code",
+        specificationVersion: "harness-v1",
+        data: { claudeSessionId: "claude-1", bridge: { ...BRIDGE, sandboxId: "sandbox-0" } },
+      },
+    };
+
+    it("resumes from the restored session files and tells the model its files are gone", async () => {
+      harnessState.claimedState = replaced;
+      snapshotRestore.available = true;
+
+      const result = await runHarnessTurn(options() as any, "ui");
+      const stream = await result.response!.text();
+
+      expect(snapshotRestore.start).toHaveBeenCalledWith(
+        expect.objectContaining({ hosted: true, computerId: "computer-1", sandboxId: "sandbox-1", stateVersion: 1 }),
+      );
+      expect(harnessState.createSession).toHaveBeenCalledWith({
+        sessionId: "harness-session-0",
+        resumeFrom: {
+          type: "resume-session",
+          harnessId: "claude-code",
+          specificationVersion: "harness-v1",
+          data: { claudeSessionId: "claude-1" },
+        },
+      });
+      expect(stream).toContain('"reason":"sandbox-restored"');
+      expect(JSON.stringify(harnessState.streamCalls[0])).toContain(
+        "computer was replaced since your last turn",
+      );
+    });
+
+    it("starts fresh with the replaced notice when the restored session cannot start", async () => {
+      harnessState.claimedState = replaced;
+      snapshotRestore.available = true;
+      harnessState.createSession.mockRejectedValueOnce(
+        new Error("snapshot names a file outside the session folder"),
+      );
+
+      const result = await runHarnessTurn(options() as any, "ui");
+      const stream = await result.response!.text();
+
+      expect(harnessState.createSession).toHaveBeenLastCalledWith();
+      expect(stream).toContain('"reason":"sandbox-replaced"');
+      expect(stream).not.toContain('"reason":"resume-failed"');
+    });
+
+    it("starts a fresh session with the existing notice when nothing was saved", async () => {
+      harnessState.claimedState = replaced;
+
+      const result = await runHarnessTurn(options() as any, "ui");
+      const stream = await result.response!.text();
+
+      expect(harnessState.createSession).toHaveBeenCalledWith(undefined);
+      expect(stream).toContain('"reason":"sandbox-replaced"');
+      expect(JSON.stringify(harnessState.streamCalls[0])).not.toContain(
+        "computer was replaced since your last turn",
+      );
+    });
+  });
+
+  it("saves the CLI's session files once the turn's commit lands", async () => {
+    harnessState.claimedState = {
+      harnessSessionId: "harness-session-0",
+      computerId: "computer-1",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "claude-code",
+        data: { claudeSessionId: "claude-1", bridge: BRIDGE },
+      },
+    };
+    const persisted = { outcome: "saved" };
+    const result = await runHarnessTurn(
+      {
+        ...options(),
+        runtimeSecrets: [],
+        onConversationComplete: vi.fn(async () => persisted),
+      } as any,
+      "ui",
+    );
+    await result.response!.text();
+
+    expect(snapshotSave.saver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hosted: true,
+        harnessSessionId: "harness-session-0",
+        stateVersion: 2,
+        secrets: [],
+      }),
+    );
+    expect(snapshotSave.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves nothing when the transcript and resume state did not land", async () => {
+    const result = await runHarnessTurn(
+      {
+        ...options(),
+        runtimeSecrets: [],
+        onConversationComplete: vi.fn(async () => ({
+          outcome: "failed",
+          failureKind: "exception",
+        })),
+      } as any,
+      "ui",
+    );
+    await result.response!.text();
+    expect(snapshotSave.run).not.toHaveBeenCalled();
   });
 
   it("A pauses, B runs, A decides: the decision reattaches to A's bridge", async () => {

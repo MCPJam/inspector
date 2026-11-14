@@ -282,6 +282,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "compatibility",
     scope: "project",
   },
+  { path: "readiness", kind: "screen", surfaceId: "readiness", scope: "project" },
   {
     path: "oauth-flow",
     kind: "screen",

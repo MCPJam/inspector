@@ -136,7 +136,11 @@ import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { warmBridgeWindowMs, warmRetentionFor } from "./warm-retention.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
-import { harnessBrokerDeliveryEnabled, nativeForwardingEnabled } from "./harness-flags.js";
+import {
+  harnessBrokerDeliveryEnabled,
+  harnessQuietClaudeStartup,
+  nativeForwardingEnabled,
+} from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -269,6 +273,11 @@ import {
   type HarnessOwnerRef,
   type HarnessSessionCommitPayload,
 } from "./harness-session-state.js";
+import { sessionSnapshotSaver } from "./session-snapshot/save-session-snapshot.js";
+import {
+  SESSION_RESTORED_NOTE,
+  startSessionSnapshotRestore,
+} from "./session-snapshot/restore-session-snapshot.js";
 import {
   buildHarnessSessionDataPart,
   harnessBackgroundTaskInfoFromRaw,
@@ -1058,6 +1067,9 @@ export async function runHarnessTurn(
   // rides /ingest-chat with the transcript. `releaseHarnessLease` lets either
   // closure free the lane if the commit can't happen (detach/persist failure).
   let capturedHarnessCommit: HarnessSessionCommitPayload | undefined;
+  // Copies the CLI's session files off the box once the commit has landed.
+  let saveSnapshotAfterCommit: (() => void) | undefined;
+  let sandboxWorkDir: string | undefined;
   let releaseHarnessLease: (() => Promise<void>) | undefined;
   // Broker-delivery run identity, set after the lease is installed into E2B's
   // egress transform; used to revoke + clear the rule on teardown.
@@ -2489,6 +2501,18 @@ export async function runHarnessTurn(
       const uploadQuotaComputerId =
         box !== null && box.kind === "computer" ? box.computerId : undefined;
       tSandbox = turnEvent.mark("box");
+      // A replaced box: fetch the saved session files now, alongside the cold
+      // start, so they can be written before the CLI starts.
+      const snapshotRestore = startSessionSnapshotRestore({
+        hosted: localPrepared === null && !warmAgentPilot && !isApprovalResume,
+        owner: continuity?.owner,
+        state: continuity?.state,
+        stateVersion: continuity?.stateVersion,
+        computerId,
+        sandboxId,
+        getBearer: currentAuthorization,
+        ...(abortSignal ? { abortSignal } : {}),
+      });
 
       // Brokered turns acquire their exclusive box lease before any sandbox
       // bootstrap. External-account runtimes have no broker lease, so their
@@ -2793,6 +2817,8 @@ export async function runHarnessTurn(
             })
           : [],
       );
+      // Hosted boxes only: a local run keeps the person's own CLI settings.
+      const quietStartup = localPrepared === null && harnessQuietClaudeStartup();
       const buildRuntime = (startupTimeoutMs?: number, sandboxHomeDir?: string) =>
         harnessAdapter.mcpDelivery === "harness" &&
         harnessAdapter.mcpNativeDelivery === "session-config"
@@ -2807,6 +2833,7 @@ export async function runHarnessTurn(
               ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
               elicitationHandler: elicitationServerIds.size > 0,
+              ...(quietStartup ? { quietStartup: true } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2821,6 +2848,7 @@ export async function runHarnessTurn(
               permissionMode,
               ...(options.requireNativeToolDiscovery ? { requireNativeToolDiscovery: true } : {}),
               ...(nativeForwarding ? { forwardingMcpJson: mcpJson } : {}),
+              ...(quietStartup ? { quietStartup: true } : {}),
               ...(turnReasoningEffort !== undefined
                 ? { reasoningEffort: turnReasoningEffort }
                 : {}),
@@ -2995,6 +3023,8 @@ export async function runHarnessTurn(
           // pass (the finally's agent session has no file I/O). Stays valid until
           // the box is detached/destroyed, which happens AFTER adoption.
           sandboxFileSession = session;
+          sandboxWorkDir = sessionWorkDir;
+          await snapshotRestore?.apply(session, sessionWorkDir);
           cleanupSandbox = session;
           const networkSession = session as Partial<HarnessV1NetworkSandboxSession>;
           if (typeof networkSession.getPortEndpoint === "function")
@@ -3159,7 +3189,9 @@ export async function runHarnessTurn(
           "The session for this approval is no longer available; the pending action will not run. Start a new turn.",
         );
       }
-      const resumable = eligibility.resume && !localStateMissing
+      // A replaced box resumes too once its saved session files are back.
+      const restoring = !eligibility.resume && (await snapshotRestore?.ready()) === true;
+      const resumable = (eligibility.resume && !localStateMissing) || restoring
         ? continuity?.state ?? undefined
         : undefined;
       // Categorical reason to surface to the client (never a raw sandbox id).
@@ -3167,7 +3199,7 @@ export async function runHarnessTurn(
       let resetReason: HarnessResetReason | undefined = localStateMissing
         ? "resume-failed"
         : eligibility.reason === "sandbox-replaced"
-          ? "sandbox-replaced"
+          ? restoring ? "sandbox-restored" : "sandbox-replaced"
           : continuity?.runtimeChanged
             ? "runtime-changed"
             : undefined;
@@ -3247,7 +3279,8 @@ export async function runHarnessTurn(
           });
           // Reattach threw — fall back fresh, but make it VISIBLE (the adapter
           // swallows its own reattach failures; this catch is our last signal).
-          resetReason = "resume-failed";
+          // A refused restore is still a replaced computer to the user.
+          resetReason = restoring ? "sandbox-replaced" : "resume-failed";
           session = await agent.createSession();
         }
       } else {
@@ -3316,7 +3349,9 @@ export async function runHarnessTurn(
               messages: withHarnessTurnContext(withHarnessAttachmentNote(
                 withHarnessPromptImages(promptAttachments.messages, images),
                 buildHarnessAttachmentNote(attachmentOutcomes, images),
-              ), options.harnessTurnContext),
+              ), resetReason === "sandbox-restored"
+                ? [options.harnessTurnContext, SESSION_RESTORED_NOTE].filter(Boolean).join("\n\n")
+                : options.harnessTurnContext),
               // Hand the harness the combined abort signal so a user cancel OR a
               // lost-lease liveness abort propagates into the in-sandbox run.
               abortSignal: effectiveAbortSignal,
@@ -4605,6 +4640,17 @@ export async function runHarnessTurn(
               // Phase 3: the ingest commit re-resolves the guest's own lane.
               ...(executionScope ? { executionScope } : {}),
             };
+            saveSnapshotAfterCommit = sessionSnapshotSaver({
+              hosted: !localPrepared && !warmAgentPilot,
+              session: sandboxFileSession,
+              owner: continuity.owner,
+              harnessSessionId: session.sessionId,
+              stateVersion: continuity.stateVersion + 1,
+              resumeState,
+              workDir: sandboxWorkDir,
+              secrets: secretsUnavailable ? undefined : runtimeSecretsOverride,
+              getBearer: cleanupAuthorization,
+            });
           } else {
             if (localPrepared && retainLocalState) await session.stop();
             else await session.destroy();
@@ -4845,6 +4891,7 @@ export async function runHarnessTurn(
         if (capturedHarnessCommit && onConversationComplete && persistOk) {
           retainLocalState = true;
           localStateCommitted = true;
+          saveSnapshotAfterCommit?.();
         }
         if (persistOutcome && chatSessionId) {
           writePersistReceipt(receiptWriter, persistOutcome, {

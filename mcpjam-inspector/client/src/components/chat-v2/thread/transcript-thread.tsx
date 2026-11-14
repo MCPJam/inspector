@@ -492,12 +492,8 @@ export function TranscriptThread({
         const isLatestAssistantMessage =
           message.role === "assistant" &&
           message.id === lastRenderableMessageId;
-        const claudeFooterMode =
-          isClaudeFamily && isLatestAssistantMessage
-            ? isLoading
-              ? "animated"
-              : "static"
-            : "none";
+        const claudeFooterActive =
+          isClaudeFamily && isLatestAssistantMessage && isLoading;
         const mcpjamFooterActive =
           isMcpjamHost && isLatestAssistantMessage && isLoading;
         const messageToolCallIds = getMessageToolCallIds(message);
@@ -597,7 +593,7 @@ export function TranscriptThread({
               widgetPolicy={widgetPolicy}
               reasoningDisplayMode={reasoningDisplayMode}
               mcpToolResultImageRendering={mcpToolResultImageRendering}
-              claudeFooterMode={claudeFooterMode}
+              claudeFooterActive={claudeFooterActive}
               mcpjamFooterActive={mcpjamFooterActive}
               renderUserMessageActions={renderUserMessageActions}
               // Per-turn ratings (inherited from MessageView's props), minus
