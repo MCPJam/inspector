@@ -79,6 +79,9 @@ export type {
   EvidenceReuseRefusal,
 } from "./evidence-reuse.js";
 
+// Submission forms as data. The flows barrel names its own exports, all pure.
+export * from "./flows/index.js";
+
 /**
  * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.
  *

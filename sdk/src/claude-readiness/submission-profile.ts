@@ -89,7 +89,7 @@ const screenshotSchema = z.object({
 
 export const claudeSubmissionProfileSchema = z.object({
   name: z.string().min(1).max(CLAUDE_SUBMISSION_LIMITS.nameMaxLength),
-  tagline: z.string().min(1).max(CLAUDE_SUBMISSION_LIMITS.taglineMaxLength),
+  tagline: z.string().min(1).max(CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength),
   description: z
     .string()
     .min(1)

@@ -167,7 +167,7 @@ export function runClaudeSubmissionChecks(
   // asserting something it never verified.
   const overLongFields = [
     ["name", profile.name.length, CLAUDE_SUBMISSION_LIMITS.nameMaxLength],
-    ["tagline", profile.tagline.length, CLAUDE_SUBMISSION_LIMITS.taglineMaxLength],
+    ["tagline", profile.tagline.length, CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength],
     [
       "description",
       profile.description.length,
@@ -184,7 +184,7 @@ export function runClaudeSubmissionChecks(
       ? violated(
           LISTING_FIELDS,
           stamp,
-          `Listing fields must fit their limits: name ≤ ${CLAUDE_SUBMISSION_LIMITS.nameMaxLength}, tagline ≤ ${CLAUDE_SUBMISSION_LIMITS.taglineMaxLength}, description ≤ ${CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength}, and ${CLAUDE_SUBMISSION_LIMITS.categoriesMin}–${CLAUDE_SUBMISSION_LIMITS.categoriesMax} categories.`,
+          `Listing fields must fit their limits: name ≤ ${CLAUDE_SUBMISSION_LIMITS.nameMaxLength}, tagline ≤ ${CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength}, description ≤ ${CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength}, and ${CLAUDE_SUBMISSION_LIMITS.categoriesMin}–${CLAUDE_SUBMISSION_LIMITS.categoriesMax} categories.`,
           {
             overLong: overLongFields.map(([field, length, limit]) => ({
               field,
@@ -201,7 +201,7 @@ export function runClaudeSubmissionChecks(
       categories: profile.categories.length,
           limits: {
             name: CLAUDE_SUBMISSION_LIMITS.nameMaxLength,
-            tagline: CLAUDE_SUBMISSION_LIMITS.taglineMaxLength,
+            tagline: CLAUDE_SUBMISSION_LIMITS.oneLinerMaxLength,
             description: CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
           },
         }),
