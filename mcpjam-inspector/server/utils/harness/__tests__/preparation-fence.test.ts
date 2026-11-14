@@ -15,7 +15,11 @@ function innerSession() {
     readTextFile: vi.fn(async () => "marker"),
     writeFile: vi.fn(async () => undefined),
     writeBinaryFile: vi.fn(async () => undefined),
-    writeTextFile: vi.fn(async () => undefined),
+    // Typed as the session's, so a test can stand in a write that reads its
+    // options.
+    writeTextFile: vi.fn<Experimental_SandboxSession["writeTextFile"]>(
+      async () => undefined,
+    ),
     spawn: vi.fn(),
     run: vi.fn(async () => RESULT),
   } satisfies Experimental_SandboxSession;
