@@ -29,13 +29,15 @@ import {
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
 
-function formatChatHistoryModelLabel(
+export function formatChatHistoryModelLabel(
   session: ChatHistorySession,
+  /** Names for models the static list does not know, e.g. hosted ones. */
+  modelName?: (modelId: string) => string | undefined,
 ): string | null {
   const raw = session.modelId?.trim();
   if (!raw) return null;
   // Plus the effort the session's last turn ran at (" · High").
-  return `${getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
+  return `${modelName?.(raw) ?? getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
     session.modelSelection,
   )}`;
 }
@@ -88,6 +90,14 @@ interface ChatHistoryRowProps {
   onConvertToTestCase?: (session: ChatHistorySession) => void;
   /** Project list only: avatar for another member's shared thread. */
   projectThreadOwner?: ProjectThreadOwnerAvatar;
+  /** Replaces the title, e.g. a column row named by its model. */
+  titleOverride?: string;
+  /** Replaces the model label, e.g. a multi-model session's lineup. */
+  labelOverride?: string;
+  /** Multi-model sessions are not shared to a project. */
+  hideShare?: boolean;
+  /** Overrides "Archive" for rows that archive more than one chat. */
+  archiveLabel?: string;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -112,6 +122,10 @@ export function ChatHistoryRow({
   canConvertToTestCase = false,
   onConvertToTestCase,
   projectThreadOwner,
+  titleOverride,
+  labelOverride,
+  hideShare = false,
+  archiveLabel = "Archive",
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -139,11 +153,12 @@ export function ChatHistoryRow({
   }, [isRenaming]);
 
   const title =
+    titleOverride ||
     session.customTitle ||
     session.firstMessagePreview.slice(0, 60) ||
     "Untitled chat";
 
-  const modelLabel = formatChatHistoryModelLabel(session);
+  const modelLabel = labelOverride ?? formatChatHistoryModelLabel(session);
 
   const ownerAvatarTooltip =
     projectThreadOwner?.status === "show"
@@ -212,7 +227,8 @@ export function ChatHistoryRow({
     if (isStreaming || isActive || isRenaming) return;
     onPrefetch?.(session);
   };
-  const canManageProjectSharing = isAuthenticated && sharedThreadsEnabled;
+  const canManageProjectSharing =
+    isAuthenticated && sharedThreadsEnabled && !hideShare;
 
   if (isRenaming) {
     const renameField = (
@@ -394,7 +410,7 @@ export function ChatHistoryRow({
                       )
                 }
               >
-                {session.status === "active" ? "Archive" : "Unarchive"}
+                {session.status === "active" ? archiveLabel : "Unarchive"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
