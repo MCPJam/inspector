@@ -61,17 +61,24 @@ const EMPTY: TestPlanState = {
   resultsError: null,
 };
 
-function sentenceOf(error: unknown): string {
+/**
+ * What went wrong: a failure's first sentence. An API refusal ends with its
+ * own next step, which each message below replaces with one this page
+ * offers, so a message never gives two.
+ */
+function reasonOf(error: unknown): string {
   const text = (error instanceof Error ? error.message : String(error)).trim();
-  return /[.!?]$/.test(text) ? text : `${text}.`;
+  const first = /^.*?[.!?](?=\s|$)/s.exec(text)?.[0] ?? text;
+  return /[.!?]$/.test(first) ? first : `${first}.`;
 }
 
-/** The API's refusals say what to do next; any other failure gets `next`. */
-function why(error: unknown, next: string): string {
-  const refusal =
-    isPlatformApiError(error) && error.status >= 400 && error.status < 500;
-  return refusal ? sentenceOf(error) : `${sentenceOf(error)} ${next}`;
-}
+/**
+ * A conflict that names no revision: on a draft or a save, MCPJam holds no
+ * usable tool list for the server; on the results, the run's plan revision
+ * is no longer kept.
+ */
+const conflicted = (error: unknown) =>
+  isPlatformApiError(error) && error.status === 409;
 
 export function createTestPlanStore(render: () => void) {
   let state = EMPTY;
@@ -102,8 +109,10 @@ export function createTestPlanStore(render: () => void) {
       set({ saved, ...checked });
     } catch (error) {
       if (!isOpen(target)) return;
-      const text = why(error, "Reload the page to try again.");
-      set({ error: `The test plan did not load. ${text}` });
+      const reason = reasonOf(error);
+      set({
+        error: `The test plan did not load. ${reason} Reopen this rehearsal to load the plan again.`,
+      });
     }
   }
 
@@ -115,8 +124,12 @@ export function createTestPlanStore(render: () => void) {
       if (isOpen(target)) set({ results, resultsError: null });
     } catch (error) {
       if (!isOpen(target)) return;
-      const text = why(error, "Reload the page to try again.");
-      set({ resultsError: `The tool test results did not load. ${text}` });
+      const reason = reasonOf(error);
+      set({
+        resultsError: conflicted(error)
+          ? `The tool test results did not load. ${reason} Run checks again to test the current plan.`
+          : `The tool test results did not load. ${reason} Reopen this rehearsal to load the results again.`,
+      });
     }
   }
 
@@ -138,8 +151,13 @@ export function createTestPlanStore(render: () => void) {
       });
     } catch (error) {
       if (!isOpen(target)) return;
-      const text = why(error, "Try drafting it again.");
-      set({ busy: null, error: `The plan was not drafted. ${text}` });
+      const reason = reasonOf(error);
+      set({
+        busy: null,
+        error: conflicted(error)
+          ? `The plan was not drafted. ${reason} Connect the server in MCPJam to store its tools, then draft the plan again.`
+          : `The plan was not drafted. ${reason} Try drafting it again.`,
+      });
     }
   }
 
@@ -184,8 +202,13 @@ export function createTestPlanStore(render: () => void) {
           "The plan was not saved. Fix the issues marked below, then save it again.",
       });
     } else {
-      const text = why(error, "Try saving it again.");
-      set({ busy: null, error: `The plan was not saved. ${text}` });
+      const reason = reasonOf(error);
+      set({
+        busy: null,
+        error: conflicted(error)
+          ? `The plan was not saved. ${reason} Connect the server in MCPJam to store its tools, then save the plan again.`
+          : `The plan was not saved. ${reason} Try saving it again.`,
+      });
     }
   }
 
