@@ -75,6 +75,8 @@ export interface ClaudeAuthEvidence {
      * server never published one.
      */
     rejectedPointer?: string;
+    /** No discovery request got an HTTP answer. */
+    unanswered?: boolean;
   };
   /**
    * Metadata for `authorization_servers[0]` ONLY. Claude does not fall back to
@@ -492,6 +494,12 @@ export function runClaudeAuthChecks(
       "the server is authless, so it publishes no Protected Resource Metadata";
     findings.push(notApplicable(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notApplicable(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
+  } else if (prm.discoveredVia === "not-found" && prm.unanswered) {
+    // A request nobody answered is a gap in this run, not a server that
+    // publishes no metadata.
+    const reason = `no request for Protected Resource Metadata was answered (${prm.fetchError ?? "no response"})`;
+    findings.push(notEvaluated(PRM_DISCOVERABLE, stamp, reason));
+    findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
   } else {
     findings.push(
       prm.discoveredVia === "not-found"

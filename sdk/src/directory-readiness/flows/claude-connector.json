@@ -711,6 +711,13 @@
       ]
     },
     {
+      "step": "useCases",
+      "field": "useCases.access",
+      "needs": ["server"],
+      "reads": ["useCases.access", "connection.serverUrl"],
+      "checks": ["claude.submission.access-matches-annotations"]
+    },
+    {
       "step": "authentication",
       "field": "authentication.requirement",
       "needs": ["server"],
@@ -775,6 +782,13 @@
       "checks": ["claude.submission.attestations"]
     },
     {
+      "step": "compliance",
+      "field": "compliance.acknowledgments",
+      "needs": ["server"],
+      "reads": ["connection.serverUrl"],
+      "checks": ["claude.scan.cross-tool-direction-candidates"]
+    },
+    {
       "step": "review",
       "reads": [
         "dataHandling.apiOwnership",
@@ -782,6 +796,18 @@
         "dataHandling.sponsored"
       ],
       "checks": ["claude.submission.artifact-quality"]
+    },
+    {
+      "step": "review",
+      "reads": [
+        "useCases.access",
+        "dataHandling.apiOwnership",
+        "dataHandling.healthData",
+        "dataHandling.sponsored",
+        "testLaunch.selfTested",
+        "compliance.acknowledgments"
+      ],
+      "checks": ["claude.submission.declarations-confirmed"]
     }
   ],
   "laneSteps": {
