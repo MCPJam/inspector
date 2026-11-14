@@ -154,6 +154,7 @@ import {
   type ChatSessionEngine,
 } from "./chat-session-host-target.js";
 import { v1Error, v1Resource } from "./envelope.js";
+import { nativeHarnessRefusalDetails } from "./native-harness-refusal.js";
 import { readJsonObjectBody } from "./adapter.js";
 import {
   chatSessionClient,
@@ -1687,7 +1688,13 @@ async function handleTurn(c: Context): Promise<Response> {
     const inputMessages = [...priorMessages, userMessage];
 
     let lastEngineError:
-      { message: string; code?: string; httpStatus?: number } | undefined;
+      | {
+          message: string;
+          code?: string;
+          httpStatus?: number;
+          infra?: { code?: string };
+        }
+      | undefined;
 
     // A cloud harness turn runs on this conversation's THROWAWAY box, the same
     // box the Playground gives it (keyed by the runtime chat session id), and
@@ -1718,6 +1725,13 @@ async function handleTurn(c: Context): Promise<Response> {
         signal: abortController.signal,
       });
       if (!acquired.ok) {
+        const trialRefusal = nativeHarnessRefusalDetails(
+          acquired.refusal.code,
+          c.get("mcpjamOrganizationId"),
+        );
+        if (trialRefusal) {
+          return v1Error(c, "FORBIDDEN", acquired.refusal.error, trialRefusal);
+        }
         const described = describePlaygroundBoxRefusal(
           engine.harness,
           "conversation",
@@ -1834,6 +1848,7 @@ async function handleTurn(c: Context): Promise<Response> {
         message: string;
         code?: string;
         httpStatus?: number;
+        infra?: { code?: string };
       }) => {
         lastEngineError = event;
       },
@@ -1963,6 +1978,13 @@ async function handleTurn(c: Context): Promise<Response> {
         toolCallCount: result.toolCalls.length,
         engine: engineLabel(engine),
       });
+      // A native harness the organization's trial no longer covers. Refused
+      // before the turn started, so nothing ran and nothing was charged.
+      const trialRefusal = nativeHarnessRefusalDetails(
+        lastEngineError?.infra?.code,
+        c.get("mcpjamOrganizationId"),
+      );
+      if (trialRefusal) return v1Error(c, "FORBIDDEN", message, trialRefusal);
       return v1Error(
         c,
         rateLimited ? "RATE_LIMITED" : "INTERNAL_ERROR",
