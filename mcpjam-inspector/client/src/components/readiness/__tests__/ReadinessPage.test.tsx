@@ -3,7 +3,7 @@
  * portal's first screen for a saved server, then the form rendered from the
  * flow with MCPJam's results under the answers they read.
  */
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,7 +13,7 @@ import {
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
-import { ReadinessRoute } from "../ReadinessPage";
+import { ReadinessPage, ReadinessRoute } from "../ReadinessPage";
 
 const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -212,5 +212,140 @@ describe("ReadinessRoute", () => {
       screen.getByText("Add a one-liner of 200 characters or fewer."),
     ).toBeVisible();
     expect(screen.getByText("1 blocker")).toBeVisible();
+  });
+});
+
+describe("ReadinessPage", () => {
+  const SERVERS = [
+    {
+      id: "srv_1",
+      server: {
+        name: "Sample server",
+        config: { url: "https://mcp.example.com/mcp" },
+        connectionStatus: "disconnected",
+      },
+    },
+    {
+      id: "srv_2",
+      server: {
+        name: "Other server",
+        config: { url: "https://other.example.com/mcp" },
+        connectionStatus: "disconnected",
+      },
+    },
+  ] as unknown as Parameters<typeof ReadinessPage>[0]["servers"];
+
+  const page = (selected: string) => (
+    <ReadinessPage
+      projectId="proj_1"
+      servers={SERVERS}
+      selected={selected}
+      onSelect={vi.fn()}
+    />
+  );
+
+  beforeEach(() => {
+    for (const mock of Object.values(api)) mock.mockReset();
+    api.getDirectoryFlow.mockResolvedValue(CLAUDE_CONNECTOR_FLOW);
+    api.listServerSubmissions.mockResolvedValue([]);
+    api.createDirectorySubmission.mockResolvedValue(submission());
+    api.getDirectorySubmission.mockResolvedValue(submission());
+    api.startDirectorySubmissionRun.mockResolvedValue({
+      runId: "run_2",
+      status: "pending",
+    });
+  });
+
+  /** Opens the rehearsal and types into the Listing step's Name. */
+  async function editName() {
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    await screen.findByRole("heading", { level: 1, name: "Connection" });
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.type(screen.getByLabelText(/^Name/), " 2");
+  }
+
+  it("starts over on another server while a rehearsal is being created", async () => {
+    let finish: (view: SubmissionView) => void = () => undefined;
+    api.createDirectorySubmission.mockReturnValue(
+      new Promise<SubmissionView>((resolve) => (finish = resolve)),
+    );
+    const { rerender } = render(page("Sample server"));
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    expect(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    ).toBeDisabled();
+
+    rerender(page("Other server"));
+    expect(screen.getByRole("button", { name: /MCP connector/ })).toBeEnabled();
+    expect(api.listServerSubmissions).toHaveBeenLastCalledWith(
+      "proj_1",
+      "srv_2",
+      expect.any(AbortSignal),
+    );
+
+    // The first server's rehearsal is not opened when it arrives late.
+    await act(async () => finish({ ...submission(), id: "sub_9" }));
+    rerender(page("Sample server"));
+    expect(screen.getByText("What would you like to submit?")).toBeVisible();
+    expect(api.getDirectorySubmission).not.toHaveBeenCalled();
+  });
+
+  it("starts one run when Run checks is pressed twice during the save", async () => {
+    let finish: (view: SubmissionView) => void = () => undefined;
+    api.updateDirectorySubmission.mockReturnValue(
+      new Promise<SubmissionView>((resolve) => (finish = resolve)),
+    );
+    render(page("Sample server"));
+    await editName();
+
+    const run = screen.getByRole("button", { name: /Run checks/ });
+    await userEvent.click(run);
+    await userEvent.click(run);
+    await act(async () => finish({ ...submission(), revision: 3 }));
+
+    expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(1);
+    expect(api.startDirectorySubmissionRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the form open when Save and exit cannot save", async () => {
+    api.updateDirectorySubmission.mockRejectedValue(
+      new Error("The name is too long."),
+    );
+    render(page("Sample server"));
+    await editName();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save and exit" }),
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Listing" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /Your last change was not saved\. The name is too long\./,
+      ),
+    ).toBeVisible();
+  });
+
+  it("closes the form once Save and exit has saved", async () => {
+    api.updateDirectorySubmission.mockResolvedValue({
+      ...submission(),
+      revision: 3,
+    });
+    render(page("Sample server"));
+    await editName();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save and exit" }),
+    );
+    expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText("What would you like to submit?"),
+    ).toBeVisible();
   });
 });

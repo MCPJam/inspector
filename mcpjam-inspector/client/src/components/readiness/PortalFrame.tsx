@@ -204,7 +204,15 @@ export function PortalFrame({
           <span className="text-sm text-muted-foreground" role="status">
             <SaveNote session={session} />
           </span>
-          <Button type="button" variant="secondary" size="sm" onClick={onClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            // A save that fails or conflicts keeps the form open with its notice.
+            onClick={async () => {
+              if (await session.saveNow()) onClose();
+            }}
+          >
             Save and exit
           </Button>
         </div>

@@ -3752,10 +3752,7 @@ describe("ConformanceTab", () => {
     }
   });
 
-  it("hides the readiness sections unless mcpjam-directory-readiness-cards is on", () => {
-    // The Readiness page replaces these cards, so they have their own flag,
-    // off: turning on the page's flag must not bring them back.
-    enabledFlags.add("mcpjam-directory-readiness");
+  it("hides the readiness sections while neither readiness flag is on", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     expect(
       screen.getByText("Run your first conformance check"),
@@ -3765,19 +3762,23 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
   });
 
-  it("shows the readiness sections when mcpjam-directory-readiness-cards is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness-cards");
-    render(<ConformanceTab server={createHttpServer()} />);
+  it.each(["mcpjam-directory-readiness-cards", "mcpjam-directory-readiness"])(
+    "shows the readiness sections when %s is on",
+    (flag) => {
+      enabledFlags.add(flag);
+      render(<ConformanceTab server={createHttpServer()} />);
 
-    // Before any run, too: readiness has its own run control and recovers an
-    // in-flight run on mount, so hiding it until the suites run would strand
-    // both behind the full run, OAuth browser flow included.
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
-    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
-  });
+      // Before any run, too: readiness has its own run control and recovers an
+      // in-flight run on mount, so hiding it until the suites run would strand
+      // both behind the full run, OAuth browser flow included.
+      expect(
+        screen.getByText("Run your first conformance check"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
+      expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
+      expect(screen.getByText("Muse Directory Readiness")).toBeDefined();
+    },
+  );
 
   it("keeps the readiness sections mounted when the first run starts", async () => {
     enabledFlags.add("mcpjam-directory-readiness-cards");

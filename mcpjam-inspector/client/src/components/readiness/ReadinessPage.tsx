@@ -3,7 +3,7 @@
  * rehearsal bar sits above a copy of the Claude portal: its first screen
  * (what to submit, then the server's saved rehearsals), then the form.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Blocks, Plug } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -84,6 +84,14 @@ function PortalStart({
   const [saved, setSaved] = useState<SubmissionSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A rehearsal created after the page moved on is not opened over it.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     listServerSubmissions(projectId, serverId, controller.signal).then(
@@ -102,8 +110,10 @@ function PortalStart({
     try {
       const scope = { projectId, serverId, flowId: FLOW_ID };
       const key = `ui-${serverId}-${Date.now()}`;
-      onOpen((await createDirectorySubmission(scope, key)).id);
+      const created = await createDirectorySubmission(scope, key);
+      if (mounted.current) onOpen(created.id);
     } catch (failure) {
+      if (!mounted.current) return;
       setError(
         `The rehearsal did not start. ${messageOf(failure)} Try starting it again.`,
       );
@@ -229,6 +239,17 @@ export function ReadinessPage({
     server: chosen?.server ?? NO_SERVER,
   });
   const { flow, view, run } = session;
+  // Set before the save is awaited, so a second press cannot start a second run.
+  const starting = useRef(false);
+  const startRun = async () => {
+    if (starting.current) return;
+    starting.current = true;
+    try {
+      await session.startRun();
+    } finally {
+      starting.current = false;
+    }
+  };
   const config = chosen?.server.config;
   const serverUrl = config && "url" in config ? config.url : undefined;
   const totals = (key: "blockers" | "likelyFlags" | "notChecked") =>
@@ -258,6 +279,8 @@ export function ReadinessPage({
   } else if (!openId) {
     body = (
       <PortalStart
+        // Another server or project starts over: its own list, nothing busy.
+        key={`${projectId}:${chosen.id}`}
         projectId={projectId}
         serverId={chosen.id}
         onOpen={(id) => setOpen({ serverId: chosen.id, id })}
@@ -303,7 +326,7 @@ export function ReadinessPage({
         canRun={Boolean(view) && run.status !== "unavailable"}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
-        onRun={() => void session.startRun()}
+        onRun={() => void startRun()}
       />
       <div className="portal-claude flex min-h-0 flex-1 flex-col bg-background text-foreground">
         {body}

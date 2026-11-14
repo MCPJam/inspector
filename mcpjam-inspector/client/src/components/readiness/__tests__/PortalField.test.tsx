@@ -13,6 +13,14 @@ import {
   type PlacedFinding,
 } from "@mcpjam/sdk/browser";
 import { PortalField, type PortalFieldProps } from "../PortalField";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Off disk: vitest stubs CSS imports, `?raw` included, to an empty string.
+const portalTheme = readFileSync(
+  resolve(__dirname, "../portal-theme.css"),
+  "utf8",
+);
 
 function claudeField(key: string): DirectoryFlowField {
   const field = directoryFlowField(CLAUDE_CONNECTOR_FLOW, key);
@@ -52,8 +60,9 @@ describe("PortalField", () => {
     rerender(
       <PortalField field={field} value={"x".repeat(201)} onChange={onChange} />,
     );
+    // The portal's own red: `destructive` stays MCPJam's for MCPJam's results.
     expect(screen.getByText("201 / 200 characters")).toHaveClass(
-      "text-destructive",
+      "text-[var(--portal-destructive)]",
     );
     expect(screen.getByLabelText(/One-liner/)).toHaveAttribute(
       "aria-invalid",
@@ -258,6 +267,11 @@ describe("PortalField", () => {
     expect(input).toHaveAccessibleDescription("Error: This field is required");
     draw(claudeField("listing.authorName"), "");
     expect(screen.getByText("Author name")).not.toHaveTextContent("required");
+  });
+
+  it("gives the portal's red its own token and leaves MCPJam's alone", () => {
+    expect(portalTheme).toMatch(/--portal-destructive:/);
+    expect(portalTheme).not.toMatch(/--destructive:/);
   });
 
   it("puts MCPJam's results for the field under it", () => {

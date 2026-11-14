@@ -26,8 +26,10 @@ import {
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { McpjamChecks } from "./McpjamChecks";
 
+/** The portal's error red: `destructive` keeps MCPJam's for MCPJam's results. */
+const PORTAL_ERROR = "text-[var(--portal-destructive)]";
 const INPUT =
-  "rounded-lg border-transparent bg-muted text-sm placeholder:text-muted-foreground/70";
+  "rounded-lg border-transparent bg-muted text-sm placeholder:text-muted-foreground/70 aria-invalid:border-[var(--portal-destructive)]";
 /** Controls a `<label for>` can name; the rest are groups it labels by id. */
 const LABELLED = ["text", "textarea", "select", "secret"];
 
@@ -62,7 +64,7 @@ const rowsOf = (value: DirectoryAnswerValue | undefined) =>
 /** The portal's red asterisk; assistive tech hears the word. */
 const REQUIRED = (
   <>
-    <span aria-hidden="true" className="text-destructive">
+    <span aria-hidden="true" className={PORTAL_ERROR}>
       {" *"}
     </span>
     <span className="sr-only"> (required)</span>
@@ -362,7 +364,7 @@ export function PortalField(props: PortalFieldProps) {
         describedBy={issue ? errorId : undefined}
       />
       {issue ? (
-        <p id={errorId} className="text-sm text-destructive">
+        <p id={errorId} className={cn("text-sm", PORTAL_ERROR)}>
           Error: {issue.message}
         </p>
       ) : null}
@@ -370,7 +372,7 @@ export function PortalField(props: PortalFieldProps) {
         <p
           className={cn(
             "text-sm tabular-nums",
-            over ? "text-destructive" : "text-muted-foreground",
+            over ? PORTAL_ERROR : "text-muted-foreground",
           )}
         >
           {length} / {field.maxLength} characters
