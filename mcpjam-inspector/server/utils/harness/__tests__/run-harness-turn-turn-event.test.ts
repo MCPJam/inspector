@@ -245,6 +245,32 @@ describe("runHarnessTurn: harness_turn_completed", () => {
     }
   });
 
+  it("counts the route's acquisition of the box toward the box wake, and no other stage", async () => {
+    const { sink, options } = turn("web");
+    let now = 0;
+    const timing = new TurnTiming({
+      harnessTurnEvent: sink as HarnessTurnEventSink,
+      now: () => now,
+    });
+    // The route created or woke the conversation's box before the turn began.
+    await timing.timeBoxAcquisition(async () => {
+      now += 1_700;
+    });
+    await runToClose({ ...options, turnTiming: timing });
+    const event = onlyEvent(sink);
+    expect(event.box_wake_ms).toBeGreaterThanOrEqual(1_700);
+    for (const field of [
+      "claim_ms",
+      "broker_start_ms",
+      "session_connect_ms",
+      "dispatch_setup_ms",
+      "model_stream_ms",
+    ] as const) {
+      expect(event[field]).toEqual(expect.any(Number));
+      expect(event[field]).toBeLessThan(1_700);
+    }
+  });
+
   it("reports the public API's inline turn, first text included", async () => {
     const info = vi.spyOn(logger, "info");
     const { sink, options } = turn("api");

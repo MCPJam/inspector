@@ -5,8 +5,9 @@
  * Built from what the turn already measures, as it learns it: the stage marks
  * of its `[harness][timing]` line, the lane claim's state version, how its
  * session started, the warm attach's answer and the bootstrap observation.
- * The route's `TurnTiming` supplies `first_text_ms` and the sink: a turn with
- * none (an eval, a swarm) sends nothing.
+ * The route's `TurnTiming` supplies `first_text_ms`, the time the route spent
+ * acquiring the turn's box before the turn started, and the sink: a turn
+ * with none (an eval, a swarm) sends nothing.
  *
  * Content-free by construction: closed vocabularies, the harness id and whole
  * milliseconds, plus the verified organization id the route's sink adds. A
@@ -166,7 +167,10 @@ export class HarnessTurnRecord {
     }
   }
 
-  /** As the `[harness][timing]` line computes them, for the stages reached. */
+  /**
+   * As the `[harness][timing]` line computes them, for the stages reached.
+   * The box's wake also counts the route acquiring it before the turn began.
+   */
   private durations(): Array<[HarnessTurnDuration, number | undefined]> {
     const between = (from: HarnessTurnStage, to: HarnessTurnStage) => {
       const begin = this.marks.get(from);
@@ -175,10 +179,13 @@ export class HarnessTurnRecord {
         ? undefined
         : end - begin;
     };
+    const acquired = this.timing?.boxAcquisitionMs();
+    const woken = between("claim", "box");
+    const boxWake = acquired === undefined ? woken : acquired + (woken ?? 0);
     return [
       ["first_text_ms", this.timing?.fields().firstTextMs],
       ["claim_ms", between("start", "claim")],
-      ["box_wake_ms", this.local ? undefined : between("claim", "box")],
+      ["box_wake_ms", this.local ? undefined : boxWake],
       ["broker_start_ms", this.local ? undefined : between("box", "broker")],
       ["local_prepare_ms", this.local ? between("claim", "box") : undefined],
       ["session_connect_ms", between("broker", "connect")],

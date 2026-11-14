@@ -47,9 +47,14 @@ type Sink = HarnessTurnEventSink & {
 };
 const captured = () => vi.fn<HarnessTurnEventSink["capture"]>();
 
-function setup(options: { surface?: "web" | "api"; local?: boolean } = {}) {
+function setup(
+  options: { surface?: "web" | "api"; local?: boolean; now?: () => number } = {},
+) {
   const sink: Sink = { surface: options.surface ?? "web", capture: captured() };
-  const timing = new TurnTiming({ harnessTurnEvent: sink });
+  const timing = new TurnTiming({
+    harnessTurnEvent: sink,
+    ...(options.now ? { now: options.now } : {}),
+  });
   const turn = new HarnessTurnRecord(
     timing,
     "claude-code",
@@ -199,6 +204,70 @@ describe("harness_turn_completed: timings", () => {
     expect(event).toMatchObject({ surface: "local", local_prepare_ms: 900 });
     expect(event).not.toHaveProperty("box_wake_ms");
     expect(event).not.toHaveProperty("broker_start_ms");
+  });
+
+  it("adds the route's acquisition of the box to its wake, and leaves every other stage as it was", async () => {
+    let now = 0;
+    const { sink, timing, turn } = setup({ now: () => now });
+    // The route created or woke the conversation's box before the turn began.
+    await timing.timeBoxAcquisition(async () => {
+      now += 2_000;
+    });
+    turn.mark("start");
+    vi.advanceTimersByTime(300);
+    turn.claimed(1);
+    vi.advanceTimersByTime(15);
+    turn.mark("box");
+    vi.advanceTimersByTime(1_100);
+    turn.mark("broker");
+    vi.advanceTimersByTime(400);
+    turn.sessionStarted({
+      approval: false,
+      resumed: true,
+      resetReason: undefined,
+    });
+    vi.advanceTimersByTime(100);
+    turn.mark("dispatch");
+    vi.advanceTimersByTime(4_800);
+    turn.mark("stream");
+    turn.close(completed);
+    expect(sent(sink)).toMatchObject({
+      claim_ms: 300,
+      box_wake_ms: 2_015,
+      broker_start_ms: 1_100,
+      session_connect_ms: 400,
+      dispatch_setup_ms: 1_915,
+      model_stream_ms: 4_900,
+    });
+  });
+
+  it("reports the route's acquisition as the box wake of a turn that never reached its box", async () => {
+    let now = 0;
+    const { sink, timing, turn } = setup({ now: () => now });
+    await timing.timeBoxAcquisition(async () => {
+      now += 1_250;
+    });
+    turn.mark("start");
+    vi.advanceTimersByTime(250);
+    turn.claimed(0);
+    turn.close({ aborted: false, completed: false, bootstrap: undefined });
+    expect(sent(sink)).toMatchObject({ claim_ms: 250, box_wake_ms: 1_250 });
+  });
+
+  it("sends no box wake from a local turn, whatever its recorder holds", async () => {
+    let now = 0;
+    const { sink, timing, turn } = setup({ local: true, now: () => now });
+    await timing.timeBoxAcquisition(async () => {
+      now += 1_250;
+    });
+    turn.mark("start");
+    turn.claimed(1);
+    vi.advanceTimersByTime(900);
+    turn.mark("box");
+    turn.close(completed);
+    const event = sent(sink);
+    expect(event).toMatchObject({ surface: "local", local_prepare_ms: 900 });
+    expect(event).not.toHaveProperty("box_wake_ms");
   });
 
   it("takes first_text_ms from the route's recorder, from the start of the request", () => {

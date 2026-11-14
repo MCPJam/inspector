@@ -49,4 +49,34 @@ describe("TurnTiming", () => {
     expect(timing.fields()).toEqual({});
     expect(timing.text()).toBe("");
   });
+
+  it("keeps how long the route took to acquire the turn's box, outside its stages", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    expect(timing.boxAcquisitionMs()).toBeUndefined();
+    now = 40;
+    const box = await timing.timeBoxAcquisition(async () => {
+      now = 1_540.4;
+      return "box";
+    });
+    expect(box).toBe("box");
+    expect(timing.boxAcquisitionMs()).toBe(1_500);
+    now = 1_600;
+    timing.mark("tools");
+    // The stage it ran in keeps it; the stage marks and their fields are as before.
+    expect(timing.fields()).toEqual({ toolsMs: 1_600 });
+    expect(timing.serverTiming()).toBe("tools;dur=1600.0");
+  });
+
+  it("keeps the time of an acquisition that threw", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    await expect(
+      timing.timeBoxAcquisition(async () => {
+        now = 700;
+        throw new Error("the computers service is unreachable");
+      }),
+    ).rejects.toThrow("unreachable");
+    expect(timing.boxAcquisitionMs()).toBe(700);
+  });
 });

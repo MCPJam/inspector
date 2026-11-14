@@ -29,6 +29,7 @@ export class TurnTiming {
   private previous: number;
   private readonly stages: Array<[TurnTimingStage, number]> = [];
   private firstTextAfter: number | undefined;
+  private boxAcquiredIn: number | undefined;
 
   constructor(
     options: {
@@ -52,6 +53,28 @@ export class TurnTiming {
   /** The first model text handed to the client stream; later calls keep it. */
   markFirstText(): void {
     this.firstTextAfter ??= this.now() - this.startedAt;
+  }
+
+  /**
+   * Run `acquire`, the route's acquisition of the box a harness turn runs on
+   * (creating or waking it), and keep how long it took. The box is held
+   * before the turn starts, so the turn adds this to the wake it measures
+   * itself (`box_wake_ms`). It is not a stage: the stage it ran in keeps it.
+   */
+  async timeBoxAcquisition<T>(acquire: () => Promise<T>): Promise<T> {
+    const startedAt = this.now();
+    try {
+      return await acquire();
+    } finally {
+      this.boxAcquiredIn = this.now() - startedAt;
+    }
+  }
+
+  /** Whole milliseconds the route spent acquiring the turn's box, if it did. */
+  boxAcquisitionMs(): number | undefined {
+    return this.boxAcquiredIn === undefined
+      ? undefined
+      : Math.round(this.boxAcquiredIn);
   }
 
   /** The `Server-Timing` header value for the stages closed so far. */

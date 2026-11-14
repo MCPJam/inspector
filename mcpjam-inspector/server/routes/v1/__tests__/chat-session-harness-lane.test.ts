@@ -24,6 +24,7 @@ const {
   runUnifiedAssistantTurnMock,
   finalizeUsageMock,
   captureServerEventMock,
+  acquireBoxMock,
 } = vi.hoisted(() => ({
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
@@ -31,6 +32,13 @@ const {
   runUnifiedAssistantTurnMock: vi.fn(),
   finalizeUsageMock: vi.fn(),
   captureServerEventMock: vi.fn(),
+  acquireBoxMock: vi.fn(async () => ({
+    ok: true,
+    box: {
+      binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+      release: async () => {},
+    },
+  })),
 }));
 
 vi.mock("convex/browser", () => ({
@@ -81,13 +89,7 @@ vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("../../../utils/harness/playground-box.js")
   >()),
-  acquirePlaygroundHarnessBox: async () => ({
-    ok: true,
-    box: {
-      binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
-      release: async () => {},
-    },
-  }),
+  acquirePlaygroundHarnessBox: () => acquireBoxMock(),
 }));
 vi.mock("../../../services/environments/plugin-attribution.js", () => ({
   fetchPluginRuntimeAttribution: async () => null,
@@ -378,8 +380,42 @@ describe("the harness turn's closing event", () => {
           outcome: "completed",
           bootstrap: "baked",
           first_text_ms: expect.any(Number),
+          box_wake_ms: expect.any(Number),
         },
       ],
     ]);
+  });
+
+  it("counts creating or waking the conversation's box toward its box wake", async () => {
+    let acquiredIn = 0;
+    acquireBoxMock.mockImplementationOnce(async () => {
+      const startedAt = performance.now();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      acquiredIn = performance.now() - startedAt;
+      return {
+        ok: true,
+        box: {
+          binding: { sandboxRowId: "row_v1", sandboxId: "sbx_v1" },
+          release: async () => {},
+        },
+      };
+    });
+    runUnifiedAssistantTurnMock.mockImplementationOnce(
+      async (opts: { turnTiming: TurnTiming }) => {
+        new HarnessTurnRecord(opts.turnTiming, "claude-code", false).close({
+          aborted: false,
+          completed: true,
+          bootstrap: "baked",
+        });
+        return harnessTurn();
+      },
+    );
+
+    expect((await send(firstTurn())).status).toBe(200);
+    const [event] = captureServerEventMock.mock.calls
+      .filter(([, name]) => name === "harness_turn_completed")
+      .map(([, , properties]) => properties);
+    expect(acquiredIn).toBeGreaterThanOrEqual(25);
+    expect(event.box_wake_ms).toBeGreaterThanOrEqual(Math.floor(acquiredIn));
   });
 });

@@ -68,9 +68,11 @@ export const HARNESS_TURN_OUTCOMES = [
 
 /**
  * Whole milliseconds. `first_text_ms` counts from the start of the request,
- * and the stages are the `[harness][timing]` line's. A stage the turn never
- * finished is absent. A local turn has no box or broker, so it reports that
- * window as `local_prepare_ms` instead of `box_wake_ms` and `broker_start_ms`.
+ * and the stages are the `[harness][timing]` line's, except that
+ * `box_wake_ms` also counts the route creating or waking the conversation's
+ * box before the turn began. A stage the turn never finished is absent. A
+ * local turn has no box or broker, so it reports that window as
+ * `local_prepare_ms` instead of `box_wake_ms` and `broker_start_ms`.
  */
 export const HARNESS_TURN_DURATIONS = [
   "first_text_ms",

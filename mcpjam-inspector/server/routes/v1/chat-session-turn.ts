@@ -1716,14 +1716,15 @@ async function handleTurn(c: Context): Promise<Response> {
       // Only a pinned environment is the box's grant, never the trace
       // composition.
       const boxEnvironmentId = pins.environmentId;
-      const acquired = await acquirePlaygroundHarnessBox({
+      // Creating or waking it counts toward the turn's box wake.
+      const acquired = await timing.timeBoxAcquisition(() => acquirePlaygroundHarnessBox({
         bearer: authHeader.replace(/^Bearer\s+/i, ""),
         projectId,
         chatSessionId: runtimeChatSessionId,
         ...(boxEnvironmentId ? { projectEnvironmentId: boxEnvironmentId } : {}),
         harness: engine.harness,
         signal: abortController.signal,
-      });
+      }));
       if (!acquired.ok) {
         const described = describePlaygroundBoxRefusal(
           engine.harness,

@@ -223,6 +223,7 @@ export async function handleManagedChatTurn(
       bearerToken,
       localIngress,
       resources,
+      timing,
       setup: setup.value,
       connections,
     });
