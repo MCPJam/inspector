@@ -19,6 +19,7 @@ import {
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "../../mcp-client-manager/capabilities.js";
 import { XAA_MCP_EXTENSION } from "../../xaa/mcp-init.js";
+import { MCP_SKILLS_EXTENSION_ID } from "../../mcp-client-manager/skills-dispatch.js";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
@@ -445,6 +446,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         extensions: {
           ...(base.clientCapabilities.extensions as Record<string, unknown>),
           [XAA_MCP_EXTENSION]: {},
+          // Skills over MCP. MCPJam ships the fulfiller (skills/list,
+          // skills/get and digest-checked reads), so it declares it, as the
+          // backend MCPJam template does.
+          [MCP_SKILLS_EXTENSION_ID]: {},
         },
       };
       // Per-resource hostContext for MCPJam's own house chrome. Style
@@ -3664,7 +3669,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "grokbot",
     label: "Grokbot",
-    description: "Grokbot MCP client. Form elicitation, no widget rendering.",
+    description: "Grokbot MCP client. Form elicitation and MCP Apps widgets.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "grokbot",
@@ -3675,7 +3680,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         requireToolApproval: false,
       });
       // Its connector sends Cursor CLI's handshake: `Cursor` 1.0.0 with form
-      // elicitation and the MCP UI extension. No widget rendered.
+      // elicitation and the MCP UI extension. It renders widgets.
       base.clientCapabilities = {
         elicitation: { form: {} },
         extensions: {
@@ -3692,7 +3697,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: { name: "Cursor", version: "1.0.0" },
         },
-        apps: { mcpAppsOverrides: MCP_APPS_NO_CLAIMS },
+        // The probe recorded no widget, so no MCP Apps value is measured.
+        // Empty, so caniuse shows each one as not yet tested.
+        apps: { mcpAppsOverrides: {} },
       };
       return base;
     },

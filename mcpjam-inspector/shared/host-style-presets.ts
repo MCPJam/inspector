@@ -349,10 +349,12 @@ export const HOST_STYLE_CAPABILITIES = {
   notion: {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
-  // Tools-only clients: no widget rendered during their probes.
+  // A tools-only client: no widget rendered during its probe.
   muse: {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
+  // Renders widgets, but its probe recorded none, so no MCP Apps capability
+  // is measured and none is claimed.
   grokbot: {
     mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
   },
