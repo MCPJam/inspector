@@ -50,6 +50,7 @@ import { cancelComposerForms } from "@/components/elicitation/composer-form-stor
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
   displayBehaviorForHost,
+  entrypointWithoutFullscreenForHost,
   pluginExtensionsForHost,
   pluginExtensionProfileForHost,
   type PluginExtensionsHostConfig,
@@ -71,6 +72,7 @@ import {
   useExtensionSlot,
   useExtensionStore,
   useExtensionWorkspaceState,
+  type ExtensionPorts,
 } from "@/components/host-workspace/ExtensionWorkspaceProvider";
 import { useElementViewportRect } from "@/components/host-workspace/use-element-rect";
 import {
@@ -394,6 +396,7 @@ import {
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import { ChatAppDisplayBehaviorProvider } from "@/contexts/chat-app-display-behavior-context";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import {
   isToolPart,
@@ -401,6 +404,7 @@ import {
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -1311,12 +1315,16 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
-  // ChatGPT's or Claude's display-mode rules for this client's Apps.
-  const displayBehavior = displayBehaviorForHost({
+  // ChatGPT's or Claude's rules for this client's Apps: how they choose a
+  // display mode, and where an entry App that can't go fullscreen opens.
+  const pluginExtensionHost = {
     hostStyle,
     harness: previewedHost?.config?.harness,
     mcpProfile: previewedHost?.config?.mcpProfile,
-  });
+  };
+  const displayBehavior = displayBehaviorForHost(pluginExtensionHost);
+  const entrypointWithoutFullscreen =
+    entrypointWithoutFullscreenForHost(pluginExtensionHost);
   // Who owns extension state for this client. Null turns every extension off.
   const extensionIdentity = useMemo<ExtensionOwnerIdentity | null>(
     () =>
@@ -1907,6 +1915,10 @@ export function PlaygroundMain({
   const sendPluginOnboardingRef = useRef<SendPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
+  // Assigned once the new-chat transition below exists.
+  const beginNewChatRef = useRef<ExtensionPorts["beginNewChat"]>(
+    async () => null,
+  );
   // In the Playground, extension state lives in ExtensionWorkspaceProvider
   // (around the whole panel group) and this center only registers its scope.
   // Embedded chats without the provider keep their own inline workspace.
@@ -1915,6 +1927,8 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: ((...args) =>
         runPluginOnboardingRef.current(...args)) as RunPluginOnboarding,
+      beginNewChat: (isCurrent: () => boolean) =>
+        beginNewChatRef.current(isCurrent),
     }),
     [dispatchPluginMessage],
   );
@@ -1948,6 +1962,7 @@ export function PlaygroundMain({
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
           displayBehavior,
+          entrypointWithoutFullscreen,
           profile: pluginExtensionProfileForHost(previewedHost?.config),
           // A save re-checks open Apps; it never reloads them by itself.
           hostRevision: previewedHost?.config?.id,
@@ -1971,6 +1986,13 @@ export function PlaygroundMain({
   );
   const extensionOwners = useExtensionOwners();
   const setGlobalTakeoverSlot = useExtensionSlot("takeover");
+  const setInlineAppSlot = useExtensionSlot("inline");
+  // A chat with an entry App opened inline shows the thread layout, with the
+  // App at its top and the footer composer, though it has no messages yet.
+  const showsInlineApp =
+    useExtensionWorkspaceState(
+      (state) => !!state.chats[chatSessionId]?.apps.some((row) => row.inline),
+    ) === true;
   const releaseExtensionChat = useExtensionChatRelease();
   // A global App takes the client area over; closing it returns to the chat.
   const globalTakeoverOpen =
@@ -2384,6 +2406,13 @@ export function PlaygroundMain({
   ]);
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
+  const { status: hostedCatalogStatus } = useHostedModelCatalog();
+  // Just after a page load (the sign-in redirect is one) a pane's saved model
+  // can be missing only because these have not loaded yet.
+  const compareModelsSettling =
+    isAuthLoading ||
+    !isSessionBootstrapComplete ||
+    hostedCatalogStatus === "loading";
   const currentClientResolutions = useMemo(
     () =>
       !isMultiHostMode
@@ -2404,6 +2433,7 @@ export function PlaygroundMain({
               : resolvePlaygroundClientColumn({
                   ...input,
                   hostId: paneHostId(pane) ?? "",
+                  modelsSettling: compareModelsSettling,
                 });
           }),
     [
@@ -2413,6 +2443,7 @@ export function PlaygroundMain({
       hostList,
       catalogModels,
       hostedOrgModelConfig,
+      compareModelsSettling,
       hostSlots[0].host,
       hostSlots[0].isLoading,
       hostSlots[1].host,
@@ -4150,6 +4181,7 @@ export function PlaygroundMain({
     ]),
     begin: (isCurrent) => handleNewChat({ isCurrent }),
   });
+  beginNewChatRef.current = extensionThreadTransition.begin;
 
   // Archive-all clears the composer only once its archive request returns,
   // so App drafts wait for it as they wait for the discard dialog.
@@ -4600,6 +4632,15 @@ export function PlaygroundMain({
     ) {
       return true;
     }
+    // On the multi-select Playground, `serverName` is the app-wide selection,
+    // which may not be one of the servers this chat runs against. Only a
+    // server the user added here may hold up the send.
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      !playgroundServerSelectorProps.selectedMultipleServers.includes(serverName)
+    ) {
+      return true;
+    }
 
     const connectionStatus = servers[serverName]?.connectionStatus;
     if (connectionStatus === "connected") {
@@ -4632,7 +4673,13 @@ export function PlaygroundMain({
     } finally {
       setIsPreparingServerForSend(false);
     }
-  }, [ensureServersReady, serverName, servers]);
+  }, [
+    ensureServersReady,
+    isEnvironmentMode,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+  ]);
 
   const localAutoApprove = useLocalAutoApproveConsent({
     enabled: localHarnessRequested && requireToolApproval === false,
@@ -6388,15 +6435,22 @@ export function PlaygroundMain({
    * condition that matters here), and the trace-diagnostics shell has its own
    * composer with the device frame behind it set to `display: none`.
    */
+  const threadLayoutEmpty = isThreadEmpty && !showsInlineApp;
   const showPinnedConversationTargetNotice =
     !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
-    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+    !(threadLayoutEmpty && showSingleModelEmptyStateComposer);
 
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <OwnedModelAppPortsProvider value={ownedModelWorkspace.value}>
+      {/* While this chat's plugin extensions run (a scope exists only then), the
+          client's display rules reach every App in it, owned or not. The
+          provider alone isn't enough: it is mounted with the flag off too. */}
+      <ChatAppDisplayBehaviorProvider
+        value={extensionScope ? displayBehavior : undefined}
+      >
       <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
       <ChatDeepLinkProvider value={chatDeepLinks}>
       <WorkspaceFileActionsProvider value={threadApps.fileActions}>
@@ -6428,7 +6482,7 @@ export function PlaygroundMain({
               </div>
             </div>
           ) : null}
-          {isThreadEmpty ? (
+          {threadLayoutEmpty ? (
             // Empty state — centered (welcome + composer, or post-connect guide)
             <div
               data-testid="playground-empty-state-shell"
@@ -6604,6 +6658,7 @@ export function PlaygroundMain({
             >
               <div className="relative flex-1 min-h-0">
                 <StickToBottom.Content className="flex flex-col min-h-0">
+                  <div ref={setInlineAppSlot} />
                   <Thread
                     harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
@@ -6719,11 +6774,11 @@ export function PlaygroundMain({
           (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
           {!isWidgetFullTakeover &&
             !showFullscreenChatOverlay &&
-            (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
+            (!threadLayoutEmpty || shouldShowUpsell || isAuthLoading) && (
               <div
                 className={cn(
                   "mx-auto w-full max-w-4xl shrink-0",
-                  isThreadEmpty ? "px-4 pb-4" : "p-3",
+                  threadLayoutEmpty ? "px-4 pb-4" : "p-3",
                 )}
               >
                 {errorMessage && (
@@ -6790,6 +6845,7 @@ export function PlaygroundMain({
       </WorkspaceFileActionsProvider>
       </ChatDeepLinkProvider>
       </WidgetFullscreenPlacementContext.Provider>
+      </ChatAppDisplayBehaviorProvider>
     </OwnedModelAppPortsProvider>
   );
 

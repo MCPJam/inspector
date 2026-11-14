@@ -148,7 +148,7 @@ export function getHarnessResumeEligibility(args: {
   return { resume: true, reason: "legacy-cold-resume" };
 }
 
-function getConvexHttpUrl(): string {
+export function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
     throw new Error("CONVEX_HTTP_URL is required for harness session-state");
@@ -156,7 +156,7 @@ function getConvexHttpUrl(): string {
   return convexHttpUrl;
 }
 
-async function postSessionState(
+export async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,

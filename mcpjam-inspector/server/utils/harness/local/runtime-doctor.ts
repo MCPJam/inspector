@@ -17,6 +17,7 @@
  * paths and URLs.
  */
 import { homedir, platform as osPlatform, arch as osArch } from "node:os";
+import { DEFAULT_LOCAL_HARNESS_ID } from "./runtimes/index.js";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
 import { resolveLocalCompatibility } from "./compatibility.js";
 import { describeInstallerNetwork } from "./runtime-fetch.js";
@@ -116,7 +117,8 @@ export function suggestRepairs(input: {
   policy: ResolvedUpdatePolicy["policy"];
   proxyConfigured: boolean;
 }): string[] {
-  const flag = input.harnessId === "claude-code" ? "" : ` --harness ${input.harnessId}`;
+  // The CLI's own default needs no flag.
+  const flag = input.harnessId === DEFAULT_LOCAL_HARNESS_ID ? "" : ` --harness ${input.harnessId}`;
   const install = `mcpjam-inspector harness install${flag}`;
   const repair = `mcpjam-inspector harness repair${flag}`;
   const offline = `mcpjam-inspector harness install${flag} --from <pack>.tar.gz   (no network; keep the .manifest.json and .sig beside it)`;

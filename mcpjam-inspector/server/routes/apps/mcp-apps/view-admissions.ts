@@ -61,6 +61,16 @@ function servesLocalSandboxViews(): boolean {
   );
 }
 
+/**
+ * The port the browser used to reach this server. The Node adapter builds the
+ * request URL from the `Host` header, so behind a Docker port remap this is the
+ * published port, and behind Vite's dev proxy (`changeOrigin`) it is the server
+ * port the App iframe loads directly.
+ */
+function browserFacingPort(c: Context): string {
+  return new URL(c.req.url).port;
+}
+
 /** Hosted dev serves loopback App documents only to a page on this machine. */
 function assertLoopbackHostOrigin(hostOrigin: string): void {
   if (
@@ -161,7 +171,14 @@ async function authorizePreparation(
     return sandboxViewOwner(c);
   }
   const owner = await sandboxViewOwner(c);
-  if (!c.mcpClientManager.getServerConfig(source.serverId))
+  // A saved App copy (eval run, saved view) has no receipt: its bytes come from
+  // the saved run, not a live read, so drawing it needs no connected server.
+  // Like hosted's already-read bytes above, it grants no server access. Live
+  // reads always carry a receipt and keep this check.
+  if (
+    input.sourceReceipt &&
+    !c.mcpClientManager.getServerConfig(source.serverId)
+  )
     throw new WebRouteError(
       404,
       ErrorCode.NOT_FOUND,
@@ -204,7 +221,12 @@ export function sandboxViewAdmissionRoutes(): Hono {
       const owner = await authorizePreparation(c, input, raw);
       return c.json(
         local
-          ? await sandboxViews.prepare(input, owner, c.req.raw.signal)
+          ? await sandboxViews.prepare(
+              input,
+              owner,
+              browserFacingPort(c),
+              c.req.raw.signal,
+            )
           : await prepareHostedSandboxView(input, owner),
       );
     } catch (error) {

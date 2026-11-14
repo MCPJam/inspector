@@ -14,6 +14,7 @@ import {
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
 import { MODEL_REASONING_EFFORTS } from "@mcpjam/sdk/browser";
 import { registeredHarnessIds } from "../registry";
+import { HARNESS_SURFACES, harnessSurfaceRefusal } from "@/shared/harness-descriptors";
 import { getHarnessAdapter, type HarnessId } from "../registry";
 
 // The capability-driven preflight that lets the chat-v2 routes fail closed with a
@@ -55,6 +56,7 @@ function args(
 ) {
   return {
     harnessId: "claude-code" as HarnessId,
+    surface: "playground" as const,
     requireToolApproval: false,
     hasSelectedMcpServers: false,
     // The RESOLVED model. Eligibility and the canonical id are derived from it
@@ -64,6 +66,83 @@ function args(
     ...overrides,
   };
 }
+
+describe("checkHarnessRuntimeAvailable surface support", () => {
+  const surfaces = HARNESS_SURFACES.filter(
+    (surface): surface is Exclude<typeof surface, "guests" | "local"> =>
+      surface !== "guests" && surface !== "local",
+  );
+  // Every registered runtime on every surface, local and hosted: a runtime
+  // added later is covered here without a new test.
+  for (const harnessId of registeredHarnessIds()) {
+    for (const surface of surfaces) {
+      for (const localExecution of [false, true]) {
+        it(`${harnessId} on ${surface}${localExecution ? " (local)" : ""}`, () => {
+          const declared =
+            harnessSurfaceRefusal(harnessId, surface) ??
+            (localExecution ? harnessSurfaceRefusal(harnessId, "local") : undefined);
+          const result = checkHarnessRuntimeAvailable(
+            args({ harnessId, surface, localExecution }),
+          );
+          if (declared) {
+            expect(result).toEqual({
+              ok: false,
+              kind: "surface-unsupported",
+              reason: declared,
+            });
+          } else {
+            expect(result.ok ? undefined : result.kind).not.toBe(
+              "surface-unsupported",
+            );
+          }
+        });
+      }
+    }
+  }
+
+  describe("a dedicated client that reaches servers only by forwarding", () => {
+    const refusedOn = ["api", "evals", "events", "swarms", "user-testing"] as const;
+    it.each(refusedOn)("is refused with servers on %s, in the planner's words", (surface) => {
+      const result = checkHarnessRuntimeAvailable(
+        args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true }),
+      );
+      expect(result).toMatchObject({ ok: false, kind: "surface-unsupported" });
+      expect(result.ok ? "" : result.reason).toBe(
+        "GitHub Copilot CLI calls MCP servers only through its own client, and this turn cannot forward them. " +
+          (surface === "api"
+            ? "Open this client in the signed-in hosted Playground."
+            : "Use this client with MCP servers in the signed-in hosted Playground."),
+      );
+    });
+    it("runs with servers in the Playground and without servers anywhere", () => {
+      const runs = [
+        args({ harnessId: "copilot-cli", surface: "playground", hasSelectedMcpServers: true }),
+        ...refusedOn.map((surface) => args({ harnessId: "copilot-cli", surface })),
+      ];
+      for (const input of runs) {
+        const result = checkHarnessRuntimeAvailable(input);
+        expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+      }
+    });
+    it("runs with servers everywhere as another client's agent loop", () => {
+      for (const surface of refusedOn) {
+        const result = checkHarnessRuntimeAvailable(
+          args({ harnessId: "copilot-cli", surface, hasSelectedMcpServers: true, agentLoop: true }),
+        );
+        expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+      }
+    });
+  });
+
+  it("runs GitHub Copilot CLI in evals, swarms and User Testing", () => {
+    for (const surface of ["evals", "swarms", "user-testing"] as const) {
+      const result = checkHarnessRuntimeAvailable(
+        args({ harnessId: "copilot-cli", surface }),
+      );
+      expect(result.ok ? undefined : result.kind).not.toBe("surface-unsupported");
+    }
+  });
+});
 
 describe("checkHarnessRuntimeAvailable", () => {
   it.each([

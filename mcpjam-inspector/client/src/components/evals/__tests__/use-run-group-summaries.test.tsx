@@ -76,5 +76,26 @@ it("merges live rows, forgets deleted members, and isolates suite changes", asyn
 
 it("blocks actions when a group is deleted or access is revoked", async () => {
   mocks.query.mockResolvedValue({ page: [], isDone: true, continueCursor: "" });
-  await expect(readRunGroupSummaries(mocks.query, "suite", "group")).rejects.toThrow("unavailable");
+  await expect(
+    readRunGroupSummaries(mocks.query, "suite", "group"),
+  ).rejects.toThrow("unavailable");
+});
+
+it("reports a group as loading, then ready or failed", async () => {
+  const { result } = renderHook(() => useRunGroupSummaries("suite", []));
+  expect(result.current.groupStatus("good")).toBe("loading");
+  mocks.query.mockResolvedValueOnce({
+    page: [{ _id: "one" }],
+    isDone: true,
+    continueCursor: "",
+  });
+  await act(async () => {
+    await result.current.loadGroup("good");
+  });
+  expect(result.current.groupStatus("good")).toBe("ready");
+  mocks.query.mockRejectedValueOnce(new Error("offline"));
+  await act(async () => {
+    await expect(result.current.loadGroup("bad")).rejects.toThrow("offline");
+  });
+  expect(result.current.groupStatus("bad")).toBe("failed");
 });

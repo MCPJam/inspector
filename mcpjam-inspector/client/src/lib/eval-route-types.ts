@@ -1,14 +1,33 @@
+export const ITERATION_TABS = [
+  "scorecard",
+  "steps",
+  "chat",
+  "tools",
+  "trace",
+  "replay",
+  "raw",
+] as const;
+export type IterationTab = (typeof ITERATION_TABS)[number];
+
+/** A result page under a run: `caseKey` is the grid row key (`matrixCaseKey`). */
+export type RunResultPageRoute = {
+  caseKey: string;
+  target?: string;
+  iterationId?: string;
+  tab?: IterationTab;
+};
+
 export type SuiteOverviewView =
-  | "runs"
-  | "test-cases"
-  | "executions"
-  | "cross-host";
+  "runs" | "test-cases" | "executions" | "cross-host";
 
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs
  * (`/evals/runs`). Runs-only shapes (`commit-detail`, `fromCommit`) are
  * omitted from Suites URLs at runtime.
  */
+
+/** The Suite settings tabs that have their own address. */
+export type SuiteSettingsTab = "settings" | "evaluators";
 
 export type EvalRoute =
   | { type: "list" }
@@ -40,6 +59,7 @@ export type EvalRoute =
       insightsFocus?: boolean;
       compareToRunId?: string;
       comparison?: boolean;
+      resultPage?: RunResultPageRoute;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | {
@@ -54,7 +74,13 @@ export type EvalRoute =
       /** Return to the Eval my server first-run preview after editing. */
       fromEvalServer?: string;
     }
-  | { type: "suite-edit"; suiteId: string; fromCaseChecks?: string }
+  | {
+      type: "suite-edit";
+      suiteId: string;
+      fromCaseChecks?: string;
+      /** Suite settings tab; absent means Settings. */
+      tab?: SuiteSettingsTab;
+    }
   | {
       type: "commit-detail";
       commitSha: string;

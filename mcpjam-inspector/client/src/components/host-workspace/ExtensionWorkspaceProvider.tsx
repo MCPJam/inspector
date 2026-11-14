@@ -24,6 +24,8 @@ import {
 } from "./ThreadAppPanel";
 import { createThreadAppApi } from "./thread-app-api";
 import { logExtensionEvent } from "./extension-log";
+import { useEntrypointInNewChat } from "./entry-inline-fallback";
+import { InlineChatApps } from "./InlineChatApps";
 import type { RunPluginOnboarding } from "./use-plugin-onboarding";
 import {
   useExtensionDiscovery,
@@ -65,6 +67,8 @@ export interface ExtensionRegistration {
   capabilities?: ExtensionCapabilities;
   /** How Apps choose a display mode; undefined while Display modes is off. */
   displayBehavior?: DisplayBehavior;
+  /** `inline`: a global App that can't go fullscreen opens in a new chat. */
+  entrypointWithoutFullscreen?: "refuse" | "inline";
   /** Which client profile App launches are counted under (H9). */
   profile?: "chatgpt" | "codex";
   /**
@@ -89,6 +93,7 @@ export const EXTENSION_AUTH_HOLD_MS = 30_000;
 export interface ExtensionPorts {
   sendMessage: AppMessageSender;
   runOnboarding: RunPluginOnboarding;
+  beginNewChat: (isCurrent: () => boolean) => Promise<string | null>;
 }
 
 export type ExtensionOwnerKind = "global" | "chat";
@@ -115,6 +120,8 @@ interface ExtensionStoreState {
   railSlot: HTMLElement | null;
   /** Where global Apps take the client area over. Mounted once by the center. */
   takeoverSlot: HTMLElement | null;
+  /** The top of the chat, where each chat's inline Apps are drawn. */
+  inlineSlot: HTMLElement | null;
   /** Bumped when a rail tab should be shown (opening the rail if collapsed). */
   railRevealSeq: number;
   /**
@@ -139,6 +146,7 @@ function createExtensionStore() {
     includedPluginTools: null,
     railSlot: null,
     takeoverSlot: null,
+    inlineSlot: null,
     railRevealSeq: 0,
     railDismissSeq: 0,
     modelFullscreen: null,
@@ -183,6 +191,7 @@ function registrationKey(registration: ExtensionRegistration): string {
     ]),
     capabilitiesKey(registration.capabilities ?? ALL_EXTENSION_CAPABILITIES),
     registration.displayBehavior ?? null,
+    registration.entrypointWithoutFullscreen ?? "refuse",
     registration.profile ?? "chatgpt",
     registration.hostRevision ?? null,
     registration.includedPluginTools ?? null,
@@ -222,6 +231,7 @@ export function ExtensionWorkspaceProvider({
     runOnboarding: async () => {
       throw new Error("Onboarding is unavailable");
     },
+    beginNewChat: async () => null,
   });
   const value = useMemo<ExtensionWorkspaceContextValue>(
     () => ({
@@ -384,6 +394,11 @@ export function ExtensionWorkspaceProvider({
     (...args) => portsRef.current.runOnboarding(...args),
     [],
   );
+  const onFullscreenUnsupported = useEntrypointInNewChat(
+    store,
+    identity ? registration?.entrypointWithoutFullscreen : undefined,
+    portsRef,
+  );
 
   return (
     <ExtensionWorkspaceContext.Provider value={value}>
@@ -402,6 +417,7 @@ export function ExtensionWorkspaceProvider({
             currentThreadId={currentThreadId}
             sendMessage={sendMessage}
             runOnboarding={runOnboarding}
+            onFullscreenUnsupported={onFullscreenUnsupported}
             store={store}
           />
         ) : null}
@@ -519,6 +535,7 @@ const GlobalOwner = memo(function GlobalOwner({
   currentThreadId,
   sendMessage,
   runOnboarding,
+  onFullscreenUnsupported,
   store,
 }: {
   identity: ExtensionOwnerIdentity;
@@ -531,10 +548,12 @@ const GlobalOwner = memo(function GlobalOwner({
   currentThreadId: () => string;
   sendMessage: AppMessageSender;
   runOnboarding: RunPluginOnboarding;
+  onFullscreenUnsupported: ReturnType<typeof useEntrypointInNewChat>;
   store: ExtensionStore;
 }) {
   const scope = useMemo(() => globalOwnerScope(identity), [identity]);
   const workspace = useThreadAppWorkspace(scope, servers, {
+    onFullscreenUnsupported,
     discovery,
     capabilities,
     displayBehavior,
@@ -653,17 +672,23 @@ const ChatOwner = memo(function ChatOwner({
   const railSlot = useStore(store, (state) => state.railSlot);
   const shown = useStore(store, (state) => state.currentChatId === chatId);
   const active = workspace.apps.some((row) => row.key === workspace.active);
-  if (!railSlot) return <>{workspace.approvalDialog}</>;
   return (
-    <SlotPortal slot={railSlot}>
-      <div
-        data-extension-chat={chatId}
-        hidden={!shown || !active}
-        className="h-full min-h-0"
-      >
-        <RetainedAppsView workspace={workspace} />
-      </div>
-    </SlotPortal>
+    <>
+      {railSlot ? (
+        <SlotPortal slot={railSlot}>
+          <div
+            data-extension-chat={chatId}
+            hidden={!shown || !active}
+            className="h-full min-h-0"
+          >
+            <RetainedAppsView workspace={workspace} />
+          </div>
+        </SlotPortal>
+      ) : (
+        workspace.approvalDialog
+      )}
+      <InlineChatApps store={store} chatId={chatId} workspace={workspace} />
+    </>
   );
 });
 
@@ -743,12 +768,12 @@ export function usePublishPluginIcons(
  * area and the center's takeover area. Each must be mounted once and never
  * moved, because moving an iframe to a new parent reloads it.
  */
-export function useExtensionSlot(kind: "rail" | "takeover") {
+export function useExtensionSlot(kind: "rail" | "takeover" | "inline") {
   const context = useContext(ExtensionWorkspaceContext);
   return useCallback(
     (element: HTMLElement | null) => {
       if (!context) return;
-      const key = kind === "rail" ? "railSlot" : "takeoverSlot";
+      const key = `${kind}Slot` as const;
       if (context.store.getState()[key] !== element)
         context.store.setState({ [key]: element } as Partial<ExtensionStoreState>);
     },

@@ -1,0 +1,50 @@
+/**
+ * The stylesheet every story renders against.
+ *
+ * This is the app's ACTUAL entry stylesheet, not a copy of it. When the
+ * Storybook lived in `design-system` it had to restate Tailwind, the tokens and
+ * the base layer by hand, and that mirror was its weakest point: if it drifted,
+ * a component looked right in Storybook and wrong in the product. From inside
+ * the app workspace there is nothing to mirror — one import and Storybook is
+ * reading the same CSS the inspector ships, `@theme` blocks, `@source` scanning
+ * and all.
+ */
+@import "../client/src/index.css";
+
+/**
+ * Three app-shell rules have to be undone, because they describe a full-screen
+ * single-page app and a component gallery is not one.
+ *
+ * `index.css` sets `height: 100%` and `overflow: hidden` on `html` and `body`
+ * so the inspector's own panes own all scrolling. Inherited here, that clips
+ * every story taller than the viewport and makes the docs pages unscrollable —
+ * the content is there, it just cannot be reached.
+ */
+html,
+body {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+/**
+ * Storybook renders each story into `#storybook-root`, not `#root`, so the
+ * app's `#root` rules never apply. Painting the body from the role tokens is
+ * what makes the dark-mode toggle look like dark mode rather than light
+ * components on a white page.
+ */
+body {
+  @apply bg-background text-foreground;
+}
+
+/* Tailwind scans source files for class names; the paths in `index.css` are
+   relative to `index.css` and cover the app, the design system, chat-ui and
+   widget-react. The stories live outside all of those, so their classes would
+   never be emitted without this. */
+@source "../stories/**/*.tsx";
+
+/* Breathing room around a canvas-mode story. Docs pages lay out their own
+   blocks, so this stays scoped to the standalone canvas. */
+.sb-story-padding {
+  padding: 1.5rem;
+}

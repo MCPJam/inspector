@@ -18,12 +18,17 @@ on:
         default: false
         type: boolean
       deploy_webapp:
-        description: "Deploy the webapp to production after publish"
+        description: "Deploy the webapp to production once the backend and the npm build are done, without waiting for publish"
         required: false
         default: false
         type: boolean
       skip_verify:
         description: "Skip the verification gates: green CI (Tests + Build and Test) and a green staging deploy"
+        required: false
+        default: false
+        type: boolean
+      fresh_conformance:
+        description: "Run the local harness conformance gate in this release, even when an earlier run has evidence for these inputs"
         required: false
         default: false
         type: boolean
@@ -99,7 +104,10 @@ jobs:
       codex_desired_pack: ${{ steps.local_harness_packs.outputs.codex_desired }}
       claude_permitted_pack: ${{ steps.local_harness_packs.outputs.claude_permitted }}
       codex_permitted_pack: ${{ steps.local_harness_packs.outputs.codex_permitted }}
+      runtime_desired_packs: ${{ steps.local_harness_packs.outputs.runtime_desired }}
+      runtime_permitted_packs: ${{ steps.local_harness_packs.outputs.runtime_permitted }}
       permitted_harnesses: ${{ steps.local_harness_packs.outputs.permitted_harnesses }}
+      local_harness_packs_key: ${{ steps.local_harness_packs.outputs.key }}
     steps:
       - name: Enforce main branch
         run: |
@@ -292,65 +300,121 @@ jobs:
         run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets --verify-attestations
 
       # Every pack this build may SELECT: the desired one per harness, and the
-      # one permitted previous (one version across targets; a record that
-      # permits two is refused here rather than half-tested).
+      # one permitted previous. The evidence run reads them the same way.
       - name: Local harness packs this build selects
         id: local_harness_packs
         working-directory: mcpjam-inspector
-        run: |
-          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
-          import { readRuntimeCompat } from "./scripts/local-harness-pack-tables.mjs";
-          const record = readRuntimeCompat();
-          const one = (harnessId, role) => {
-            const versions = new Set(Object.values(record.harnesses[harnessId]?.targets ?? {})
-              .map((slot) => slot[role]?.packVersion).filter(Boolean));
-            if (versions.size > 1) throw new Error(`${harnessId} ${role} packs differ across targets: ${[...versions]}`);
-            return [...versions][0] ?? "";
-          };
-          const out = {
-            claude_desired: one("claude-code", "desired"),
-            codex_desired: one("codex", "desired"),
-            claude_permitted: one("claude-code", "permitted"),
-            codex_permitted: one("codex", "permitted"),
-          };
-          out.permitted_harnesses = [out.claude_permitted && "claude-code", out.codex_permitted && "codex"].filter(Boolean).join(",");
-          for (const [key, value] of Object.entries(out)) console.log(`${key}=${value}`);
-          JS
+        run: node scripts/local-harness-release-packs.mjs >> "$GITHUB_OUTPUT"
 
-  # The release contract (`runtime-contract.json`): conformance evidence for
-  # THIS commit's Inspector layer × every pack the build may select, on every
-  # advertised platform. Run here, on the release commit, so a bridge change
-  # needs no extra step: the evidence is produced by the release itself.
-  local-harness-evidence:
+  # The release contract (`runtime-contract.json`) needs conformance evidence
+  # for THIS commit's Inspector layer × every pack the build may select, on
+  # every advertised platform. The evidence run
+  # (local-harness-release-evidence.yml) usually produced it while staging
+  # deployed this commit: this job finds that run, waiting for it while it
+  # is still going, or any earlier one whose conformance inputs digest is
+  # this commit's. Finding none, the two calls below run conformance here, as
+  # every release used to.
+  local-harness-evidence-lookup:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+      name: ${{ steps.find.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Find conformance evidence for these inputs and packs
+        id: find
+        uses: actions/github-script@v9
+        env:
+          PACKS: ${{ needs.preflight.outputs.local_harness_packs_key }}
+          FRESH: ${{ inputs.fresh_conformance }}
+        with:
+          script: |
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const { findReleaseEvidence, releaseEvidenceName } =
+              await import(`${workspace}/.github/scripts/release-evidence.mjs`);
+            const { computeConformanceInputsDigest } =
+              await import(`${workspace}/mcpjam-inspector/scripts/conformance-inputs-digest.mjs`);
+            const name = releaseEvidenceName({ digest: computeConformanceInputsDigest(), packs: process.env.PACKS });
+            core.setOutput("name", name);
+            // The way out if reused evidence is ever what fails the gate: the
+            // run that follows marks its own, and later releases find that.
+            if (process.env.FRESH === "true") {
+              core.info("fresh_conformance is set; running the gate in this release.");
+              core.setOutput("run_id", "");
+              return;
+            }
+            // Under the job's timeout, so a stuck evidence run still leaves
+            // time to run the gate here.
+            const found = await findReleaseEvidence({
+              github, ...context.repo, name, sha: context.sha,
+              timeoutMs: 30 * 60 * 1000, log: (line) => core.info(line),
+            });
+            core.info(found.reason);
+            core.setOutput("run_id", found.runId === null ? "" : String(found.runId));
+
+  # `!cancelled()` rather than `always()`: a failed lookup means "run it
+  # here", but a cancelled release must not start a dozen legs.
+  local-harness-evidence:
+    needs: [preflight, local-harness-evidence-lookup]
+    if: |
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      fromJSON(needs.preflight.outputs.build_inspector_artifacts) &&
+      needs.local-harness-evidence-lookup.outputs.run_id == ''
     uses: ./.github/workflows/local-harness-conformance.yml
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_desired_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_desired_packs }}
+      certified_only: true
 
   local-harness-evidence-permitted:
-    needs: preflight
-    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) && needs.preflight.outputs.permitted_harnesses != '' }}
+    needs: [preflight, local-harness-evidence-lookup]
+    if: |
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      fromJSON(needs.preflight.outputs.build_inspector_artifacts) &&
+      needs.preflight.outputs.permitted_harnesses != '' &&
+      needs.local-harness-evidence-lookup.outputs.run_id == ''
     uses: ./.github/workflows/local-harness-conformance.yml
     with:
       published_pack_version: ${{ needs.preflight.outputs.claude_permitted_pack }}
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_permitted_pack }}
+      runtime_pack_versions: ${{ needs.preflight.outputs.runtime_permitted_packs }}
       harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
+      certified_only: true
 
   local-harness-contract:
-    needs: [preflight, local-harness-evidence, local-harness-evidence-permitted]
+    needs: [preflight, local-harness-evidence-lookup, local-harness-evidence, local-harness-evidence-permitted]
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       fromJSON(needs.preflight.outputs.build_inspector_artifacts) &&
-      needs.local-harness-evidence.result == 'success' &&
-      (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
+      (
+        needs.local-harness-evidence-lookup.outputs.run_id != '' ||
+        (
+          needs.local-harness-evidence.result == 'success' &&
+          (needs.local-harness-evidence-permitted.result == 'success' || needs.local-harness-evidence-permitted.result == 'skipped')
+        )
+      )
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
       id-token: write
       attestations: write
+      # Downloading the evidence an earlier run produced.
+      actions: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -365,11 +429,23 @@ jobs:
       - name: Build SDK for the runtime contract check
         run: npm run build:sdk -w @mcpjam/inspector
       - name: Collect conformance evidence
+        if: needs.local-harness-evidence-lookup.outputs.run_id == ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: conformance-evidence-*
           path: ${{ runner.temp }}/evidence
           merge-multiple: true
+      # The gate below checks these records exactly as it checks this run's
+      # own: layer, pack and conformance inputs digest.
+      - name: Collect the conformance evidence an earlier run produced
+        if: needs.local-harness-evidence-lookup.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: conformance-evidence-*
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+          run-id: ${{ needs.local-harness-evidence-lookup.outputs.run_id }}
+          github-token: ${{ github.token }}
       # The gate: refuses a release whose layer was not run against every pack
       # it may select, and writes the contract a user's installer can be held to.
       - name: Check the evidence and write the runtime contract
@@ -388,6 +464,20 @@ jobs:
         with:
           name: local-harness-runtime-contract
           path: ${{ runner.temp }}/runtime-contract.json
+          if-no-files-found: error
+      # Evidence this run produced, and the gate accepted, is there for the
+      # next release with the same conformance inputs to reuse.
+      - name: Write the evidence marker
+        if: needs.local-harness-evidence-lookup.outputs.run_id == '' && needs.local-harness-evidence-lookup.outputs.name != ''
+        env:
+          NAME: ${{ needs.local-harness-evidence-lookup.outputs.name }}
+        run: |
+          jq -n --arg name "$NAME" --arg commit "$GITHUB_SHA" '{name: $name, commit: $commit}' > "$RUNNER_TEMP/evidence-marker.json"
+      - if: needs.local-harness-evidence-lookup.outputs.run_id == '' && needs.local-harness-evidence-lookup.outputs.name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.local-harness-evidence-lookup.outputs.name }}
+          path: ${{ runner.temp }}/evidence-marker.json
           if-no-files-found: error
 
   build-mac:
@@ -714,26 +804,44 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
-  # The Docker Hub image at the Inspector version npm just got. No job here
-  # waits on it, so a Docker Hub outage or a rejected token cannot hold back
-  # the webapp or the GitHub release; the run still ends red so the failure is
-  # seen. The run, and with it the `release` concurrency group, stays open
-  # until the image is pushed, so a release dispatched meanwhile starts after
-  # it. Retry with "Re-run failed jobs", or dispatch docker-release.yml.
-  # `always()` and the explicit result check are needed because
-  # publish-packages often runs after a skipped deploy-backend-prod, and a
-  # skipped ancestor would otherwise skip this job too.
+  # The Docker Hub image at the Inspector version npm gets. Built and pushed
+  # BY DIGEST here, while the gates run: no tag names it, so nobody pulls it
+  # by version before `docker-publish` tags it once npm has that version. The
+  # build took ten minutes (thirty once) after publish, holding the run open.
+  # No job but `docker-publish` waits on it, so a Docker Hub outage or a
+  # rejected token cannot hold back the webapp or the GitHub release; the run
+  # still ends red so the failure is seen. Retry with "Re-run failed jobs",
+  # or dispatch docker-release.yml.
   docker-release:
-    needs:
-      - preflight
-      - publish-packages
-    if: |
-      always() &&
-      needs.preflight.outputs.publish_inspector == 'true' &&
-      needs.publish-packages.result == 'success'
+    needs: preflight
+    if: needs.preflight.outputs.publish_inspector == 'true'
     uses: ./.github/workflows/docker-release.yml
     with:
       sha: ${{ github.sha }}
+      stage: build
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # The version and `latest` tags, on the digests `docker-release` pushed.
+  # `always()` and the explicit result checks are needed because
+  # publish-packages often runs after a skipped deploy-backend-prod, and a
+  # skipped ancestor would otherwise skip this job too.
+  docker-publish:
+    needs:
+      - preflight
+      - publish-packages
+      - docker-release
+    if: |
+      always() &&
+      needs.preflight.outputs.publish_inspector == 'true' &&
+      needs.publish-packages.result == 'success' &&
+      needs.docker-release.result == 'success'
+    uses: ./.github/workflows/docker-release.yml
+    with:
+      sha: ${{ github.sha }}
+      stage: publish
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -854,16 +962,25 @@ jobs:
   # dispatched on its own — a release is not the only reason to ship or roll
   # back the webapp. `require_staging_green` is false here because preflight
   # already gated this exact SHA on a green staging run.
+  #
+  # It waits for the backend (never ship a webapp that calls a function
+  # production does not have) and for the packed npm build and its smoke, but
+  # not for the local harness gate or `npm publish`: the hosted app runs no
+  # local harness, and Railway's seven-minute build used to start only once
+  # npm had the package. A release that then fails before publishing leaves
+  # production's webapp ahead of npm, which is what a webapp-only deploy
+  # between releases does too; the retry redeploys the same commit.
+  # `!cancelled()`, so a cancelled release never starts a production deploy.
   deploy-webapp:
     needs:
       - preflight
-      - publish-packages
+      - build-packages
       - deploy-backend-prod
     if: |
-      always() &&
+      !cancelled() &&
       fromJSON(inputs.deploy_webapp) &&
       needs.preflight.result == 'success' &&
-      needs.publish-packages.result == 'success' &&
+      needs.build-packages.result == 'success' &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
@@ -985,45 +1102,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Node.js for catalog parity heads-up
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install dependencies for catalog parity heads-up
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        run: npm ci --legacy-peer-deps
-
-      - name: Check SDK host catalog fallback against staging
-        if: fromJSON(needs.preflight.outputs.publish_sdk)
-        env:
-          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
-        run: |
-          set +e
-          npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
-          status=$?
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            {
-              echo "## SDK host catalog fallback parity"
-              echo ""
-              echo "SDK fallback matches the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "::warning::SDK host catalog fallback did not match the live catalog at $HOST_CATALOG_PARITY_URL. This release will continue; verify backend deploy/seed status before relying on the fallback snapshot."
-          {
-            echo "## SDK host catalog fallback parity warning"
-            echo ""
-            echo "The SDK fallback did not match the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
-            echo ""
-            echo "This warning is non-blocking. Check backend deploy/seed status before relying on the fallback snapshot."
-          } >> "$GITHUB_STEP_SUMMARY"
-
       # On the commit this run built, which already carries the versions. The
       # tag ruleset forbids moving or deleting a `v*` tag, so a re-run finds
       # it in place, and one pointing anywhere else is a real conflict.
@@ -1089,6 +1167,56 @@ jobs:
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           draft: false
+
+  # A heads-up, never a gate: it only warns. It compares the SDK's fallback
+  # host catalog with staging's live one, so it does not depend on anything
+  # this release deploys and runs beside the rest instead of inside
+  # `finalize`, where its install held up the GitHub release by a minute.
+  catalog-parity:
+    needs: preflight
+    if: needs.preflight.outputs.publish_sdk == 'true'
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Check SDK host catalog fallback against staging
+        env:
+          HOST_CATALOG_PARITY_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
+        run: |
+          set +e
+          npm run check:host-catalog-fallback:remote -w @mcpjam/sdk
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            {
+              echo "## SDK host catalog fallback parity"
+              echo ""
+              echo "SDK fallback matches the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::warning::SDK host catalog fallback did not match the live catalog at $HOST_CATALOG_PARITY_URL. This release will continue; verify backend deploy/seed status before relying on the fallback snapshot."
+          {
+            echo "## SDK host catalog fallback parity warning"
+            echo ""
+            echo "The SDK fallback did not match the live catalog at \`$HOST_CATALOG_PARITY_URL\`."
+            echo ""
+            echo "This warning is non-blocking. Check backend deploy/seed status before relying on the fallback snapshot."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Tells #engineering a release is going out and how it ended, so an alert
   # during or after it has context. The backend and webapp deploys it starts
@@ -1170,10 +1298,10 @@ jobs:
           echo "slack_ts=$(jq -r .ts <<< "$resp")" >> "$GITHUB_OUTPUT"
 
   # Waits for every job nothing else waits on, not just `finalize`: the image
-  # push, the hosted template roll-out and the evals action can each still be
+  # tags, the hosted template roll-out and the evals action can each still be
   # running, or fail, after `finalize` succeeds.
   announce-finish:
-    needs: [preflight, announce-start, finalize, docker-release, roll-out-hosted-template, publish-evals-action, byoc-candidate]
+    needs: [preflight, announce-start, finalize, docker-publish, roll-out-hosted-template, publish-evals-action, byoc-candidate, catalog-parity]
     if: always() && needs.announce-start.result == 'success'
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     permissions:

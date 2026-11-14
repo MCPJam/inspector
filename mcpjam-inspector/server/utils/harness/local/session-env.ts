@@ -18,6 +18,8 @@ import { readdirSync } from "node:fs";
  * controls, and supervision.
  */
 import { posix, win32 } from "node:path";
+import { DEFAULT_LOCAL_HARNESS_ID, LOCAL_RUNTIMES, localRuntimeOf } from "./runtimes/index.js";
+import { SUPPORTED_LOCAL_HARNESS_IDS } from "./targets.js";
 
 /**
  * Path flavour follows the TARGET platform, not the host running this code.
@@ -279,35 +281,32 @@ export function validateLocalHarnessScopedEnv(
 }
 
 /**
- * Prefixes a project secret may not use, PER HARNESS: the names that harness's
- * runtime reads its model endpoint and credential from.
+ * Names a project secret may not use, PER RUNTIME: where that runtime reads its
+ * model endpoint and credential (`reservedSecretEnv` in its definition).
  *
- * Per harness rather than one global list on purpose. A Claude Code project
+ * Per runtime rather than one global list on purpose. A Claude Code project
  * may legitimately carry an `OPENAI_API_KEY` for its MCP server to use —
  * refusing it everywhere would break existing local Claude projects for a
  * conflict that only exists under Codex, where `OPENAI_BASE_URL` and
- * `CODEX_API_KEY` are exactly what the gateway's capability travels in.
+ * `CODEX_API_KEY` are exactly what the gateway's capability travels in. An id
+ * with no local runtime gets every runtime's names, never none.
  */
-const RUNTIME_RESERVED_SECRET_PREFIXES: Readonly<
-  Record<string, RegExp>
-> = {
-  "claude-code": /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_)/i,
-  codex: /^(CODEX_|OPENAI_|AI_GATEWAY_|BRIDGE_)/i,
-};
+function reservedSecretEnvFor(harnessId: string): RegExp {
+  const runtime = localRuntimeOf(harnessId);
+  if (runtime) return runtime.reservedSecretEnv;
+  return new RegExp(
+    SUPPORTED_LOCAL_HARNESS_IDS.map((id) => LOCAL_RUNTIMES[id].reservedSecretEnv.source).join("|"),
+    "i",
+  );
+}
 
 /** Project secrets must not impersonate runtime-owned model or bridge credentials. */
 export function validateLocalHarnessSecretEnv(
   scoped: Readonly<Record<string, string>>,
-  harnessId: string = "claude-code",
+  harnessId: string = DEFAULT_LOCAL_HARNESS_ID,
 ): void {
   validateLocalHarnessScopedEnv(scoped);
-  const reserved = Object.prototype.hasOwnProperty.call(
-    RUNTIME_RESERVED_SECRET_PREFIXES,
-    harnessId,
-  )
-    ? RUNTIME_RESERVED_SECRET_PREFIXES[harnessId]!
-    : // An unknown harness gets the union, never nothing.
-      /^(ANTHROPIC_|AI_GATEWAY_|BRIDGE_|CLAUDE_CODE_|CODEX_|OPENAI_)/i;
+  const reserved = reservedSecretEnvFor(harnessId);
   for (const name of Object.keys(scoped)) {
     if (reserved.test(name)) {
       throw new LocalHarnessEnvError(
@@ -331,24 +330,17 @@ export function validateLocalHarnessSecretEnv(
  * probe with it, so an adapter-supplied value can only agree or be wrong.
  */
 export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
-  // Bridge control channel.
+  // Bridge control channel. The vendor model endpoints and credentials the
+  // adapter computes from the explicit auth Inspector hands it are the
+  // runtime's own (`bridgeEnv` in its definition).
   "BRIDGE_CHANNEL_TOKEN",
   "BRIDGE_WS_PORT",
   "BRIDGE_REPLAY_FROM_DISK",
-  // Vendor model endpoints and credentials, as computed by the adapter from
-  // the explicit auth Inspector hands it.
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "CODEX_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "AI_GATEWAY_API_KEY",
-  "AI_GATEWAY_BASE_URL",
 ];
 
 /**
- * Filter an adapter-supplied environment down to the allowlist.
+ * Filter an adapter-supplied environment down to the allowlist: the bridge's
+ * channel and this runtime's own vendor names.
  *
  * Values are not inspected — they are the adapter's to compute — but names
  * outside the list never reach the child, so an adapter change cannot quietly
@@ -356,10 +348,12 @@ export const BRIDGE_SUPPLIED_ENV_ALLOWLIST: readonly string[] = [
  */
 export function filterBridgeSuppliedEnv(
   env: Readonly<Record<string, string>> | undefined,
+  harnessId: string = DEFAULT_LOCAL_HARNESS_ID,
 ): Record<string, string> {
   const filtered: Record<string, string> = {};
   if (!env) return filtered;
-  for (const name of BRIDGE_SUPPLIED_ENV_ALLOWLIST) {
+  const vendor = localRuntimeOf(harnessId)?.bridgeEnv ?? [];
+  for (const name of [...BRIDGE_SUPPLIED_ENV_ALLOWLIST, ...vendor]) {
     const value = env[name];
     if (typeof value === "string" && !/[\0\n\r]/.test(value)) {
       filtered[name] = value;

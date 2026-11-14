@@ -313,6 +313,61 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     },
   );
 
+  // OpenRouter answers a BYOK key with no balance with a 402 whose message
+  // matches the MCPJam exhaustion phrases.
+  it("keeps running when the customer's own provider reports insufficient credits", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw Object.assign(
+          new Error(
+            "Insufficient credits. Add more using https://openrouter.ai/settings/credits",
+          ),
+          {
+            name: "AI_APICallError",
+            statusCode: 402,
+            responseBody:
+              '{"error":{"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits","code":402}}',
+          },
+        );
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+
+    const result = await runEvalSuiteWithAiSdk(config as any);
+
+    expect(streamTextMock).toHaveBeenCalledTimes(3);
+    expect(
+      result?.quickRunIterationOutcomes?.map(
+        (outcome) => outcome.creditsExhausted,
+      ),
+    ).toEqual([false, false, false]);
+    const persisted = convexClient.action.mock.calls.find(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.errorDetails,
+    );
+    expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
+  });
+
+  it("redacts a key the provider's error message echoes before storing it", async () => {
+    const keyTail = "x".repeat(32);
+    streamTextMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error(`Incorrect API key provided: sk-proj-${keyTail}`),
+        { name: "AI_APICallError", statusCode: 401 },
+      );
+    });
+
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+
+    const failed = convexClient.action.mock.calls.find(
+      ([name, args]) => name === "testSuites:updateTestIteration" && args.error,
+    );
+    expect(failed?.[1].error).toContain("Incorrect API key provided");
+    expect(failed?.[1].error).not.toContain(keyTail);
+  });
+
   describe("environment quick runs (committed iterations)", () => {
     it("runs every attempt on its committed row and creates none", async () => {
       const config = buildQuickRunConfig();

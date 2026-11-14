@@ -502,6 +502,57 @@ describe("a server whose protected call asks for sign-in but publishes no metada
       expect(mode.detail).toMatch(/a protected call asked for sign-in/);
     }
   );
+
+  it.each([
+    [
+      "a 401 with no WWW-Authenticate header",
+      { ...bearer401, challenge: parseChallengeHeader(undefined) },
+      false,
+    ],
+    [
+      "a _meta challenge on a tool error",
+      {
+        ...bearer401,
+        outcome: "tool-error" as const,
+        status: 200,
+        challenge: parseToolResultAuthChallenge({
+          isError: true,
+          _meta: {
+            "mcp/www_authenticate": [
+              'Bearer resource_metadata="https://elsewhere.example/prm"',
+            ],
+          },
+        }),
+      },
+      true,
+    ],
+  ])(
+    "explains the isError rule only when the server sent one, for %s",
+    (_label, protectedCall, mentionsIsError) => {
+      const challenge = byId(
+        runClaudeAuthChecks(
+          {
+            ...STRANDED,
+            lazyAuthProbe: {
+              attempted: true,
+              protocolVersion: "2025-06-18",
+              eraNote: "test",
+              protectedCall,
+            },
+          },
+          STAMP
+        ),
+        "claude.auth.unauthenticated-challenge"
+      );
+      expect(challenge.status).toBe("violated");
+      expect(JSON.stringify(challenge)).toMatch(
+        /Claude starts sign-in only on HTTP 401 with WWW-Authenticate/
+      );
+      expect(JSON.stringify(challenge).includes("200 isError result is")).toBe(
+        mentionsIsError
+      );
+    }
+  );
 });
 
 describe("WWW-Authenticate on a successful response", () => {

@@ -67,7 +67,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -120,6 +119,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../harness-bake-observer.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../harness-bake-observer.js")>()),
+  watchNewBoxForStaleBake: vi.fn(),
+}));
+
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
@@ -131,6 +135,8 @@ import {
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 import { ScenarioHarnessRepublishRequiredError } from "../../scenario-runtime-config.js";
+import { claimHarnessSessionState } from "../harness-session-state.js";
+import { watchNewBoxForStaleBake } from "../harness-bake-observer.js";
 
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
@@ -182,6 +188,7 @@ afterEach(() => {
   vi.mocked(reserveHarnessBox).mockClear();
   vi.mocked(renewHarnessBoxReservation).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
+  vi.mocked(watchNewBoxForStaleBake).mockClear();
 });
 
 describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
@@ -286,6 +293,53 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
       kind: "sandbox",
       sandboxRowId: BINDING.sandboxRowId,
     });
+  });
+});
+
+describe("runHarnessTurn — a new conversation's box is watched for a stale bake", () => {
+  // Only a conversation's first turn is sure to run on a box booted just now,
+  // from the template the deployment boots today.
+  const chat = { sourceType: "direct", chatSessionId: "chat-1" };
+  const firstTurnClaim = () =>
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      stateVersion: 0,
+      state: null,
+      fingerprintChanged: false,
+    });
+
+  it("watches the box on the conversation's first turn", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledTimes(1);
+    expect(watchNewBoxForStaleBake).toHaveBeenCalledWith(
+      expect.any(Object),
+      "claude-code",
+    );
+  });
+
+  it("does not watch a later turn's box, which may predate the template", async () => {
+    // The default claim has a commit behind it (stateVersion 1).
+    await runHarnessTurn(
+      baseOptions({ ...chat, harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
+  });
+
+  it("does not watch a persistent computer, or a box with no conversation lane", async () => {
+    firstTurnClaim();
+    await runHarnessTurn(baseOptions(chat) as never, "none");
+    expect(resolveHarnessSandbox).toHaveBeenCalledTimes(1);
+    // An eval box: no lane, and its run may have frozen an older default.
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none",
+    );
+    expect(watchNewBoxForStaleBake).not.toHaveBeenCalled();
   });
 });
 
