@@ -33,6 +33,14 @@ export type SuiteSkillsEdit = (
 export const SKILLS_READ_ONLY_REASON =
   "This deployment can’t save skill changes from this page. Edit each environment’s skills on the Environments page.";
 
+/**
+ * Why a skills change is refused when it would leave two of one client's
+ * environments with the same setup: the backend keeps one of two identical
+ * environments, so the suite would lose a combination.
+ */
+export const MERGED_ENVIRONMENTS_REASON =
+  "Changing this skill would make two of the suite’s environments identical, so the suite would keep only one of them. Set them apart on the Environments page, or remove one from the suite first.";
+
 export type SuiteSkillState = {
   /** Skills every environment selects, at the same version. */
   value: ProjectEnvironmentSkillSelection | null;
@@ -52,9 +60,18 @@ function versionsBySkill(
 }
 
 export function suiteSkillState(
-  environments: readonly Pick<ProjectEnvironmentView, "skillSelection">[],
+  environments: readonly Pick<
+    ProjectEnvironmentView,
+    "skillSelection" | "serverSkillSelection"
+  >[],
 ): SuiteSkillState {
   const each = environments.map((row) => versionsBySkill(row.skillSelection));
+  // The backend's limit counts Library and MCP-server skills together.
+  const used = environments.map(
+    (row, index) =>
+      each[index]!.size +
+      (row.serverSkillSelection?.serverSkillIds.length ?? 0),
+  );
   const ids = [...new Set(each.flatMap((versions) => [...versions.keys()]))];
   const shared = ids.filter((skillId) =>
     each.every(
@@ -65,12 +82,12 @@ export function suiteSkillState(
   );
   const across: SkillSelectionAcross = {
     partialIds: new Set(ids.filter((id) => !shared.includes(id))),
-    largestCount: Math.max(0, ...each.map((versions) => versions.size)),
+    largestCount: Math.max(0, ...used),
     // Only an environment that lacks the skill grows when it is added.
     canAdd: (skillId) =>
       each.every(
-        (versions) =>
-          versions.has(skillId) || versions.size < MAX_ENVIRONMENT_SKILLS,
+        (versions, index) =>
+          versions.has(skillId) || used[index]! < MAX_ENVIRONMENT_SKILLS,
       ),
   };
   if (!shared.length) return { value: null, across };

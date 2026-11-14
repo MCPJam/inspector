@@ -25,6 +25,7 @@ import { seedRunMatrix } from "../evaluate/suite-run-matrix";
 import {
   chooseTemplate,
   composeAdhocStack,
+  compositionKey,
   environmentComposition,
   lacksServerSource,
   sharedServerGroup,
@@ -38,7 +39,11 @@ import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
 import type { EvalSuite } from "./types";
-import { SKILLS_READ_ONLY_REASON, type SuiteSkillsEdit } from "./suite-skills";
+import {
+  MERGED_ENVIRONMENTS_REASON,
+  SKILLS_READ_ONLY_REASON,
+  type SuiteSkillsEdit,
+} from "./suite-skills";
 import { SuiteSkillsField, SuiteSkillsHints } from "./suite-skills-field";
 
 type Selections = Record<string, ModelSelection>;
@@ -199,9 +204,24 @@ export function planSuiteClients(
         efforts: options.modelSelections === true,
       });
       if (matches.length) {
+        // Two environments of one client and model with the same setup are one
+        // environment to the backend, so a skills edit that made them alike
+        // would drop one without a word.
+        const settled = new Map<string, boolean>();
         for (const row of matches) {
           const regroup = group !== null && row.serverAttachmentId !== group;
           const skillSelection = options.skills?.(row);
+          if (options.skills) {
+            const edited = regroup || skillSelection !== undefined;
+            const after = compositionKey({
+              ...row,
+              ...(skillSelection !== undefined ? { skillSelection } : {}),
+              ...(regroup ? { serverAttachmentId: group } : {}),
+            });
+            if (settled.has(after) && (edited || settled.get(after)))
+              throw new Error(MERGED_ENVIRONMENTS_REASON);
+            settled.set(after, edited);
+          }
           if (!regroup && skillSelection === undefined) {
             push({ environmentId: row.environmentId });
           } else if (lossless) {
