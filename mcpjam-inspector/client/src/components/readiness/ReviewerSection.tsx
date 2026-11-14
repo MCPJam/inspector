@@ -5,20 +5,23 @@
  *
  * - the reviewer's credentials, written straight to project secrets and never
  *   shown again, as the portal keeps its own secret;
- * - answers the flow keeps on this step outside the portal's layout, such as
- *   the identity tool and the identity it should answer with;
- * - the sign-in rehearsal's state in words and, when it waits for a person,
- *   what they must do and how a teammate or an agent resumes it.
+ * - answers the flow keeps on this step outside the portal's layout;
+ * - each stage of the latest sign-in rehearsal with its frame of the run's
+ *   recording, and who the identity check found;
+ * - the rehearsal's state in words and, when it waits for a person, the
+ *   handover: what the page asked for, who can finish it, and how a teammate
+ *   or an agent resumes it.
  *
  * The credential inputs are uncontrolled: a value stays in its input until
  * the save reads it, and no component state ever holds it.
  */
 import { useState, type FormEvent } from "react";
-import { formatDistanceToNow } from "date-fns";
-import type { DirectoryFlow, DirectoryFlowStep } from "@mcpjam/sdk/browser";
-import { Badge } from "@mcpjam/design-system/badge";
+import type {
+  DirectoryFlow,
+  DirectoryFlowStep,
+  PlacedStep,
+} from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@mcpjam/design-system/cn";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import type {
@@ -35,16 +38,24 @@ import {
   type ReviewerCredentials,
 } from "@/hooks/use-reviewer-credentials";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
-import type {
-  ReviewerAttempt,
-  ReviewerSignIn,
-} from "@/lib/apis/reviewer-attempts-api";
-import { copyToClipboard } from "@/lib/clipboard";
+import type { ReviewerSignIn } from "@/lib/apis/reviewer-attempts-api";
 import { convexErrMessage } from "@/lib/convex-error";
-import { toast } from "@/lib/toast";
 import { sentenceOf } from "./error-sentence";
 import { McpjamMark } from "./McpjamChecks";
 import { PortalField } from "./PortalField";
+import { ReviewerHandover } from "./ReviewerHandover";
+import {
+  PathChip,
+  PathRowItem,
+  RecordingPlayer,
+  useRunRecording,
+} from "./ReviewerStages";
+import {
+  handoverOf,
+  reviewerPathRows,
+  type Handover,
+  type PathRow,
+} from "./reviewer-stages";
 import {
   rehearsalSignIn,
   reviewerDetail,
@@ -176,6 +187,7 @@ function CredentialsRow({
   credentials,
   names,
   here,
+  stage,
   onSaved,
 }: {
   credentials: ReviewerCredentials;
@@ -183,6 +195,8 @@ function CredentialsRow({
   names: string[];
   /** Saved under this submission's names, rather than only an agent's. */
   here: boolean;
+  /** The last rehearsal's word on them, when it had one. */
+  stage?: PathRow;
   onSaved: () => void;
 }) {
   const [replacing, setReplacing] = useState(false);
@@ -233,60 +247,18 @@ function CredentialsRow({
     <li className="grid grid-cols-[1.25rem_11rem_minmax(0,1fr)_auto] items-start gap-3 py-2 text-sm">
       <span className="text-xs tabular-nums text-muted-foreground">1</span>
       <span className="font-medium">Reviewer credentials</span>
-      <div className="min-w-0 space-y-2">{body}</div>
-      <Badge variant="outline" className={cn(!saved && "border-dashed")}>
-        {saved ? "Established" : "Not tested"}
-      </Badge>
-    </li>
-  );
-}
-
-/** What a paused attempt needs, and how anyone else picks it up. */
-function Paused({
-  attempt,
-  scope,
-}: {
-  attempt: ReviewerAttempt;
-  scope: Scope;
-}) {
-  const command = `mcpjam readiness reviewer resume ${scope.submissionId} --attempt ${attempt.id} --project ${scope.projectId}`;
-  const copy = async () => {
-    if (await copyToClipboard(command)) {
-      toast.success("Resume command copied.");
-    } else {
-      toast.error(
-        "The resume command was not copied. Copy the attempt id from this page.",
-      );
-    }
-  };
-  const { waitingFor } = attempt;
-  return (
-    <div className="space-y-2 rounded-md border border-warning/70 bg-warning/10 p-3">
-      {waitingFor ? (
-        <>
-          <p>{waitingFor.reason}</p>
-          <p className="font-medium">{waitingFor.action}</p>
-          <p className="text-xs text-muted-foreground">
-            {`Paused ${formatDistanceToNow(waitingFor.since, { addSuffix: true })}.`}
+      <div className="min-w-0 space-y-2">
+        {body}
+        {stage?.detail ? (
+          <p className="text-muted-foreground [overflow-wrap:anywhere]">
+            {stage.detail}
           </p>
-        </>
-      ) : null}
-      <p className="text-muted-foreground">
-        A teammate or an agent can resume this attempt with its id.
-      </p>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Attempt id</span>
-        <code className="font-code">{attempt.id}</code>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          onClick={() => void copy()}
-        >
-          Copy resume command
-        </Button>
+        ) : null}
       </div>
-    </div>
+      <PathChip
+        status={stage?.status ?? (saved ? "established" : "not-tested")}
+      />
+    </li>
   );
 }
 
@@ -296,17 +268,27 @@ function RehearsalState({
   signIn,
   canAct,
   scope,
+  handover,
+  onShowStop,
 }: {
   rehearsal: ReviewerRehearsal;
   saved: boolean;
   signIn: ReviewerSignIn | null;
   canAct: boolean;
   scope: Scope;
+  handover: Handover | null;
+  /** Shows the page the sign-in stopped on, when the recording can. */
+  onShowStop?: () => void;
 }) {
   const attempt = rehearsal.attempt ?? null;
   const waiting = attempt?.state === "waiting-for-person" ? attempt : null;
   const open = attempt?.state === "running" || waiting ? attempt : null;
-  const detail = reviewerDetail(attempt);
+  // A failed rehearsal ends in its last stage's words, which that row shows.
+  const last = attempt?.stages.at(-1)?.detail;
+  const detail =
+    last !== undefined && attempt?.detail === last
+      ? undefined
+      : reviewerDetail(attempt);
   const { busy } = rehearsal;
   return (
     <div className="space-y-2 text-sm">
@@ -314,7 +296,14 @@ function RehearsalState({
         {reviewerStatus(saved, attempt)}
       </p>
       {detail ? <p className="text-muted-foreground">{detail}</p> : null}
-      {waiting ? <Paused attempt={waiting} scope={scope} /> : null}
+      {waiting ? (
+        <ReviewerHandover
+          attempt={waiting}
+          handover={handover}
+          scope={scope}
+          onShow={onShowStop}
+        />
+      ) : null}
       {canAct ? (
         <div className="flex flex-wrap gap-2">
           {waiting ? (
@@ -360,10 +349,13 @@ export function ReviewerSection({
   submissionId,
   values,
   onAnswer,
+  steps = [],
 }: Scope & {
   step: DirectoryFlowStep;
   values: AnswerValues;
   onAnswer: (key: string, value: AnswerValues[string]) => void;
+  /** The latest run's results, where the identity check's answer is. */
+  steps?: readonly PlacedStep[];
 }) {
   const scope = { projectId, submissionId };
   const credentials = useReviewerCredentials(scope);
@@ -373,6 +365,9 @@ export function ReviewerSection({
   const attempt = rehearsal.attempt ?? null;
   const here = Boolean(credentials.saved || savedHere);
   const signIn = rehearsalSignIn(here ? credentials.names : null, attempt);
+  const path = reviewerPathRows(attempt, steps);
+  const evidence = useRunRecording(path, attempt?.state === "running");
+  const handover = handoverOf(attempt);
   const loading =
     rehearsal.attempt === undefined ||
     (credentials.saved === undefined && !savedHere);
@@ -403,9 +398,25 @@ export function ReviewerSection({
                 signIn?.passwordSecretName,
               ].filter((name): name is string => Boolean(name))}
               here={here}
+              stage={path.credentials}
               onSaved={() => setSavedHere(true)}
             />
+            {path.rows.map((row, index) => (
+              <PathRowItem
+                key={row.key}
+                row={row}
+                number={index + 2}
+                onShow={evidence.show(row.frame)}
+              />
+            ))}
           </ol>
+          {evidence.reader}
+          <RecordingPlayer
+            key={path.runId}
+            recording={evidence.recording}
+            player={evidence.player}
+            onToggle={evidence.toggle}
+          />
           {mcpjamAnswers(step).map((field) => (
             <PortalField
               key={field.key}
@@ -420,6 +431,8 @@ export function ReviewerSection({
             signIn={signIn}
             canAct={credentials.member === true}
             scope={scope}
+            handover={handover}
+            onShowStop={evidence.show(handover?.frame)}
           />
         </>
       )}
@@ -441,7 +454,7 @@ export function ReviewerPath({
 }: {
   flow: DirectoryFlow;
   step: DirectoryFlowStep;
-  view: Pick<SubmissionView, "id" | "projectId">;
+  view: Pick<SubmissionView, "id" | "projectId" | "steps">;
   session: Pick<DirectorySubmissionSession, "values" | "setAnswer">;
 }) {
   if (REVIEWER_STEPS[flow.id] !== step.id) return null;
@@ -453,6 +466,7 @@ export function ReviewerPath({
       submissionId={view.id}
       values={session.values}
       onAnswer={session.setAnswer}
+      steps={view.steps}
     />
   );
 }
