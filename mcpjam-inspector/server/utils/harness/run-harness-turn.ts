@@ -2904,7 +2904,7 @@ export async function runHarnessTurn(
       // `hostExecutedMcp.tools` are built through `mcpToolOptionsFor`, whose
       // declaration is a boolean, and `builtInTools` is `resolveHostTools`'
       // output, every member of which declares a boolean too. The
-      // function-form skill tools (`effective-skill-tools`) reach the
+      // skill tools (`effective-skill-tools`) reach the
       // emulated engine through `allTools`, which this path does not consume.
       //
       // The adapter capability still gates the whole map — advertise =
