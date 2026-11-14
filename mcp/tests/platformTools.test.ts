@@ -219,6 +219,11 @@ const PLAIN_TOOLS = [
   "draft_directory_submission_test_plan",
   "save_directory_submission_test_plan",
   "get_directory_submission_tool_tests",
+  // The eval suite holding a submission's test cases.
+  "get_directory_submission_evals",
+  "set_directory_submission_evals",
+  "import_directory_submission_test_cases",
+  "export_directory_submission_test_cases",
   "start_conformance_run",
   "get_conformance_run",
   "list_conformance_runs",
@@ -545,6 +550,10 @@ describe("platform tool registration", () => {
       "draft_directory_submission_test_plan",
       "save_directory_submission_test_plan",
       "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
+      "export_directory_submission_test_cases",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
@@ -735,6 +744,7 @@ describe("platform tool registration", () => {
       "record_directory_submission_status",
       "record_directory_submission_snapshot",
       "import_directory_finding",
+      "import_directory_submission_test_cases",
       "send_feedback",
     ]);
     // Writes whose identical repeat answers success on the state the first
@@ -757,6 +767,7 @@ describe("platform tool registration", () => {
       "update_project",
       "archive_goal",
       "save_directory_submission_test_plan",
+      "import_directory_submission_test_cases",
     ]);
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
