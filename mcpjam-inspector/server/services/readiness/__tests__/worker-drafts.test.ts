@@ -188,6 +188,11 @@ function run(includeLlmObservations = true) {
     fetchFn: server.fetchFn,
     includeLlmObservations,
     submissionId: "sub_1",
+    // A plan runs as the reviewer account or not at all.
+    reviewer: {
+      accountId: "acct_reviewer",
+      mcpHeaders: { authorization: "Bearer reviewer-token" },
+    },
   });
 }
 

@@ -9,6 +9,7 @@ export {
   DIRECTORY_CLIENT_SIGNATURES,
   DIRECTORY_REVIEWER_FIELDS,
   DIRECTORY_REVIEWER_FIXTURE_PAIRS,
+  directoryDeclaresNoSignIn,
   directoryReviewerSpec,
   directoryReviewerStep,
 } from "./evidence.js";

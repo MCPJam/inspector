@@ -42,6 +42,8 @@ import {
   type DirectoryLazyAuthProbeConfig,
   type DirectoryObservationState,
   type DirectoryObservationStatus,
+  type DirectoryReviewerPathEvidence,
+  type DirectoryReviewerRunInput,
   type MuseReadinessResult,
   type OpenAIArchiveObservations,
   type OpenAIReadinessResult,
@@ -141,7 +143,7 @@ export interface RunReadinessOptions {
 async function reviewerEvidence(
   options: RunReadinessOptions,
   documents: { prm?: string; authorizationServer?: string },
-) {
+): Promise<DirectoryReviewerRunInput> {
   if (!options.reviewer) return {};
   const evidence = await gatherReviewerPath(options.reviewer, options, {
     "protected-resource": documents.prm,
@@ -418,6 +420,8 @@ export interface ReadinessRunOutcome {
   result: DirectoryReadinessResult;
   /** The observation axis, mirrored out so a caller can report it separately. */
   observations: DirectoryObservationState<string, string>;
+  /** A submission run's reviewer path, which its tool tests must respect. */
+  reviewerPath?: DirectoryReviewerPathEvidence;
 }
 
 /**
@@ -527,6 +531,7 @@ export async function runDirectoryReadiness(
         decisionScan,
       }),
       observations,
+      reviewerPath: reviewer.reviewerPath,
     };
   }
 
@@ -579,5 +584,6 @@ export async function runDirectoryReadiness(
         : {}),
     }),
     observations,
+    reviewerPath: reviewer.reviewerPath,
   };
 }
