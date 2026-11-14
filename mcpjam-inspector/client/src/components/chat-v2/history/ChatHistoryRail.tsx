@@ -18,6 +18,7 @@ import { ChatHistoryGroupRow } from "./ChatHistoryGroupRow";
 import { foldMultiModelSessions } from "./multi-model-session-rows";
 import { useMultiModelGroupActions } from "./use-multi-model-group-actions";
 import { useMultiModelSessionsEnabled } from "@/hooks/useMultiModelSessionsEnabled";
+import { setLoadedHistorySessions } from "@/lib/multi-model-analytics";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
@@ -298,6 +299,7 @@ export function ChatHistoryRail({
     void refetch();
   }, [enabled, isReactive, refetch, refreshSignal]);
 
+  useEffect(() => setLoadedHistorySessions(personal), [personal]);
   const personalEntries = useMemo(
     () =>
       multiModelSessionsEnabled

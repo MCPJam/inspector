@@ -1440,6 +1440,7 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     loadChatSession,
     rewindToMessage,
+    branchFromThread,
     syncResumedVersion,
     resumedVersion,
     restoredToolRenderOverrides,
@@ -3930,7 +3931,27 @@ export function PlaygroundMain({
     groupId: comparisonRecoveryGroupId,
     projectId: convexProjectId ?? "local",
     selectedServers,
+    compareActive: isCompareMode,
+    generation: multiModelSessionGeneration,
+    liveColumnKeys: isMultiHostMode
+      ? multiHostColumns.map((column) => `host:${column.compareId}`)
+      : modelCompareCards.map((entry) => `model:${entry.key}`),
     applyRestore: restoreMultiModelSession,
+    branchFromThread,
+    detachForBranch: () => {
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      pendingRestoredModelRef.current = null;
+      clearConversationUrlRef.current();
+    },
+    showSingleChat: (column) => {
+      setMultiModelEnabled(false);
+      if (column.hostId) setSelectedHostIds([column.hostId]);
+    },
+    unavailableHostIds: unavailableClients.map((client) => client.compareId),
+    modelsReady: availableModels.length > 0,
+    openColumnAlone: (column) => void handleSelectThread(column),
   });
   const handleSelectThread = useCallback(
     async (
@@ -4181,6 +4202,7 @@ export function PlaygroundMain({
       // root single-model session alone leaves the visible lane transcripts
       // intact and the user sees nothing happen.
       resetMultiModelSessions();
+      multiModelSessions.clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
       return true;
@@ -4236,6 +4258,7 @@ export function PlaygroundMain({
       syncResumedVersion(null);
       resetChat();
       resetMultiModelSessions();
+      multiModelSessions.clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
@@ -5567,6 +5590,8 @@ export function PlaygroundMain({
 
     if (isCompareMode) {
       // Each card prepends the same messages to its own thread.
+      if (compareSentPrompts.length === 0)
+        multiModelSessions.trackStarted(composerText);
       if (!queueBroadcastRequest({
         text: composerText,
         files,
@@ -5587,7 +5612,13 @@ export function PlaygroundMain({
       if (prependMessages.length > 0) {
         setMessages((prev) => [...prev, ...prependMessages]);
       }
-      const sent = await sendMessage({
+      const sent = multiModelSessions.sendInColumn
+        ? await multiModelSessions.sendInColumn({
+            text: composerText,
+            files,
+            metadata: outgoingSenderMetadata,
+          })
+        : await sendMessage({
         text: composerText,
         files,
         metadata: outgoingSenderMetadata,
@@ -5629,6 +5660,9 @@ export function PlaygroundMain({
     trackSendMessage,
     modelContextQueue,
     sendMessage,
+    multiModelSessions.sendInColumn,
+    multiModelSessions.trackStarted,
+    compareSentPrompts.length,
     setMessages,
     outgoingSenderMetadata,
     onFirstMessageSent,
@@ -6133,6 +6167,7 @@ export function PlaygroundMain({
       : { model: selectedModel },
   );
   const composerNotice =
+    multiModelSessions.notice ||
     apiSessionNotice ||
     conversationTargetNotice ||
     localHarnessNotice ||
@@ -6140,6 +6175,7 @@ export function PlaygroundMain({
     clientInitNotice ||
     signInNotice ? (
       <div className="flex flex-col gap-2">
+        {multiModelSessions.notice}
         {apiSessionNotice}
         {conversationTargetNotice}
         {localHarnessNotice}

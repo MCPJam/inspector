@@ -830,6 +830,10 @@ export interface UseChatSessionReturn {
      */
     onBeforeBranch?: () => void;
   }) => Promise<{ previousChatSessionId: string } | null>;
+  /** Sends into a new branch holding the whole transcript (a multi-model column). */
+  branchFromThread: (
+    options: Omit<Parameters<UseChatSessionReturn["rewindToMessage"]>[0], "messageId">,
+  ) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -6046,6 +6050,104 @@ export function useChatSession(
    *   `sendMessage` preflight failed closed, having already surfaced its own
    *   error toast. Callers must stay silent and must not touch bookkeeping.
    */
+  type BranchSendOptions = Omit<{
+      messageId: string;
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+      metadata?: Record<string, unknown>;
+      /**
+       * Runs immediately before the branch is minted, and ONLY then — every
+       * refusal above this point returns without calling it.
+       *
+       * Callers detach from the resumed thread here (baseline, pending
+       * selection, `resumedVersion`, the conversation URL). That has to happen
+       * before the branch's turn starts, or the post-stream conflict check
+       * captures a baseline naming the ORIGINAL thread. But doing it in the
+       * caller *before* `rewindToMessage` meant a refusal left the session id
+       * unchanged with its optimistic-concurrency guard already torn down: the
+       * next ordinary send then rewrote the original's row carrying no
+       * `expectedVersion`, silently clobbering turns another tab or device had
+       * added. Deferring to this hook keeps the teardown and the branch
+       * atomic — refuse early and the thread is untouched.
+       */
+      onBeforeBranch?: () => void;
+    }, "messageId">;
+  // Mints a branch holding `prefix`, records where it came from, and sends the
+  // new message into it. Shared by message edits and multi-model columns.
+  const forkAndSend = useCallback(
+    async (
+      prefix: UIMessage[],
+      lineageMessageId: string,
+      reason: ChatRewind["reason"],
+      options: BranchSendOptions,
+    ): Promise<{ previousChatSessionId: string } | null> => {
+      const previousChatSessionId = chatSessionIdRef.current;
+
+      // Past every refusal that leaves the thread untouched — safe to detach.
+      options.onBeforeBranch?.();
+
+      const branchSessionId = await startChatWithMessages(prefix, {
+        resetReason: "fork",
+      });
+
+      // An awaited resolve is not proof of commit: clearPendingSessionHydration
+      // resolves a SUPERSEDED hydration too. If anything switched sessions in
+      // that window, the live id is either still the original or some third
+      // session an interloper installed — sending into either corrupts a row
+      // that has nothing to do with this branch. Refuse instead.
+      if (chatSessionIdRef.current !== branchSessionId) {
+        return null;
+      }
+
+      rewindRef.current = {
+        chatSessionId: branchSessionId,
+        lineage: {
+          parentChatSessionId: previousChatSessionId,
+          rewoundFromMessageId: lineageMessageId,
+          reason,
+        },
+      };
+
+      // Read through the ref, NOT the closure: the `sendMessage` captured
+      // before the await belongs to the pre-branch `Chat` instance and would
+      // send the original untruncated history. See `sendMessageRef`.
+      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
+      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
+      // toast and returns without ever calling `baseSendMessage` — and by then
+      // the branch has already been minted. Returning success before that
+      // settles gave the user "New branch created" plus a server-resolution
+      // error, sitting on a truncated prefix whose turn never ran and with the
+      // original detached: exactly the orphan branch the pre-mint readiness
+      // checks exist to prevent.
+      //
+      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
+      // proves nothing — hence the boolean. The try/catch covers the remaining
+      // case where the underlying send throws, which would otherwise escape as
+      // an unhandled rejection.
+      let dispatched = false;
+      try {
+        dispatched = await sendMessageRef.current({
+          text: options.text,
+          files: options.files,
+          metadata: options.metadata,
+        });
+      } catch {
+        return null;
+      }
+      if (!dispatched) {
+        return null;
+      }
+
+      return { previousChatSessionId };
+    },
+    [startChatWithMessages],
+  );
+
   const rewindToMessage = useCallback(
     async (options: {
       messageId: string;
@@ -6090,68 +6192,37 @@ export function useChatSession(
       if (targetIndex < 0) {
         return null;
       }
-
-      const previousChatSessionId = chatSessionIdRef.current;
-      const prefix = messagesRef.current.slice(0, targetIndex);
-
-      // Past every refusal that leaves the thread untouched — safe to detach.
-      options.onBeforeBranch?.();
-
-      const branchSessionId = await startChatWithMessages(prefix, {
-        resetReason: "fork",
-      });
-
-      // An awaited resolve is not proof of commit: clearPendingSessionHydration
-      // resolves a SUPERSEDED hydration too. If anything switched sessions in
-      // that window, the live id is either still the original or some third
-      // session an interloper installed — sending into either corrupts a row
-      // that has nothing to do with this branch. Refuse instead.
-      if (chatSessionIdRef.current !== branchSessionId) {
-        return null;
-      }
-
-      rewindRef.current = {
-        chatSessionId: branchSessionId,
-        lineage: {
-          parentChatSessionId: previousChatSessionId,
-          rewoundFromMessageId: options.messageId,
-          reason: "message_edit",
-        },
-      };
-
-      // Read through the ref, NOT the closure: the `sendMessage` captured
-      // before the await belongs to the pre-branch `Chat` instance and would
-      // send the original untruncated history. See `sendMessageRef`.
-      // Awaited, not fire-and-forget. `sendMessage` runs its own async preflight
-      // (hosted server-id resolution) that can fail CLOSED — it surfaces its own
-      // toast and returns without ever calling `baseSendMessage` — and by then
-      // the branch has already been minted. Returning success before that
-      // settles gave the user "New branch created" plus a server-resolution
-      // error, sitting on a truncated prefix whose turn never ran and with the
-      // original detached: exactly the orphan branch the pre-mint readiness
-      // checks exist to prevent.
-      //
-      // Note the fail-closed paths RESOLVE rather than reject, so awaiting alone
-      // proves nothing — hence the boolean. The try/catch covers the remaining
-      // case where the underlying send throws, which would otherwise escape as
-      // an unhandled rejection.
-      let dispatched = false;
-      try {
-        dispatched = await sendMessageRef.current({
-          text: options.text,
-          files: options.files,
-          metadata: options.metadata,
-        });
-      } catch {
-        return null;
-      }
-      if (!dispatched) {
-        return null;
-      }
-
-      return { previousChatSessionId };
+      return forkAndSend(
+        messagesRef.current.slice(0, targetIndex),
+        options.messageId,
+        "message_edit",
+        options,
+      );
     },
-    [startChatWithMessages],
+    [forkAndSend],
+  );
+
+  /**
+   * Continues a column opened alone from a multi-model session as a new chat:
+   * the whole transcript is copied into a branch so the session itself stays
+   * as it was. The lineage names the last message kept.
+   */
+  const branchFromThread = useCallback(
+    async (
+      options: BranchSendOptions,
+    ): Promise<{ previousChatSessionId: string } | null> => {
+      if (
+        statusRef.current === "submitted" ||
+        statusRef.current === "streaming"
+      ) {
+        return null;
+      }
+      const transcript = messagesRef.current;
+      const last = transcript[transcript.length - 1];
+      if (!last) return null;
+      return forkAndSend(transcript, last.id, "multi_model_column", options);
+    },
+    [forkAndSend],
   );
 
   /**
@@ -6948,6 +7019,7 @@ export function useChatSession(
     messages,
     setMessages,
     rewindToMessage,
+    branchFromThread,
     sendMessage,
     stop: stopChat,
     canStopApproval,

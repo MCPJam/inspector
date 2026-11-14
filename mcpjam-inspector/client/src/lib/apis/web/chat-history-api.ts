@@ -372,6 +372,18 @@ export async function chatHistoryGroupAction(
   );
 }
 
+/** A column left its multi-model session; it stays listed but never reopens. */
+export async function markMultiModelColumnRemoved(
+  chatSessionId: string,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean }> {
+  return webPost<Record<string, unknown>, { ok: boolean }>(
+    "/api/web/chat-history/action",
+    { action: "multi-model-column-removed", chatSessionId },
+    requestOptions,
+  );
+}
+
 export async function chatHistoryAction(
   action: string,
   sessionId: string,
