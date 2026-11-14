@@ -483,6 +483,27 @@ describe("ReadinessRoute", () => {
     });
   });
 
+  it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    const rail = within(
+      await screen.findByRole("navigation", {
+        name: "Claude submission steps",
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "MCPJam test plan" }),
+    ).toBeNull();
+    await userEvent.click(rail.getByRole("button", { name: /Test & launch/ }));
+    const section = screen.getByRole("region", { name: "MCPJam test plan" });
+    expect(
+      await within(section).findByText(/^No test plan is saved/),
+    ).toBeVisible();
+    expect(plans.getToolTests).toHaveBeenCalled();
+  });
+
   it("asks for a saved server first", () => {
     context.selectedServerEntry = null;
     render(<ReadinessRoute />);

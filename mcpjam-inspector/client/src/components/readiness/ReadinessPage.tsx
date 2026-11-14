@@ -309,6 +309,7 @@ export function ReadinessPage({
         flow={flow}
         view={view}
         session={session}
+        testPlan={plan}
         serverUrl={serverUrl}
         serverName={chosen.server.name}
         onClose={() => setOpen(null)}
