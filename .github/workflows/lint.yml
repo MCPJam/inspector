@@ -43,6 +43,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Check canonical error rules
+        run: npm run errors:check && node --test scripts/__tests__/error-rules.test.mjs
+
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
