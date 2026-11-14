@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useState } from "react";
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
@@ -437,6 +438,7 @@ export function ConfiguredSuiteRunReview(
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { availableModels, modelSelectionsSupported } = useAvailableModels({
     projectId,
+    harnessTargets: hosts.map((host) => ({ harnessId: effectiveHarnessId(host) ?? "" })),
   });
   const { capable, pending } = useEvalComposeCapable(projectId);
   // Until the probe answers, plan as an older backend would: a cell the

@@ -2,6 +2,7 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "../evals/suite-iterations-view";
+import { suiteEditRoute } from "../evals/create-suite-navigation";
 
 function applyEvaluatePath(route: EvalRoute, options?: { replace?: boolean }) {
   navigateApp(buildEvaluatePath(route), { replace: options?.replace });
@@ -58,12 +59,8 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
         { replace: options?.replace },
       );
     },
-    toSuiteEdit: (suiteId, fromCaseChecks) => {
-      applyEvaluatePath({
-        type: "suite-edit",
-        suiteId,
-        ...(fromCaseChecks ? { fromCaseChecks } : {}),
-      });
+    toSuiteEdit: (suiteId, fromCaseChecks, tab, options) => {
+      applyEvaluatePath(suiteEditRoute(suiteId, fromCaseChecks, tab), options);
     },
   };
 }

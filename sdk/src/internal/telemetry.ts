@@ -189,7 +189,7 @@ function envelope(source: Fields, options: SentryBoundaryOptions): Fields {
   const actor = telemetryActorId(options.actorId);
   const release = token(
     options.release,
-    /^(?:@mcpjam\/sdk@)?\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$|^[0-9a-f]{7,40}$/
+    /^(?:mcpjam-sdk@)?\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$|^[0-9a-f]{7,40}$/
   );
   return {
     ...sentryProtocolMetadata([], options),

@@ -1872,13 +1872,19 @@ export function ConformanceRunDetailRoute() {
       projectId: convexProjectId,
     });
   // The run's server Settings, the same defaults the Conformance page reads.
-  const { defaultsByServer, inputsByServer, loadDefaults, saveDefaults } =
-    useConformanceServerData({
-      projectId: convexProjectId,
-      serversById,
-      serversByName,
-      serversLoading: isLoading || isBootstrapping,
-    });
+  const {
+    defaultsByServer,
+    inputsByServer,
+    timeoutsByServer,
+    loadDefaults,
+    saveDefaults,
+    saveTimeout,
+  } = useConformanceServerData({
+    projectId: convexProjectId,
+    serversById,
+    serversByName,
+    serversLoading: isLoading || isBootstrapping,
+  });
   const params = useParams<{ runId?: string }>();
   const pathname = getRouteFallbackPathname();
   const raw =
@@ -1911,6 +1917,8 @@ export function ConformanceRunDetailRoute() {
                     : "failed";
               },
               save: saveDefaults,
+              timeouts: timeoutsByServer,
+              saveTimeout,
             }
           : undefined
       }

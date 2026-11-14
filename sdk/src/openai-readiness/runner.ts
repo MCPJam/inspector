@@ -48,12 +48,14 @@ import {
   type DirectoryLazyAuthProbeEvidence,
 } from "../directory-readiness/lazy-auth.js";
 import { probeLazyAuthentication } from "../directory-readiness/lazy-auth-probe.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
 import {
   mapOpenAIObservationsToFindings,
   type OpenAIObservationState,
 } from "./observations.js";
 import { OPENAI_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { withPortalCode } from "./portal-codes/issue-codes.js";
 import { OPENAI_APP_HTML_MIME } from "./profile.js";
 import {
   readOpenAIPluginPackage,
@@ -70,6 +72,7 @@ import {
   type OpenAIAppsUiEvidence,
 } from "./checks/apps-ui.js";
 import { runOpenAIAuthChecks } from "./checks/auth.js";
+import { runOpenAIDecisionChecks } from "./checks/decisions.js";
 import { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
 import { runOpenAIMigrationChecks } from "./checks/migration.js";
 import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
@@ -201,6 +204,8 @@ export interface OpenAIReadinessEvidence {
    * if it wanted to.
    */
   llmObservations?: OpenAIObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 }
 
 const LANE_SUMMARIES: Record<OpenAIReadinessLane, string> = {
@@ -559,6 +564,17 @@ export function gradeOpenAIReadiness(
         stamp
       ),
       ...optional.findings,
+      ...runOpenAIDecisionChecks(
+        evidence.decisionScan,
+        stamp,
+        shape.hasMcpServer
+          ? {
+              read: evidence.tools !== undefined,
+              complete: evidence.toolListingComplete,
+              error: evidence.toolListingError,
+            }
+          : undefined
+      ),
       ...runOpenAISubmissionChecks(
         {
           profile: parsedProfile.profile,
@@ -581,7 +597,7 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
-  );
+  ).map(withPortalCode);
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
 

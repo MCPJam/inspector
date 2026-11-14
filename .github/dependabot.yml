@@ -88,8 +88,8 @@ updates:
         applies-to: security-updates
         patterns: ["playwright", "playwright-core", "@playwright/test"]
       # The AI SDK harness adapters are pinned to the exact version the local
-      # harness evidence was gathered against (`adapterVersion` in
-      # mcpjam-inspector/server/utils/harness/local/compatibility.ts), because
+      # harness evidence was gathered against (`adapterVersion` in each
+      # mcpjam-inspector/server/utils/harness/local/runtimes/<id>.ts), because
       # a patch release can change a command shape. They broke #5474 twice:
       # the manifest pin test, and a real runtime break in the pre-seeded
       # skills path (1.0.117 throws "Invalid homePath: expected a non-empty

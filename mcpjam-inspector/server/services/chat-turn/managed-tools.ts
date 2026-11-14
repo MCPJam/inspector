@@ -321,6 +321,7 @@ export async function prepareManagedTools(args: {
                 ...(provisioned.value.workdir
                   ? { workdir: provisioned.value.workdir }
                   : {}),
+                idleMs: provisioned.value.idleMs,
               },
             }
           : { ok: false as const, refusal: provisioned };
@@ -453,12 +454,9 @@ export async function prepareManagedTools(args: {
     if (playgroundBoxReason === "credential") {
       const credentialRefusal = await playgroundCredentialRefusal({
         harnessId: resolvedExecution.harness,
-        secretEnv,
         bearer: bearerToken,
         projectId: hostedBody.projectId,
-        ...(playgroundEnvironmentId
-          ? { environmentId: playgroundEnvironmentId }
-          : {}),
+        signal: c.req.raw.signal as AbortSignal | undefined,
       });
       if (credentialRefusal) {
         throw new WebRouteError(409, ErrorCode.CONFLICT, credentialRefusal, {

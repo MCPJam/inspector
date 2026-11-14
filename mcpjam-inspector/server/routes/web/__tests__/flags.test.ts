@@ -45,15 +45,19 @@ vi.mock("../../../config.js", async (importOriginal) => ({
 import clientFlags from "../flags.js";
 import { shutdownAnalytics } from "../../../utils/analytics.js";
 import { CLIENT_FEATURE_FLAG_KEYS } from "../../../../shared/client-feature-flags.js";
+import {
+  LOCAL_HARNESS_IDS,
+  localHarnessRolloutFlag,
+} from "../../../../shared/harness-descriptors.js";
 
 // posthog-js generates a v7 UUID for a visitor it has not identified.
 const ANONYMOUS_ID = "0192a3f1-8c5e-7b3d-8f21-6a4c9e0d1b2f";
 // Each local harness's flag, as answered to anyone the server has not
 // verified as a member who may run it here.
-const LOCAL_HARNESS_FLAGS_OFF = {
-  "local-harness-enabled": false,
-  "local-codex-enabled": false,
-};
+// Every local runtime's rollout flag, each answered here rather than by PostHog.
+const LOCAL_HARNESS_FLAGS_OFF = Object.fromEntries(
+  LOCAL_HARNESS_IDS.map((id) => [localHarnessRolloutFlag(id), false]),
+);
 
 function createApp() {
   const app = new Hono();
@@ -110,12 +114,11 @@ describe("GET /api/web/flags", () => {
   });
 
   it("answers each local harness flag server-side, never from PostHog alone", async () => {
-    // Without a verified member this machine runs neither harness locally,
+    // Without a verified member this machine runs no runtime locally,
     // whatever PostHog evaluates for the distinct id.
-    mocks.getAllFlags.mockResolvedValueOnce({
-      "local-harness-enabled": true,
-      "local-codex-enabled": true,
-    });
+    mocks.getAllFlags.mockResolvedValueOnce(
+      Object.fromEntries(LOCAL_HARNESS_IDS.map((id) => [localHarnessRolloutFlag(id), true])),
+    );
 
     const { body } = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
 

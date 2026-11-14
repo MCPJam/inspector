@@ -89,6 +89,20 @@ export type {
   PluginExtensionsHostInput,
   ResolvedPluginExtensions,
 } from "./plugin-extensions.js";
+export {
+  canonicalizePluginExtensionBehavior,
+  PLUGIN_EXTENSION_BEHAVIOR_VALUES,
+  PLUGIN_EXTENSION_STYLE_DEFAULTS,
+  pluginExtensionStyleDefaults,
+  readPluginExtensionBehavior,
+  resolvePluginExtensionBehavior,
+} from "./plugin-extension-behavior.js";
+export type {
+  HostConfigPluginExtensionBehaviorV1,
+  PluginExtensionBehaviorKey,
+  PluginExtensionStyleDefaults,
+  ResolvedPluginExtensionBehavior,
+} from "./plugin-extension-behavior.js";
 
 // Per-client plugin App context budgets (mcpProfile.apps.modelContextPolicy).
 export {

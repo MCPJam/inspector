@@ -19,6 +19,7 @@ import {
   HARNESS_MCP_PLAN_REASONS,
   harnessDiscoveryRoute,
   hostedForwardingSurface,
+  requiredForwardingRefusal,
   resolveHarnessMcpPlan,
   toDiscoveryDeliveryLabel,
   type HarnessForwardingAdmission as Admission,
@@ -296,6 +297,105 @@ describe("harness MCP route table", () => {
     expect(observed(plan)).toEqual({ gaps: [], ...row.expected });
     expect(plan.reasons).toEqual(row.reasons);
     expect(admit).toHaveBeenCalledTimes(row.admitCalls);
+  });
+});
+
+describe("a pass-through-only runtime", () => {
+  const passThroughOnly = { ...RUNTIME, passThroughOnly: true as const };
+
+  it("keeps its configured route, gaps listed, where others take the bridge", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ forwardingRuntime: passThroughOnly, admit: BRIDGE }),
+    );
+    expect(observed(plan)).toEqual({
+      candidate: true,
+      surface: true,
+      useNativeForwarding: false,
+      enhancedApps: false,
+      nativeMcpDelivery: true,
+      label: "native-proxy",
+      gaps: ["app-host-capabilities", "unqualified-protocol"],
+    });
+    expect(plan.reasons).toEqual([
+      "forwarding not admitted; configured route retained",
+    ]);
+  });
+
+  it("still forwards a gap-free turn on pass-through", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ forwardingRuntime: passThroughOnly, admit: NATIVE }),
+    );
+    expect(plan).toMatchObject({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+      gaps: [],
+      reasons: [],
+    });
+  });
+});
+
+describe("a forward-only client", () => {
+  const forwardOnly = (overrides: Partial<Facts> = {}) =>
+    facts({
+      dispatch: { mcpClient: "mcpjam" },
+      forwardingRuntime: { ...RUNTIME, passThroughOnly: true },
+      requiredForwarding: "pass-through",
+      ...overrides,
+    });
+
+  it("forwards on pass-through when admitted", () => {
+    const plan = resolveHarnessMcpPlan(forwardOnly({ admit: NATIVE }));
+    expect(plan).toMatchObject({ forwardingKind: "pass-through", upstream: "harness" });
+    expect(plan).not.toHaveProperty("refused");
+  });
+
+  it.each([
+    ["profiled forwarding", { admit: BRIDGE }, "forwarding not admitted; configured route retained"],
+    ["no admission", { admit: RETAINED }, "forwarding not admitted; configured route retained"],
+    ["the flag off", { forwardingEnabled: false }, "forwarding flag off"],
+    ["an unenrolled organization", { forwardingOrganization: false }, "organization not enrolled"],
+    ["an eval", { evalIterationId: "e" }, "eval iteration"],
+    ["account routing", { accountRouting: true }, "account routing"],
+  ] as const)("refuses a turn with servers on %s", (_name, overrides, reason) => {
+    const plan = resolveHarnessMcpPlan(forwardOnly(overrides));
+    expect(plan.refused).toBe(true);
+    expect(plan.reasons[0]).toBe(reason);
+    expect(plan.forwardingKind).toBeUndefined();
+  });
+
+  it("runs a turn with no servers, claiming no forwarding", () => {
+    const plan = resolveHarnessMcpPlan(forwardOnly({ selectedServerCount: 0 }));
+    expect(plan).not.toHaveProperty("refused");
+    expect(plan).toMatchObject({ upstream: "mcpjam", delivery: "host-tools" });
+    expect(plan.forwardingKind).toBeUndefined();
+  });
+
+  it("leaves a client without the requirement on its configured route", () => {
+    const plan = resolveHarnessMcpPlan(
+      forwardOnly({ requiredForwarding: undefined, admit: RETAINED }),
+    );
+    expect(plan).not.toHaveProperty("refused");
+    expect(plan.delivery).toBe("host-tools");
+  });
+
+  it("names the step that unblocks each refusal", () => {
+    const text = (overrides: Partial<Facts>) =>
+      requiredForwardingRefusal(
+        resolveHarnessMcpPlan(forwardOnly(overrides)),
+        "GitHub Copilot CLI",
+      );
+    expect(text({ admit: BRIDGE })).toBe(
+      "GitHub Copilot CLI calls MCP servers only through its own client, and this turn cannot forward them. " +
+        "Change these server settings or choose another client: app-host-capabilities, unqualified-protocol.",
+    );
+    expect(text({ accountRouting: true })).toContain(
+      "Choose one account for each server",
+    );
+    expect(text({ forwardingEnabled: false })).toContain(
+      "Ask an admin to turn on native forwarding",
+    );
+    expect(text({ scenarioId: "s" })).toContain("signed-in hosted Playground");
   });
 });
 

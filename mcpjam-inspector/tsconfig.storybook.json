@@ -1,0 +1,34 @@
+{
+  // Stories live outside `client/src`, so `typecheck:client` never sees them.
+  // Without this a story could go stale against the component it documents and
+  // Storybook would keep booting happily — Vite strips types rather than
+  // checking them.
+  //
+  // Extends the client config so `@/*`, `@mcpjam/sdk/*` and the rest of the
+  // path aliases resolve exactly as they do for app code.
+  //
+  // Run it with: npm run typecheck:storybook -w @mcpjam/inspector
+  "extends": "./client/tsconfig.json",
+  "compilerOptions": {
+    // `client/tsconfig.json` sets `baseUrl: "."` relative to itself, so its
+    // `paths` resolve against `client/`. Restating it here keeps that meaning
+    // now that the config file sits one level up.
+    "baseUrl": "./client",
+    // Story files legitimately declare render helpers they do not use in every
+    // export, and the client config sets both of these to `true`.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  // The ambient declaration files are pulled in explicitly. `client/src`
+  // reaches them via its own `include: ["src"]`, but narrowing `include` to the
+  // stories drops them, and then every client module this typecheck follows
+  // loses `import.meta.env`, the image-module declarations and the `window`
+  // extensions.
+  "include": [
+    "stories",
+    ".storybook",
+    "client/src/vite-env.d.ts",
+    "client/src/md.d.ts",
+    "client/src/types/**/*.d.ts"
+  ]
+}

@@ -20,7 +20,7 @@ import {
   orgKeysDisallowedRow,
   savedModelRow,
 } from "@/components/chat-v2/shared/available-models";
-import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { isRuntimeAccountModel } from "@/shared/model-provider";
 import {
   applyHarnessModelLocks,
   type HarnessModelTarget,
@@ -68,7 +68,7 @@ export function orgKeysSavableRows(
 ): ModelDefinition[] {
   if (!requireOrgKeys) return models;
   return models.filter(
-    (row) => row.disabled === true || orgSelectionTarget(row, purpose),
+    (row) => row.disabled === true || isRuntimeAccountModel(String(row.id)) || orgSelectionTarget(row, purpose),
   );
 }
 
@@ -105,6 +105,7 @@ export function orgSavableModels(
   if (!requireOrgKeys) return models;
   return models.filter(
     (model) =>
+      isRuntimeAccountModel(String(model.id)) ||
       isOrgKeysDisallowedRow(model) ||
       modelSelectionFromDefinition(model, undefined, "evalTarget")?.source ===
         "org",
@@ -114,7 +115,7 @@ export function orgSavableModels(
 /**
  * The rows an eval model picker offers: {@link orgSavableModels}, with a
  * harness's lock on each row it can't run (under the policy, a harness runs
- * only on an organization connection to its own vendor).
+ * only on an organization connection that serves its API).
  */
 export function evalModelRows(
   models: ModelDefinition[],
@@ -143,12 +144,12 @@ export function resolveEvalModelChoice(
     ? findModelForStoredChoice({ modelId, selection }, models, undefined, {
         exactSelection: requireOrgKeys,
       })
-    : requireOrgKeys && saved && !isRuntimeChosenModelSentinel(modelId)
+    : requireOrgKeys && saved && !isRuntimeAccountModel(modelId)
       ? undefined
       : models.find((model) => String(model.id) === modelId);
   return (
     row ??
-    (requireOrgKeys && saved && !isRuntimeChosenModelSentinel(modelId)
+    (requireOrgKeys && saved && !isRuntimeAccountModel(modelId)
       ? orgKeysDisallowedRow(savedModelRow(modelId, models))
       : { id: modelId, name: compactModelLabel(modelId), provider: "unknown" })
   );

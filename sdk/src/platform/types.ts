@@ -14,6 +14,13 @@ export type {
   PlatformConformanceSettingsSource,
   PlatformConformanceSuiteKind,
 } from "./conformance-types.js";
+export type {
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSource,
+  PlatformServerRevisionSummary,
+  PlatformServerRevisionTool,
+} from "./server-revision-types.js";
 import type {
   SwarmJourneyFinding,
   SwarmJourneyFindings,
@@ -59,6 +66,16 @@ export type {
   PlatformFindingsJobStatus,
   PlatformReadinessObservationReason,
 } from "./analysis-outcome-types.js";
+import type { PlatformEvalFindingsView } from "./findings-view-types.js";
+export type {
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingProblem,
+} from "./findings-view-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -5343,6 +5360,11 @@ export interface PlatformUnifiedFindings {
   };
   canBuild: boolean;
   canEnrich: boolean;
+  /**
+   * One problem per recorded observation, joined by the backend. Absent from
+   * older backends. Check `version` before rendering; render it alone.
+   */
+  findingsView?: PlatformEvalFindingsView;
 }
 
 export interface PlatformInsightsEnvelope {
@@ -6013,6 +6035,12 @@ export interface PlatformReadinessRun {
   authMode: "headless" | "interactive" | "provided-token" | null;
   capabilities: string[];
   attemptCount: number;
+  /**
+   * The run stopped on the server and waits for the person who started it:
+   * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   * Absent from deployments older than the field: read it as `false`.
+   */
+  resumable?: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;
@@ -6022,6 +6050,10 @@ export interface PlatformReadinessRun {
   llmObservations: PlatformReadinessObservationState;
   hasReport: boolean;
   reportUrl: string | null;
+  /** The directory submission the run graded; `null` for a run started from a server. */
+  submissionId: string | null;
+  /** The submission's revision when the run was requested: the answers it graded. */
+  submissionRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }

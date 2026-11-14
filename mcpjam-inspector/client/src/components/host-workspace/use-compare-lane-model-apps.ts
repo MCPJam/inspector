@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { DisplayBehavior } from "@mcpjam/sdk/widget-runtime";
 import type { ExtensionLaunchProfile } from "@/lib/extension-launch-health";
 import type { ExtensionCapabilities } from "./extension-owners";
 import type { ThreadAppScope } from "./thread-app-api";
@@ -12,6 +13,7 @@ export function useCompareLaneModelApps(
   capabilities?: ExtensionCapabilities,
   profile?: ExtensionLaunchProfile,
   canInvoke?: () => boolean,
+  displayBehavior?: DisplayBehavior,
 ) {
   const workspaceId = scope?.pluginWorkspace.workspaceId;
   const projectId = scope?.projectId;
@@ -25,7 +27,7 @@ export function useCompareLaneModelApps(
     rejectAppMessage,
     modelScope,
     capabilities?.modelContext !== false,
-    capabilities?.displayModes === true,
+    displayBehavior,
     profile,
   );
   const value = useMemo(

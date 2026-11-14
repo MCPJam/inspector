@@ -1,20 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
-import { HARNESS_DESCRIPTORS } from "../harness-descriptors";
+import {
+  HARNESS_DESCRIPTORS,
+  HARNESS_SURFACES,
+  harnessSurfaceRefusal,
+} from "../harness-descriptors";
+import { orgKeySurfaceRefusal } from "../org-key-surfaces";
 
 /** Adding a descriptor field means deciding what every harness says for it. */
 const DESCRIPTOR_KEYS = [
   "controls",
   "credential",
   "displayName",
-  "guest",
-  "local",
   "mcpClient",
   "modelAccess",
-  "orgUpstream",
+  "orgKeys",
   "protocol",
   "reasoningEfforts",
   "runtimeVersion",
+  "unavailableOn",
 ];
 
 const LOOP_CONTROLS = [
@@ -46,6 +50,13 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
     for (const control of Object.values(descriptor.controls)) {
       if (!control.enforced) expect(control.note.trim()).not.toBe("");
     }
+    for (const [surface, reason] of Object.entries(descriptor.unavailableOn)) {
+      expect(HARNESS_SURFACES).toContain(surface);
+      expect(reason).toMatch(/^[A-Z].+\.$/);
+      // The backend's mirror pin captures surface/reason pairs, so each
+      // reason names its runtime.
+      expect(reason.startsWith(descriptor.displayName)).toBe(true);
+    }
   });
 
   it("keeps brokered and own-account harnesses distinct", () => {
@@ -54,20 +65,20 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.protocol).not.toBeNull();
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
-      expect(descriptor.orgUpstream).toBeNull();
+      expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
-      expect(descriptor.local).toBe(false);
-      expect(descriptor.guest).toBe(false);
+      expect(harnessSurfaceRefusal(id, "local")).toBeDefined();
+      expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      // Its boxes get the organization's key only in evals, swarms and the
+      // Playground; the org-key checks enforce that with the same copy.
+      const name = descriptor.displayName;
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(orgKeySurfaceRefusal(name, "study"));
+      expect(harnessSurfaceRefusal(id, "api")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
+      expect(harnessSurfaceRefusal(id, "events")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
     }
   });
 
   it("only admits an organization key when that path is qualified", () => {
-    if (id === "codex" || id === "copilot-cli") {
-      expect(descriptor.orgUpstream).toEqual({ provider: "openai", profile: "openai-native" });
-    } else if (id === "claude-code") {
-      expect(descriptor.orgUpstream).not.toBeNull();
-    } else {
-      expect(descriptor.orgUpstream).toBeNull();
-    }
+    expect(descriptor.orgKeys).toBe(id !== "cursor");
   });
 });

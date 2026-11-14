@@ -570,6 +570,9 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
               sandboxRowId: "sbxrow-e2e",
               sandboxId: container,
               workdir: "/home/user",
+              // The backend's idle window, as its reserve reply sends it: a
+              // warm agent runs only on a box that has one.
+              idleMs: 5 * 60_000,
             },
             harnessMcpProxy: {
               plane: "web-authorized",

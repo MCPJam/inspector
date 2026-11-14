@@ -14,7 +14,6 @@ import { usePluginServerNotices } from "@/hooks/use-plugin-server-notices";
 import { usePluginServerSignIn } from "@/hooks/usePluginServerSignIn";
 import { registerPluginNoticeSignIn } from "@/lib/plugins/plugin-notice-display";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
-import { useProjectSecrets } from "@/hooks/useProjectSecrets";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 import {
@@ -35,10 +34,6 @@ import {
   runnablePluginVersionIds,
   type HiddenEnvironmentVenue,
 } from "@/lib/plugins/hidden-environment";
-import {
-  externalAccountCredentialFor,
-  externalCredentialSecretSelection,
-} from "@/shared/external-credential-selection";
 
 /**
  * Composes the hidden ad-hoc environment a Playground chat runs its plugins
@@ -70,12 +65,12 @@ export interface PlaygroundHiddenEnvironmentInput {
   eligible: boolean;
   /** The chat's client. No client, nothing to compose. */
   hostId: string | null;
-  /** The client's harness, for the key a Cursor client must carry. */
+  /** The client's harness, for where its plugins run. */
   harnessId: string | null | undefined;
   /**
    * The client's settings have loaded, so `harnessId` is its answer rather
-   * than a gap. Until then nothing is composed (and sends wait), so a Cursor
-   * client is never composed without the key it needs.
+   * than a gap. Until then nothing is composed (and sends wait), so the venue
+   * is never decided on a guess.
    */
   hostResolved: boolean;
   /** The selected saved client, never a browser-only runtime override. */
@@ -117,7 +112,6 @@ type Composition = {
   computerAvailable: boolean;
   pluginVersionIds: string[];
   pluginServerIds: string[];
-  secretSelection?: { mode: "explicit"; secretIds: string[] };
 };
 
 type Composed =
@@ -240,56 +234,13 @@ export function usePlaygroundHiddenEnvironment(
     [runnable],
   );
 
-  // A client that signs in with the member's own account (Cursor) runs on a
-  // box that holds that key only if its environment grants it, exactly as the
-  // client turn's own hidden grant does. Read only when such a client has
-  // something to run.
-  const needsCredential = !!externalAccountCredentialFor(
-    harnessId ?? undefined,
-  );
-  const projectSecrets = useProjectSecrets(
-    needsCredential && pluginVersionIds.length > 0 ? projectId : null,
-  );
-  const credential = useMemo(():
-    | { status: "none" }
-    | { status: "loading" }
-    | { status: "missing" }
-    | {
-        status: "granted";
-        selection: { mode: "explicit"; secretIds: string[] };
-      } => {
-    if (!needsCredential) return { status: "none" };
-    if (projectSecrets === undefined) return { status: "loading" };
-    try {
-      const selection = externalCredentialSecretSelection(
-        { harness: harnessId ?? null },
-        projectSecrets,
-      );
-      return selection ? { status: "granted", selection } : { status: "none" };
-    } catch {
-      // No usable key. The client turn refuses this with the copy that says
-      // where to add one, so the chat stays on it rather than composing an
-      // environment that would be refused with less helpful words.
-      return { status: "missing" };
-    }
-  }, [needsCredential, projectSecrets, harnessId]);
-
   const composition = useMemo((): Composition | "loading" | null => {
     if (pluginsPending) return "loading";
     if (!eligible || !projectId || !hostId) return null;
     if (pluginVersionIds.length === 0) return null;
     if (!hostResolved) return "loading";
-    if (credential.status === "missing") return null;
-    if (credential.status === "loading") return "loading";
-    const secretSelection =
-      credential.status === "granted" ? credential.selection : undefined;
     return {
-      key: hiddenEnvironmentCompositionKey({
-        hostId,
-        pluginVersionIds,
-        secretIds: secretSelection?.secretIds,
-        venue,
-      }),
+      key: hiddenEnvironmentCompositionKey({ hostId, pluginVersionIds, venue }),
       projectId,
       hostId,
       venue,
@@ -297,7 +248,6 @@ export function usePlaygroundHiddenEnvironment(
       computerAvailable,
       pluginVersionIds,
       pluginServerIds,
-      ...(secretSelection ? { secretSelection } : {}),
     };
   }, [
     pluginsPending,
@@ -310,7 +260,6 @@ export function usePlaygroundHiddenEnvironment(
     computerAvailable,
     pluginVersionIds,
     pluginServerIds,
-    credential,
   ]);
   const compositionRef = useRef(composition);
   compositionRef.current = composition;
@@ -364,9 +313,6 @@ export function usePlaygroundHiddenEnvironment(
         // No stored servers: each turn names the chat's own selection.
         serverSelection: { mode: "none" },
         pluginVersionIds: versionIds,
-        ...(target.secretSelection
-          ? { secretSelection: target.secretSelection }
-          : {}),
       });
       return result.environment.environmentId;
     },

@@ -1,3 +1,4 @@
+import { cursorModelRows } from "../cursor-models";
 import { describe, expect, it } from "vitest";
 import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import type { HostDetail } from "@/hooks/useClients";
@@ -96,12 +97,40 @@ describe("saved-client comparison resolution", () => {
   });
 
   it("keeps a disabled saved model on the unavailable result", () => {
-    const locked = { ...hosted, disabled: true, disabledReason: "Sign in to use this frontier model" };
+    const locked = {
+      ...hosted,
+      disabled: true,
+      disabledReason: "Sign in to use this frontier model",
+    };
     expect(resolve(host, [locked])).toMatchObject({
       status: "unavailable",
       model: locked,
     });
   });
+
+  it.each([
+    ["missing", []],
+    ["locked", [{ ...hosted, disabled: true }]],
+  ])(
+    "reads a %s saved model as loading while sign-in and the catalog settle",
+    (_label, models: ModelDefinition[]) => {
+      // Just after the sign-in redirect reloads the page, the model list can
+      // lack the saved model only because it has not loaded yet.
+      const result = resolvePlaygroundClientColumn({
+        paneId: host.hostId,
+        hostId: host.hostId,
+        slot: { host, isLoading: false },
+        hosts: [],
+        models,
+        modelsSettling: true,
+      });
+      expect(result).toMatchObject({
+        status: "loading",
+        reason: "Loading saved configuration…",
+      });
+      expect(resolve(host, models).status).toBe("unavailable");
+    },
+  );
 
   it("keys a column by its pane, so two panes on one client stay apart", () => {
     const panes = ["a", "a~2"].map((paneId) =>
@@ -192,10 +221,16 @@ describe("each column reads the catalog through its own harness", () => {
     it(`${harnessId}: resolves its saved model on its own list, not the lead's`, () => {
       if (HARNESS_DESCRIPTORS[harnessId].modelAccess === "external-account") {
         // Its account picks the model: the sentinel is what runs.
-        const auto = resolve(clientOn({ harness: harnessId }, "cursor/auto"), catalog);
+        const auto = resolve(clientOn({ harness: harnessId }, "cursor/auto"), [
+          ...catalog,
+          ...cursorModelRows({ configured: true, models: [] }),
+        ]);
         expect(auto).toMatchObject({
           status: "ready",
-          column: { compareSubLabel: "Cursor Auto", model: { id: "cursor/auto" } },
+          column: {
+            compareSubLabel: "Cursor Auto",
+            model: { id: "cursor/auto" },
+          },
         });
         // A stale ordinary model is a broken setup the server refuses, never
         // a ready column showing a model the account doesn't run. The picker
@@ -205,13 +240,14 @@ describe("each column reads the catalog through its own harness", () => {
           expect(
             resolve(clientOn({ harness: harnessId }, String(row.id)), catalog),
           ).toMatchObject({
-            status: "invalid",
-            reason: "The saved model choice is invalid. Edit this client in Connect.",
+            status: "unavailable",
           });
         }
         return;
       }
-      const admitted = harnessPickerModels(catalog, { harnessId });
+      const admitted = harnessPickerModels(catalog, { harnessId }).filter(
+        (row) => !row.disabled,
+      );
       const refused = catalog.filter(
         (row) => !admitted.some((kept) => kept.id === row.id),
       );
@@ -222,7 +258,8 @@ describe("each column reads the catalog through its own harness", () => {
       }
       for (const row of refused) {
         expect(
-          resolve(clientOn({ harness: harnessId }, String(row.id)), catalog).status,
+          resolve(clientOn({ harness: harnessId }, String(row.id)), catalog)
+            .status,
         ).toBe("unavailable");
       }
     });
@@ -243,7 +280,10 @@ describe("each column reads the catalog through its own harness", () => {
   it("reads the agent loop before the harness", () => {
     const viaLoop = clientOn({ agentLoop: "codex" }, "openai/gpt-5.5");
     expect(resolve(viaLoop, catalog)).toMatchObject({ status: "ready" });
-    const refusedOnLoop = clientOn({ agentLoop: "codex" }, "anthropic/claude-haiku-4.5");
+    const refusedOnLoop = clientOn(
+      { agentLoop: "codex" },
+      "anthropic/claude-haiku-4.5",
+    );
     expect(resolve(refusedOnLoop, catalog).status).toBe("unavailable");
   });
 
@@ -294,27 +334,26 @@ describe("each column reads the catalog through its own harness", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("ignores a pick on a client whose account chooses the model", () => {
+  it("preserves an explicit Cursor account model picked for one pane", () => {
     const cursor = clientOn({ harness: "cursor" }, "cursor/auto");
-    expect(
-      resolvePlaygroundClientColumn({
-        paneId: "pane",
-        hostId: cursor.hostId,
-        slot: { host: cursor, isLoading: false },
-        hosts: [],
-        models: catalog,
-        pickedSelection: {
-          source: "hosted",
-          modelId: "openai/gpt-5.5",
-          fallback: { provider: "none", model: "none" },
-        },
-      }),
-    ).toMatchObject({
+    const rows = cursorModelRows({
+      configured: true,
+      models: [{ modelId: "cursor/mini", displayName: "Mini" }],
+    });
+    const result = resolvePlaygroundClientColumn({
+      paneId: "pane",
+      hostId: cursor.hostId,
+      slot: { host: cursor, isLoading: false },
+      hosts: [],
+      models: rows,
+      pickedSelection: { source: "legacy", modelId: "cursor/mini" },
+    });
+    expect(result).toMatchObject({
       status: "ready",
       column: {
-        model: { id: "cursor/auto" },
-        modelPicked: false,
-        modelRows: [],
+        model: { id: "cursor/mini", provider: "cursor" },
+        modelPicked: true,
+        selection: { source: "legacy", modelId: "cursor/mini" },
       },
     });
   });

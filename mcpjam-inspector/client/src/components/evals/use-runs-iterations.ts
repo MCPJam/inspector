@@ -1,7 +1,11 @@
 import { useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useMemo } from "react";
-import type { EvalIteration, EvalSuiteRunListItem } from "./types";
+import type {
+  EvalIteration,
+  EvalSuiteRun,
+  EvalSuiteRunListItem,
+} from "./types";
 import { launchRuns } from "../evaluate/run-results-matrix-model";
 import {
   previousCompletedRunOf,
@@ -11,13 +15,15 @@ import {
 const runDetailsQuery = makeFunctionReference<
   "query",
   { runId: string },
-  { run: EvalSuiteRunListItem; iterations: EvalIteration[] } | null
+  { run: EvalSuiteRun; iterations: EvalIteration[] } | null
 >("testSuites:getTestSuiteRunDetails");
 
 export interface RunsIterations {
   /** Every loaded iteration of the requested runs, in run order. */
   iterations: EvalIteration[];
   byRun: ReadonlyMap<string, EvalIteration[]>;
+  /** The full record of each run that answered, keyed by run id. */
+  runsById: ReadonlyMap<string, EvalSuiteRun>;
   /** True while any requested run has not answered yet. */
   isLoading: boolean;
   /** Runs whose read failed (deleted, or access revoked). */
@@ -52,11 +58,12 @@ export function useRunsIterations(
 
   return useMemo(() => {
     const byRun = new Map<string, EvalIteration[]>();
+    const runsById = new Map<string, EvalSuiteRun>();
     const failedRunIds = new Set<string>();
     let isLoading = false;
     for (const runId of key ? key.split(",") : []) {
       const result = results[runId] as
-        | { iterations: EvalIteration[] }
+        | { run: EvalSuiteRun; iterations: EvalIteration[] }
         | null
         | Error
         | undefined;
@@ -69,6 +76,7 @@ export function useRunsIterations(
         continue;
       }
       byRun.set(runId, result.iterations ?? EMPTY_ITERATIONS);
+      if (result.run) runsById.set(runId, result.run);
     }
     const ordered = runIds.filter(
       (runId, index) => runIds.indexOf(runId) === index,
@@ -76,6 +84,7 @@ export function useRunsIterations(
     return {
       iterations: ordered.flatMap((runId) => byRun.get(runId) ?? []),
       byRun,
+      runsById,
       isLoading,
       failedRunIds,
     };

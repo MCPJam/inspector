@@ -209,7 +209,7 @@ describe("the profile schema", () => {
   it("reports each issue with its field path", () => {
     const { profile, issues } = parseClaudeSubmissionProfile({
       ...validProfile(),
-      tagline: "x".repeat(56),
+      tagline: "x".repeat(201),
       documentationUrl: "http://acme.example/docs",
       categories: [],
     });

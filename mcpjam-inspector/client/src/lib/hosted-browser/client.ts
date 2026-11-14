@@ -70,6 +70,13 @@ export interface HostedBrowserSession {
    * holds a parked lease that a stranger has it, with no way to hand it back.
    */
   yours: boolean;
+  /** The desktop's idle window, when the control plane sends it. */
+  idleMs?: number;
+  /**
+   * Is the desktop paused? A read without `ensure` says so without waking
+   * it. Absent from a server too old to say.
+   */
+  asleep?: boolean;
 }
 
 /** A refusal that carries enough for a caller to tell one apart from another. */
@@ -181,8 +188,7 @@ async function authorized(
 
 async function decode<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => null)) as
-    | (T & { error?: string; detail?: string })
-    | null;
+    (T & { error?: string; detail?: string }) | null;
   if (!res.ok) {
     throw new HostedBrowserError(
       body?.detail ?? body?.error ?? "The browser could not be reached.",
@@ -208,6 +214,39 @@ export async function fetchHostedBrowserSession(
     `/session${options.ensure ? "?ensure=1" : ""}`,
   );
   return decode<HostedBrowserSession>(res);
+}
+
+/**
+ * Is the desktop running again? A read without `ensure`, so asking never
+ * wakes it. False when the server cannot say: a paused pane then waits for
+ * input, or for the next check.
+ */
+export async function hostedBrowserAwake(
+  tokens: BrowserTokenCache,
+): Promise<boolean> {
+  try {
+    return (await fetchHostedBrowserSession(tokens)).asleep === false;
+  } catch {
+    // Unreachable or refused: still paused as far as the pane can tell.
+    return false;
+  }
+}
+
+/**
+ * Tell the control plane a person is using the desktop through VNC, whose
+ * input never passes the relay. Never throws: a missed ping only means the
+ * desktop may pause a little early, and the next input sends another.
+ */
+export async function pingHostedBrowserInput(
+  tokens: BrowserTokenCache,
+): Promise<boolean> {
+  try {
+    const res = await authorized(tokens, "/input-ping", { method: "POST" });
+    return res.ok;
+  } catch {
+    // Unreachable or refused: nothing to undo, and the next input retries.
+    return false;
+  }
 }
 
 /**

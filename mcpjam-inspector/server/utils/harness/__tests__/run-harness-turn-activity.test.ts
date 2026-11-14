@@ -122,7 +122,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -424,6 +423,28 @@ describe("runHarnessTurn activity", () => {
     );
     expect(JSON.stringify(result.messageHistory)).toContain("cat: missing.txt");
     expect(onToolResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles a repeated approved call without adding a second card or replacing its input", async () => {
+    const originalInput = { providerIdentifier: "host-tools", toolName: "show_app", args: {} };
+    harnessState.script = [
+      { type: "tool-call", toolCallId: "prior-call", toolName: "mcp__docs__show_app", input: {} },
+      { type: "tool-result", toolCallId: "prior-call", toolName: "mcp__docs__show_app", output: "App result" },
+      { type: "text-delta", delta: "Opened." },
+    ];
+    harnessState.finalText = "Opened.";
+    const result = await runHarnessTurn(options({ messages: [
+      { role: "user", content: "Open the App" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "prior-call", toolName: "show_app", input: originalInput,
+        providerOptions: { mcpjam: { serverId: "docs" } } }] },
+    ] }) as never, "ui");
+    const chunks = sseChunks(await result.response!.text());
+    expect(chunks.filter(chunk => chunk.type === "tool-input-available")).toHaveLength(0);
+    expect(chunks.filter(chunk => chunk.type === "tool-output-available")).toHaveLength(1);
+    const calls = result.messageHistory.flatMap(message => Array.isArray(message.content) ? message.content : [])
+      .filter(part => part.type === "tool-call");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ toolCallId: "prior-call", input: originalInput });
   });
 
   it("persists a resumed tool failure once when the call came from history", async () => {

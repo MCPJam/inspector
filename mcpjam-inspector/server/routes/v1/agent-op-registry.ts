@@ -61,7 +61,16 @@ import {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
+  listDirectoryFlowsOperation,
+  getDirectoryFlowOperation,
+  createDirectorySubmissionOperation,
+  listDirectorySubmissionsOperation,
+  getDirectorySubmissionOperation,
+  updateDirectorySubmissionOperation,
+  startDirectorySubmissionRunOperation,
+  getDirectorySubmissionResultsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -116,6 +125,11 @@ import {
   listServerPromptsOperation,
   listServerResourcesOperation,
   listServerToolsOperation,
+  listServerRevisionsOperation,
+  getServerRevisionOperation,
+  diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
   readServerResourceOperation,
   listServerSkillsOperation,
   getServerSkillOperation,
@@ -1557,6 +1571,36 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getReadinessRunOperation, tier: "direct" },
   { operation: listReadinessRunsOperation, tier: "direct" },
   { operation: getReadinessReportOperation, tier: "direct" },
+  // Directory submissions. Answers spend nothing and name the agent as their
+  // author; a run dials the submission's server, so a person approves it.
+  { operation: listDirectoryFlowsOperation, tier: "direct" },
+  { operation: getDirectoryFlowOperation, tier: "direct" },
+  { operation: createDirectorySubmissionOperation, tier: "direct" },
+  { operation: listDirectorySubmissionsOperation, tier: "direct" },
+  { operation: getDirectorySubmissionOperation, tier: "direct" },
+  {
+    operation: updateDirectorySubmissionOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
+    ],
+  },
+  {
+    operation: startDirectorySubmissionRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // Platform-paid, like the readiness starts: no money to warn about.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+    ],
+  },
+  { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
   {
     operation: startConformanceRunOperation,
     tier: "gated",
@@ -1608,7 +1652,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
     ],
   },
+  {
+    // The requester finishing the run a person already approved: it creates
+    // nothing, so it needs no second approval.
+    operation: resumeReadinessRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- When `get_readiness_run` reports `resumable: true`, the run stopped on the server before it finished. Call `resume_readiness_run` once, then keep polling `get_readiness_run`. Only the person who started the run can resume it; if it is refused, say so and do not retry.",
+    ],
+  },
   { operation: listServerToolsOperation, tier: "direct" },
+  { operation: listServerRevisionsOperation, tier: "direct" },
+  { operation: getServerRevisionOperation, tier: "direct" },
+  { operation: diffServerRevisionsOperation, tier: "direct" },
+  // Account metadata only, structurally without a token, like the secrets
+  // reads; the three writes are in EXCLUDED_FROM_AGENT.
+  { operation: listServerAccountsOperation, tier: "direct" },
+  { operation: getServerAccountOperation, tier: "direct" },
   { operation: listServerPromptsOperation, tier: "direct" },
   { operation: listServerResourcesOperation, tier: "direct" },
   {
@@ -2625,6 +2685,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // deliberate, it does not make a removal recoverable.
   delete_persona:
     "Removes a persona from the roster; the agent proposes authoring, never destruction.",
+  delete_directory_submission:
+    "Deletes a submission and every answer in it, and nothing here can restore them; the agent proposes authoring, never destruction.",
   // PROJECT SECRET WRITES. The first two are excluded for a reason that is not
   // about risk appetite at all: their INPUT carries the plaintext credential,
   // so it would transit model context and be written into this turn's
@@ -2639,6 +2701,13 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as create_secret: a rotation carries the new plaintext as an argument. Available on REST/SDK/CLI.",
   delete_secret:
     "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
+  // SERVER ACCOUNT WRITES, on the same three grounds as the secrets above.
+  upload_server_account_tokens:
+    "The access token is an argument, so it would reach model context and the turn transcript before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the token comes from.",
+  update_server_account:
+    "Making an account the default decides which account runs with no saved account choice sign in as. That is a person's choice, made on REST, the SDK or the CLI.",
+  delete_server_account:
+    "Deletes an account and asks its issuer to revoke the token, which nothing here can undo; the agent proposes authoring, never destruction.",
   // TRACE DESTINATIONS — all ten, and the reasons split into three groups.
   //
   // The two credential-carrying writes are excluded on the same argument as

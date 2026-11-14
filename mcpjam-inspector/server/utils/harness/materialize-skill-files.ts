@@ -1,31 +1,32 @@
 /**
- * Harness materialization of a skill's SUPPORTING FILES onto the Computer.
+ * Harness materialization of a skill's SUPPORTING FILES onto the Computer: the
+ * box writer's file step (`box-skills-writer.ts` is its only caller).
  *
  * The harness adapter writes SKILL.md itself (via the `skills` param), but it has
  * no concept of supporting files (`scripts/`, `references/`, `assets/`). This
- * pass — run in `onSandboxSession` right AFTER `reconcileSkillDirs` — fetches
- * each visible skill's file blobs from Convex and writes them onto the box under
- * `<runtime skills root>/<name>/<path>` via `writeBinaryFile` (no 16k exec cap).
- * The root is the ADAPTER's (`HarnessRuntimeAdapter.skillsBaseDir`: Claude Code
- * `~/.claude/skills`, Codex `~/.agents/skills`) so this pass always lands beside
- * the SKILL.md the adapter itself wrote.
+ * pass writes each delivered skill's files onto the box under
+ * `<runtime skills root>/<name>/<path>` via `writeBinaryFile` (no 16k exec cap),
+ * beside the SKILL.md the adapter wrote. A file's bytes are either in hand (a
+ * frozen run downloaded them at run start) or behind a signed link this pass
+ * downloads.
  *
  * Invariants:
- *  - Fail-soft ALWAYS: a bad URL / write error skips that file, never the turn.
+ *  - Fail-soft ALWAYS: a bad URL / write error skips that file, never the turn;
+ *    the skill it belongs to is reported failed.
  *  - Every target path is RE-VALIDATED with `isPathWithinDirectory` against its
  *    skill dir (defense-in-depth over the backend's path validation).
- *  - A 20MB per-turn byte budget bounds the write; files beyond it are skipped
- *    with a logged reason (never silent).
+ *  - A 20MB per-turn byte budget bounds the downloads; files beyond it are
+ *    skipped with a logged reason (never silent).
  *  - Stale-file prune covers EVERY delivered skill dir — including a skill whose
  *    file set became empty (reconcile only removes deleted/renamed dirs, so an
  *    existing skill's orphaned files would otherwise linger). One global `find`
  *    scopes the sweep to delivered dirs; the caller must NOT invoke this on a
  *    fetch failure (an empty file set would then delete every skill's files).
  */
+import type { PinnedSkillArtifactFile } from "../../../shared/skill-types.js";
 import { isPathWithinDirectory } from "../skill-parser.js";
 import type { RuntimeSkillFile } from "./runtime-skills.js";
 import { shellQuote } from "./shell-quote.js";
-import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 import { reserveUploadBytes } from "../computers/control-plane-client.js";
 
@@ -132,6 +133,10 @@ async function getOnBoxFileSizes(
   return sizes;
 }
 
+/** A supporting file of the skill `skillId`: its bytes in hand, or a link. */
+export type BoxSkillFile =
+  (PinnedSkillArtifactFile & { skillId: string }) | RuntimeSkillFile;
+
 /**
  * Write every runtime skill file onto the box under its skill dir. `skillNamesById`
  * maps skillId → on-box dir name for ALL skills delivered this turn (not only
@@ -143,21 +148,30 @@ async function getOnBoxFileSizes(
  */
 export async function materializeSkillFiles(args: {
   session: MaterializeSession;
-  files: RuntimeSkillFile[];
-  skillNamesById: Map<string, string>;
-  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
-   *  to Claude Code's for legacy callers. */
-  skillsBase?: string;
+  files: readonly BoxSkillFile[];
+  skillNamesById: ReadonlyMap<string, string>;
+  /** The runtime's skills folder, absolute. */
+  skillsBase: string;
   /** Convex computer row id. When present, each write reserves its NET-NEW bytes
    *  against the computer's cumulative-upload quota (a file already on the box at
    *  the same size reserves nothing); over quota → that file is skipped. Absent
    *  (e.g. a non-computer host or tests) ⇒ no metering. */
   computerId?: string;
   signal?: AbortSignal;
-}): Promise<{ written: number; skipped: number }> {
-  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
+}): Promise<{
+  written: number;
+  skipped: number;
+  /** Skill folder name → why one of its files is not on the box. */
+  failed: Map<string, string>;
+}> {
+  const { skillsBase } = args;
   let written = 0;
   let skipped = 0;
+  const failed = new Map<string, string>();
+  const fail = (skill: string, path: string, reason: string) => {
+    skipped += 1;
+    if (!failed.has(skill)) failed.set(skill, `${path}: ${reason}`);
+  };
   let budget = MATERIALIZE_BUDGET_BYTES;
   // Only pay for the size sweep when we're actually metering.
   const onBoxSizes = args.computerId
@@ -207,7 +221,27 @@ export async function materializeSkillFiles(args: {
         skill: skillName,
         path: file.path,
       });
-      skipped += 1;
+      fail(skillName, file.path, "path escapes the skill folder");
+      continue;
+    }
+    // A frozen run's copy: the bytes were downloaded, and bounded, at run start.
+    if ("content" in file || "base64" in file) {
+      try {
+        await args.session.writeBinaryFile({
+          path: `${skillDir}/${file.path}`,
+          content:
+            typeof file.content === "string"
+              ? new TextEncoder().encode(file.content)
+              : Buffer.from(file.base64 ?? "", "base64"),
+        });
+        written += 1;
+      } catch (error) {
+        fail(
+          skillName,
+          file.path,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       continue;
     }
     if (!file.url) {
@@ -221,7 +255,7 @@ export async function materializeSkillFiles(args: {
         skill: skillName,
         path: file.path,
       });
-      skipped += 1;
+      fail(skillName, file.path, "over the per-turn budget");
       continue;
     }
     try {
@@ -233,7 +267,7 @@ export async function materializeSkillFiles(args: {
         : timeout;
       const res = await fetch(file.url, { signal });
       if (!res.ok) {
-        skipped += 1;
+        fail(skillName, file.path, `download failed (HTTP ${res.status})`);
         continue;
       }
       const bytes = new Uint8Array(await res.arrayBuffer());
@@ -243,7 +277,7 @@ export async function materializeSkillFiles(args: {
           skill: skillName,
           path: file.path,
         });
-        skipped += 1;
+        fail(skillName, file.path, "over the per-turn budget");
         continue;
       }
       const targetPath = `${skillDir}/${file.path}`;
@@ -269,7 +303,7 @@ export async function materializeSkillFiles(args: {
                   path: file.path,
                 }
               );
-              skipped += 1;
+              fail(skillName, file.path, "over the computer's storage quota");
               continue;
             }
             logger.warn(
@@ -295,7 +329,11 @@ export async function materializeSkillFiles(args: {
         path: file.path,
         error: error instanceof Error ? error.message : String(error),
       });
-      skipped += 1;
+      fail(
+        skillName,
+        file.path,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
   if (written > 0) {
@@ -303,5 +341,5 @@ export async function materializeSkillFiles(args: {
       written,
     });
   }
-  return { written, skipped };
+  return { written, skipped, failed };
 }

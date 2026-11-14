@@ -117,10 +117,11 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *  provider-qualified Gateway id verbatim (`anthropic/claude-fable-5`) — so the
  *  model on the wire is the model that was asked for, never the CLI default.
  *
- *  On the NATIVE profile (a turn on the organization's own Anthropic key)
- *  there is no Gateway, so the overrides are switched off by the turn's
- *  `MCPJAM_HARNESS_UPSTREAM_PROFILE=anthropic-native` env and the CLI's native
- *  ids go on the wire as they are (pinned to the leased model by the turn).
+ *  On an organization profile (`anthropic-native` on its own Anthropic key,
+ *  `org-gateway` on its gateway) there is no Gateway, so any
+ *  `MCPJAM_HARNESS_UPSTREAM_PROFILE` other than `gateway` switches the
+ *  overrides off and the CLI's ids go on the wire as they are (pinned to the
+ *  leased model by the turn).
  *  The turn's `env` reaches the bridge on its `start` message (`start.env`),
  *  NOT as the bridge process's own environment, so that is where it is read.
  *
@@ -132,7 +133,8 @@ const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `const HOST_TOOL_PREFIX = "mcp
 const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `const HOST_TOOL_PREFIX = "mcp__harness-tools__";
 function gatewayModelOverrideSettingsFor(model, env) {
   if (typeof model !== "string") return undefined;
-  if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
+  const profile = env?.MCPJAM_HARNESS_UPSTREAM_PROFILE;
+  if (profile && profile !== "gateway") return undefined;
   let overrides;
   if (model === "haiku") {
     const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
@@ -248,7 +250,8 @@ const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (t
 const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
 const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model, env) {
     if (typeof model !== "string") return undefined;
-    if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
+    const profile = env?.MCPJAM_HARNESS_UPSTREAM_PROFILE;
+    if (profile && profile !== "gateway") return undefined;
     let overrides;
     if (model === "haiku") {
       const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";

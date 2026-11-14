@@ -34,8 +34,11 @@ import {
   TASKS_CATALOG,
   protocolAdviceCatalog,
   protocolCatalog,
+  shownTasksCatalog,
+  useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import { Collapse, SUITE_COPY } from "./conformance-ui";
+import { ConformanceSourceVersion } from "./conformance-source-version";
 
 export type CheckSuite = "protocol" | "apps" | "tasks";
 
@@ -242,7 +245,10 @@ export function ConformanceCheckPicker({
     checkId: string,
   ) => string | undefined;
 }) {
-  const catalogs = checkCatalogs(versionPin);
+  const catalogs = {
+    ...checkCatalogs(versionPin),
+    tasks: shownTasksCatalog(useTasksUpdateCheckEnabled()),
+  };
   const advice = adviceCatalogs(versionPin);
   const adviceCatalog = (suite: AdviceSuite) =>
     showAdvice ? advice[suite] : [];
@@ -289,101 +295,107 @@ export function ConformanceCheckPicker({
   };
   const oauthAdvice = adviceSection("oauth", selection.oauth !== false);
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      {CHECK_SUITES.map((suite) => {
-        const catalog = catalogs[suite];
-        const picked = pickedIds(selection, suite, catalog);
-        const inputStatus = checkInputStatus
-          ? (checkId: string) => checkInputStatus(suite, checkId)
-          : undefined;
-        const adviceSuite = suite === "apps" ? undefined : suite;
-        const suiteAdvice = adviceSuite
-          ? adviceSection(adviceSuite, picked.size > 0)
-          : undefined;
-        const isPicked = (id: string) =>
-          picked.has(id) || Boolean(suiteAdvice?.picked.has(id));
-        const titleOf = (id: string) =>
-          (
-            catalog.find((item) => item.id === id) ??
-            suiteAdvice?.catalog.find((item) => item.id === id)
-          )?.title;
-        const renderExtra = renderCheckExtra
-          ? (entry: CatalogEntry, opened: boolean) =>
-              renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
-          : undefined;
-        const renderTag = (entry: CatalogEntry) => {
-          const status = inputStatus?.(entry.id);
-          return status ? (
-            <NeedsInputTag
-              status={status}
-              picked={isPicked(entry.id)}
-              advice={Boolean(
-                suiteAdvice?.catalog.some((item) => item.id === entry.id),
-              )}
+    // A pinned run is graded against that revision's pages, so the rows link
+    // them; on "auto" the revision is not known yet and they link the current.
+    <ConformanceSourceVersion
+      version={versionPin === "auto" ? undefined : versionPin}
+    >
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        {CHECK_SUITES.map((suite) => {
+          const catalog = catalogs[suite];
+          const picked = pickedIds(selection, suite, catalog);
+          const inputStatus = checkInputStatus
+            ? (checkId: string) => checkInputStatus(suite, checkId)
+            : undefined;
+          const adviceSuite = suite === "apps" ? undefined : suite;
+          const suiteAdvice = adviceSuite
+            ? adviceSection(adviceSuite, picked.size > 0)
+            : undefined;
+          const isPicked = (id: string) =>
+            picked.has(id) || Boolean(suiteAdvice?.picked.has(id));
+          const titleOf = (id: string) =>
+            (
+              catalog.find((item) => item.id === id) ??
+              suiteAdvice?.catalog.find((item) => item.id === id)
+            )?.title;
+          const renderExtra = renderCheckExtra
+            ? (entry: CatalogEntry, opened: boolean) =>
+                renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
+            : undefined;
+          const renderTag = (entry: CatalogEntry) => {
+            const status = inputStatus?.(entry.id);
+            return status ? (
+              <NeedsInputTag
+                status={status}
+                picked={isPicked(entry.id)}
+                advice={Boolean(
+                  suiteAdvice?.catalog.some((item) => item.id === entry.id),
+                )}
+              />
+            ) : null;
+          };
+          const notApplicableReason = checkNotApplicable
+            ? (entry: CatalogEntry) => checkNotApplicable(suite, entry.id)
+            : undefined;
+          return (
+            <SuiteChecks
+              key={suite}
+              title={SUITE_COPY[suite].title}
+              description={SUITE_COPY[suite].description}
+              catalog={catalog}
+              countLabel={countLabel}
+              defaultOpen={defaultOpen}
+              onSuiteChange={(value) => {
+                const next = withPicked(
+                  selection,
+                  suite,
+                  catalog,
+                  catalog.map((entry) => entry.id),
+                  value,
+                );
+                onChange(
+                  adviceSuite ? withAllAdvice(next, adviceSuite, value) : next,
+                );
+              }}
+              isPicked={(id) => picked.has(id)}
+              needsInput={(id) => inputStatus?.(id) === "missing"}
+              onCheckChange={(id, value) =>
+                onChange(withPicked(selection, suite, catalog, [id], value))
+              }
+              suiteExtra={renderSuiteExtra?.(suite)}
+              renderExtra={renderExtra}
+              renderTag={renderTag}
+              notApplicableReason={notApplicableReason}
+              advice={suiteAdvice?.prop}
+              needsInputCount={
+                catalog.filter(
+                  (entry) =>
+                    picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
+                ).length
+              }
             />
-          ) : null;
-        };
-        const notApplicableReason = checkNotApplicable
-          ? (entry: CatalogEntry) => checkNotApplicable(suite, entry.id)
-          : undefined;
-        return (
-          <SuiteChecks
-            key={suite}
-            title={SUITE_COPY[suite].title}
-            description={SUITE_COPY[suite].description}
-            catalog={catalog}
-            countLabel={countLabel}
-            defaultOpen={defaultOpen}
-            onSuiteChange={(value) => {
-              const next = withPicked(
-                selection,
-                suite,
-                catalog,
-                catalog.map((entry) => entry.id),
-                value,
-              );
-              onChange(
-                adviceSuite ? withAllAdvice(next, adviceSuite, value) : next,
-              );
-            }}
-            isPicked={(id) => picked.has(id)}
-            needsInput={(id) => inputStatus?.(id) === "missing"}
-            onCheckChange={(id, value) =>
-              onChange(withPicked(selection, suite, catalog, [id], value))
-            }
-            suiteExtra={renderSuiteExtra?.(suite)}
-            renderExtra={renderExtra}
-            renderTag={renderTag}
-            notApplicableReason={notApplicableReason}
-            advice={suiteAdvice?.prop}
-            needsInputCount={
-              catalog.filter(
-                (entry) =>
-                  picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
-              ).length
-            }
-          />
-        );
-      })}
-      <SuiteChecks
-        title={SUITE_COPY.oauth.title}
-        description={SUITE_COPY.oauth.description}
-        catalog={OAUTH_CATALOG}
-        countLabel={countLabel}
-        defaultOpen={defaultOpen}
-        onSuiteChange={(value) =>
-          onChange(
-            withAllAdvice(withOAuthSuite(selection, value), "oauth", value),
-          )
-        }
-        isPicked={(id) => isOAuthStepScored(selection, id)}
-        onCheckChange={(id, value) =>
-          onChange(withOAuthStep(selection, id, value))
-        }
-        listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
-        advice={oauthAdvice.prop}
-      />
-    </div>
+          );
+        })}
+        <SuiteChecks
+          title={SUITE_COPY.oauth.title}
+          description={SUITE_COPY.oauth.description}
+          catalog={OAUTH_CATALOG}
+          countLabel={countLabel}
+          defaultOpen={defaultOpen}
+          onSuiteChange={(value) =>
+            onChange(
+              withAllAdvice(withOAuthSuite(selection, value), "oauth", value),
+            )
+          }
+          isPicked={(id) => isOAuthStepScored(selection, id)}
+          onCheckChange={(id, value) =>
+            onChange(withOAuthStep(selection, id, value))
+          }
+          listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
+          advice={oauthAdvice.prop}
+        />
+      </div>
+    </ConformanceSourceVersion>
   );
 }
 

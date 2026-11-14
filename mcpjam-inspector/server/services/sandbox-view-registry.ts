@@ -6,7 +6,6 @@ import {
   sandboxViewHeaders,
   SANDBOX_VIEW_DENY_POLICY,
 } from "../utils/sandbox-view-response.js";
-import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { PreparedSandboxView } from "@mcpjam/sdk/widget-runtime";
 import { renderSandboxProxyHtml } from "../routes/apps/mcp-apps/sandbox-proxy-html.js";
@@ -25,11 +24,18 @@ export const SANDBOX_VIEW_PATH = "/api/apps/mcp-apps/sandbox-proxy";
 const MAX_VIEWS = 32;
 const MAX_OWNER_VIEWS = 16;
 
+/**
+ * A single UUID label under `localhost`, the only hostname shape the registry
+ * mints. Every such host belongs to the App partition: an admitted one serves
+ * its document and the rest 404. Other names fall through to the Inspector.
+ */
+const APP_HOST =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.localhost\.?(?::\d*)?$/;
+
 interface Entry {
   id: string;
   fingerprint: string;
   lease: SandboxViewLease;
-  server: Server;
   proxyUrl: string;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -46,22 +52,24 @@ export function sandboxViewFingerprint(input: SandboxViewInput): string {
   );
 }
 
-/** Owns only document metadata and bounded loopback listeners; never stores App HTML. */
+function notFound(): Response {
+  return new Response("Not Found", {
+    status: 404,
+    headers: sandboxViewHeaders(SANDBOX_VIEW_DENY_POLICY),
+  });
+}
+
+/**
+ * Owns local App document leases; never stores App HTML. Each admission gets
+ * its own `<uuid>.localhost` origin on the port the browser already uses to
+ * reach the Inspector, so the document loads wherever that port is forwarded
+ * (Docker, SSH tunnels, devcontainers) and needs no listener of its own.
+ */
 export class SandboxViewRegistry {
   private readonly entries = new Map<string, Entry>();
   private readonly viewKeys = new Map<string, string>();
-  private reserved = 0;
-  private closing = false;
-  private readonly reservedOwners = new Map<string, number>();
-  private readonly pending = new Map<
-    string,
-    { fingerprint: string; result: Promise<PreparedSandboxView> }
-  >();
 
-  constructor(
-    private readonly now = Date.now,
-    private readonly port = 0,
-  ) {}
+  constructor(private readonly now = Date.now) {}
 
   private arm(entry: Entry): void {
     clearTimeout(entry.timer);
@@ -72,12 +80,17 @@ export class SandboxViewRegistry {
     entry.timer.unref?.();
   }
 
+  /**
+   * `port` is the port the browser used to reach the Inspector for this
+   * admission ("" for the scheme default); the App origin reuses it.
+   */
   async prepare(
     input: SandboxViewInput,
     ownerHash: string,
+    port: string,
     signal?: AbortSignal,
   ): Promise<PreparedSandboxView> {
-    if (this.closing) throw new Error("App document service is closed");
+    signal?.throwIfAborted();
     const keyHash = sandboxDigest(
       JSON.stringify([ownerHash, input.viewInstanceId]),
     );
@@ -91,158 +104,111 @@ export class SandboxViewRegistry {
       this.arm(old);
       return this.response(old);
     }
-    const pending = this.pending.get(keyHash);
-    if (pending) {
-      if (pending.fingerprint !== fingerprint)
-        throw new Error("App admission changed while being prepared");
-      return pending.result;
-    }
-    const result = this.create(input, ownerHash, keyHash, fingerprint, signal);
-    this.pending.set(keyHash, { fingerprint, result });
-    try {
-      return await result;
-    } finally {
-      this.pending.delete(keyHash);
-    }
+    return this.create(input, ownerHash, keyHash, fingerprint, port);
   }
 
-  private async create(
+  private create(
     input: SandboxViewInput,
     ownerHash: string,
     keyHash: string,
     fingerprint: string,
-    signal?: AbortSignal,
-  ): Promise<PreparedSandboxView> {
+    port: string,
+  ): PreparedSandboxView {
     if (input.admissionId)
       throw new Error("App admission is no longer active; reopen the App");
     if (
-      this.entries.size + this.reserved >= MAX_VIEWS ||
+      this.entries.size >= MAX_VIEWS ||
       [...this.entries.values()].filter(
         (entry) => entry.lease.ownerHash === ownerHash,
-      ).length +
-        (this.reservedOwners.get(ownerHash) ?? 0) >=
-        MAX_OWNER_VIEWS
+      ).length >= MAX_OWNER_VIEWS
     )
       throw new Error("Too many open Apps; close an App and try again");
+    if (!/^\d{0,5}$/.test(port))
+      throw new Error("App document port is invalid");
     const policy = checkedSandboxPolicy(
       `${resolveSandboxViewPolicy(input, ownerHash)}, frame-ancestors 'self' ${input.hostOrigin}`,
     );
-    this.reserved++;
-    this.reservedOwners.set(
+    const id = randomUUID();
+    const leaseBase = {
+      generation: id,
+      keyHash,
       ownerHash,
-      (this.reservedOwners.get(ownerHash) ?? 0) + 1,
+      sourceHash: sandboxSourceDigest(input.source),
+      htmlHash: sandboxDigest(input.html),
+      policyHash: sandboxDigest(policy),
+      hostOrigin: input.hostOrigin,
+      // A fresh loopback hostname gives every admission its own browser
+      // origin on the shared port. `respond` rejects any other Host.
+      viewOrigin: `http://${id}.localhost${port ? `:${port}` : ""}`,
+      policy,
+    };
+    const lease: SandboxViewLease = {
+      ...leaseBase,
+      identityHash: sandboxViewIdentity(leaseBase),
+      expiresAt: this.now() + SANDBOX_VIEW_LEASE_MS,
+    };
+    const capability = sealSandboxViewCapability(
+      lease.keyHash,
+      lease.identityHash,
+      lease.viewOrigin,
     );
-    let entry: Entry | undefined;
-    let server: Server | undefined;
+    const entry: Entry = {
+      id,
+      fingerprint,
+      lease,
+      proxyUrl: `${lease.viewOrigin}${SANDBOX_VIEW_PATH}?view_token=${capability}`,
+    };
+    this.entries.set(id, entry);
+    this.viewKeys.set(keyHash, id);
+    this.arm(entry);
+    return this.response(entry);
+  }
+
+  /**
+   * Answers every request to an App host: the admitted document at its exact
+   * origin, path and capability, and 404 for anything else. Returns null for
+   * other hosts so the Inspector handles them.
+   */
+  respond(request: Request): Response | null {
+    const host = (request.headers.get("host") ?? "").toLowerCase();
+    if (!APP_HOST.test(host)) return null;
+    const entry = this.entries.get(host.slice(0, host.indexOf(".")));
+    if (
+      !entry ||
+      entry.lease.expiresAt <= this.now() ||
+      request.method !== "GET" ||
+      `http://${host}` !== entry.lease.viewOrigin
+    )
+      return notFound();
+    let url: URL;
     try {
-      signal?.throwIfAborted();
-      {
-        server = createServer((request, response) => {
-          response.statusCode = 404;
-          for (const [name, value] of Object.entries(
-            sandboxViewHeaders(SANDBOX_VIEW_DENY_POLICY),
-          ))
-            response.setHeader(name, value);
-          if (
-            !entry ||
-            entry.lease.expiresAt <= this.now() ||
-            request.method !== "GET"
-          ) {
-            response.end("Not Found");
-            return;
-          }
-          try {
-            const url = new URL(request.url ?? "/", entry.lease.viewOrigin);
-            if (
-              request.headers.host !== new URL(entry.lease.viewOrigin).host ||
-              url.pathname !== SANDBOX_VIEW_PATH
-            ) {
-              response.end("Not Found");
-              return;
-            }
-            const claim = openSandboxViewCapability(
-              url.searchParams.get("view_token") ?? "",
-              entry.lease.viewOrigin,
-            );
-            if (
-              claim.keyHash !== entry.lease.keyHash ||
-              claim.identityHash !== entry.lease.identityHash
-            ) {
-              response.end("Not Found");
-              return;
-            }
-            const document = renderSandboxProxyHtml({
-              htmlSha256: entry.lease.htmlHash,
-              hostOrigin: entry.lease.hostOrigin,
-              admissionId: entry.id,
-            });
-            response.writeHead(200, sandboxViewHeaders(entry.lease.policy));
-            response.end(document);
-          } catch {
-            // Invalid public capabilities return the same bounded, restrictive document response.
-            response.end("Not Found");
-          }
-        });
-        await new Promise<void>((resolve, reject) => {
-          server!.once("error", reject);
-          server!.listen(this.port, "127.0.0.1", () => {
-            server!.removeListener("error", reject);
-            resolve();
-          });
-        });
-        const address = server.address();
-        if (!address || typeof address === "string")
-          throw new Error("App document listener did not open");
-        signal?.throwIfAborted();
-        if (this.closing) throw new Error("App document service is closed");
-        const id = randomUUID();
-        const leaseBase = {
-          generation: id,
-          keyHash,
-          ownerHash,
-          sourceHash: sandboxSourceDigest(input.source),
-          htmlHash: sandboxDigest(input.html),
-          policyHash: sandboxDigest(policy),
-          hostOrigin: input.hostOrigin,
-          // A fresh loopback hostname gives every admission its own browser
-          // origin even when the OS reuses a port. The Host check rejects old URLs.
-          viewOrigin: `http://${id}.localhost:${address.port}`,
-          policy,
-        };
-        const lease: SandboxViewLease = {
-          ...leaseBase,
-          identityHash: sandboxViewIdentity(leaseBase),
-          expiresAt: this.now() + SANDBOX_VIEW_LEASE_MS,
-        };
-        const capability = sealSandboxViewCapability(
-          lease.keyHash,
-          lease.identityHash,
-          lease.viewOrigin,
-        );
-        entry = {
-          id,
-          fingerprint,
-          lease,
-          server,
-          proxyUrl: `${lease.viewOrigin}${SANDBOX_VIEW_PATH}?view_token=${capability}`,
-        };
-        this.entries.set(id, entry);
-        this.viewKeys.set(keyHash, id);
-        this.arm(entry);
-        return this.response(entry);
-      }
-    } catch (error) {
-      if (server?.listening && !entry) {
-        server.closeAllConnections();
-        server.close();
-      }
-      throw error;
-    } finally {
-      this.reserved--;
-      const reserved = (this.reservedOwners.get(ownerHash) ?? 1) - 1;
-      if (reserved === 0) this.reservedOwners.delete(ownerHash);
-      else this.reservedOwners.set(ownerHash, reserved);
+      url = new URL(request.url);
+    } catch {
+      return notFound();
     }
+    if (url.pathname !== SANDBOX_VIEW_PATH) return notFound();
+    try {
+      const claim = openSandboxViewCapability(
+        url.searchParams.get("view_token") ?? "",
+        entry.lease.viewOrigin,
+      );
+      if (
+        claim.keyHash !== entry.lease.keyHash ||
+        claim.identityHash !== entry.lease.identityHash
+      )
+        return notFound();
+    } catch {
+      // Invalid public capabilities get the same restrictive 404.
+      return notFound();
+    }
+    return new Response(
+      renderSandboxProxyHtml({
+        htmlSha256: entry.lease.htmlHash,
+        hostOrigin: entry.lease.hostOrigin,
+        admissionId: entry.id,
+      }),
+      { status: 200, headers: sandboxViewHeaders(entry.lease.policy) },
+    );
   }
 
   private response(entry: Entry): PreparedSandboxView {
@@ -259,14 +225,6 @@ export class SandboxViewRegistry {
     this.entries.delete(id);
     this.viewKeys.delete(entry.lease.keyHash);
     clearTimeout(entry.timer);
-    entry.server.closeAllConnections();
-    entry.server.close();
-  }
-  close(): void {
-    this.closing = true;
-    for (const entry of this.entries.values())
-      this.dispose(entry.id, entry.lease.ownerHash);
   }
 }
 export const sandboxViews = new SandboxViewRegistry();
-process.once("exit", () => sandboxViews.close());

@@ -1,4 +1,4 @@
-import { usesMcpjamClient } from "@/shared/harness-descriptors";
+import { effectiveHarnessId, usesMcpjamClient } from "@/shared/harness-descriptors";
 import { legacyPluginFormWire } from "../../services/plugin-host/owned-legacy.js";
 import type { ModelToolExecutor } from "../../utils/model-tool-executor.js";
 
@@ -85,7 +85,7 @@ export function chatPluginFormPlan(input: {
   // server in the batch or leave this path off as a whole.
   const inlineServerIds =
     input.inlineMrtr && input.forms === true &&
-    (input.harness === "codex" || !!input.agentLoop) &&
+    effectiveHarnessId(input) !== null &&
     input.serverIds.every((id) =>
       input.pinFor(id) === MODERN || legacyPluginFormWire(input.pinFor(id)),
     )

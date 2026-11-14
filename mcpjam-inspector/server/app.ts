@@ -78,6 +78,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
+import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host.js";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -274,6 +275,10 @@ export async function createHonoApp() {
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     appLogger.debug("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }
+
+  // Local App documents answer their own `localhost` subdomains before any
+  // other middleware or route sees the request.
+  mountLocalSandboxViewHost(app);
 
   // Middleware to inject the client manager into context
   app.use("*", async (c, next) => {
