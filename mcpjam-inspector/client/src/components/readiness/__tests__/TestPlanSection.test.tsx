@@ -1,7 +1,7 @@
 /**
  * The test plan on Claude's Test & launch step: what is saved and by whom,
- * what keeps it from running, the edits a person makes before saving, and
- * the refused saves.
+ * what keeps it from running, the edits a person makes before saving, the
+ * refused saves, drafts to accept, and what a run's calls showed.
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,7 +12,14 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { DirectoryTestPlanSession } from "@/hooks/use-directory-test-plan";
 import { TestPlanSection } from "../TestPlanSection";
-import { ISSUES, PLAN, planSession, savedPlan } from "./test-plan-fixtures";
+import {
+  DRAFTING,
+  ISSUES,
+  PLAN,
+  RESULTS,
+  planSession,
+  savedPlan,
+} from "./test-plan-fixtures";
 
 vi.mock("@/hooks/use-task-owner-id", () => ({
   useTaskOwnerId: () => "user_1",
@@ -195,5 +202,62 @@ describe("TestPlanSection", () => {
     expect(
       screen.getByText(/Connect the server in MCPJam to store its tools\.$/),
     ).toBeVisible();
+  });
+
+  it("shows each draft with Accept, which changes only this tab's plan", async () => {
+    const session = planSession({
+      results: { ...RESULTS, drafting: DRAFTING },
+    });
+    show(session);
+    expect(screen.getByText(/A run never sends a draft/)).toBeVisible();
+    expect(
+      screen.getByText("Expected refusal: Invalid arguments"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "delete_note#valid: It needs a fixture the plan does not name.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/^MCPJam dropped 1 draft that did not match/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/^2 cases without arguments were not sent for drafting/),
+    ).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Accept for create_note#valid" }),
+    );
+    expect(edited(session).cases[0].arguments).toEqual({
+      title: "Sample note",
+    });
+    expect(session.save).not.toHaveBeenCalled();
+  });
+
+  it("shows which run and revision the results are from, valid input apart from negative cases", () => {
+    show(planSession({ results: RESULTS }));
+    expect(
+      screen.getByText(
+        /with test plan revision 3\. MCPJam called your server directly/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Valid input: 1 passed, 1 failed, 1 in doubt."),
+    ).toBeVisible();
+    expect(screen.getByText(/^Negative cases: 1 passed\./)).toBeVisible();
+    const doubt = screen.getByRole("alert");
+    expect(doubt).toHaveTextContent("1 call in doubt");
+    expect(doubt).toHaveTextContent(
+      /delete_note \(delete_note#valid\) started .* and never finished, so it may have changed data\./,
+    );
+    expect(screen.getByText("delete_note removing note: done")).toBeVisible();
+  });
+
+  it("says no run has called the tools before one names a plan", () => {
+    show(
+      planSession({
+        results: { ...RESULTS, run: null, testPlanRevision: null },
+      }),
+    );
+    expect(screen.getByText(/^No run has called the tools yet/)).toBeVisible();
   });
 });
