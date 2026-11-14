@@ -55,7 +55,17 @@
     },
     "readiness": {
       "usage": "Usage: mcpjam readiness [options] [command]",
-      "subcommands": ["check", "start", "status", "list", "cancel", "report"]
+      "subcommands": [
+        "check",
+        "start",
+        "status",
+        "list",
+        "cancel",
+        "resume",
+        "report",
+        "flows",
+        "submission"
+      ]
     },
     "resources": {
       "usage": "Usage: mcpjam resources [options] [command]",

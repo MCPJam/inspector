@@ -17,8 +17,7 @@ const actorKey = (holder: Holder) =>
  * A new update that would cross a budget is refused with
  * `PLUGIN_CONTEXT_MEMORY_LIMIT`, a known rejection, so the App keeps its last
  * context. Context already admitted is counted when it is restored but never
- * refused, and nothing is evicted to make room: a model App has no durable
- * copy to fall back on.
+ * refused, and nothing is evicted to make room.
  */
 export class PluginContextMemory {
   private readonly held = new Map<string, { actor: string; bytes: number }>();

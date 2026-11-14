@@ -51,7 +51,6 @@ import {
   runFrozenSkillOptions,
   streamTestCase,
   throwIfEvalToolSnapshotFailed,
-  type EvalPinnedSkillSource,
   type EvalTestCase,
 } from "../../services/evals-runner";
 import {
@@ -115,6 +114,7 @@ import {
   buildPinnedSkillSource,
   type BuiltPinnedSkillSource,
 } from "../../services/evals/pinned-skill-source.js";
+import type { PinnedSkillSource } from "../../services/environments/turn-skills.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
@@ -3131,7 +3131,7 @@ export async function prepareEvalRun(
   // Everything here happens BEFORE `execute()`, which is the whole point: a
   // setup failure must precede model execution and name the component that
   // caused it.
-  let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  let pinnedSkillSource: PinnedSkillSource | undefined;
   /**
    * The run's frozen skills in HARNESS shape (materialized on box), built here
    * rather than per iteration because the supporting-file download is I/O that
@@ -3140,9 +3140,9 @@ export async function prepareEvalRun(
    *
    * Set for EVERY runId-bearing run, empty included. The harness selects its
    * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
-   * `undefined` falls through to a live project-wide fetch of whatever the
-   * project holds right now — which would unfreeze a frozen run, and would hand
-   * the `skillsOverride: "exclude"` arm every skill in the project.
+   * `undefined` leaves the box with whatever skills it already holds — which
+   * would unfreeze a frozen run, and would hand the `skillsOverride: "exclude"`
+   * arm an earlier turn's skills.
    */
   let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   /** The run's pinned plugin servers, re-gated just before execution. */
@@ -3904,7 +3904,7 @@ function isTerminalIteration(iteration: unknown): boolean {
 function environmentExecutionOptions(prepared: PreparedSingleCaseExecution): {
   committedQuickRunIterationIds?: string[];
   projectEnvironmentId?: string;
-  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedSkillSource?: PinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
   const environment = prepared.environment;

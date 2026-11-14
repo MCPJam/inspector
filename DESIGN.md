@@ -315,6 +315,15 @@ unreadable.
 hub, sandbox proxy iframe, view iframe). They are role-based names for that one
 drawing. Do not reuse them as a general accent palette.
 
+**Directory portal copies are scoped.** The Readiness page copies a directory's
+submission portal one to one, so inside `.portal-claude`
+(`mcpjam-inspector/client/src/components/readiness/portal-theme.css`) the role
+tokens take that portal's colours, in light and dark. Components there still use
+role tokens; only the values change. The scope overrides the surface, text,
+border and ring roles and leaves the status roles alone, so MCPJam's additions on
+those screens (the rehearsal bar, results marked "MCPJam") keep MCPJam's status
+colours. Do not apply the scope anywhere else.
+
 **Two syntax palettes, and they are not interchangeable.** The `json-*` tokens
 belong to the JSON viewer alone. The `code-*` tokens serve multi-language code —
 docs code blocks (via Mintlify's Shiki `css-variables` theme), terminal and log
@@ -402,6 +411,10 @@ Conventions: `cn()` merges class names, `class-variance-authority` defines varia
 its `className` prop or by adding a cva variant to the primitive itself — not by
 restyling it at the call site.
 
+Tab sets open on their first visible tab. Do not seed the active tab from the
+current selection or from which tab holds it; a caller may open a specific tab
+only for an explicit deep link (a "Settings" action that opens the Settings tab).
+
 Docs equivalents follow the product: buttons match the app's Add Server button,
 tables are bottom-hairline only, callouts are left-rail editorial marks.
 
@@ -422,10 +435,11 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
 
 - Don't write a literal hex or `oklch()` value into a component, a stylesheet, or
   this file's prose. Role values belong in `design-system/src/tokens.css`, so
-  there is one place to change. The one exception is a package-local accent
+  there is one place to change. The exceptions are a package-local accent
   palette deliberately outside the role system — chat-ui's
-  `--trace-waterfall-*` — and adding another is a decision to make on purpose:
-  it won't track the theme, and nothing will check it.
+  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`),
+  which hold a portal's own colours. Adding another is a decision to make on
+  purpose: it won't track the theme, and nothing will check it.
 - Don't hand-edit generated regions: this file's front matter, the fenced blocks in
   `docs/style.css` and `chat-ui/src/styles.css`, or the derived color fields in
   `docs/docs.json`. CI fails on drift; run the sync script.

@@ -4,7 +4,7 @@ import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ConvexBatchAuthorizeSuccess } from "../routes/web/auth.js";
 
 /**
- * Exactly which of the acting person's accounts each server runs with, keyed
+ * Exactly which accounts each server runs with for the acting person, keyed
  * by server id. Sent to the backend, which resolves only these accounts'
  * tokens, and checked again here so a run never falls back to an account
  * nobody chose.
@@ -17,11 +17,12 @@ export const SAVED_ACCOUNT_UNAVAILABLE =
 
 /**
  * The account group a server runs with when its launcher sent a set, or
- * `undefined` when no chosen account applies: a project-shared server (one
- * connection for everyone) or a server not on OAuth.
+ * `undefined` when no chosen account applies: a server not on OAuth. A set
+ * names the person's own accounts or, on a server shared with the project,
+ * the project's accounts; the backend answers both the same way.
  *
  * The base account owns the bare server key, which run-level lookups such as
- * the tool snapshot use. It is the person's default when chosen, otherwise the
+ * the tool snapshot use. It is the default account when chosen, otherwise the
  * first chosen account, so leaving the default out never leaves the key empty.
  *
  * Names never carry an email, because a teammate can open the run, and the
@@ -40,7 +41,6 @@ export function accountSetGroup(args: {
   const refuse: (message: string) => never = (message) => {
     throw new WebRouteError(403, ErrorCode.FORBIDDEN, args.refusal ?? message);
   };
-  if (auth.oauthAccountSet === "shared") return undefined;
   if (auth.oauthAccountSet !== "applied") {
     // A token without the backend's answer means the set was ignored, and
     // that token is the default account's.
@@ -57,7 +57,7 @@ export function accountSetGroup(args: {
     );
   }
   const listed = auth.oauthConnections ?? [];
-  // The backend names accounts over the person's whole list, so a name here
+  // The backend names accounts over the server's whole list, so a name here
   // matches the one in suite settings; the local rule covers an older backend.
   const fallback = connectionLabels(listed, { withoutEmail: true });
   const labels = listed.map((c, index) => c.displayName ?? fallback[index]);

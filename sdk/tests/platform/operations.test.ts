@@ -2392,6 +2392,16 @@ describe("operation catalog consistency", () => {
     list_server_revisions: { server: "s" },
     get_server_revision: { server: "s", revisionNumber: 2 },
     diff_server_revisions: { server: "s", revisionNumber: 2 },
+    list_server_accounts: { server: "s" },
+    get_server_account: { server: "s", account: "test-automation-1" },
+    upload_server_account_tokens: {
+      server: "s",
+      account: "test-automation-1",
+      tokens: { access_token: "at_example" },
+      clientInformation: { clientId: "client_example" },
+    },
+    update_server_account: { server: "s", account: "a", isDefault: true },
+    delete_server_account: { server: "s", account: "test-automation-1" },
     list_server_tools: { server: "s" },
     list_server_prompts: { server: "s" },
     list_server_resources: { server: "s" },
@@ -2408,7 +2418,20 @@ describe("operation catalog consistency", () => {
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
+    resume_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
+    list_directory_flows: {},
+    get_directory_flow: { flow: "claude-connector" },
+    create_directory_submission: { server: "s", flow: "claude-connector" },
+    list_directory_submissions: {},
+    get_directory_submission: { submission: "sub" },
+    update_directory_submission: {
+      submission: "sub",
+      answers: { "listing.name": "Acme" },
+    },
+    delete_directory_submission: { submission: "sub" },
+    start_directory_submission_run: { submission: "sub" },
+    get_directory_submission_results: { submission: "sub" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
@@ -2758,6 +2781,14 @@ describe("operation catalog consistency", () => {
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
+      // Runs a re-queued one again with its requester's credentials.
+      "resume_readiness_run",
+      // Directory submissions: the answers are a saved record, and a run
+      // started from one dials the submission's server.
+      "create_directory_submission",
+      "update_directory_submission",
+      "delete_directory_submission",
+      "start_directory_submission_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
@@ -2834,6 +2865,12 @@ describe("operation catalog consistency", () => {
       "create_secret",
       "update_secret",
       "delete_secret",
+      // Server account writes. The upload carries a token in its INPUT and the
+      // update moves the default runs act as (both risk: exposure); the delete
+      // removes an account and asks its issuer to revoke the token.
+      "upload_server_account_tokens",
+      "update_server_account",
+      "delete_server_account",
       // Trace-destination writes. `create` and `update` carry vendor
       // credentials in their INPUT and decide whether customer content leaves
       // the platform (risk: exposure); `resume` is exposure too, because it

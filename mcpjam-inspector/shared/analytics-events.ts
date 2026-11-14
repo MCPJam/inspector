@@ -124,6 +124,15 @@ export const ANALYTICS_EVENTS = {
   skill_uploaded: { source: "client" },
   skill_injected: { source: "client" },
   skill_loaded: { source: "client" },
+  /**
+   * One turn's skills, in counts (server-authoritative; no client twin):
+   * handed to the engine by family (and how many of those the agent's prompt
+   * leaves unlisted), left out by reason, failed to arrive, and `outcome`
+   * (ok | partial | failed). Sent only by
+   * `server/services/environments/skills-delivered-event.ts`, and personless.
+   * NEVER a skill name, id, ref or content.
+   */
+  skills_delivered: { source: "server" },
 
   // --- Auth / activation funnel (migrated) ---
   login_button_clicked: { source: "client" },
@@ -277,7 +286,10 @@ export const ANALYTICS_EVENTS = {
   eval_generate_negative_tests_button_clicked: { source: "client" },
   eval_generate_tests_button_clicked: { source: "client" },
   eval_generate_tests_completed: { source: "client" },
+  eval_case_result_viewed: { source: "client" },
+  eval_iteration_viewed: { source: "client" },
   eval_run_insights_opened: { source: "client" },
+  eval_run_viewed: { source: "client" },
   eval_setup_next_step_button_clicked: { source: "client" },
   eval_setup_start_eval_run_button_clicked: { source: "client" },
   eval_suite_created: { source: "client" },

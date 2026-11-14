@@ -1247,6 +1247,85 @@ describe("web auth manager batching", () => {
     ]);
   });
 
+  it("connects the project accounts a person chose on a shared server", async () => {
+    const first = "e".repeat(32);
+    const second = "f".repeat(32);
+    const requests: Array<{ body: any }> = [];
+    global.fetch = vi.fn(async (_input, init) => {
+      requests.push({ body: JSON.parse(String(init?.body)) });
+      return Response.json({
+        results: {
+          "server-1": {
+            ok: true,
+            role: "member",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              updatedAt: 123,
+              transportType: "http",
+              url: "https://example.com/mcp",
+              headers: {},
+              useOAuth: true,
+            },
+            // A shared server answers a set the way a personal one does,
+            // with the project's chosen accounts.
+            oauthAccountSet: "applied",
+            oauthAccessToken: "token-1",
+            oauthCredentialId: first,
+            oauthConnections: [
+              {
+                connectionId: second,
+                isDefault: false,
+                label: "test-automation-2",
+                displayName: "test-automation-2",
+                accessToken: "token-2",
+              },
+              {
+                connectionId: first,
+                isDefault: true,
+                label: "test-automation-1",
+                displayName: "test-automation-1",
+                accessToken: "token-1",
+              },
+            ],
+          },
+        },
+      });
+    }) as typeof fetch;
+    mcpClientManagerMock.mockClear();
+
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { connectionIdSets: { "server-1": [second, first] } },
+    );
+
+    expect(requests[0].body.connectionIdSets).toEqual({
+      "server-1": [second, first],
+    });
+    const configs = mcpClientManagerMock.mock.calls[0][0];
+    expect(Object.keys(configs).sort()).toEqual(
+      ["server-1", `server-1#${second}`].sort(),
+    );
+    // The project's default owns the bare key; the other chosen account its own.
+    expect(
+      new Headers(configs["server-1"].requestInit.headers).get("authorization"),
+    ).toBe("Bearer token-1");
+    expect(
+      new Headers(configs[`server-1#${second}`].requestInit.headers).get(
+        "authorization",
+      ),
+    ).toBe("Bearer token-2");
+    expect(
+      result.connectionsByServerId?.["server-1"].map((c) => c.label),
+    ).toEqual(["test-automation-2", "test-automation-1"]);
+  });
+
   describe("a member's only login", () => {
     const credential = "c".repeat(32);
     const single = (overrides: Record<string, unknown> = {}) => ({

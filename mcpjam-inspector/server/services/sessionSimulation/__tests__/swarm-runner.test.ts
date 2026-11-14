@@ -70,6 +70,7 @@ import { isAccountLimit } from "../../../../shared/swarm-attempt-error.js";
 import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { classifyTurnFailure } from "../../../utils/turn-failure-classification.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
+import type { SyntheticHostSessionAdapter } from "../runner.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 import { logger } from "../../../utils/logger.js";
 
@@ -177,12 +178,15 @@ describe("swarm single-host runner — attempt ordering", () => {
 
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // ChatGPT's preset plus the override, not only the override's own keys.
+    // Messages carrying every OpenAI content type (not just text) is
+    // ChatGPT-specific, and so is `downloadFile` among these presets.
     expect(adapter.runtime.hostCapabilities).toMatchObject({
       openLinks: {},
       serverTools: {},
       serverResources: {},
+      downloadFile: {},
+      message: { text: {}, image: {}, resourceLink: {}, resource: {} },
     });
-    expect(adapter.runtime.hostCapabilities).not.toHaveProperty("downloadFile");
   });
 
   it("advertises only the override's own keys while the snapshot has no host style", async () => {
@@ -1705,7 +1709,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(bySession.get("synth_run-1_env_envB_0")).toBe("envB");
   });
 
-  it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {
+  it("delivers pinned skill BODIES to the session runtime (authoritative set), and an empty pin set as an empty one", async () => {
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
 
     await startJourneyRun(
@@ -1718,12 +1722,24 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const a = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envA_0",
     );
-    expect(a.runtime.pinnedSkills).toHaveLength(1);
-    expect(a.runtime.pinnedSkills[0]).toMatchObject({
+    // The copy a harness writes to its box, and the pin every turn plans from:
+    // the snapshot's row joined with the fetched body.
+    expect(a.runtime.pinnedSkillSource.harnessSkills).toHaveLength(1);
+    expect(a.runtime.pinnedSkillSource.harnessSkills[0]).toMatchObject({
       name: "sk-one",
       contentHash: "hash-1",
       content: "# body",
     });
+    expect(a.runtime.pinnedSkillSource.pins).toEqual([
+      {
+        skillId: "sk1",
+        name: "sk-one",
+        description: "d",
+        contentHash: "hash-1",
+        sharing: "project",
+        content: "# body",
+      },
+    ]);
     // Persist attribution carries the targetId (chat-ingestion echo).
     expect(a.persist.targetId).toBe("target-a");
 
@@ -1744,9 +1760,141 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const b = adapters.find(
       (x) => x.chatSessionId === "synth_run-1_env_envB_0",
     );
-    // Skill-less env target: authoritative EMPTY array — NEVER undefined
+    // Skill-less env target: an authoritative EMPTY set — NEVER undefined
     // (undefined would fall back to the live pool).
-    expect(b.runtime.pinnedSkills).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.pins).toEqual([]);
+    expect(b.runtime.pinnedSkillSource.harnessSkills).toEqual([]);
+  });
+
+  it("downloads the pinned supporting file before the swarm starts its sessions", async () => {
+    const file = {
+      path: "scripts/check.sh",
+      contentHash: "file-hash",
+      size: 9,
+      url: "data:text/plain,echo%20test",
+    };
+    fetchPinnedSkillMock.mockResolvedValue({
+      ...pinnedArtifact("hash-1"),
+      files: [file],
+    });
+
+    await startJourneyRun(baseOpts({ hosts: [ENV_TARGET_A], sessionsPerTarget: 1 }));
+
+    const session = runSyntheticHostSessionMock.mock.calls[0]?.[0];
+    expect(session?.runtime.pinnedSkillSource.harnessSkills[0].files).toEqual([
+      { path: file.path, mimeType: "text/plain", content: "echo test" },
+    ]);
+    const [supporting] = session.runtime.pinnedSkillSource.set.standaloneSkills[0].files;
+    expect(new TextDecoder().decode(await supporting.read())).toBe("echo test");
+  });
+
+  it("addresses a plugin's skill by the target's pinned plugin version", async () => {
+    fetchPinnedSkillMock.mockResolvedValue({
+      name: "summarize",
+      description: "d",
+      content: "# summarize",
+      contentHash: "hash-plugin",
+    });
+    const pluginTarget = {
+      ...ENV_TARGET_A,
+      pluginVersions: [
+        { pluginId: "plg_acme", pluginVersionId: "plv_acme_1", name: "acme" },
+      ],
+      pinnedSkills: [
+        {
+          skillId: "sk_summarize",
+          name: "summarize",
+          description: "d",
+          contentHash: "hash-plugin",
+          modelRef: "acme/summarize",
+          sharing: "project" as const,
+          channels: ["plugin" as const],
+        },
+      ],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [pluginTarget], sessionsPerTarget: 1 }),
+    );
+
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    expect(
+      adapter.runtime.pinnedSkillSource.set.pluginSkills.map(
+        (skill: any) => skill.ref,
+      ),
+    ).toEqual(["acme/summarize"]);
+  });
+
+  it("gives each target its own server's pin when two servers serve the same skill", async () => {
+    // Byte-identical skills from two servers share a hash; their server and
+    // URI are what tell the pins apart.
+    const capture = (serverId: string, serverLabel: string, slug: string) => ({
+      serverSkillId: `ss_${serverId}`,
+      serverSkillVersionId: `ssv_${serverId}`,
+      serverId,
+      serverLabel,
+      skillUri: "skill://search",
+      serverSkillVersionNumber: 1,
+      serverSkillCapturedAt: 1_700_000_000_000,
+      name: "search",
+      description: "Search the docs.",
+      contentHash: "hash-search",
+      modelRef: `${slug}/search`,
+      sharing: "project" as const,
+      channels: ["mcp-server" as const],
+    });
+    fetchPinnedSkillMock.mockImplementation(async () => ({
+      name: "search",
+      description: "Search the docs.",
+      content: "# Search",
+      contentHash: "hash-search",
+    }));
+    const targetA = {
+      ...ENV_TARGET_A,
+      pinnedSkills: [capture("srv_a", "Docs A", "docs-a")],
+    };
+    const targetB = {
+      ...ENV_TARGET_A,
+      targetId: "target-b",
+      environmentRef: { environmentId: "envB", name: "Env B", revision: 1 },
+      pinnedSkills: [capture("srv_b", "Docs B", "docs-b")],
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [targetA, targetB], sessionsPerTarget: 1 }),
+    );
+
+    // One fetch per server, each naming its own: the cache never hands one
+    // server's pin to the other target.
+    expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(2);
+    for (const [targetId, serverId] of [
+      ["target-a", "srv_a"],
+      ["target-b", "srv_b"],
+    ]) {
+      expect(fetchPinnedSkillMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          targetId,
+          contentHash: "hash-search",
+          serverSkill: { serverId, skillUri: "skill://search" },
+        }),
+      );
+    }
+    const servedTo = (environmentId: string) =>
+      runSyntheticHostSessionMock.mock.calls
+        .map((c) => c[0] as SyntheticHostSessionAdapter)
+        .find(
+          (adapter) =>
+            adapter.chatSessionId === `synth_run-1_env_${environmentId}_0`,
+        )
+        ?.runtime.pinnedSkillSource?.set.serverSkills.map((skill) => [
+          skill.serverId,
+          skill.serverLabel,
+          skill.ref,
+        ]);
+    expect(servedTo("envA")).toEqual([["srv_a", "Docs A", "docs-a/search"]]);
+    expect(servedTo("envB")).toEqual([["srv_b", "Docs B", "docs-b/search"]]);
   });
 
   it("caches pinned bodies by (projectId, contentHash): one fetch even across two targets pinning the same hash", async () => {
@@ -1796,11 +1944,11 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(executed.filter((id) => id.includes("env_envB"))).toHaveLength(2);
   });
 
-  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
+  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkillSource undefined", async () => {
     await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerTarget: 1 }));
     const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
     // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
-    expect(adapter.runtime.pinnedSkills).toBeUndefined();
+    expect(adapter.runtime.pinnedSkillSource).toBeUndefined();
     expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
   });
 

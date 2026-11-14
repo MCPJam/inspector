@@ -33,6 +33,7 @@ import {
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
   type ClaudeReadinessResult,
+  type DirectoryAnswer,
   type DirectoryObservationEnvelope,
   type DirectoryObservationReason,
   type DirectoryFeatureClaim,
@@ -103,6 +104,8 @@ export interface RunReadinessOptions {
   lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
   /** Features the submitter claims. */
   claimedFeatures?: DirectoryFeatureClaim[];
+  /** A Claude connector submission's answers, graded with the portal's rules. */
+  submissionAnswers?: readonly DirectoryAnswer[];
   now?: () => Date;
 }
 
@@ -248,7 +251,8 @@ export function renderObservationEvidence(input: {
  */
 async function resolveObservations<Kind extends string, Id extends string>(
   options: RunReadinessOptions,
-  evidence: string,
+  /** Absent when the run could not use the server: a model would read nothing. */
+  evidence: string | undefined,
   // The publisher's OWN parser, passed in so the returned state carries that
   // publisher's envelope type. A shared parser would widen it to `string` ids
   // and hand the grader an envelope it cannot tell apart from the other
@@ -265,6 +269,14 @@ async function resolveObservations<Kind extends string, Id extends string>(
       reason: "not_requested",
       detail:
         "this run did not request model-backed observations, so nothing was charged",
+    };
+  }
+  if (evidence === undefined) {
+    return {
+      status: "not-requested",
+      reason: "no_evidence",
+      detail:
+        "the server could not be used, so no model was asked to read it and nothing was charged",
     };
   }
 
@@ -327,6 +339,15 @@ async function resolveObservations<Kind extends string, Id extends string>(
     };
   }
   return { status: "completed", envelope: parsed.envelope };
+}
+
+/**
+ * Whether the Claude gather recorded that it could not use the server, which
+ * the SDK's partial-results gather sets as `serverFailure`. Read by name, so
+ * a gather that never sets it reads as a server that answered.
+ */
+function serverFailed(evidence: object): boolean {
+  return "serverFailure" in evidence && evidence.serverFailure !== undefined;
 }
 
 export interface ReadinessRunOutcome {
@@ -443,10 +464,12 @@ export async function runDirectoryReadiness(
 
   const observations = await resolveObservations(
     options,
-    renderObservationEvidence({
-      target: options.target,
-      tools: evidence.tools,
-    }),
+    serverFailed(evidence)
+      ? undefined
+      : renderObservationEvidence({
+          target: options.target,
+          tools: evidence.tools,
+        }),
     parseClaudeExperienceObservations,
   );
   assertNotCancelled(options.signal);
@@ -455,6 +478,9 @@ export async function runDirectoryReadiness(
     result: gradeClaudeReadiness({
       ...evidence,
       llmObservations: observations,
+      ...(options.submissionAnswers
+        ? { submissionAnswers: options.submissionAnswers }
+        : {}),
     }),
     observations,
   };

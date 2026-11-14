@@ -2,6 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ComparePaneSettingsSection } from "./compare-pane-settings";
 import type { ComparePaneSections } from "./use-compare-pane-controls";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  skillExclusionLabel,
+  UNLISTED_SKILL_NOTE,
+} from "@/lib/skill-delivery-labels";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { authFetch } from "@/lib/session-token";
 import type { RecoveryPane } from "@/lib/comparison-recovery-record";
@@ -12,14 +16,6 @@ import {
   type PaneSkillsRequest,
 } from "@/shared/pane-skills-preview";
 
-const reasonText = {
-  "unsupported-harness": "This client doesn’t support skills.",
-  "server-skill-unsupported": "This client can’t use skills from MCP servers.",
-  "plugin-disabled": "Its plugin is turned off for this pane.",
-  "name-collision": "Another skill with this name takes precedence.",
-  "invalid-skill-name": "This client can’t use this skill name.",
-} satisfies Record<NonNullable<PaneSkillRow["reason"]>, string>;
-
 interface Props {
   /** Null when there is no signed-in project. */
   projectId: string | null;
@@ -27,6 +23,8 @@ interface Props {
   namedSetupsVisible: boolean;
   /** The exact ad hoc setup used for this client's plugin selections, if any. */
   clientEnvironmentId?: string | null;
+  /** The context window of the pane's model, which sizes its skill list. */
+  modelContextTokens?: number;
   pending?: boolean;
 }
 
@@ -35,6 +33,7 @@ export function ComparePaneSkills({
   pane,
   clientEnvironmentId,
   namedSetupsVisible,
+  modelContextTokens,
   pending,
 }: Props) {
   const visible = useSkillsEnabled();
@@ -56,6 +55,7 @@ export function ComparePaneSkills({
           },
     serverIds: pane.serverIds ?? undefined,
     pluginVersionIds: pane.pluginVersionIds ?? undefined,
+    modelContextTokens,
   };
   const body = JSON.stringify(request);
   return (
@@ -133,11 +133,7 @@ function DeliveryList({ body }: { body: string }) {
         {result.skills.map((skill) => (
           <li key={skill.skillId} className="space-y-0.5">
             <span className="block break-words text-sm">{skill.name}</span>
-            {(skill.reason || skill.description) && (
-              <p className="break-words text-xs text-muted-foreground">
-                {skill.reason ? reasonText[skill.reason] : skill.description}
-              </p>
-            )}
+            <SkillNote skill={skill} />
           </li>
         ))}
       </ul>
@@ -145,20 +141,43 @@ function DeliveryList({ body }: { body: string }) {
   );
 }
 
+/** The line under a skill: why the pane's turns leave it out, that the model
+ *  won't see it listed, or else what it does. */
+function SkillNote({ skill }: { skill: PaneSkillRow }) {
+  const server =
+    skill.origin?.kind === "mcp-server" ? skill.origin.server : undefined;
+  const note = skill.reason
+    ? skillExclusionLabel(skill.reason, { server })
+    : skill.omittedFromCatalog
+      ? UNLISTED_SKILL_NOTE
+      : skill.description;
+  if (!note) return null;
+  return <p className="break-words text-xs text-muted-foreground">{note}</p>;
+}
+
 export function useComparePaneSkillsSection(
   projectId: string | null,
   namedSetupsVisible: boolean,
 ): ComparePaneSections {
   return useCallback(
-    ({ pane, lane }) => (
+    ({ pane, lane, model }) => (
       <ComparePaneSkills
         projectId={projectId}
         pane={pane}
         namedSetupsVisible={namedSetupsVisible}
         clientEnvironmentId={lane.environmentId}
+        modelContextTokens={contextTokens(model?.contextLength)}
         pending={lane.pending}
       />
     ),
     [projectId, namedSetupsVisible],
   );
+}
+
+/** A context size the preview can send. A turn reads any other value as an
+ *  unknown size, as the preview does when the field is absent. */
+function contextTokens(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
 }

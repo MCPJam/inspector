@@ -241,7 +241,6 @@ export async function executeClaimedEventRun(
       modelDefinition,
       systemPrompt: built.systemPrompt,
       requireToolApproval: false,
-      skillsSource: { kind: "none" },
       // The host's tool-visibility policy, as a chat with it would apply.
       // Approval stays the trigger's (unattended runs auto-deny), and Tasks
       // stay off: no event run opts into them.

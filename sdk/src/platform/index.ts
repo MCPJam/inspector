@@ -98,6 +98,28 @@ export type {
   PlatformWidgetSessionClosed,
   PlatformWidgetRenderBody,
 } from "./widget-session-types.js";
+export type {
+  PlatformServerAccount,
+  PlatformServerAccountDeleted,
+  PlatformServerAccountTokens,
+  PlatformServerAccountUpload,
+} from "./server-account-types.js";
+export type {
+  PlatformDirectoryFlowSummary,
+  PlatformDirectorySubmission,
+  PlatformDirectorySubmissionConflict,
+  PlatformDirectorySubmissionCounts,
+  PlatformDirectorySubmissionCreateBody,
+  PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionResults,
+  PlatformDirectorySubmissionRunBody,
+  PlatformDirectorySubmissionSummary,
+  PlatformDirectorySubmissionUpdateBody,
+  PlatformDirectorySubmissionView,
+} from "./directory-submission-types.js";
+export { directorySubmissionConflict } from "./directory-submission-client.js";
+// The nine directory submission operations and their input and result types.
+export * from "./directory-submission-operations.js";
 
 export {
   computeRunTargets,
@@ -344,6 +366,13 @@ export type {
   PlatformEvalIterationReportUnavailableReason,
   PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindings,
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingProblem,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
   PlatformInsightsStatus,
   PlatformSwarmRunInsights,
   PlatformSwarmRunInsightsCanceled,
@@ -541,6 +570,7 @@ export {
   getReadinessRunOperation,
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
+  resumeReadinessRunOperation,
   getReadinessReportOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
@@ -549,6 +579,11 @@ export {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  listServerAccountsOperation,
+  getServerAccountOperation,
+  uploadServerAccountTokensOperation,
+  updateServerAccountOperation,
+  deleteServerAccountOperation,
   getConformanceCheckOperation,
   listClientsOperation,
   listHostsOperation,
@@ -719,6 +754,13 @@ export {
   type GetServerRevisionResult,
   type DiffServerRevisionsInput,
   type DiffServerRevisionsResult,
+  type ServerAccountInput,
+  type ServerAccountResult,
+  type ListServerAccountsResult,
+  type UploadServerAccountTokensInput,
+  type UploadServerAccountTokensResult,
+  type UpdateServerAccountInput,
+  type DeleteServerAccountResult,
   type GetConformanceReportInput,
   type GetConformanceReportResult,
   type GetConformanceCheckInput,
@@ -1094,3 +1136,4 @@ export type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
+export { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "./findings-view-types.js";

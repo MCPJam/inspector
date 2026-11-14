@@ -143,9 +143,12 @@ HOME="$CONFORMANCE_ROOT/home" CONFORMANCE_ROOT="$CONFORMANCE_ROOT" \
 
 In CI these are the `codex-scenarios` legs of `local-harness-conformance.yml`,
 stamped separately (`codex_conformance_version`) so a Codex failure never
-withholds Claude Code's version or the reverse. The certified targets
-(`nativeTargets`: darwin-arm64, linux-x64) block; linux-arm64 and darwin-x64
-run without blocking. The unattended leg is evidence, not yet a gate: a target
+withholds Claude Code's version or the reverse. The certified targets (the
+manifest's `nativeTargets`, which the plan reads) block; the others, linux-arm64
+today, run without blocking, and only on a push to main: a release runs just
+the certified ones. The darwin-x64 legs run x64 Node under Rosetta 2 on an Apple
+Silicon runner, so every process in them is an x86_64 binary on the Darwin
+kernel an Intel Mac runs. The unattended leg is evidence, not yet a gate: a target
 is added to `unattendedSandboxTargets` only after it passes there, and until
 then unattended local Codex is refused on it. Ubuntu 24.04's AppArmor
 user-namespace restriction can stop bubblewrap from starting at all — the

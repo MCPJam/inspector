@@ -1,9 +1,12 @@
 name: Docker Release
 
 # Publishes the self-hosted Inspector image, mcpjam/mcp-inspector on Docker
-# Hub, at the Inspector version `main` carries. release.yml calls it once that
-# version is on npm. Dispatching it by hand is the retry path, and the way to
-# push the current version without cutting a release.
+# Hub, at the Inspector version `main` carries. release.yml calls it twice:
+# `stage: build` while its gates run, which pushes each architecture's image
+# by digest with no tag naming it, and `stage: publish` once npm has the
+# version, which tags those digests. Dispatching it by hand does both, and is
+# the retry path and the way to push the current version without cutting a
+# release.
 #
 # Same Dockerfile Railway builds the hosted app from, but without hosted settings:
 # without VITE_MCPJAM_HOSTED_MODE the bundle is the local Inspector, the one
@@ -12,9 +15,14 @@ on:
   workflow_call:
     inputs:
       sha:
-        description: "The commit the release published to npm"
+        description: "The commit the release publishes to npm"
         required: true
         type: string
+      stage:
+        description: "build (push by digest), publish (tag the digests this run pushed), or all"
+        required: false
+        type: string
+        default: all
     secrets:
       DOCKERHUB_USERNAME:
         required: true
@@ -88,6 +96,7 @@ jobs:
   # the client bundle, Chromium) takes several times longer.
   build:
     needs: prepare
+    if: inputs.stage != 'publish'
     name: Build ${{ matrix.arch }}
     timeout-minutes: 60
     strategy:
@@ -141,28 +150,53 @@ jobs:
           docker run --rm --env SENTRY_AUTH_TOKEN --entrypoint node \
             mcpjam-server-sourcemaps:local mcpjam-inspector/scripts/server-sourcemaps.mjs
 
-      - name: Build and push
+      # By digest: no tag names the image until `publish` adds them, so a
+      # release can build it before npm has the version without anyone being
+      # able to pull that version early.
+      - name: Build and push by digest
+        id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./mcpjam-inspector/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          push: true
+          outputs: type=image,name=${{ env.DOCKER_REPOSITORY }},push-by-digest=true,name-canonical=true,push=true
           # A public repository defaults to mode=max, which records build-arg
           # values in an attestation published next to the image.
           provenance: mode=min
           build-args: |
             MCPJAM_BUILD_SURFACE=local
-          tags: ${{ env.DOCKER_REPOSITORY }}:v${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
 
-  # The tags users pull, each pointing at both architectures. Written only
-  # after both builds pushed, so `latest` never names a single-arch image.
+      - name: Record the image digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p "$RUNNER_TEMP/digest"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digest/$ARCH"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest/${{ matrix.arch }}
+          if-no-files-found: error
+
+  # The tags users pull. The multi-arch ones are written only after both
+  # builds pushed, so `latest` never names a single-arch image. In a release
+  # this runs as its own call, after `build` in an earlier one of the same run,
+  # whose digests reach it as artifacts.
   publish:
     needs: [prepare, build]
+    if: |
+      !cancelled() &&
+      inputs.stage != 'build' &&
+      needs.prepare.result == 'success' &&
+      (needs.build.result == 'success' || (inputs.stage == 'publish' && needs.build.result == 'skipped'))
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
@@ -172,13 +206,27 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Collect the image digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: docker-image-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
       # `latest` follows npm's `latest` dist-tag, so re-running an older
       # release's Docker job refreshes its own tag without moving `latest`
       # back, and a prerelease never becomes `latest`.
-      - name: Create the multi-arch tags
+      - name: Create the tags
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          amd64="$(cat "$RUNNER_TEMP/digests/amd64")"
+          arm64="$(cat "$RUNNER_TEMP/digests/arm64")"
+          for digest in "$amd64" "$arm64"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::not an image digest: $digest"; exit 1; }
+          done
+          docker buildx imagetools create --tag "$DOCKER_REPOSITORY:v$VERSION-amd64" "$DOCKER_REPOSITORY@$amd64"
+          docker buildx imagetools create --tag "$DOCKER_REPOSITORY:v$VERSION-arm64" "$DOCKER_REPOSITORY@$arm64"
           tags=("$DOCKER_REPOSITORY:v$VERSION")
           skipped=""
           npm_latest="$(npm view @mcpjam/inspector dist-tags.latest)"
@@ -191,6 +239,6 @@ jobs:
           tag_flags=()
           for tag in "${tags[@]}"; do tag_flags+=(--tag "$tag"); done
           docker buildx imagetools create "${tag_flags[@]}" \
-            "$DOCKER_REPOSITORY:v$VERSION-amd64" \
-            "$DOCKER_REPOSITORY:v$VERSION-arm64"
+            "$DOCKER_REPOSITORY@$amd64" \
+            "$DOCKER_REPOSITORY@$arm64"
           echo "Published ${tags[*]} (linux/amd64, linux/arm64). $skipped" >> "$GITHUB_STEP_SUMMARY"

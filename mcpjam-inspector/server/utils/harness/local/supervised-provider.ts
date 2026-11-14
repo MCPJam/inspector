@@ -34,6 +34,7 @@
  * survive into product copy.
  */
 import { randomUUID } from "node:crypto";
+import { localRuntime } from "./runtimes/index.js";
 import {
   lstat,
   mkdir,
@@ -653,12 +654,11 @@ export function createSupervisedLocalHarnessProvider(
     const confineToSessionState = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots: [roots[0]!] });
 
-    // Git Bash is how Claude Code runs shell commands on Windows. Codex runs
-    // its own shell, so it is neither looked up nor handed to it.
-    const gitBashPath =
-      opts.harnessId === "claude-code"
-        ? await resolveGitBashPath(platform)
-        : undefined;
+    // Git Bash, for a runtime that runs shell commands through Git for
+    // Windows. A runtime with its own shell is neither looked up nor handed it.
+    const gitBashPath = localRuntime(opts.harnessId).gitBashOnWindows
+      ? await resolveGitBashPath(platform)
+      : undefined;
     // The runtime this session launches from — the vendor pack and, where the
     // harness has one, the Inspector layer — must sit OUTSIDE both roots the
     // session may write. Inside one, the agent could rewrite the bytes it is
@@ -828,7 +828,7 @@ export function createSupervisedLocalHarnessProvider(
       supplied: Readonly<Record<string, string>> | undefined,
     ): Record<string, string> => ({
       ...env,
-      ...filterBridgeSuppliedEnv(supplied),
+      ...filterBridgeSuppliedEnv(supplied, opts.harnessId),
     });
 
     const runTranslated = async (

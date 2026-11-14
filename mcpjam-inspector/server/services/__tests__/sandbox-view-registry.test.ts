@@ -1,7 +1,5 @@
-import { get } from "node:http";
-import { createConnection } from "node:net";
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { generateSessionToken } from "../session-token.js";
 import {
   prepareSandboxViewSchema,
@@ -9,28 +7,6 @@ import {
   SANDBOX_VIEW_LEASE_MS,
 } from "../sandbox-view-policy.js";
 import { SandboxViewRegistry } from "../sandbox-view-registry.js";
-
-// Node's OS resolver need not implement .localhost; browsers resolve it to
-// loopback. Keep the original Host header while driving the actual listener.
-// Do not pool distinct origins onto one rewritten IP across listener restarts.
-function fetch(value: string | URL): Promise<Response> {
-  const url = new URL(value);
-  const host = url.host;
-  url.hostname = "127.0.0.1";
-  return new Promise((resolve, reject) => {
-    get(url, { agent: false, headers: { Host: host } }, (response) => {
-      const body: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => body.push(chunk));
-      response.on("error", reject);
-      response.on("end", () => resolve(new Response(Buffer.concat(body), {
-        status: response.statusCode,
-        headers: Object.fromEntries(Object.entries(response.headers).flatMap(
-          ([key, value]) => typeof value === "string" ? [[key, value]] : [],
-        )),
-      })));
-    }).on("error", reject);
-  });
-}
 
 const owner = sandboxDigest("owner");
 const input = () =>
@@ -48,126 +24,145 @@ const input = () =>
   });
 let now: number;
 let registry: SandboxViewRegistry;
+
+/** A browser request: the Host header carries the URL's host. */
+function request(
+  value: string | URL,
+  init: { method?: string; host?: string } = {},
+): Request {
+  const url = new URL(value);
+  return new Request(url, {
+    method: init.method ?? "GET",
+    headers: { host: init.host ?? url.host },
+  });
+}
+function respond(value: string | URL, init?: { method?: string; host?: string }) {
+  const response = registry.respond(request(value, init));
+  if (!response) throw new Error("expected the App partition to answer");
+  return response;
+}
+
 beforeEach(() => {
   generateSessionToken();
   now = Date.now();
   registry = new SandboxViewRegistry(() => now);
 });
-afterEach(() => {
-  registry.close();
-});
 
 describe("local App document leases", () => {
-  it("serves only the admitted document with HTTP policy and metadata, without App bytes", async () => {
+  it("serves the admitted document on the Inspector's port with HTTP policy and no App bytes", async () => {
     const request = input();
-    const view = await registry.prepare(request, owner);
-    const response = await fetch(view.proxyUrl);
+    const view = await registry.prepare(request, owner, "6274");
+    const url = new URL(view.proxyUrl);
+    expect(url.hostname).toBe(`${view.admissionId}.localhost`);
+    expect(url.port).toBe("6274");
+    const response = respond(view.proxyUrl);
     expect(response.status).toBe(200);
-    expect(response.headers.get("Content-Security-Policy")).toContain(
-      "connect-src 'none'",
-    );
-    expect(response.headers.get("Content-Security-Policy")).toContain(
-      "frame-ancestors 'self' http://localhost:6274",
-    );
+    const policy = response.headers.get("Content-Security-Policy");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("frame-ancestors 'self' http://localhost:6274");
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
     expect(response.headers.get("Origin-Agent-Cluster")).toBe("?1");
+    expect(response.headers.get("X-Frame-Options")).toBeNull();
     const body = await response.text();
     expect(body).toContain(view.htmlSha256);
     expect(body).not.toContain(request.html);
-    for (const path of [
-      "/",
-      "/api/session-token",
-      "/health",
-      "/assets/script.js",
-    ]) {
-      const denied = await fetch(new URL(path, view.proxyUrl));
-      expect(denied.status).toBe(404);
-      expect(denied.headers.get("Content-Security-Policy")).toContain(
+  });
+
+  it("answers every other request to an App host with a restrictive 404", async () => {
+    const view = await registry.prepare(input(), owner, "6274");
+    const denied = [
+      ...["/", "/api/session-token", "/health", "/assets/script.js"].map(
+        (path) => respond(new URL(path, view.proxyUrl)),
+      ),
+      respond(view.proxyUrl, { method: "POST" }),
+      respond(view.proxyUrl, { method: "HEAD" }),
+      respond(view.proxyUrl, { host: `${view.admissionId}.localhost:8080` }),
+      respond(view.proxyUrl, { host: `${view.admissionId}.localhost.:6274` }),
+      respond(`http://${crypto.randomUUID()}.localhost:6274/api/session-token`),
+      respond(`${new URL(view.proxyUrl).origin}/api/apps/mcp-apps/sandbox-proxy`),
+    ];
+    for (const response of denied) {
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Content-Security-Policy")).toContain(
         "default-src 'none'",
       );
     }
-    const noCapability = new URL(view.proxyUrl);
-    noCapability.search = "";
-    expect((await fetch(noCapability)).status).toBe(404);
   });
 
-  it("reuses a one-port pool across restarts without reusing browser authority", async () => {
-    const first = await registry.prepare(input(), owner);
-    const port = Number(new URL(first.proxyUrl).port);
-    registry.close();
-    for (let attempt = 0; attempt < 8; attempt++) {
-      registry = new SandboxViewRegistry(() => now, port);
-      const next = await registry.prepare(input(), owner);
-      expect(new URL(next.proxyUrl).origin).not.toBe(new URL(first.proxyUrl).origin);
-      expect(new URL(next.proxyUrl).port).toBe(String(port));
-      expect((await fetch(next.proxyUrl)).status).toBe(200);
-      expect((await fetch(first.proxyUrl)).status).toBe(404);
-      const oldCapability = new URL(next.proxyUrl);
-      oldCapability.search = new URL(first.proxyUrl).search;
-      expect((await fetch(oldCapability)).status).toBe(404);
-      registry.close();
-    }
+  it("matches the App host case-insensitively and leaves the Inspector's own hosts alone", async () => {
+    const view = await registry.prepare(input(), owner, "6274");
+    const upper = new URL(view.proxyUrl).host.toUpperCase();
+    expect(respond(view.proxyUrl, { host: upper }).status).toBe(200);
+    for (const host of [
+      "inspector.localhost:6274",
+      `x.${view.admissionId}.localhost:6274`,
+      "localhost:6274",
+      "127.0.0.1:6274",
+      "[::1]:6274",
+      "localhost",
+      "inspector.example.com",
+    ])
+      expect(
+        registry.respond(request(`http://${host}/api/session-token`)),
+      ).toBeNull();
   });
 
-  it("contains malformed absolute-form targets and keeps the listener usable", async () => {
-    const view = await registry.prepare(input(), owner);
-    const url = new URL(view.proxyUrl);
-    const raw = await new Promise<string>((resolve, reject) => {
-      const socket = createConnection({
-        host: "127.0.0.1",
-        port: Number(url.port),
-      });
-      let text = "";
-      socket.on("connect", () =>
-        socket.write(
-          `GET http://[ HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`,
-        ),
-      );
-      socket.on("data", (data) => {
-        text += data.toString();
-      });
-      socket.on("error", reject);
-      socket.on("end", () => resolve(text));
-    });
-    expect(raw).toContain("404");
-    expect(raw.toLowerCase()).toContain(
-      "content-security-policy: default-src 'none'",
+  it("omits a default port from the App origin", async () => {
+    const view = await registry.prepare(input(), owner, "");
+    expect(new URL(view.proxyUrl).origin).toBe(
+      `http://${view.admissionId}.localhost`,
     );
-    expect((await fetch(view.proxyUrl)).status).toBe(200);
+    expect(respond(view.proxyUrl).status).toBe(200);
+    await expect(
+      registry.prepare({ ...input(), viewInstanceId: crypto.randomUUID() }, owner, "x"),
+    ).rejects.toThrow("port");
   });
 
-  it("coalesces identical starts, survives31 hidden minutes, and renews without changing URL", async () => {
+  it("coalesces identical starts and renews without changing URL", async () => {
     const request = input();
     const [first, duplicate] = await Promise.all([
-      registry.prepare(request, owner),
-      registry.prepare(request, owner),
+      registry.prepare(request, owner, "6274"),
+      registry.prepare(request, owner, "6274"),
     ]);
     expect(duplicate).toEqual(first);
     now += 31 * 60 * 1000;
-    expect((await fetch(first.proxyUrl)).status).toBe(200);
+    expect(respond(first.proxyUrl).status).toBe(200);
     const renewed = await registry.prepare(
       { ...request, admissionId: first.admissionId },
       owner,
+      "6274",
     );
     expect(renewed.proxyUrl).toBe(first.proxyUrl);
     expect(renewed.expiresAt).toBe(now + SANDBOX_VIEW_LEASE_MS);
     registry.dispose(first.admissionId, sandboxDigest("wrong-owner"));
-    expect((await fetch(first.proxyUrl)).status).toBe(200);
+    expect(respond(first.proxyUrl).status).toBe(200);
     registry.dispose(first.admissionId, owner);
-    await expect(fetch(first.proxyUrl)).rejects.toThrow();
+    expect(respond(first.proxyUrl).status).toBe(404);
+  });
+
+  it("gives a new admission a new origin and refuses the old capability", async () => {
+    const first = await registry.prepare(input(), owner, "6274");
+    registry = new SandboxViewRegistry(() => now);
+    const next = await registry.prepare(input(), owner, "6274");
+    expect(new URL(next.proxyUrl).origin).not.toBe(new URL(first.proxyUrl).origin);
+    expect(respond(next.proxyUrl).status).toBe(200);
+    expect(respond(first.proxyUrl).status).toBe(404);
+    const oldCapability = new URL(next.proxyUrl);
+    oldCapability.search = new URL(first.proxyUrl).search;
+    expect(respond(oldCapability).status).toBe(404);
   });
 
   it("refuses changed admission bytes and leaves expired documents closed", async () => {
     const request = input();
-    const first = await registry.prepare(request, owner);
+    const first = await registry.prepare(request, owner, "6274");
     await expect(
-      registry.prepare({ ...request, html: request.html + "changed" }, owner),
+      registry.prepare({ ...request, html: request.html + "changed" }, owner, "6274"),
     ).rejects.toThrow("changed");
     now += SANDBOX_VIEW_LEASE_MS + 1;
-    expect((await fetch(first.proxyUrl)).status).toBe(404);
+    expect(respond(first.proxyUrl).status).toBe(404);
     await expect(
-      registry.prepare({ ...request, admissionId: first.admissionId }, owner),
+      registry.prepare({ ...request, admissionId: first.admissionId }, owner, "6274"),
     ).rejects.toThrow("expired");
   });
 });

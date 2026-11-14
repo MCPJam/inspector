@@ -406,9 +406,9 @@ export interface OrgLocalModelHandlerOptions {
  * is nothing for the refusal to protect.
  *
  * A FUNCTION-form declaration does NOT trip this guard. It cannot be evaluated
- * here — this runs before the model has produced an input — and the two
- * families that use the form (`effective-skill-tools`, `server-skill-tools`)
- * declare it UNCONDITIONALLY and answer `false` on the common path. Reading
+ * here — this runs before the model has produced an input — and the skill
+ * tools that use the form (`effective-skill-tools`) declare it
+ * UNCONDITIONALLY and answer `false` on the common path. Reading
  * "unevaluable" as "asks" refused every local-runtime turn that carried a
  * skill tool, switch or no switch, where before it ran. `streamText` evaluates
  * the function per call, exactly as it did before the declaration was unified;

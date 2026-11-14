@@ -7,7 +7,13 @@ import {
   type LiveChatTraceRequestPayloadEntry,
 } from "@/shared/live-chat-trace";
 import type { TimeoutMetadata } from "../../utils/run-supervisor/deadline.js";
-import type { ModelMessage, Tool as AiTool, ToolChoice, ToolSet } from "ai";
+import {
+  NoOutputGeneratedError,
+  type ModelMessage,
+  type Tool as AiTool,
+  type ToolChoice,
+  type ToolSet,
+} from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
@@ -471,6 +477,15 @@ export async function driveLocalEvalTurn(
     // Typed evidence only (an AI SDK call error); the runner's catch reads it.
     acc.stepErrorEvidence =
       providerCallEvidenceOf(error) ?? providerCallEvidenceOf(streamError);
+    // The SDK's "no output" error carries no cause and names neither provider
+    // nor status. The runner records and reports whatever is thrown here, so
+    // throw the provider's own error from the stream's `error` part instead.
+    if (
+      NoOutputGeneratedError.isInstance(error) &&
+      streamError instanceof Error
+    ) {
+      throw streamError;
+    }
     throw error;
   }
   // Set by `onTraceContext` before the stream was consumed.

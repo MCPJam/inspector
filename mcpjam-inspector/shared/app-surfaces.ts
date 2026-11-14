@@ -393,7 +393,8 @@ export const APP_SURFACES = [
       "evals",
       "evals/create",
       "evals/suite/:suiteId",
-      "evals/suite/:suiteId/edit",
+      "evals/suite/:suiteId/settings",
+      "evals/suite/:suiteId/settings/evaluators",
       "evals/suite/:suiteId/runs/:runId",
       "evals/suite/:suiteId/test/:testId",
       "evals/suite/:suiteId/test/:testId/edit",
@@ -401,7 +402,8 @@ export const APP_SURFACES = [
       "evals/runs/create",
       "evals/runs/commit/:commitSha",
       "evals/runs/suite/:suiteId",
-      "evals/runs/suite/:suiteId/edit",
+      "evals/runs/suite/:suiteId/settings",
+      "evals/runs/suite/:suiteId/settings/evaluators",
       "evals/runs/suite/:suiteId/runs/:runId",
       "evals/runs/suite/:suiteId/test/:testId",
       "evals/runs/suite/:suiteId/test/:testId/edit",
@@ -442,9 +444,12 @@ export const APP_SURFACES = [
       "evaluate/create",
       "evaluate/eval-server/:serverId",
       "evaluate/suite/:suiteId",
-      "evaluate/suite/:suiteId/edit",
+      "evaluate/suite/:suiteId/settings",
+      "evaluate/suite/:suiteId/settings/evaluators",
       "evaluate/suite/:suiteId/runs/:runId",
       "evaluate/suite/:suiteId/runs/:runId/compare",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId",
+      "evaluate/suite/:suiteId/runs/:runId/cases/:caseId/iterations/:iterationId",
       "evaluate/suite/:suiteId/test/:testId",
       "evaluate/suite/:suiteId/test/:testId/edit",
     ],
@@ -640,6 +645,30 @@ export const APP_SURFACES = [
         "Read-only review of a server's host compatibility; nothing to operate, but snapshot-only for observability so the agent can see which servers and hosts are on the matrix.",
     },
     showInAtlas: true,
+  },
+  {
+    id: "readiness",
+    scope: "project",
+    canonicalPath: "/readiness",
+    routePatterns: ["readiness"],
+    navSegments: ["readiness"],
+    title: "Readiness",
+    purpose:
+      "Rehearse a directory submission for a saved server: fill a copy of the Claude connector portal and run MCPJam's checks on the answers and the server.",
+    userActivities: [
+      "Start or open a rehearsal for a saved server",
+      "Fill the portal's fields and read check results under them",
+      "Run the readiness checks",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Agents edit and run submissions through the directory submission operations, not the page.",
+    },
+    // Flag-gated: the atlas is static and cannot read
+    // `mcpjam-directory-readiness`, so advertising `/readiness` would send the
+    // agent to a page that redirects for everyone the flag excludes.
+    showInAtlas: false,
   },
   {
     id: "oauth-flow",

@@ -197,6 +197,10 @@ if (probe) {
     if (vendorRoot === null || !existsSync(join(vendorRoot, "node_modules", "@openai", "codex", "bin", "codex.js"))) {
       throw new Error("the pack has no node_modules/@openai/codex/bin/codex.js");
     }
+  } else if (layer.harnessId === "copilot-cli") {
+    // Copilot's bridge drives the CLI through the pack's SDK, its one external.
+    const sdk = await import("@github/copilot-sdk");
+    if (typeof sdk.CopilotClient !== "function") throw new Error("the pack's Copilot SDK exports no CopilotClient");
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(0);
