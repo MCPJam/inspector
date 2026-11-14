@@ -12,8 +12,11 @@
  * THE REVIEWER-ONLY RULE. The plan runs as the reviewer account and on no
  * other credential: the saved server's is the requester's, often a staff
  * member's (RP2). A run without a reviewer account lists and calls nothing
- * and says why. A case that uses a fixture the reviewer path looked up and
- * did not find is not sent, and is reported blocked, naming it (RP5). A
+ * and says why, as does one whose account the reviewer path's identity check
+ * found signed in as another account or organization: the plan's writes
+ * would land there. An identity it could not check does not stop the run.
+ * A case that uses a fixture the reviewer path looked up and did not find
+ * is not sent, and is reported blocked, naming it (RP5). A
  * server the submission says needs no sign-in is tested as a directory's
  * reviewer reaches it: with no credential at all, recording no account.
  *
@@ -30,6 +33,7 @@ import {
   validateDirectoryTestPlan,
   type DirectoryDialOptions,
   type DirectoryReviewerFixtureEvidence,
+  type DirectoryReviewerIdentityEvidence,
   type DirectoryTestCallRecord,
   type DirectoryTestPlan,
   type DirectoryTestPlanIssue,
@@ -77,6 +81,15 @@ const MISMATCH =
   "The test plan does not match the tools the server lists now, so no tool was called. Fix the issues listed, save the plan, then start a new run.";
 const signInNeeded = (status: number) =>
   `The server refused a connection with no credential (HTTP ${status}), but the submission says it needs no sign-in, so no tool was called. Correct the authentication answer, or let the server accept calls without sign-in, then start a new run.`;
+/** The identity check's outcomes that stop the plan: someone else's account. */
+const WRONG_REVIEWER: Partial<
+  Record<DirectoryReviewerIdentityEvidence["outcome"], string>
+> = {
+  "wrong-account":
+    "The reviewer account signed in as a different account than the submission names, so MCPJam made none of the test plan's calls. Rehearse the reviewer sign-in with the account the submission names, then start a new run.",
+  "wrong-tenant":
+    "The reviewer account answers for an organization other than the one the submission names, so MCPJam made none of the test plan's calls. Leave the reviewer account in only the organization or project the submission names, then start a new run.",
+};
 
 /** What a run's report says about its tool tests. */
 export interface DirectoryToolTestReport {
@@ -113,6 +126,8 @@ export interface RunDirectoryTestPlanOptions {
   reviewer: ReadinessReviewerAccount | { noSignIn: true };
   /** The reviewer path's fixture lookup, when it ran. */
   fixtures?: DirectoryReviewerFixtureEvidence;
+  /** The reviewer path's identity check, when it ran. */
+  identity?: DirectoryReviewerIdentityEvidence;
   signal: AbortSignal;
   /** When the run must have finished. */
   deadlineAt: number;
@@ -159,6 +174,10 @@ async function testPlanReport(
   // The reviewer-only rule: with no reviewer account, nothing is even listed.
   if ("missing" in reviewer) return notRun(reviewer.missing, planRevision);
   const signedIn = "noSignIn" in reviewer ? undefined : reviewer;
+  // Nor as someone else. With no sign-in, no call carries the account.
+  const outcome = signedIn && options.identity?.outcome;
+  const wrongReviewer = outcome ? WRONG_REVIEWER[outcome] : undefined;
+  if (wrongReviewer) return notRun(wrongReviewer, planRevision);
   const saved = await stopOr(readRunTestPlan(lease), lease);
   if (saved === null) return notRun(unreadable(planRevision), planRevision);
   if (!saved) return notRun(notSaved(planRevision), planRevision);
