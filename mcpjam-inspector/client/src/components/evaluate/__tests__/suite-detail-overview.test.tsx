@@ -1695,7 +1695,11 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     renderSuitePage({}, false);
     expect(pageViews()).toEqual([]);
     expect(screen.queryByTestId("suite-page-header")).toBeNull();
-    expect(screen.getByText("Configure suite evaluators")).toBeVisible();
+    expect(
+      within(screen.getByTestId("suite-detail-identity")).getByRole("button", {
+        name: "Suite settings",
+      }),
+    ).toBeVisible();
     expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
   });
 });
