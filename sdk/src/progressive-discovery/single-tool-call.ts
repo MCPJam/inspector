@@ -25,8 +25,10 @@ export function offersOnlyMetaTools(
  * Provider options that limit a model reply to one tool call, keyed by the
  * provider id MCPJam uses (`anthropic`, `openai`, ...), or `undefined` when
  * the installed AI SDK provider has no such control (google, deepseek,
- * ollama, custom). Bedrock reads the `anthropic` key for Claude models, and
- * Azure falls back to the `openai` key.
+ * ollama, custom). Bedrock reads the `anthropic` key for Claude models.
+ * Option names follow THIS repo's installed providers; the backend keeps its
+ * own table for its own (its `@ai-sdk/xai` 4 names the option
+ * `parallel_function_calling`).
  */
 export function singleToolCallProviderOptions(
   providerKey: string | undefined,
@@ -36,8 +38,9 @@ export function singleToolCallProviderOptions(
     case "bedrock":
       return { anthropic: { disableParallelToolUse: true } };
     case "openai":
-    case "azure":
       return { openai: { parallelToolCalls: false } };
+    case "azure":
+      return { azure: { parallelToolCalls: false } };
     case "mistral":
       return { mistral: { parallelToolCalls: false } };
     case "xai":

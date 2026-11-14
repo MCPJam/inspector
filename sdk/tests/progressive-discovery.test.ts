@@ -581,7 +581,7 @@ describe("one tool call while only search and load are offered", () => {
       openai: { parallelToolCalls: false },
     });
     expect(singleToolCallProviderOptions("azure")).toEqual({
-      openai: { parallelToolCalls: false },
+      azure: { parallelToolCalls: false },
     });
     expect(singleToolCallProviderOptions("mistral")).toEqual({
       mistral: { parallelToolCalls: false },
