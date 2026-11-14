@@ -153,6 +153,25 @@ chatHistory.get("/list", async (c) =>
   }),
 );
 
+// GET /chat-history/group?groupId=...&projectId=...
+chatHistory.get("/group", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const { groupId, projectId } = c.req.query();
+    if (!groupId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "groupId is required",
+      );
+    }
+    return await proxyGet(bearerToken, "/direct-chat/group", {
+      groupId,
+      projectId,
+    });
+  }),
+);
+
 // GET /chat-history/detail?sessionId=...&chatSessionId=...&projectId=...
 chatHistory.get("/detail", async (c) =>
   handleRoute(c, async () => {

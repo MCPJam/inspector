@@ -5,7 +5,7 @@ import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import type {
   ModelReasoningEffort,
   RequestedModelSelection,
@@ -389,6 +389,7 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   rewind?: ChatRewind;
+  multiModel?: ChatMultiModelColumn;
   turnTrace?: PersistedTurnTrace;
   turnLeaseOwnerToken?: string;
   /**
@@ -639,6 +640,7 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     // stay on the legacy path.
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
+    ...(options.multiModel ? { multiModel: options.multiModel } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
     ...(options.turnLeaseOwnerToken
       ? { turnLeaseOwnerToken: options.turnLeaseOwnerToken }

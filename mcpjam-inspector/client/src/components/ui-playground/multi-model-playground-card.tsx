@@ -25,6 +25,7 @@ import {
   readComparisonAuthRecovery,
   registerComparisonColumn,
   prepareComparisonAuthRecovery,
+  type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
 import {
@@ -178,6 +179,13 @@ interface MultiModelPlaygroundCardProps {
     profile: "chatgpt" | "codex";
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
+  /** A comparison being restored; read once when the column mounts. */
+  comparisonRecovery?: ComparisonAuthRecovery | null;
+  /**
+   * This column's position in its multi-model session; only ever grows.
+   * Absent when the feature is off, and then the column saves no group.
+   */
+  multiModelPosition?: number;
   /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode it's the card's `comparisonKey` (the bare model id for a default
@@ -335,6 +343,8 @@ export function MultiModelPlaygroundCard({
   readinessNotice,
   extensionBinding = null,
   browserWorkspace,
+  comparisonRecovery,
+  multiModelPosition,
   compareId,
   compareLabel,
   compareKind,
@@ -511,8 +521,9 @@ export function MultiModelPlaygroundCard({
       : pluginComputerAttached,
   });
   const [recoveryColumn] = useState(() =>
-    readComparisonAuthRecovery(
-      hostedContext?.projectId ?? "local",
+    (
+      comparisonRecovery ??
+      readComparisonAuthRecovery(hostedContext?.projectId ?? "local")
     )?.columns.find(
       (column) => column.compareId === compareId && column.kind === compareKind,
     ),
@@ -539,6 +550,20 @@ export function MultiModelPlaygroundCard({
           )
         : { ok: true as const },
     [browserWorkspace?.id, browserWorkspace?.clientCount, compareId],
+  );
+  // The comparison id is the multi-model session's group: a restored
+  // comparison keeps the id it was saved under, so its columns stay together.
+  const multiModelColumn = useMemo(
+    () =>
+      browserWorkspace && multiModelPosition !== undefined
+        ? {
+            groupId: browserWorkspace.id,
+            position: multiModelPosition,
+            columnKind: compareKind,
+            compareId,
+          }
+        : undefined,
+    [browserWorkspace?.id, multiModelPosition, compareKind, compareId],
   );
   const {
     messages,
@@ -574,6 +599,7 @@ export function MultiModelPlaygroundCard({
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
+    multiModelColumn,
     prepareAuthRecovery,
     authRecoveryPaused: recoveryStatus !== "ready",
     selectedServers,

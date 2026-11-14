@@ -43,6 +43,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "multi-account-connections-enabled",
   "org-model-gateways",
   "platform-post-launch",
+  "playground-multi-model-sessions",
   "plugin-extensions-enabled",
   "plugins-enabled",
   "pricing-feature-signin-required",

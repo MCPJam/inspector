@@ -5,7 +5,9 @@ import {
   readComparisonAuthRecovery,
   registerComparisonLayout,
   clearComparisonAuthRecovery,
+  type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
+import { useMultiModelSessions } from "@/hooks/use-multi-model-sessions";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
@@ -3278,6 +3280,21 @@ export function PlaygroundMain({
     setRestoredConversation(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
+  // Reopens a multi-model session through the sign-in recovery path: the
+  // layout effect applies the lineup and each remounted column loads its chat.
+  const restoreMultiModelSession = useCallback(
+    (record: ComparisonAuthRecovery) => {
+      cancelPendingHistorySelection();
+      clearMultiModelUiState();
+      compareTranscriptsRef.current = {};
+      comparisonLayoutRestoredRef.current = false;
+      setComparisonServersRestored(false);
+      setComparisonRecovery(record);
+      setMultiModelSessionGeneration((previous) => previous + 1);
+    },
+    [cancelPendingHistorySelection, clearMultiModelUiState],
+  );
+
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
       await chatHistoryAction("mark-read", sessionId);
@@ -3899,13 +3916,23 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
+  const multiModelSessions = useMultiModelSessions({
+    groupId: comparisonRecoveryGroupId,
+    projectId: convexProjectId ?? "local",
+    selectedServers,
+    applyRestore: restoreMultiModelSession,
+  });
   const handleSelectThread = useCallback(
-    async (session: ChatHistorySession) => {
+    async (
+      session: ChatHistorySession,
+      siblings?: readonly ChatHistorySession[],
+    ) => {
       if (isStreaming) return;
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
+      if (await multiModelSessions.openFromHistory(session, siblings)) return;
 
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
@@ -3968,6 +3995,7 @@ export function PlaygroundMain({
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
+      multiModelSessions.openFromHistory,
     ],
   );
 
@@ -7227,6 +7255,10 @@ export function PlaygroundMain({
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
+                          comparisonRecovery={comparisonRecovery}
+                          multiModelPosition={multiModelSessions.positionFor(
+                            `host:${column.compareId}`,
+                          )}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -7363,6 +7395,10 @@ export function PlaygroundMain({
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}
+                            comparisonRecovery={comparisonRecovery}
+                            multiModelPosition={multiModelSessions.positionFor(
+                              `model:${compareId}`,
+                            )}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide
