@@ -111,6 +111,7 @@ export type {
   PlatformDirectorySubmissionCounts,
   PlatformDirectorySubmissionCreateBody,
   PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionResults,
   PlatformDirectorySubmissionRunBody,
   PlatformDirectorySubmissionSummary,

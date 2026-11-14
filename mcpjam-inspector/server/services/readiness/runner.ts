@@ -32,6 +32,7 @@ import {
   gradeOpenAIReadiness,
   parseClaudeExperienceObservations,
   parseOpenAIExperienceObservations,
+  xmldomParseXml,
   type ClaudeReadinessResult,
   type DirectoryAnswer,
   type DirectoryObservationEnvelope,
@@ -41,9 +42,11 @@ import {
   type DirectoryObservationState,
   type DirectoryObservationStatus,
   type MuseReadinessResult,
+  type OpenAIArchiveObservations,
   type OpenAIReadinessResult,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
+import type { PluginFileSource } from "@mcpjam/sdk/plugin-bundle";
 
 export type ReadinessPublisher = "claude" | "openai" | "muse";
 
@@ -106,6 +109,14 @@ export interface RunReadinessOptions {
   claimedFeatures?: DirectoryFeatureClaim[];
   /** A Claude connector submission's answers, graded with the portal's rules. */
   submissionAnswers?: readonly DirectoryAnswer[];
+  /**
+   * The package an OpenAI run grades, already checked against the stored
+   * version it came from, with the facts read off its ZIP.
+   */
+  pluginPackage?: {
+    source: PluginFileSource;
+    archive: OpenAIArchiveObservations;
+  };
   now?: () => Date;
 }
 
@@ -421,6 +432,14 @@ export async function runDirectoryReadiness(
       ...(options.claimedFeatures !== undefined
         ? { claimedFeatures: options.claimedFeatures }
         : {}),
+      ...(options.pluginPackage
+        ? {
+            packageSource: options.pluginPackage.source,
+            archive: options.pluginPackage.archive,
+            // Node has no `DOMParser`: without this, SVG assets are a gap.
+            parseXml: xmldomParseXml,
+          }
+        : {}),
       now: options.now,
     });
     assertNotCancelled(options.signal);
@@ -430,7 +449,8 @@ export async function runDirectoryReadiness(
       renderObservationEvidence({
         target: options.target,
         tools: evidence.tools,
-        skills: evidence.importedSkills?.skills,
+        // The package's skills when the run uploads them, else the server's.
+        skills: evidence.importedSkills?.skills ?? evidence.package?.skills,
       }),
       parseOpenAIExperienceObservations,
     );
