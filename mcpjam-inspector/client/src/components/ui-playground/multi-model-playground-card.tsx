@@ -48,6 +48,7 @@ import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -547,6 +548,7 @@ export function MultiModelPlaygroundCard({
     stop,
     error,
     chatSessionId,
+    appSessionScopeId,
     toolsMetadata,
     toolServerMap,
     liveTraceEnvelope,
@@ -599,10 +601,12 @@ export function MultiModelPlaygroundCard({
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
-    onReset: () => {
-      setModelContextQueue([]);
+    onReset: (reason) => {
+      if (reason !== "conflict-fork") {
+        setModelContextQueue([]);
+        setInjectedToolRenderOverrides({});
+      }
       setPreludeTraceExecutions([]);
-      setInjectedToolRenderOverrides({});
     },
   });
 
@@ -662,17 +666,19 @@ export function MultiModelPlaygroundCard({
     hiddenEnvironment.blockingError,
   ]);
 
+  const appReopenKey = useAppSessionReopenKey(chatSessionId, appSessionScopeId);
+  // Reopening the source starts a fresh workspace at the same persisted address.
   const laneScope = useMemo(() => {
-    const pluginWorkspace = laneWorkspaceForSession(chatSessionId);
+    const pluginWorkspace = laneWorkspaceForSession(appSessionScopeId);
     return pluginWorkspace && laneIdentity
       ? {
           projectId: laneIdentity.projectId,
           hostId: laneIdentity.hostId,
-          threadId: chatSessionId,
+          threadId: appSessionScopeId,
           pluginWorkspace,
         }
       : null;
-  }, [laneWorkspaceForSession, chatSessionId, laneIdentity]);
+  }, [laneWorkspaceForSession, appSessionScopeId, laneIdentity, appReopenKey]);
   const { pluginServers } = hiddenEnvironment;
   const laneServers = useMemo(() => {
     const servers = extensionBinding?.servers ?? [];
@@ -1016,8 +1022,11 @@ export function MultiModelPlaygroundCard({
     setTraceViewMode("chat");
     setRevealedInChat(false);
     setPreludeTraceExecutions([]);
-    setInjectedToolRenderOverrides({});
   }, [chatSessionId]);
+
+  useEffect(() => {
+    setInjectedToolRenderOverrides({});
+  }, [appSessionScopeId, appReopenKey]);
 
   const drainModelContextQueue = useCallback(() => {
     const queued = modelContextQueue;
@@ -1293,6 +1302,7 @@ export function MultiModelPlaygroundCard({
                 <TraceViewer
                   widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
+                  appSessionScopeId={appSessionScopeId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -1331,6 +1341,7 @@ export function MultiModelPlaygroundCard({
                 <TraceViewer
                   widgetPolicy={laneWidgetPolicy}
                   chatSessionId={chatSessionId}
+                  appSessionScopeId={appSessionScopeId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -1389,6 +1400,7 @@ export function MultiModelPlaygroundCard({
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
+                      appSessionScopeId={appSessionScopeId}
                       harnessStartupPhase={harnessStartupPhase}
                       chatSessionId={chatSessionId}
                       messages={messages}

@@ -13,6 +13,7 @@ import {
 import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
+import { useAppSessionReopenKey } from "../chat-v2/thread/app-session-scope";
 import { usePlaygroundChatHistoryBridgeStore } from "./playground-chat-history-bridge";
 import { useAppPaneTools } from "./use-app-pane-tools";
 import type { AppPaneTool } from "./app-pane-tools";
@@ -29,21 +30,26 @@ function schemaFingerprint(tool: AppPaneTool | null) {
 export function useAppToolRun() {
   const groups = useAppPaneTools();
   const registry = useAppToolsRegistryApi();
+  const scope = useActiveChatSessionStore((state) =>
+    state.compareActive ? null : state.appSessionScopeId,
+  );
   const sessionId = useActiveChatSessionStore((state) => state.sessionId);
+  const reopenKey = useAppSessionReopenKey(sessionId, scope);
   const viewOnly = useActiveChatSessionStore((state) => state.viewOnly);
   const streaming = usePlaygroundChatHistoryBridgeStore(
     (state) => state.bridge?.isStreaming ?? false,
   );
   const [selection, setSelection] = useState<{
     tool: AppPaneTool;
-    sessionId: string | null;
+    scope: string | null;
+    reopenKey: number;
   } | null>(null);
   const catalog = groups.flatMap((group) => group.tools);
   const retained = useRef<AppPaneTool | null>(null);
   const live = catalog.find((tool) => tool.key === selection?.tool.key);
   if (live) retained.current = live;
   const selected =
-    selection?.sessionId === sessionId
+    selection?.scope === scope && selection.reopenKey === reopenKey
       ? (live ??
         (retained.current?.key === selection.tool.key
           ? retained.current
@@ -59,8 +65,8 @@ export function useAppToolRun() {
   const token = useRef(0);
   const busy = useRef(false);
   const controllers = useRef(new Set<AbortController>());
-  const current = useRef({ sessionId, key: selected?.key });
-  current.current = { sessionId, key: selected?.key };
+  const current = useRef({ scope, reopenKey, key: selected?.key });
+  current.current = { scope, reopenKey, key: selected?.key };
   const fingerprint = schemaFingerprint(selected);
   const schema = useRef(selected?.inputSchema);
   schema.current = selected?.inputSchema;
@@ -90,7 +96,16 @@ export function useAppToolRun() {
     return () => {
       for (const controller of pending) controller.abort();
     };
-  }, [sessionId]);
+  }, [scope, reopenKey]);
+
+  useEffect(() => {
+    if (!viewOnly) return;
+    // Permission revocation cancels execution, not this lifetime's detail state.
+    token.current += 1;
+    busy.current = false;
+    setInvoking(false);
+    for (const controller of controllers.current) controller.abort();
+  }, [viewOnly]);
 
   const clear = () => {
     token.current += 1;
@@ -104,27 +119,43 @@ export function useAppToolRun() {
     const tool = catalog.find((tool) => tool.key === key);
     if (!tool || tool.key === selected?.key) return;
     clear();
-    setSelection({ tool, sessionId });
+    setSelection({ tool, scope, reopenKey });
   };
-  const canRun = available && !streaming && !viewOnly && !invoking;
+  const canRun = available && !streaming && !viewOnly && !invoking && !!scope;
   const run = async () => {
-    if (!selected || !canRun || busy.current || !sessionId) return;
+    if (!selected || !canRun || busy.current || !scope) return;
+    if (
+      current.current.reopenKey !== reopenKey ||
+      current.current.key !== selected.key
+    ) {
+      return;
+    }
+    const active = useActiveChatSessionStore.getState();
+    if (
+      !active.sessionId ||
+      active.appSessionScopeId !== scope ||
+      active.compareActive ||
+      active.viewOnly
+    )
+      return;
+    const invocationSessionId = active.sessionId;
     const state = registry.getState();
     // Resolve against the active bridge at click time, including modal swaps.
     const bridgeId = state.activeBridgeByParent.get(
-      `${sessionId}\0${selected.instance.parentToolCallId}`,
+      `${scope}\0${selected.instance.parentToolCallId}`,
     );
     const alias = [...state.aliases.values()].find(
       (entry) =>
         entry.bridgeId === bridgeId && entry.rawName === selected.rawName,
     )?.alias;
-    const entry = alias ? state.resolve(alias, sessionId) : null;
+    const entry = alias ? state.resolve(alias, scope) : null;
     if (!entry || !alias) return;
     const runId = ++token.current;
     const key = selected.key;
     const isCurrent = () =>
       token.current === runId &&
-      current.current.sessionId === sessionId &&
+      current.current.scope === scope &&
+      current.current.reopenKey === reopenKey &&
       current.current.key === key;
     const controller = new AbortController();
     controllers.current.add(controller);
@@ -141,6 +172,16 @@ export function useAppToolRun() {
       const raw = await dispatchAppToolCall(entry, input, {
         signal: controller.signal,
       });
+      const access = useActiveChatSessionStore.getState();
+      if (
+        current.current.reopenKey !== reopenKey ||
+        controller.signal.aborted ||
+        access.viewOnly ||
+        access.compareActive ||
+        access.appSessionScopeId !== scope
+      ) {
+        return;
+      }
       recordAppToolInvocation(
         {
           alias,
@@ -152,6 +193,8 @@ export function useAppToolRun() {
           input,
           raw,
           initiatedBy: "user",
+          chatSessionId: invocationSessionId,
+          appSessionScopeId: scope,
         },
         useTrafficLogStore.getState().addLog,
       );

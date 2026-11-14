@@ -25,6 +25,7 @@ import {
 } from "@/shared/plugin-message";
 import { buildMentionContextMessages } from "@/shared/user-context-message";
 import type { PluginMentionSelection } from "@/shared/plugin-mentions";
+import type { PluginWorkspaceDescriptor } from "@/shared/plugin-workspace";
 import { createPrivateFormAnswer } from "@/lib/apis/private-form-answer";
 import { sameChatAuthSession } from "@/lib/chat-auth-session";
 import {
@@ -497,7 +498,7 @@ function useMaybeSharedAppState(): AppState | null {
 function pluginGlobalTurnFields(
   global:
     | {
-        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        workspace: PluginWorkspaceDescriptor;
         references: string[];
       }
     | undefined,
@@ -527,15 +528,13 @@ export interface UseChatSessionOptions {
    */
   pluginGlobalContext?: () =>
     | {
-        workspace: import("@/shared/plugin-workspace").PluginWorkspaceDescriptor;
+        workspace: PluginWorkspaceDescriptor;
         references: string[];
       }
     | undefined;
   pluginWorkspace?:
-    | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
-    | ((chatSessionId: string) =>
-        | import("@/shared/plugin-workspace").PluginWorkspaceDescriptor
-        | undefined);
+    | PluginWorkspaceDescriptor
+    | ((appSessionScopeId: string) => PluginWorkspaceDescriptor | undefined);
   prepareAuthRecovery?: (
     continuationId: string,
   ) => import("@/lib/scope-step-up-pending").PendingWriteResult;
@@ -697,13 +696,21 @@ export interface UseChatSessionOptions {
    */
   usePageTools?: boolean;
   /** Callback when chat is reset */
-  onReset?: (reason?: ChatSessionResetReason) => void;
+  onReset?: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => void;
+}
+
+export interface ChatSessionHydration {
+  persistedSnapshotToolCallIds: string[];
+  appSessionScopeId: string;
+  messages: UIMessage[];
+  toolRenderOverrides: Record<string, ToolRenderOverride>;
 }
 
 export type ChatSessionResetReason =
   | "auth-bootstrap"
   | "hydrate"
   | "fork"
+  | "conflict-fork"
   | "servers-changed"
   | "reset";
 
@@ -834,6 +841,8 @@ export interface UseChatSessionReturn {
    * the reply was cut off, or the turn spent its step budget — else `null`.
    */
   autoResumeNotice: string | null;
+  /** Local App lifetime, independent of the persisted conversation row. */
+  appSessionScopeId: string;
   chatSessionId: string;
 
   // Model state
@@ -960,6 +969,8 @@ export interface UseChatSessionReturn {
   detachToLocalFork: (
     messages: UIMessage[],
     options?: {
+      /** Set only for a conflict receipt continuing the full live transcript. */
+      preserveAppSession?: boolean;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     },
   ) => Promise<{ chatSessionId: string } | null>;
@@ -1149,6 +1160,7 @@ interface LiveTraceAccumulatorState {
 
 interface PendingSessionHydration {
   sessionId: string;
+  appSessionScopeId?: string;
   messages: UIMessage[];
   resumedVersion: number | null;
   toolRenderOverrides?: Record<
@@ -2284,12 +2296,23 @@ export function useChatSession(
   );
   // Restoring the stored id — rather than minting a fresh one and seeding it —
   // is what keeps the resumed turns appending to the SAME server-side thread.
-  const [chatSessionId, setChatSessionId] = useState(
+  const [chatSessionId, setChatSessionIdState] = useState(
     () => restoredScenarioTranscript?.chatSessionId ?? generateId(),
   );
+  // The server row changes on conflict, but the local App runtime must not.
+  // Keeping its scope also retains aliases and registrations still hashing;
+  // every ordinary session transition resets both identities together.
+  const [appSessionScopeId, setAppSessionScopeId] = useState(chatSessionId);
+  const appSessionScopeIdRef = useRef(appSessionScopeId);
+  appSessionScopeIdRef.current = appSessionScopeId;
+  // Only a conflict continuation keeps the previous row as its App owner.
+  const setChatSessionId = useCallback((id: string, appScopeId = id) => {
+    setAppSessionScopeId(appScopeId);
+    setChatSessionIdState(id);
+  }, []);
   const pluginWorkspace =
     typeof options.pluginWorkspace === "function"
-      ? options.pluginWorkspace(chatSessionId)
+      ? options.pluginWorkspace(appSessionScopeId)
       : options.pluginWorkspace;
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
@@ -2757,6 +2780,7 @@ export function useChatSession(
         void fulfillHarnessAppTool(appToolEvent, {
           registry: appToolsRegistryRef.current,
           chatSessionId: () => chatSessionIdRef.current,
+          appSessionScopeId: () => appSessionScopeIdRef.current,
           claim: (args) => convexClient.mutation(appToolInvocations.claim, args),
           complete: (args) => convexClient.mutation(appToolInvocations.complete, args),
         }).catch(() => toast.error("The app tool response could not be delivered. Check whether the action ran before trying again."));
@@ -4338,7 +4362,7 @@ export function useChatSession(
           // the server defends the boundary again in `validateAppToolEntries`.
           appTools: appToolsRegistryRef.current
             .getState()
-            .snapshotForChatBody(chatSessionIdRef.current),
+            .snapshotForChatBody(appSessionScopeIdRef.current),
           // WebMCP page tools, when the caller opted this turn into the tools
           // of an open inspector session. Drained fresh at POST time for the
           // same reason as `appTools`: the page may have registered or dropped
@@ -4453,6 +4477,13 @@ export function useChatSession(
     addToolOutput,
   } = useChat({
     id: chatSessionId,
+    // Seed the new SDK store before its first render. An empty intermediate
+    // transcript unmounts the App's anchor even when its lifetime is retained.
+    messages:
+      pendingSessionHydrationRef.current?.sessionId === chatSessionId &&
+      pendingSessionHydrationRef.current.appSessionScopeId !== undefined
+        ? pendingSessionHydrationRef.current.messages
+        : undefined,
     // Buffered stream chunks can otherwise publish enough synchronous store
     // updates to exhaust React's update-depth limit before it drains effects.
     experimental_throttle: 50,
@@ -4521,7 +4552,7 @@ export function useChatSession(
 
       const entry = appToolsRegistryRef.current
         .getState()
-        .resolve(toolName, chatSessionIdRef.current);
+        .resolve(toolName, appSessionScopeIdRef.current);
       if (!entry) {
         // Two cases:
         //   - server tool name: not an app alias, let the server's
@@ -4602,6 +4633,7 @@ export function useChatSession(
       const controller = new AbortController();
       const registry = appToolsRegistryRef.current.getState();
       registry.registerPendingCall(entry.instance.bridgeId, controller);
+      const invocationSessionId = chatSessionIdRef.current;
       try {
         const raw = await dispatchAppToolCall(
           entry,
@@ -4613,6 +4645,8 @@ export function useChatSession(
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation(
           {
+            chatSessionId: invocationSessionId,
+            appSessionScopeId: entry.instance.chatSessionId,
             alias: tc.toolName,
             rawName: entry.rawName,
             appName: entry.instance.appName,
@@ -5230,7 +5264,7 @@ export function useChatSession(
           ...hydration,
           resolve,
         };
-        setChatSessionId(hydration.sessionId);
+        setChatSessionId(hydration.sessionId, hydration.appSessionScopeId);
       });
     },
     [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
@@ -5409,15 +5443,21 @@ export function useChatSession(
     options.builtInToolDefinitions,
   ]);
 
-  // useLayoutEffect (not useEffect) so the trace state is swapped out
-  // before the browser paints the new chatSessionId render, preventing a
-  // flash of the previous session's live-trace envelope on session switch
-  // or fork.
+  // Swap traces before paint on history switches and manual branches. A
+  // conflict keeps the App lifetime and its revealed trace; returning to the
+  // source conversation must still restore that source's own trace state.
+  const traceAppSessionScopeRef = useRef(appSessionScopeId);
   useLayoutEffect(() => {
+    const preserveAppTrace =
+      traceAppSessionScopeRef.current === appSessionScopeId &&
+      chatSessionId !== appSessionScopeId;
+    traceAppSessionScopeRef.current = appSessionScopeId;
     const hydratedState = pendingLiveTraceStateRef.current;
     pendingLiveTraceStateRef.current = null;
-    setLiveTraceState(hydratedState ?? createEmptyLiveTraceState());
-  }, [chatSessionId]);
+    setLiveTraceState((previous) =>
+      hydratedState ?? (preserveAppTrace ? previous : createEmptyLiveTraceState()),
+    );
+  }, [chatSessionId, appSessionScopeId]);
 
   useSharedChatWidgetCapture({
     // Scenario runtime sessions persist server-side on every platform, so
@@ -5946,6 +5986,7 @@ export function useChatSession(
       messages: UIMessage[],
       options?: {
         resetReason?: ChatSessionResetReason;
+        appSessionScopeId?: string;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
       },
     ) => {
@@ -5982,6 +6023,7 @@ export function useChatSession(
         : messages;
       const hydrationPromise = queueSessionHydration({
         sessionId: nextSessionId,
+        appSessionScopeId: options?.appSessionScopeId,
         messages: branchMessages,
         resumedVersion: null,
         toolRenderOverrides: options?.toolRenderOverrides,
@@ -6191,11 +6233,15 @@ export function useChatSession(
     async (
       messages: UIMessage[],
       options?: {
+        preserveAppSession?: boolean;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
       },
     ): Promise<{ chatSessionId: string } | null> => {
       const forkSessionId = await startChatWithMessages(messages, {
-        resetReason: "fork",
+        resetReason: options?.preserveAppSession ? "conflict-fork" : "fork",
+        appSessionScopeId: options?.preserveAppSession
+          ? appSessionScopeIdRef.current
+          : undefined,
         toolRenderOverrides: options?.toolRenderOverrides,
       });
       // Exact match, not "it changed": the live id after a superseded hydration
@@ -6383,6 +6429,7 @@ export function useChatSession(
         : null;
       skipNextForkDetectionRef.current = true;
       rewindRef.current = null;
+      const sameRow = chatSessionIdRef.current === session.chatSessionId;
       await queueSessionHydration({
         sessionId: session.chatSessionId,
         messages: uiMessages,
@@ -6391,7 +6438,16 @@ export function useChatSession(
         persistedSnapshotToolCallIds,
         turnTraces: hydratedTurnTraces,
       });
-      onResetRef.current?.("hydrate");
+      if (chatSessionIdRef.current === session.chatSessionId &&
+          (!options?.shouldApply || options.shouldApply())) {
+        const hydration = {
+          persistedSnapshotToolCallIds,
+          appSessionScopeId: appSessionScopeIdRef.current,
+          messages: uiMessages,
+          toolRenderOverrides: overrides,
+        };
+        onResetRef.current?.("hydrate", sameRow ? hydration : undefined);
+      }
     },
     [
       queueSessionHydration,
@@ -6945,6 +7001,7 @@ export function useChatSession(
     status,
     error,
     autoResumeNotice,
+    appSessionScopeId,
     chatSessionId,
 
     // Model state

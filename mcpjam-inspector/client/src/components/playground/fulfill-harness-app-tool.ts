@@ -36,6 +36,7 @@ export async function fulfillHarnessAppTool(
   deps: {
     registry: StoreApi<AppToolsRegistryState>;
     chatSessionId: () => string | undefined;
+    appSessionScopeId: () => string | undefined;
     claim: (args: {
       id: string;
       bridgeId: string;
@@ -65,7 +66,10 @@ export async function fulfillHarnessAppTool(
   );
   if (!row) return;
   const registry = deps.registry.getState();
-  const entry = registry.resolve(row.alias, row.chatSessionId);
+  const appSessionScopeId = deps.appSessionScopeId();
+  const entry = appSessionScopeId
+    ? registry.resolve(row.alias, appSessionScopeId)
+    : null;
   let result: ReturnType<typeof scrubAppToolResultForModel>;
   const controller = new AbortController();
   const timer = setTimeout(

@@ -1,4 +1,7 @@
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import { retainInjectedAppOverrides } from "./retain-injected-app-overrides";
+import type { ChatSessionHydration } from "@/hooks/use-chat-session";
+import { usePublishActiveChatSession } from "@/hooks/use-publish-active-chat-session";
 import {
   hasComparisonAuthRecoveryRequest,
   markComparisonColumnSettled,
@@ -81,6 +84,7 @@ import {
 } from "@mcpjam/widget-react";
 import {
   chatOwnerScope,
+  archivedChatAppScope,
   chatOwnerWorkspace,
   globalOwnerWorkspace,
   type ExtensionOwnerIdentity,
@@ -162,6 +166,7 @@ import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Thread } from "@/components/chat-v2/thread";
+import { useAppSessionReopenKey } from "@/components/chat-v2/thread/app-session-scope";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { collectInputHistory } from "@/components/chat-v2/chat-input/input-history";
 import { StickToBottom } from "use-stick-to-bottom";
@@ -798,8 +803,12 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
-    useWidgetModelContextQueue();
+  const [
+    modelContextQueue,
+    setModelContextQueue,
+    handleModelContextUpdate,
+    retainModelContextForMessages,
+  ] = useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -808,6 +817,7 @@ export function PlaygroundMain({
   const [isTakeoverChatOpen, setIsTakeoverChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
     useState(false);
+  const injectedAppScopeRef = useRef<string | null>(null);
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
@@ -1421,6 +1431,7 @@ export function PlaygroundMain({
     mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
+    appSessionScopeId,
     detachToLocalFork,
     consumePersistReceipt,
     consumeTurnAborted,
@@ -1516,10 +1527,23 @@ export function PlaygroundMain({
       ? { harnessId: previewedHarnessId }
       : null,
     preferredModelId: previewedHost?.config?.modelId ?? null,
-    onReset: (reason?: ChatSessionResetReason) => {
-      setModelContextQueue([]);
-      setPreludeTraceExecutions([]);
-      setInjectedToolRenderOverrides({});
+    onReset: (reason?: ChatSessionResetReason, hydration?: ChatSessionHydration) => {
+      if (reason === "hydrate" && hydration) {
+        retainModelContextForMessages(hydration.messages);
+      } else if (reason !== "conflict-fork") {
+        setModelContextQueue([]);
+      }
+      if (reason !== "conflict-fork") setPreludeTraceExecutions([]);
+      if (reason === "hydrate" && hydration &&
+          injectedAppScopeRef.current === hydration.appSessionScopeId) {
+        setInjectedToolRenderOverrides((previous) => retainInjectedAppOverrides(
+          previous, hydration.messages, hydration.toolRenderOverrides,
+          hydration.persistedSnapshotToolCallIds,
+        ));
+      } else if (reason !== "conflict-fork") {
+        injectedAppScopeRef.current = null;
+        setInjectedToolRenderOverrides({});
+      }
       if (reason === "servers-changed") {
         return;
       }
@@ -1535,6 +1559,11 @@ export function PlaygroundMain({
     },
   });
 
+  const activeInjectedToolRenderOverrides = useMemo(
+    () => injectedAppScopeRef.current === appSessionScopeId ? injectedToolRenderOverrides : {},
+    [appSessionScopeId, injectedToolRenderOverrides],
+  );
+
   // The Browser tab lives in the sibling right rail. Publish the current
   // conversation only while this Playground center is mounted; the rail then
   // binds the watched browser to the same durable owner. Clearing is guarded
@@ -1548,9 +1577,6 @@ export function PlaygroundMain({
     (state) =>
       state.restoredSession?.sessionId === chatSessionId &&
       state.restoredSession.origin === "api",
-  );
-  const setActiveChatSessionId = useActiveChatSessionStore(
-    (state) => state.setSessionId,
   );
 
   // Set playground active flag for widget renderers to read
@@ -1774,12 +1800,14 @@ export function PlaygroundMain({
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const effectiveThreadTheme = extractHostTheme(hostContext) ?? globalThemeMode;
+  const appReopenKey = useAppSessionReopenKey(chatSessionId, appSessionScopeId);
+  // Reopening the source starts a new inline workspace at the same address.
   const extensionScope = useMemo(
     () =>
       extensionIdentity && !multiModelEnabled
-        ? chatOwnerScope(extensionIdentity, chatSessionId)
+        ? chatOwnerScope(extensionIdentity, appSessionScopeId)
         : null,
-    [extensionIdentity, chatSessionId, multiModelEnabled],
+    [extensionIdentity, appSessionScopeId, multiModelEnabled, appReopenKey],
   );
   // The servers a hidden environment's plugins add to this chat's turns. Empty
   // unless the chat actually carries them (see `hiddenEnvironmentActive`), so
@@ -1953,7 +1981,8 @@ export function PlaygroundMain({
     extensionScope && extensionIdentity
       ? {
           identity: extensionIdentity,
-          chatId: chatSessionId,
+          chatId: appSessionScopeId,
+          sessionId: chatSessionId,
           servers: extensionServers,
           ...(hiddenEnvironmentActive && hiddenEnvironment.environmentId && hiddenPluginServers.length
             ? { includedPluginTools: { environmentId: hiddenEnvironment.environmentId, serverIds: hiddenPluginServers.map((server) => server.serverId), includeAppOnly: previewedHost?.config?.respectToolVisibility === false } }
@@ -1968,7 +1997,7 @@ export function PlaygroundMain({
           hostRevision: previewedHost?.config?.id,
         }
       : extensionIdentityPending
-        ? { identity: null, chatId: chatSessionId, servers: [], hold: true }
+        ? { identity: null, chatId: appSessionScopeId, servers: [], hold: true }
         : null,
     extensionPorts,
   );
@@ -2058,6 +2087,7 @@ export function PlaygroundMain({
             extensionScope.projectId,
             extensionScope.hostId,
             extensionScope.pluginWorkspace.workspaceId,
+            appReopenKey,
           ]),
           projectId: extensionScope.projectId,
           hostId: extensionScope.hostId,
@@ -2610,25 +2640,9 @@ export function PlaygroundMain({
   // mode-specific flags around for code that still needs to know
   // WHICH compare grid is up (e.g. the per-column derivation memos).
   const isCompareMode = isMultiModelMode || isMultiHostMode;
-  useEffect(() => {
-    setActiveChatSessionId(chatSessionId);
-    useActiveChatSessionStore.setState({
-      compareActive: isCompareMode,
-      viewOnly: apiSessionViewOnly,
-    });
-    return () => {
-      useActiveChatSessionStore.setState((state) =>
-        state.sessionId === chatSessionId
-          ? { sessionId: null, compareActive: false, viewOnly: false }
-          : state,
-      );
-    };
-  }, [
-    chatSessionId,
-    setActiveChatSessionId,
-    isCompareMode,
-    apiSessionViewOnly,
-  ]);
+  usePublishActiveChatSession(
+    chatSessionId, appSessionScopeId, isCompareMode, apiSessionViewOnly,
+  );
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isCompareMode);
 
@@ -3275,18 +3289,21 @@ export function PlaygroundMain({
     appMessageDraft.clear();
   }, [composer, fileAttachments, appMessageDraft.clear]);
 
-  const cancelPendingHistorySelection = useCallback(() => {
-    historySelectionRequestIdRef.current += 1;
-    invalidatePendingReactiveHistoryLoad();
-    setLoadingHistorySessionId(null);
-    setActiveHistorySessionId(null);
-    setLoadedThreadOwnerUserId(null);
-    setViewingHistoryReplay(false);
-    // No persisted conversation is open any more, so there is nothing left to
-    // disclose about one — and leaving the flag set would gate sends on a
-    // fresh chat the user just started.
-    setRestoredConversation(null);
-  }, [invalidatePendingReactiveHistoryLoad]);
+  const cancelPendingHistorySelection = useCallback(
+    (preserveAppSession = false) => {
+      historySelectionRequestIdRef.current += 1;
+      invalidatePendingReactiveHistoryLoad();
+      setLoadingHistorySessionId(null);
+      setActiveHistorySessionId(null);
+      setLoadedThreadOwnerUserId(null);
+      if (!preserveAppSession) setViewingHistoryReplay(false);
+      // No persisted conversation is open any more, so there is nothing left to
+      // disclose about one — and leaving the flag set would gate sends on a
+      // fresh chat the user just started.
+      setRestoredConversation(null);
+    },
+    [invalidatePendingReactiveHistoryLoad],
+  );
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
@@ -3650,9 +3667,9 @@ export function PlaygroundMain({
   suppressHistoryConflictToastRef.current = suppressHistoryConflictToast;
 
   const detachHistorySession = useCallback(
-    (toastMessage: string, opts?: { silent?: boolean }) => {
+    (toastMessage: string, opts?: { silent?: boolean; preserveAppSession?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
-      cancelPendingHistorySelection();
+      cancelPendingHistorySelection(opts?.preserveAppSession);
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
 
@@ -3684,7 +3701,11 @@ export function PlaygroundMain({
       // shown once the fork is confirmed live. `resumedVersion` is cleared by
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messagesRef.current), {
-        toolRenderOverrides: restoredToolRenderOverrides,
+        preserveAppSession: opts?.preserveAppSession,
+        toolRenderOverrides: {
+          ...restoredToolRenderOverrides,
+          ...(opts?.preserveAppSession ? activeInjectedToolRenderOverrides : {}),
+        },
       })
         .then((fork) => {
           notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
@@ -3702,6 +3723,7 @@ export function PlaygroundMain({
     [
       cancelPendingHistorySelection,
       isThreadEmpty,
+      activeInjectedToolRenderOverrides,
       restoredToolRenderOverrides,
       detachToLocalFork,
       syncResumedVersion,
@@ -3784,6 +3806,18 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
+  const currentHistoryTargetRef = useRef({
+    chatSessionId,
+    appSessionScopeId,
+    extensionIdentity,
+    projectId: convexProjectId,
+  });
+  currentHistoryTargetRef.current = {
+    chatSessionId,
+    appSessionScopeId,
+    extensionIdentity,
+    projectId: convexProjectId,
+  };
   const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
 
   const refreshCurrentHistorySession = useCallback(
@@ -4238,11 +4272,20 @@ export function PlaygroundMain({
       // An archived chat's Apps close once it is no longer the shown chat,
       // and its pending extension forms are cancelled once (D6).
       if (action === "archive") {
-        releaseExtensionChat(session.chatSessionId);
-        if (extensionIdentity)
+        // The user may have reopened the source while the archive was pending.
+        const visible = currentHistoryTargetRef.current;
+        let scope: string | null = session.chatSessionId;
+        if (visible.extensionIdentity === extensionIdentity) {
+          releaseExtensionChat(session.chatSessionId);
+          scope = archivedChatAppScope(
+            session.chatSessionId,
+            visible.chatSessionId,
+            visible.appSessionScopeId,
+          );
+        }
+        if (extensionIdentity && scope)
           cancelComposerForms(
-            chatOwnerWorkspace(extensionIdentity, session.chatSessionId)
-              .workspaceId,
+            chatOwnerWorkspace(extensionIdentity, scope).workspaceId,
           );
       }
       if (
@@ -4358,6 +4401,7 @@ export function PlaygroundMain({
     onConflict: () => {
       detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE, {
         silent: suppressHistoryConflictToastRef.current,
+        preserveAppSession: true,
       });
     },
     onUnsaved: () => {
@@ -4470,7 +4514,7 @@ export function PlaygroundMain({
   useEffect(() => {
     setTraceViewMode("chat");
     setPreludeTraceExecutions([]);
-  }, [chatSessionId]);
+  }, [appSessionScopeId, appReopenKey]);
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
@@ -4546,6 +4590,7 @@ export function PlaygroundMain({
       );
 
     if (pendingExecution.renderOverride) {
+      injectedAppScopeRef.current = appSessionScopeId;
       setInjectedToolRenderOverrides((prev) => ({
         ...prev,
         [toolCallId]: pendingExecution.renderOverride!,
@@ -4772,8 +4817,12 @@ export function PlaygroundMain({
     previewedHostId,
   ]);
   const pluginMessage = usePluginMessage({
-    threadId: chatSessionId,
-    scope: JSON.stringify([extensionOwnerScope, chatSessionId]),
+    threadId: appSessionScopeId,
+    scope: JSON.stringify([
+      extensionOwnerScope,
+      appSessionScopeId,
+      chatSessionId,
+    ]),
     disabled:
       !extensionScope ||
       isCompareMode ||
@@ -5316,12 +5365,12 @@ export function PlaygroundMain({
       // Thread. Live overrides from this turn (`injected*`) and the parent
       // (`external*`) win over restored ones for the same toolCallId.
       ...restoredToolRenderOverrides,
-      ...injectedToolRenderOverrides,
+      ...activeInjectedToolRenderOverrides,
       ...externalToolRenderOverrides,
     }),
     [
       restoredToolRenderOverrides,
-      injectedToolRenderOverrides,
+      activeInjectedToolRenderOverrides,
       externalToolRenderOverrides,
     ],
   );
@@ -6660,6 +6709,7 @@ export function PlaygroundMain({
                 <StickToBottom.Content className="flex flex-col min-h-0">
                   <div ref={setInlineAppSlot} />
                   <Thread
+                    appSessionScopeId={appSessionScopeId}
                     harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
                     messages={messages}
@@ -7536,6 +7586,7 @@ export function PlaygroundMain({
                       >
                         <SingleModelTraceDiagnosticsBody
                           chatSessionId={chatSessionId}
+                          appSessionScopeId={appSessionScopeId}
                           activeTraceViewMode={activeTraceViewMode}
                           isThreadEmpty={isThreadEmpty}
                           showLiveTracePending={showLiveTracePending}

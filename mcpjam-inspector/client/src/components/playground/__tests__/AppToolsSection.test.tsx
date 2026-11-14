@@ -8,6 +8,7 @@ import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 beforeEach(() => {
   useActiveChatSessionStore.setState({
     sessionId: "chat-1",
+    appSessionScopeId: "chat-1",
     compareActive: false,
   });
   useAppToolsRegistry.setState({
