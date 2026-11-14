@@ -52,13 +52,19 @@ export function validateDirectoryTestPlan(
       issues.push({ ...issueWords(words, { ...about, ...vars }), ...about });
     },
   };
-  // In this order: later checks read the fixtures and entries earlier ones keep.
-  checkFixtures(context);
-  checkTools(context);
-  checkCases(context);
-  checkOrder(context);
-  checkCleanup(context);
-  checkLimits(context);
+  const length = jsonLength(plan);
+  // A plan that is not JSON (a cycle, NaN) can never be stored, and walking
+  // an argument that contains itself would never end, so it gets only its
+  // limit issues.
+  if (Number.isFinite(length)) {
+    // In this order: later checks read the fixtures and entries earlier ones keep.
+    checkFixtures(context);
+    checkTools(context);
+    checkCases(context);
+    checkOrder(context);
+    checkCleanup(context);
+  }
+  checkLimits(context, length);
   return issues;
 }
 
@@ -132,9 +138,10 @@ function checkCases(context: Context) {
       (kinds.get(entry.tool) ?? new Set()).add(testCase.kind)
     );
     if (!testCase.arguments) add("argumentsMissing", about);
-    checkReferences(context, testCase.arguments, `Case ${testCase.id}`, about);
+    const where = `Case ${testCase.id}`;
+    const used = checkReferences(context, testCase.arguments, where, about);
+    checkWriteScope(context, entry, used, where, about);
     for (const fixture of testCase.creates ?? []) {
-      const where = `Case ${testCase.id}`;
       if (!fixtures.has(fixture))
         add("unknownFixture", { ...about, fixture }, { where });
       else if (!entry.writes.includes(fixture)) {
@@ -150,6 +157,10 @@ function checkCases(context: Context) {
       add("actionCases.noValid", { tool });
     if (action === "negative-only" && !has.has("negative")) {
       add("actionCases.noNegative", { tool });
+    }
+    // The sweep never sends them, so the consent would name calls that never run.
+    if (action === "negative-only" && has.has("valid")) {
+      add("actionCases.negativeOnly", { tool });
     }
   }
 }
@@ -191,10 +202,21 @@ function checkCleanup(context: Context) {
     const origin = fixtures.get(step.fixture)?.origin;
     if (!origin) add("unknownFixture", about, { where: "A cleanup step" });
     if (origin === "existing") add("cleanup.existing", about);
-    const action = entries.get(step.tool)?.action;
-    if (!action || action === "excluded") add("cleanup.tool", about);
+    const entry = entries.get(step.tool);
+    const runs = entry !== undefined && entry.action !== "excluded";
+    if (!runs) add("cleanup.tool", about);
+    else if (entry.effect === "read") add("cleanup.readOnly", about);
+    else if (origin === "created" && !entry.writes.includes(step.fixture)) {
+      add("cleanup.writes", about);
+    }
     const where = `The cleanup step for ${step.fixture}`;
-    checkReferences(context, step.arguments, where, about);
+    const used = checkReferences(context, step.arguments, where, about);
+    // A tool the plan does not run, or one that only reads, has its issue
+    // above, as does the step's own fixture.
+    if (runs && entry.effect !== "read") {
+      const others = used.filter((fixture) => fixture !== step.fixture);
+      checkWriteScope(context, entry, others, where, about);
+    }
   }
   for (const { id, origin } of fixtures.values()) {
     const removed = plan.cleanup.some((step) => step.fixture === id);
@@ -203,13 +225,15 @@ function checkCleanup(context: Context) {
   }
 }
 
+/** The fixtures the arguments refer to, each checked against the plan's. */
 function checkReferences(
   { fixtures, add }: Context,
   args: unknown,
   where: string,
   about: About
-) {
-  for (const { fixture, value } of directoryFixtureReferences(args)) {
+): string[] {
+  const references = directoryFixtureReferences(args);
+  for (const { fixture, value } of references) {
     const target = fixtures.get(fixture);
     const named =
       target?.origin === "created" ? target.capture : target?.values;
@@ -218,9 +242,27 @@ function checkReferences(
       add("unknownFixture.value", { ...about, fixture }, { where, value });
     }
   }
+  return references.map((reference) => reference.fixture);
 }
 
-function checkLimits({ plan, add }: Context) {
+/** A tool that can change data is handed only the fixtures it may write. */
+function checkWriteScope(
+  { fixtures, add }: Context,
+  entry: DirectoryToolPlan,
+  used: readonly string[],
+  where: string,
+  about: About
+) {
+  if (entry.effect === "read") return;
+  for (const fixture of new Set(used)) {
+    // An undeclared fixture is already an issue of its own.
+    if (fixtures.has(fixture) && !entry.writes.includes(fixture)) {
+      add("writeScope.uses", { ...about, fixture }, { where });
+    }
+  }
+}
+
+function checkLimits({ plan, add }: Context, length: number) {
   const { maxCalls, concurrency, callTimeoutMs } = plan.budget;
   const counts: Array<[IssueWording, number, number]> = [
     ["limit.tools", plan.tools.length, LIMITS.maxTools],
@@ -236,7 +278,7 @@ function checkLimits({ plan, add }: Context) {
       add("limit.id", {}, { id: id.slice(0, 40), max: LIMITS.maxIdLength });
     }
   }
-  if (jsonLength(plan) > LIMITS.maxPlanLength) {
+  if (length > LIMITS.maxPlanLength) {
     add("limit.plan", {}, { max: LIMITS.maxPlanLength });
   }
   const ranges: Array<[IssueWording, number, number, number]> = [

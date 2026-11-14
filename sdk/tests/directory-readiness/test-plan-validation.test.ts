@@ -169,6 +169,11 @@ describe("exclusions", () => {
       );
       entry(plan, "get_project").action = "negative-only";
       entry(plan, "search_web").action = "negative-only";
+      // A tool planned as negative only keeps no valid-input case.
+      plan.cases = plan.cases.filter(
+        (candidate) =>
+          !["get_project#valid", "search_web#valid"].includes(candidate.id)
+      );
     });
     expect(
       issues.map((issue) => [issue.code, issue.tool, issue.message])
@@ -188,6 +193,20 @@ describe("exclusions", () => {
         "list_projects",
         "list_projects has no valid-input case. Add one, or plan the tool as negative only.",
       ],
+    ]);
+  });
+
+  it("refuses a valid-input case for a tool planned as negative only", () => {
+    const issues = issuesAfter((plan) => {
+      entry(plan, "get_project").action = "negative-only";
+    });
+    expect(issues).toEqual([
+      {
+        code: "actionCases",
+        tool: "get_project",
+        message:
+          "get_project is negative only but has valid-input cases. Remove them, or plan the tool to run.",
+      },
     ]);
   });
 });
@@ -225,6 +244,42 @@ describe("permitted writes and fixtures", () => {
         tool: "delete_project",
         message:
           "delete_project can change data and names no fixture it may change. Name its fixtures, or exclude it.",
+      },
+      // Its case and its cleanup step still hand it the scratch project.
+      {
+        code: "writeScope",
+        tool: "delete_project",
+        caseId: "delete_project#valid",
+        fixture: "scratchProject",
+        message:
+          "Case delete_project#valid uses scratchProject, which delete_project may not write. Add scratchProject to its permitted writes.",
+      },
+      {
+        code: "cleanup",
+        tool: "delete_project",
+        fixture: "scratchProject",
+        message:
+          "Cleanup removes scratchProject with delete_project, which may not write it. Add scratchProject to the tool's permitted writes.",
+      },
+    ]);
+  });
+
+  it("refuses a case that hands a tool that can change data a fixture it may not write", () => {
+    const issues = issuesAfter((plan) => {
+      testCase(plan, "rename_project#valid").arguments = {
+        projectId: { $fixture: "demoProject", value: "id" },
+        name: "Renamed by MCPJam",
+      };
+    });
+    // get_project reads demoProject too, and a read may use any fixture.
+    expect(issues).toEqual([
+      {
+        code: "writeScope",
+        tool: "rename_project",
+        caseId: "rename_project#valid",
+        fixture: "demoProject",
+        message:
+          "Case rename_project#valid uses demoProject, which rename_project may not write. Add demoProject to its permitted writes.",
       },
     ]);
   });
@@ -342,6 +397,73 @@ describe("cleanup", () => {
       "Cleanup calls purge_cache, which the plan does not run. Use a tool the plan includes."
     );
   });
+
+  it("refuses removing a fixture with a tool that only reads", () => {
+    const issues = issuesAfter((plan) => {
+      plan.cleanup = plan.cleanup.map((step) => ({
+        ...step,
+        tool: "get_project",
+      }));
+    });
+    expect(issues).toEqual([
+      {
+        code: "cleanup",
+        tool: "get_project",
+        fixture: "scratchProject",
+        message:
+          "Cleanup calls get_project, which only reads data. Use a tool that can remove scratchProject.",
+      },
+    ]);
+  });
+
+  it("refuses removing a fixture with a tool that may not write it", () => {
+    const copy = { $fixture: "scratchCopy", value: "id" };
+    const issues = issuesAfter((plan) => {
+      plan.fixtures.push({
+        id: "scratchCopy",
+        description: "A second project the sweep creates and deletes.",
+        origin: "created",
+        capture: { id: "project.id" },
+      });
+      testCase(plan, "create_project#valid").creates = [
+        "scratchProject",
+        "scratchCopy",
+      ];
+      entry(plan, "create_project").writes.push("scratchCopy");
+      plan.cleanup.push({
+        fixture: "scratchCopy",
+        tool: "delete_project",
+        arguments: { projectId: copy },
+      });
+    });
+    expect(issues.map((issue) => [issue.code, issue.message])).toEqual([
+      [
+        "cleanup",
+        "Cleanup removes scratchCopy with delete_project, which may not write it. Add scratchCopy to the tool's permitted writes.",
+      ],
+    ]);
+  });
+
+  it("refuses a cleanup step that hands its tool a fixture the tool may not write", () => {
+    const issues = issuesAfter((plan) => {
+      plan.cleanup = plan.cleanup.map((step) => ({
+        ...step,
+        arguments: {
+          projectId: scratch,
+          templateId: { $fixture: "demoProject", value: "id" },
+        },
+      }));
+    });
+    expect(issues).toEqual([
+      {
+        code: "writeScope",
+        tool: "delete_project",
+        fixture: "demoProject",
+        message:
+          "The cleanup step for scratchProject uses demoProject, which delete_project may not write. Add demoProject to its permitted writes.",
+      },
+    ]);
+  });
 });
 
 describe("duplicates and limits", () => {
@@ -385,6 +507,15 @@ describe("duplicates and limits", () => {
       testCase(plan, "search_web#valid").arguments = { limit: Number.NaN };
     });
     expect(notJson.map((issue) => issue.code)).toEqual(["limit"]);
+  });
+
+  it("refuses arguments that contain themselves without walking them", () => {
+    const args: Record<string, unknown> = { query: "model context protocol" };
+    args.again = args;
+    const issues = issuesAfter((plan) => {
+      testCase(plan, "search_web#valid").arguments = args;
+    });
+    expect(issues.map((issue) => issue.code)).toEqual(["limit"]);
   });
 
   it("refuses an empty or overlong id, and more cases than a plan holds", () => {
