@@ -101,8 +101,11 @@ const plans = vi.hoisted(() => ({
   getToolTests: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-test-plan-api", () => plans);
-vi.mock("@/hooks/use-task-owner-id", () => ({
-  useTaskOwnerId: () => "user_1",
+// The reviewer section reads Convex and project secrets, and has its own
+// tests; on this page it is left out of Test & launch.
+vi.mock("../ReviewerSection", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ReviewerSection")>()),
+  ReviewerPath: () => null,
 }));
 
 function finding(
@@ -550,6 +553,27 @@ describe("ReadinessRoute", () => {
       expect(screen.queryByRole("alertdialog")).toBeNull();
       await waitFor(() => expect(sentRevisions()).toEqual([undefined]));
     });
+  });
+
+  it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
+    render(<ReadinessRoute />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /MCP connector/ }),
+    );
+    const rail = within(
+      await screen.findByRole("navigation", {
+        name: "Claude submission steps",
+      }),
+    );
+    expect(
+      screen.queryByRole("region", { name: "MCPJam test plan" }),
+    ).toBeNull();
+    await userEvent.click(rail.getByRole("button", { name: /Test & launch/ }));
+    const section = screen.getByRole("region", { name: "MCPJam test plan" });
+    expect(
+      await within(section).findByText(/^No test plan is saved/),
+    ).toBeVisible();
+    expect(plans.getToolTests).toHaveBeenCalled();
   });
 
   it("asks for a saved server first", () => {

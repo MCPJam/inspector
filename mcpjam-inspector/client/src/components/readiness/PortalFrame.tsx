@@ -23,6 +23,7 @@ import type {
   DirectorySubmissionSession,
 } from "@/hooks/use-directory-submission";
 import { useSubmissionEvents } from "@/hooks/use-submission-events";
+import type { DirectoryTestPlanSession } from "@/hooks/use-directory-test-plan";
 import type { SubmissionView } from "@/lib/apis/directory-submissions-api";
 import { AnswerOrigin, NO_PEOPLE, type People } from "./AnswerOrigin";
 import { ConflictNotice } from "./ConflictNotice";
@@ -39,6 +40,7 @@ import { DIRECTORY_NAMES } from "./RehearsalBar";
 import { OpenEvidence } from "./ShowEvidence";
 import { StatusPanel } from "./SubmissionStatus";
 import { ReviewerPath } from "./ReviewerSection";
+import { TestPlanSection } from "./TestPlanSection";
 
 function StepBody({
   flow,
@@ -182,6 +184,7 @@ export function PortalFrame({
   flow,
   view,
   session,
+  testPlan,
   serverUrl,
   serverName,
   people = NO_PEOPLE,
@@ -190,6 +193,8 @@ export function PortalFrame({
   flow: DirectoryFlow;
   view: SubmissionView;
   session: DirectorySubmissionSession;
+  /** The submission's test plan, drawn on the step that asks about testing. */
+  testPlan?: DirectoryTestPlanSession;
   serverUrl?: string;
   serverName?: string;
   /** Who wrote each answer, by name; ids alone read as "a project member". */
@@ -362,6 +367,9 @@ export function PortalFrame({
               view={view}
               session={session}
             />
+            {testPlan ? (
+              <TestPlanSection flow={flow} step={step} session={testPlan} />
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
                 type="button"
