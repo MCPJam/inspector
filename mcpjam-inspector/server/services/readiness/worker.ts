@@ -467,12 +467,17 @@ export async function executeHostedReadinessRun(
           lease,
           target: options.target,
           fetchFn: options.fetchFn,
-          // As the reviewer checks: the reviewer account, never `mcpHeaders`.
+          // As the reviewer checks: the reviewer account, never `mcpHeaders`,
+          // and not at all once its identity check names someone else.
           // With no sign-in, as a directory's reviewer: with no credential,
-          // and with no reviewer account's fixtures either.
+          // and with no reviewer account's fixtures or identity either.
           ...(directoryDeclaresNoSignIn(submission?.answers ?? [])
             ? { reviewer: NO_SIGN_IN }
-            : { reviewer, fixtures: reviewerPath?.fixtures }),
+            : {
+                reviewer,
+                fixtures: reviewerPath?.fixtures,
+                identity: reviewerPath?.identity,
+              }),
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
           // The same opt-in: drafting sends the tools' text to a model.

@@ -315,6 +315,47 @@ describe("runDirectoryTestPlan as the reviewer", () => {
   });
 
   it.each([
+    [
+      "wrong-account",
+      "The reviewer account signed in as a different account than the submission names, so MCPJam made none of the test plan's calls. Rehearse the reviewer sign-in with the account the submission names, then start a new run.",
+    ],
+    [
+      "wrong-tenant",
+      "The reviewer account answers for an organization other than the one the submission names, so MCPJam made none of the test plan's calls. Leave the reviewer account in only the organization or project the submission names, then start a new run.",
+    ],
+  ] as const)(
+    "lists and calls nothing when the identity check found %s",
+    async (outcome, reason) => {
+      const { fetchFn } = wire();
+      const report = await run(fetchFn, { identity: { outcome } });
+
+      expect(report).toEqual({
+        planRevision: 3,
+        status: "not-run",
+        reason,
+        ambiguous: [],
+        tools: [],
+        cleanup: [],
+      });
+      // The server is never dialled, so nothing is listed or called.
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(readRunTestPlan).not.toHaveBeenCalled();
+      expect(recordRunCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["verified", "unverified"] as const)(
+    "runs the plan when the identity check is %s",
+    async (outcome) => {
+      const { fetchFn, calls } = wire();
+      const report = await run(fetchFn, { identity: { outcome } });
+
+      expect(report?.status).toBe("completed");
+      expect(calls.map((call) => call.name)).toContain("delete_project");
+    },
+  );
+
+  it.each([
     ["one of its values", lookup("proj_demo"), true],
     ["its id, in another case and with spaces", lookup(" DEMOPROJECT "), true],
     ["a resource the lookup found", lookup("proj_demo", "found"), false],
@@ -424,6 +465,15 @@ describe("runDirectoryTestPlan on a server that needs no sign-in", () => {
       }),
     ]);
   }
+
+  it("runs whatever the identity check found, since no call carries the account", async () => {
+    const { fetchFn } = wire();
+    const report = await run(fetchFn, {
+      ...NO_SIGN_IN,
+      identity: { outcome: "wrong-account" },
+    });
+    expect(report?.status).toBe("completed");
+  });
 
   it("lists and calls with no credential, and records no account", async () => {
     const { fetchFn, credentials } = wire();

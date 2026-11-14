@@ -101,15 +101,18 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
+/** Who the reviewer token signs in as: the account the answers name. */
+const NAMED_REVIEWER = {
+  user: { email: "review@example.com" },
+  organization: { name: "Sample Org" },
+};
+
 /** The target server: lists the sample tools, and holds `projects` for each account. */
-function connector(projects: string[]) {
+function connector(projects: string[], reviewerIs = NAMED_REVIEWER) {
   const seen: Seen[] = [];
   const identity = (authorization: string | null) =>
     authorization === REVIEWER
-      ? {
-          user: { email: "review@example.com" },
-          organization: { name: "Sample Org" },
-        }
+      ? reviewerIs
       : {
           user: { email: "staff@example.com" },
           organization: { name: "Staff Org" },
@@ -371,6 +374,43 @@ describe("a submission run's tool tests, without a reviewer account", () => {
       expect(server.seen.some((entry) => entry.rpc === "tools/list")).toBe(
         true,
       );
+    },
+  );
+});
+
+describe("a reviewer account signed in as someone else", () => {
+  it.each([
+    [
+      "another account",
+      { ...NAMED_REVIEWER, user: { email: "other@example.com" } },
+      "The reviewer account signed in as a different account than the submission names, so MCPJam made none of the test plan's calls. Rehearse the reviewer sign-in with the account the submission names, then start a new run.",
+    ],
+    [
+      "another organization",
+      { ...NAMED_REVIEWER, organization: { name: "Other Org" } },
+      "The reviewer account answers for an organization other than the one the submission names, so MCPJam made none of the test plan's calls. Leave the reviewer account in only the organization or project the submission names, then start a new run.",
+    ],
+  ])(
+    "tests no tool when it answers for %s",
+    async (_label, reviewerIs, reason) => {
+      const backend = stubBackend();
+      const server = connector(["proj_demo"], reviewerIs);
+      await run(server.fetchFn, AS_REVIEWER);
+
+      expect(toolTests(backend)).toEqual({
+        planRevision: 3,
+        status: "not-run",
+        reason,
+        ambiguous: [],
+        tools: [],
+        cleanup: [],
+      });
+      // The identity check is the reviewer account's only call.
+      expect(
+        server.calls().map((call) => [call.tool, call.authorization]),
+      ).toEqual([["whoami", REVIEWER]]);
+      expect(backend.recorded).toEqual([]);
+      expect(backend.planRead).toBe(false);
     },
   );
 });
