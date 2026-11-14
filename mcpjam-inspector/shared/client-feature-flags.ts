@@ -39,7 +39,6 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcpjam-compatibility",
   "mcpjam-conformance",
   "mcpjam-directory-readiness",
-  "mcpjam-directory-readiness-cards",
   "mcpjam-learning",
   "multi-account-connections-enabled",
   "org-model-gateways",
