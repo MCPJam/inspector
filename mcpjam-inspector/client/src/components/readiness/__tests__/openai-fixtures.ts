@@ -133,6 +133,7 @@ export function runRow(
     submissionId: submission.id,
     submissionRevision: submission.revision,
     pluginVersionId,
+    testPlanRevision: null,
     createdAt: at,
     updatedAt: at,
   };
