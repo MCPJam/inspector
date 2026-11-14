@@ -191,6 +191,14 @@ export function createFindingConstructors<
 }
 
 /**
+ * The `details` key a `not-evaluated` finding sets, naming the evidence it
+ * grades, when no run gathers that evidence yet. A run's verdict leaves the
+ * check out of its default gate with the finding's reason, instead of waiting
+ * on evidence no run can bring.
+ */
+export const UNGATHERED_EVIDENCE_DETAIL_KEY = "ungatheredEvidence";
+
+/**
  * Mark a finding as derived from an existing suite result rather than
  * re-observed.
  *

@@ -4,10 +4,12 @@
  * Two entry points with different jobs. `validateDirectoryAnswerInput` is the
  * gate before a write: it refuses only what the portal's own controls could
  * never hold (an unknown field, a list where text goes, an option it does not
- * offer, more rows than it shows). Everything the portal lets a person type
- * and then complains about — a missing answer, a one-liner over its counter,
- * a link that is not https — is stored, and `validateDirectoryAnswers`
- * reports it, as the portal's form and review page do.
+ * offer, more rows than it shows, anything but a secret's name in a secret
+ * field, a person's write to a field the package manages). Everything the
+ * portal lets a person type and then complains about — a missing answer, a
+ * one-liner over its counter, a link that is not https — is stored, and
+ * `validateDirectoryAnswers` reports it, as the portal's form and review page
+ * do.
  *
  * Pure. Safe from the browser entry.
  */
@@ -20,6 +22,7 @@ import {
 } from "./fields.js";
 import type {
   DirectoryAnswer,
+  DirectoryAnswerOrigin,
   DirectoryAnswerValue,
   DirectoryFieldFormat,
   DirectoryFieldIssue,
@@ -31,6 +34,11 @@ import type {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** The portal's helper: "Lowercase letters, numbers, and hyphens." */
 const SLUG = /^[a-z0-9-]+$/;
+/** A project secret's name as the platform stores it: an environment variable's. */
+const SECRET_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
+/** The ChatGPT portal's words for a field its package manages. */
+const PACKAGE_READ_ONLY =
+  "Package details are read-only here; edit them in your source package.";
 
 /** MCPJam's wording where the portal's error line was not captured. */
 const FORMAT_HINTS: Record<DirectoryFieldFormat, string> = {
@@ -51,21 +59,45 @@ const KINDS: Record<DirectoryFlowField["control"], string> = {
   checkbox: "true or false",
   "checkbox-group": "a list of option values",
   pairs: "a list of rows",
+  rows: "a list of records",
   server: "a server URL",
-  secret: "a secret name",
+  secret:
+    "the name of a project secret, such as REVIEWER_PASSWORD, never the secret itself",
 };
 
 /** A value of the wrong kind for its control, as opposed to a badly formed one. */
 type Problem = Exclude<DirectoryFieldIssueCode, "unknownField"> | "wrongKind";
 
+interface ValidateOptions {
+  on?: "form" | "review";
+  /**
+   * Names of the project's secrets that hold a value. A secret field naming
+   * another reports `secretUnset`; without the list nobody looked, so none does.
+   */
+  savedSecrets?: readonly string[];
+}
+
+/**
+ * `origin: "imported"` is a package import writing what the package holds:
+ * only it may set a package-managed field, and only a value of the wrong kind
+ * is refused, because the review reports a package's limits.
+ */
 export function validateDirectoryAnswerInput(
   flow: DirectoryFlow,
   key: string,
-  value: DirectoryAnswerValue
+  value: DirectoryAnswerValue,
+  options: { origin?: DirectoryAnswerOrigin } = {}
 ): DirectoryFieldIssue | undefined {
   const field = directoryFlowField(flow, key);
   if (!field) return unknownField(key);
-  const problem = shapeProblem(field, value);
+  let problem = shapeProblem(field, value);
+  if (field.managedBy === "package") {
+    if (options.origin !== "imported") {
+      problem = isBlankAnswer(field, value) ? undefined : "managedByPackage";
+    } else if (problem !== "wrongKind") {
+      problem = undefined;
+    }
+  }
   return problem && issue(flow, field, problem, value);
 }
 
@@ -77,7 +109,7 @@ export function validateDirectoryAnswerInput(
 export function validateDirectoryAnswers(
   flow: DirectoryFlow,
   answers: readonly DirectoryAnswer[],
-  options: { on?: "form" | "review" } = {}
+  options: ValidateOptions = {}
 ): DirectoryFieldIssue[] {
   const merged = withDirectoryFlowDefaults(flow, answers);
   const byKey = new Map(merged.map((answer) => [answer.key, answer]));
@@ -85,7 +117,7 @@ export function validateDirectoryAnswers(
   for (const step of flow.steps) {
     for (const field of step.fields) {
       const answer = byKey.get(field.key);
-      const problem = fieldProblem(flow, field, answer, byKey, options.on);
+      const problem = fieldProblem(flow, field, answer, byKey, options);
       if (problem) issues.push(issue(flow, field, problem, answer?.value));
     }
   }
@@ -100,14 +132,15 @@ function fieldProblem(
   field: DirectoryFlowField,
   answer: DirectoryAnswer | undefined,
   byKey: ReadonlyMap<string, DirectoryAnswer>,
-  on: "form" | "review" = "form"
+  { on = "form", savedSecrets }: ValidateOptions
 ): Problem | undefined {
   const value = answer?.value ?? null;
   const shape = shapeProblem(field, value);
   if (shape) return shape;
   if (isBlankAnswer(field, value)) {
     const asked =
-      field.required && (on === "review" || field.requiredOn !== "review");
+      (field.required && (on === "review" || field.requiredOn !== "review")) ||
+      answeredAny(flow, field.requiredWith, byKey);
     return asked && !standsIn(field, byKey) ? "required" : undefined;
   }
   if (typeof value === "string") {
@@ -115,9 +148,18 @@ function fieldProblem(
     if (field.maxLength !== undefined && value.length > field.maxLength) {
       return "tooLong";
     }
+    // Named but empty: the portal reads the section complete with no password.
+    if (field.control === "secret" && savedSecrets?.includes(value) === false) {
+      return "secretUnset";
+    }
   }
-  if (isStringList(value) && new Set(value).size < (field.minItems ?? 0)) {
-    return "tooFew";
+  if (Array.isArray(value)) {
+    const count = isStringList(value) ? new Set(value).size : value.length;
+    if (count < (field.minItems ?? 0)) return "tooFew";
+    // A package holds as many as it holds; the write took them all.
+    if (field.control === "rows" && count > (field.maxItems ?? Infinity)) {
+      return "tooMany";
+    }
   }
   if (
     field.declaration &&
@@ -151,6 +193,12 @@ function shapeProblem(
       return value.length > (field.pairs?.maxRows ?? Infinity)
         ? "tooMany"
         : undefined;
+    case "rows":
+      return isRowList(value) ? undefined : "wrongKind";
+    case "secret":
+      return typeof value === "string" && SECRET_NAME.test(value)
+        ? undefined
+        : "wrongKind";
     case "select":
     case "radio":
     case "radio-cards":
@@ -167,6 +215,18 @@ function offers(field: DirectoryFlowField, value: string): boolean {
     field.freeEntry === true ||
     (field.options ?? []).some((entry) => entry.value === value)
   );
+}
+
+/** Whether any of `keys` has an answer, which asks for a field `requiredWith` them. */
+function answeredAny(
+  flow: DirectoryFlow,
+  keys: readonly string[] | undefined,
+  byKey: ReadonlyMap<string, DirectoryAnswer>
+): boolean {
+  return (keys ?? []).some((key) => {
+    const other = directoryFlowField(flow, key);
+    return Boolean(other && !isBlankAnswer(other, byKey.get(key)?.value));
+  });
 }
 
 function standsIn(
@@ -218,9 +278,10 @@ function isStringList(value: DirectoryAnswerValue): value is string[] {
   );
 }
 
+/** Records of strings, with only `columns` when they are given. */
 function isRowList(
   value: DirectoryAnswerValue,
-  columns: readonly string[]
+  columns?: readonly string[]
 ): value is Array<Record<string, string>> {
   return (
     Array.isArray(value) &&
@@ -231,7 +292,7 @@ function isRowList(
         !Array.isArray(row) &&
         Object.entries(row).every(
           ([column, cell]) =>
-            columns.includes(column) && typeof cell === "string"
+            (!columns || columns.includes(column)) && typeof cell === "string"
         )
     )
   );
@@ -248,15 +309,17 @@ function issue(
     key: field.key,
     step: step?.id ?? "",
     code: problem === "wrongKind" ? "format" : problem,
-    message: messageFor(field, problem, value),
+    message: messageFor(flow, field, problem, value),
   };
 }
 
 function messageFor(
+  flow: DirectoryFlow,
   field: DirectoryFlowField,
   problem: Problem,
   value: DirectoryAnswerValue | undefined
 ): string {
+  const label = field.label.toLowerCase();
   switch (problem) {
     case "wrongKind":
       return `${field.label} takes ${KINDS[field.control]}.`;
@@ -264,20 +327,43 @@ function messageFor(
       return `Choose one of: ${(field.options ?? []).map((entry) => entry.value).join(", ")}.`;
     case "wordingChanged":
       return "The wording changed after this was confirmed. Read it again and confirm it.";
+    case "managedByPackage":
+      return PACKAGE_READ_ONLY;
+    // The name only: a secret's value never reaches an answer or a message.
+    case "secretUnset":
+      return `No value is saved for the project secret ${String(value)}. Save the ${label} under that name.`;
   }
   const portal = field.errors[problem];
   if (portal) return portal;
+  const count = Array.isArray(value) ? value.length : 0;
+  const tickAll =
+    field.control === "checkbox-group" &&
+    field.minItems === field.options?.length;
+  const trigger = field.required
+    ? undefined
+    : field.requiredWith?.map((key) => directoryFlowField(flow, key)?.label)[0];
   switch (problem) {
     case "required":
-      return `${field.label} is required.`;
+      if (tickAll) return `Tick all ${field.minItems} ${label} to submit.`;
+      if (field.control === "rows" && field.minItems) {
+        return `Supply ${field.minItems} ${label}.`;
+      }
+      return trigger
+        ? `Add ${label} for the ${trigger.toLowerCase()} you entered.`
+        : `${field.label} is required.`;
     case "format":
       return FORMAT_HINTS[field.format ?? "url"];
     case "tooLong":
       return `Use ${field.maxLength} characters or fewer. This has ${String(value).length}.`;
     case "tooMany":
-      return `Choose up to ${field.maxItems ?? field.pairs?.maxRows}.`;
+      return field.control === "rows"
+        ? `Supply at most ${field.maxItems} ${label}. There are ${count}.`
+        : `Choose up to ${field.maxItems ?? field.pairs?.maxRows}.`;
     case "tooFew":
-      return `Choose at least ${field.minItems}.`;
+      if (tickAll) return `Tick all ${field.minItems} ${label} to submit.`;
+      return field.control === "rows"
+        ? `Supply at least ${field.minItems} ${label}. There are ${count}.`
+        : `Choose at least ${field.minItems}.`;
   }
 }
 
