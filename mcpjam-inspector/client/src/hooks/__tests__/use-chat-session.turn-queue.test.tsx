@@ -129,6 +129,18 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 
+// A send waits here before dispatch; a test can hold it to open a window in
+// which another turn starts.
+const browserRelease = vi.hoisted(() => ({
+  hold: null as Promise<void> | null,
+}));
+vi.mock("@/lib/browser-shell/chat-handoff", async () => ({
+  ...(await vi.importActual("@/lib/browser-shell/chat-handoff")),
+  releaseBrowserForChat: vi.fn(async () => {
+    await browserRelease.hold;
+  }),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockState.getAccessToken,
@@ -155,6 +167,7 @@ const scenario = vi.hoisted(() => ({
   bodies: [] as Record<string, unknown>[],
   releases: [] as Array<() => void>,
   firstCallsAppTool: false,
+  firstAsksApproval: false,
   onConflict: vi.fn(),
   onUnsaved: vi.fn(),
 }));
@@ -206,6 +219,18 @@ vi.mock("ai", async () => ({
               toolName: "app_deadbeef",
               input: {},
             });
+          } else if (request === 1 && scenario.firstAsksApproval) {
+            controller.enqueue({
+              type: "tool-input-available",
+              toolCallId: "call-1",
+              toolName: "delete_file",
+              input: {},
+            });
+            controller.enqueue({
+              type: "tool-approval-request",
+              approvalId: "approval-1",
+              toolCallId: "call-1",
+            });
           } else {
             controller.enqueue({ type: "text-start", id: "text" });
             controller.enqueue({
@@ -215,7 +240,9 @@ vi.mock("ai", async () => ({
             });
           }
           await released;
-          if (!appTool) controller.enqueue({ type: "text-end", id: "text" });
+          const textOpen =
+            !appTool && !(request === 1 && scenario.firstAsksApproval);
+          if (textOpen) controller.enqueue({ type: "text-end", id: "text" });
           controller.enqueue({ type: "finish-step" });
           controller.enqueue({ type: "finish" });
           controller.enqueue({
@@ -264,9 +291,11 @@ function useHarness() {
 
 beforeEach(() => {
   toastError.mockClear();
+  browserRelease.hold = null;
   scenario.bodies = [];
   scenario.releases = [];
   scenario.firstCallsAppTool = false;
+  scenario.firstAsksApproval = false;
   scenario.onConflict.mockClear();
   scenario.onUnsaved.mockClear();
 });
@@ -387,5 +416,139 @@ describe("one chat turn at a time (real AI SDK)", () => {
     ]);
     await act(async () => scenario.releases[2]());
     expect(scenario.onConflict).not.toHaveBeenCalled();
+  });
+  it("drops a queued send when the chat changes before its turn, with one notice", async () => {
+    const { result } = renderHook(useHarness);
+    await act(async () => {
+      void result.current.sendMessage({ text: "count to 150" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+
+    let queued: Promise<boolean> | undefined;
+    await act(async () => {
+      queued = result.current.sendMessage({ text: "App follow-up" });
+    });
+    act(() => result.current.resetChat());
+    await act(async () => scenario.releases[0]());
+
+    await expect(queued).resolves.toBe(false);
+    expect(scenario.bodies).toHaveLength(1);
+    expect(
+      toastError.mock.calls.filter(
+        ([, options]) => options?.id === "chat-turn-dropped",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("holds a queued send until a pending approval is answered and its step ends", async () => {
+    scenario.firstAsksApproval = true;
+    const { result } = renderHook(useHarness);
+    act(() => result.current.syncResumedVersion(4));
+    await act(async () => {
+      void result.current.sendMessage({ text: "delete the file" });
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+
+    let queuedSent = false;
+    await act(async () => {
+      void result.current
+        .sendMessage({ text: "App follow-up" })
+        .then((sent) => (queuedSent = sent));
+    });
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await act(async () => {});
+    expect(scenario.bodies).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.addToolApprovalResponse({
+        id: "approval-1",
+        approved: true,
+      });
+    });
+    // The approved step goes first; the App message waits for it.
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    await act(async () => {});
+    expect(queuedSent).toBe(false);
+    expect(scenario.bodies).toHaveLength(2);
+
+    await act(async () => scenario.releases[1]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(3));
+    expect(queuedSent).toBe(true);
+    expect(scenario.bodies.map((body) => body.expectedVersion)).toEqual([
+      4, 5, 6,
+    ]);
+    await act(async () => scenario.releases[2]());
+  });
+
+  it("gives a queued send's widget context to its own request, not to the running turn's follow-up", async () => {
+    scenario.firstCallsAppTool = true;
+    const { result } = renderHook(useHarness);
+    await act(async () => {
+      void result.current.sendMessage({ text: "play e4" });
+    });
+    await waitFor(() => expect(scenario.bodies).toHaveLength(1));
+
+    const context = [
+      {
+        toolCallId: "app-call-1",
+        context: { structuredContent: { board: "e4" } },
+      },
+    ];
+    await act(async () => {
+      void result.current.sendMessage({
+        text: "App follow-up",
+        widgetModelContext: context,
+      });
+    });
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+    expect(scenario.bodies[1]).not.toHaveProperty("widgetModelContext");
+
+    await act(async () => scenario.releases[1]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(3));
+    expect(scenario.bodies[2].widgetModelContext).toEqual(context);
+    await act(async () => scenario.releases[2]());
+  });
+  it("waits for an approved step that started while the send was being prepared", async () => {
+    scenario.firstAsksApproval = true;
+    const { result } = renderHook(useHarness);
+    act(() => result.current.syncResumedVersion(4));
+    await act(async () => {
+      void result.current.sendMessage({ text: "delete the file" });
+    });
+    await act(async () => scenario.releases[0]());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    // Nothing is queued, so this send starts at once and waits in preparation.
+    let releaseBrowser!: () => void;
+    browserRelease.hold = new Promise<void>((done) => {
+      releaseBrowser = done;
+    });
+    let sent = false;
+    await act(async () => {
+      void result.current
+        .sendMessage({ text: "App follow-up" })
+        .then((value) => (sent = value));
+    });
+    await act(async () => {
+      await result.current.addToolApprovalResponse({
+        id: "approval-1",
+        approved: true,
+      });
+    });
+    await waitFor(() => expect(scenario.bodies).toHaveLength(2));
+
+    await act(async () => releaseBrowser());
+    await act(async () => {});
+    expect(sent).toBe(false);
+    expect(scenario.bodies).toHaveLength(2);
+
+    await act(async () => scenario.releases[1]());
+    await waitFor(() => expect(scenario.bodies).toHaveLength(3));
+    expect(scenario.bodies.map((body) => body.expectedVersion)).toEqual([
+      4, 5, 6,
+    ]);
+    await act(async () => scenario.releases[2]());
   });
 });
