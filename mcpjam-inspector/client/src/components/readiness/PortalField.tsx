@@ -58,7 +58,7 @@ const rowsOf = (value: DirectoryAnswerValue | undefined) =>
   );
 
 /** The portal's red asterisk; assistive tech hears the word. */
-const REQUIRED = (
+export const REQUIRED = (
   <>
     <span aria-hidden="true" className="text-destructive">
       {" *"}
@@ -162,6 +162,11 @@ function Pairs({ field, id, value, onChange }: ControlProps) {
     while (next.length > 0 && blank(next[next.length - 1])) next.pop();
     onChange(next);
   };
+  // A portal's fixed rows all show. A list that grows shows its rows and one
+  // empty row for the next: typing there adds a row after it, so focus stays.
+  const shown = spec.grow
+    ? Math.min(spec.maxRows, rows.length + 1)
+    : spec.maxRows;
   return (
     <div
       role="group"
@@ -173,7 +178,7 @@ function Pairs({ field, id, value, onChange }: ControlProps) {
           {column}
         </span>
       ))}
-      {Array.from({ length: spec.maxRows }, (_, index) =>
+      {Array.from({ length: shown }, (_, index) =>
         spec.keys.map((column, side) => (
           <Input
             key={`${index}-${column}`}

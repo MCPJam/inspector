@@ -42,6 +42,8 @@ describe.each([
       "fixture",
       "lookup",
     ]);
+    // MCPJam's own list: its rows show as they fill.
+    expect(directoryFlowField(flow, key("fixtures"))?.pairs?.grow).toBe(true);
   });
 
   it("asks for a path beside an expected value, and a tool beside either", () => {

@@ -26,7 +26,11 @@ export const DIRECTORY_REVIEWER_FIELDS = [
   "fixtures",
 ] as const;
 
-/** The fixtures field's rows: the resource, and its lookup as `tool {"json": "arguments"}`. */
+/**
+ * The fixtures field's rows: the resource, and its lookup as
+ * `tool {"json": "arguments"}`. MCPJam's own list, not a portal's fixed
+ * rows, so it grows as it fills.
+ */
 export const DIRECTORY_REVIEWER_FIXTURE_PAIRS: NonNullable<
   DirectoryFlowField["pairs"]
 > = {
@@ -34,6 +38,7 @@ export const DIRECTORY_REVIEWER_FIXTURE_PAIRS: NonNullable<
   keys: ["fixture", "lookup"],
   placeholders: [["Sample Project", 'get_project {"name": "Sample Project"}']],
   maxRows: 20,
+  grow: true,
 };
 
 export interface DirectoryReviewerIdentitySpec {
