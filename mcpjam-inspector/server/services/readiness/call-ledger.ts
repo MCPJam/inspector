@@ -37,6 +37,8 @@ export type LedgerCallWrite = Pick<
 > & {
   /** From the plan: it lets the ledger refuse to send a write twice. */
   effect: DirectoryToolEffect;
+  /** The reviewer account the call is made as. */
+  account?: string;
   outcome?: DirectoryTestCallRecord["outcome"];
   captured?: LedgerCapturedValue[];
   detail?: string;

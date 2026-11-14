@@ -38,6 +38,8 @@
   "cases": {
     "ambiguous": "The call started and did not finish, so it may have changed data. Check what it changed, then record what happened or rerun it.",
     "staleAccount": "It ran as another reviewer account. Run it again.",
+    "staleNoAccount": "It ran with no account, and tests now run as the reviewer account. Run it again.",
+    "staleSignedIn": "It ran as a reviewer account, and the submission now says the server needs no sign-in. Run it again.",
     "staleInputs": "The case, a fixture it uses or the tool's schema changed after it ran. Run it again.",
     "running": "The call has not finished. A read that stopped runs again when the sweep resumes.",
     "refused": "The server refused the call before the tool ran. Check the reviewer's sign-in and permissions, then run it again.",

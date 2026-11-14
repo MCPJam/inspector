@@ -421,6 +421,35 @@ describe("summarizeDirectoryToolTests", () => {
     );
   });
 
+  it("keeps results made with no account apart from a reviewer account's", () => {
+    const plan = completePlan();
+    // Made with no account: the server needed no sign-in.
+    const calls = [
+      record(plan, "search_web#valid", { account: undefined }),
+      record(plan, "list_projects#valid"),
+    ];
+    const signedIn = summarize(plan, calls);
+    expect(signedIn.search_web).toMatchObject({
+      status: "stale",
+      reason:
+        "search_web#valid: It ran with no account, and tests now run as the reviewer account. Run it again.",
+    });
+    expect(signedIn.list_projects?.status).toBe("valid-input-succeeded");
+
+    const noSignIn = summarize(plan, calls, { account: null });
+    expect(noSignIn.search_web?.status).toBe("valid-input-succeeded");
+    expect(noSignIn.list_projects).toMatchObject({
+      status: "stale",
+      reason:
+        "list_projects#valid: It ran as a reviewer account, and the submission now says the server needs no sign-in. Run it again.",
+    });
+
+    // Left out, no account is compared.
+    const either = summarize(plan, calls, { account: undefined });
+    expect(either.search_web?.status).toBe("valid-input-succeeded");
+    expect(either.list_projects?.status).toBe("valid-input-succeeded");
+  });
+
   it("grades the calls as they were made when no listing is at hand", () => {
     const plan = completePlan();
     // Made against a listing these tools do not match, as a stored catalog's would not.

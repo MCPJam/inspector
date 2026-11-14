@@ -154,6 +154,19 @@ export interface DirectoryReviewerRunInput {
   clientSignatures?: DirectoryClientSignatureEvidence;
 }
 
+/**
+ * Whether a submission says its server needs no sign-in, so a reviewer
+ * connects with no account. Only Claude's form asks; ChatGPT's leaves
+ * authentication to the package's `mcp.json`.
+ */
+export function directoryDeclaresNoSignIn(
+  answers: readonly DirectoryAnswer[]
+): boolean {
+  return answers.some(
+    ({ key, value }) => key === "authentication.requirement" && value === "none"
+  );
+}
+
 /** The step a flow keeps its reviewer section on: the one with `<step>.identityTool`. */
 export function directoryReviewerStep(flow: DirectoryFlow): string | undefined {
   return flow.steps.find((step) =>

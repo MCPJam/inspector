@@ -39,6 +39,8 @@ export interface DirectoryReviewerChecks<Definition> {
 
 const NO_SUBMISSION =
   "This run graded no directory submission, so it had no reviewer account to check.";
+const NO_SIGN_IN =
+  "The submission says the server needs no sign-in, so there is no reviewer account to check.";
 
 const DOCUMENTS: Record<DirectoryClientSignatureProbe["document"], string> = {
   "protected-resource": "The protected resource metadata",
@@ -194,25 +196,31 @@ function signatureLabel(id: string): string {
  * the reviewer account or not at all: on a run without one it is blocked with
  * the reason, and a verdict it reached anyway is withdrawn, because it came
  * from another account. A run that graded no submission is left as it is.
+ * On a submission that says its server needs no sign-in, such a check does
+ * not apply: there is no reviewer account to hold it to.
  */
 export function holdToReviewerAccount<
   Finding extends DirectoryReadinessFinding,
 >(
   findings: readonly Finding[],
   flow: DirectoryFlow,
-  account: DirectoryReviewerPathEvidence["account"] | undefined
+  account: DirectoryReviewerPathEvidence["account"] | undefined,
+  noSignIn = false
 ): Finding[] {
-  if (!account || !("missing" in account)) return [...findings];
-  const reason = directoryBlockedReason(account.missing);
+  const missing = account && "missing" in account ? account.missing : undefined;
+  if (!noSignIn && missing === undefined) return [...findings];
   return findings.map((finding): Finding => {
     const needs = directoryPlacementOf(flow, finding.id)?.needs ?? [];
-    return !needs.includes("reviewer") || finding.status === "not-applicable"
-      ? finding
+    if (!needs.includes("reviewer") || finding.status === "not-applicable") {
+      return finding;
+    }
+    const held = { ...finding, remediation: undefined };
+    return noSignIn || missing === undefined
+      ? { ...held, status: "not-applicable", notEvaluatedReason: NO_SIGN_IN }
       : {
-          ...finding,
+          ...held,
           status: "not-evaluated",
-          notEvaluatedReason: reason,
-          remediation: undefined,
+          notEvaluatedReason: directoryBlockedReason(missing),
           details: {
             ...finding.details,
             [UNGATHERED_EVIDENCE_DETAIL_KEY]: "reviewerAccount",
