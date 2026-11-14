@@ -34,6 +34,7 @@ import {
   type PlatformOptions,
   type RunPlatformOperationExtras,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
 
@@ -62,6 +63,12 @@ type RunOptions = Options & { wait?: boolean; aiObservations?: boolean };
 const RUN_WAIT_MS = 20 * 60_000;
 const RUN_POLL_MS = 5_000;
 const RUN_ENDED = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * Submissions are project writes, so an omitted `--project` resolves as
+ * `registry` does: MCPJAM_PROJECT, then the repo link, then the newest project.
+ */
+const PROJECT_SCOPED = { ambientProject: true } as const;
 
 /** `--project`, and the `<submission>` argument Commander guarantees. */
 const scoped = (options: Options, submission = "") => ({ project: options.project, submission });
@@ -172,9 +179,10 @@ async function waitForRun(
 async function runSubmission(submission: string, command: Command): Promise<void> {
   const options = platformOptionsOf<RunOptions>(command);
   const globals = getGlobalOptions(command);
-  const extras = { announce: false, quiet: globals.quiet, command: "readiness submission run" };
+  const { project, projectScope } = resolveCloudProjectArgs(options);
+  const extras = { announce: false, quiet: globals.quiet, command: "readiness submission run", projectScope };
   const input = {
-    ...scoped(options, submission),
+    ...scoped({ ...options, project }, submission),
     includeLlmObservations: options.aiObservations ? true : undefined,
     idempotencyKey: options.idempotencyKey,
   };
@@ -236,22 +244,23 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
       flow,
       title,
       idempotencyKey,
-    })
+    }),
+    PROJECT_SCOPED
   );
 
   const list = verb("list", "List a project's submissions, newest first", false)
     .option("--server <id-or-name>", "Narrow to one saved server")
     .option("--flow <id>", "Narrow to one flow")
     .option("--limit <n>", "Rows to return (1-100)", (value: string) => parsePositiveInteger(value, "Limit"));
-  bindOperation(list, listDirectorySubmissionsOperation, ({ project, server, flow, limit }: Options) => ({
-    project,
-    server,
-    flow,
-    limit,
-  }));
+  bindOperation(
+    list,
+    listDirectorySubmissionsOperation,
+    ({ project, server, flow, limit }: Options) => ({ project, server, flow, limit }),
+    PROJECT_SCOPED
+  );
 
   const get = verb("get", "Read a submission: its answers, who set them, and the portal's checks");
-  bindOperation(get, getDirectorySubmissionOperation, scoped);
+  bindOperation(get, getDirectorySubmissionOperation, scoped, PROJECT_SCOPED);
 
   const set = verb("set", "Save answers to a submission")
     .option(
@@ -288,11 +297,12 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
         }
       },
     },
-    (options, id = "") => ({ ...parseSetInput(options, id), retry: options.retryOnConflict === true })
+    (options, id = "") => ({ ...parseSetInput(options, id), retry: options.retryOnConflict === true }),
+    PROJECT_SCOPED
   );
 
   const remove = verb("delete", "Delete a submission and its answers. This cannot be undone.");
-  bindOperation(remove, deleteDirectorySubmissionOperation, scoped);
+  bindOperation(remove, deleteDirectorySubmissionOperation, scoped, PROJECT_SCOPED);
 
   const run = addPlatformOptions(
     verb("run", "Grade a submission's server and answers on the platform")
@@ -317,8 +327,10 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     .hook("preAction", (command) => {
       if (command.opts().json) command.setOptionValue("format", "json");
     });
-  bindOperation(results, getDirectorySubmissionResultsOperation, (options: Options, id = "") => ({
-    ...scoped(options, id),
-    run: options.run,
-  }));
+  bindOperation(
+    results,
+    getDirectorySubmissionResultsOperation,
+    (options: Options, id = "") => ({ ...scoped(options, id), run: options.run }),
+    PROJECT_SCOPED
+  );
 }
