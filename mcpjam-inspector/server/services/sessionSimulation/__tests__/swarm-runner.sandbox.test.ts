@@ -977,16 +977,18 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(releaseSandboxMock).not.toHaveBeenCalled();
   });
 
+  const trialRefusal = {
+    ok: false,
+    status: 409,
+    error:
+      "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+    code: "native_harness_trial_exhausted",
+  };
+
   it("stops the whole run when the organization's native harness trial is used up", async () => {
     // The backend's pre-check, before a computer boots: no other target
     // escapes it, so the run stops as it does when the lease refuses.
-    provisionJourneySandboxMock.mockResolvedValue({
-      ok: false,
-      status: 409,
-      error:
-        "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
-      code: "native_harness_trial_exhausted",
-    });
+    provisionJourneySandboxMock.mockResolvedValue(trialRefusal);
 
     await startJourneyRun(baseOpts({}, 2));
 
@@ -1001,6 +1003,47 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
+  });
+
+  it("still runs another target's sponsored conversation when the refusal stops credit-funded ones mid-provision", async () => {
+    // Target 2's credit-funded box is still on its way when target 1's refusal
+    // stops credit-funded conversations. That stop cancels the box, and target
+    // 2's sponsored conversation still runs.
+    let target2Asked!: () => void;
+    const asked = new Promise<void>((resolve) => (target2Asked = resolve));
+    const provisionBox = provisionJourneySandboxMock.getMockImplementation()!;
+    provisionJourneySandboxMock.mockImplementation(async (...args) => {
+      const request = args[0] as {
+        targetId: string;
+        sessionIdx: number;
+        signal: AbortSignal;
+      };
+      if (request.targetId === "environment:env-1") {
+        await asked;
+        return trialRefusal;
+      }
+      if (request.sessionIdx === 1) return provisionBox(...args);
+      target2Asked();
+      await new Promise((resolve) =>
+        request.signal.addEventListener("abort", resolve, { once: true }),
+      );
+      return { ok: false, status: 0, error: "aborted" };
+    });
+
+    await startJourneyRun({
+      ...twoTargetOpts({}, {}),
+      sessionsPerTarget: 2,
+      sessionFunding: [
+        { targetId: "environment:env-2", sessionIdx: 1, funding: "starter" },
+      ],
+    });
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: "environment:env-2", sessionIdx: 1 }),
+    );
+    expect(terminalReports()).toContainEqual(
+      expect.objectContaining({ targetId: "environment:env-2", sessionIdx: 1 }),
     );
   });
 
