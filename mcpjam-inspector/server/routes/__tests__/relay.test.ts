@@ -222,6 +222,36 @@ describe("posthog relay proxy", () => {
     expect(new Headers(init.headers).get("content-type")).toBe("text/plain");
   });
 
+  it("forwards a launch captured before the content grant with closed fields only", async () => {
+    const app = createTestApp();
+    vi.mocked(fetch).mockResolvedValueOnce(upstreamResponse());
+    const launch = {
+      event: "app_launched",
+      uuid: "019a0000-0000-7000-8000-000000000002",
+      timestamp: EVENT_TIMESTAMP,
+      properties: {
+        token: POSTHOG_PROJECT_KEY,
+        distinct_id: "device-1",
+        location: "app",
+        is_authenticated: false,
+        platform: "web",
+        deployment: "hosted",
+        user_agent: "Mozilla/5.0 LAUNCH_SENTINEL",
+      },
+    };
+    const res = await app.request("http://localhost:6274/relay/i/v0/e/", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ api_key: POSTHOG_PROJECT_KEY, batch: [launch] }),
+    });
+    expect(res.status).toBe(200);
+    expect(forwardedJson()).toEqual({
+      api_key: POSTHOG_PROJECT_KEY,
+      batch: [{ ...restricted(launch), uuid: expect.any(String) }],
+    });
+    expect(JSON.stringify(forwardedJson())).not.toContain("LAUNCH_SENTINEL");
+  });
+
   it("serves the /tlm alias identically: prefix stripped, static/array/ingest routing intact", async () => {
     const app = createTestApp();
     vi.mocked(fetch).mockResolvedValue(upstreamResponse());
