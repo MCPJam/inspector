@@ -9,6 +9,16 @@ export interface UpgradeRequestRecipient {
 
 export type UpgradeRequestAction = "upgrade" | "buyCredits";
 
+/** What stopped the requester, in the upgrade request, by the wall they hit. */
+const UPGRADE_REQUEST_REASON: Record<UpgradeOrigin, string> = {
+  credits:
+    "Our organization has run out of MCPJam credits, so we can't continue testing until credits reset or we upgrade.",
+  evals:
+    "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.",
+  native_harness:
+    "Our organization has used its free native harness turns on MCPJam, so our clients can't run on their native harnesses until we upgrade.",
+};
+
 /**
  * Builds the owner-facing request. Exported so a test can assert the body
  * without reading it off a URL-encoded href by eye.
@@ -47,9 +57,7 @@ export function buildUpgradeRequestMail(params: {
   const isCreditPurchase = requestAction === "buyCredits";
   const blocked = isCreditPurchase
     ? "Our organization has run out of MCPJam credits."
-    : origin === "credits"
-      ? "Our organization has run out of MCPJam credits, so we can't continue testing until credits reset or we upgrade."
-      : "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.";
+    : UPGRADE_REQUEST_REASON[origin];
 
   const subject = isCreditPurchase
     ? `Credit purchase request for ${organizationName}`

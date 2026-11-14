@@ -466,6 +466,22 @@ describe("classifyEvalInfraError — harness producers", () => {
         httpStatus: 429,
       }),
     ).toMatchObject({ class: "account_limit", layer: "platform" });
+    // The Free native harness trial, refused at the lease or before the
+    // computer boots: an account limit no retry lifts.
+    expect(
+      classifyEvalInfraError({
+        source: "platform_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 403,
+      }),
+    ).toMatchObject({ class: "account_limit", layer: "platform", retryable: false });
+    expect(
+      classifyEvalInfraError({
+        source: "sandbox_setup",
+        code: "native_harness_trial_exhausted",
+        httpStatus: 409,
+      }),
+    ).toMatchObject({ class: "account_limit", retryable: false });
     // A box that is gone is the sandbox layer whoever reported it.
     expect(
       classifyEvalInfraError({

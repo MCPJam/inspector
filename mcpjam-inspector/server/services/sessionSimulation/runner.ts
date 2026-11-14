@@ -2201,9 +2201,13 @@ export async function drainAssistantTurn(
   }
 
   // Engine-error signal. Structural type covers both the hosted
-  // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`.
-  let lastEngineError: ({ message: string } & SpendRefusal) | undefined;
-  const captureEngineError = (event: { message: string } & SpendRefusal) => {
+  // `MCPJamEngineErrorEvent` and the direct `DirectChatTurnEngineErrorEvent`;
+  // a harness turn reports its code as producer evidence, under `infra`.
+  type EngineError = { message: string } & SpendRefusal & {
+    infra?: { code?: string; httpStatus?: number };
+  };
+  let lastEngineError: EngineError | undefined;
+  const captureEngineError = (event: EngineError) => {
     lastEngineError = event;
   };
 
@@ -2439,11 +2443,11 @@ export async function drainAssistantTurn(
       return error;
     };
     if (lastEngineError) {
+      const httpStatus =
+        lastEngineError.httpStatus ?? lastEngineError.infra?.httpStatus;
       const detail = [
-        lastEngineError.code,
-        lastEngineError.httpStatus !== undefined
-          ? `HTTP ${lastEngineError.httpStatus}`
-          : undefined,
+        lastEngineError.code ?? lastEngineError.infra?.code,
+        httpStatus !== undefined ? `HTTP ${httpStatus}` : undefined,
       ]
         .filter(Boolean)
         .join(", ");

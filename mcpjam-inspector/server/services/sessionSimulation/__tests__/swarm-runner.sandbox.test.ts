@@ -35,6 +35,7 @@ const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
 const dataPlaneConfiguredMock = vi.fn(() => true);
+const finalizePendingAttemptsMock = vi.fn(async () => undefined);
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
   const actual = await vi.importActual<
@@ -106,6 +107,8 @@ vi.mock("../../swarm-agent.js", async () => {
       swarmPersonaNextTurnMock(...args),
     heartbeatJourneyRun: (...args: unknown[]) =>
       heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...(args as [])),
   };
 });
 
@@ -972,6 +975,33 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
     // Nothing was booted, so nothing is released.
     expect(releaseSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("stops the whole run when the organization's native harness trial is used up", async () => {
+    // The backend's pre-check, before a computer boots: no other target
+    // escapes it, so the run stops as it does when the lease refuses.
+    provisionJourneySandboxMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error:
+        "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+      code: "native_harness_trial_exhausted",
+    });
+
+    await startJourneyRun(baseOpts({}, 2));
+
+    const terminals = terminalReports();
+    expect(terminals[0]).toMatchObject({
+      status: "failed",
+      errorCode: "native_harness_trial_exhausted",
+    });
+    // One refusal, then the stop: the second session never asked for a box.
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
   });
 
   it("retries a 503 and fails with `sandbox_at_capacity` once the retries are spent", async () => {

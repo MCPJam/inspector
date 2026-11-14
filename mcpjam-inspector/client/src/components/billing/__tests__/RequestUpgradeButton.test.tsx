@@ -49,6 +49,21 @@ describe("buildUpgradeRequestMail", () => {
     expect(decodeURIComponent(href!)).toContain("run out of MCPJam credits");
   });
 
+  it("names the native harness trial for that wall", () => {
+    const href = buildUpgradeRequestMail({
+      recipients: [OWNER],
+      organizationName: "Acme Robotics",
+      teamName: "Pro",
+      origin: "native_harness",
+    });
+
+    const decoded = decodeURIComponent(href!);
+    expect(decoded).toContain(
+      "Our organization has used its free native harness turns on MCPJam, so our clients can't run on their native harnesses until we upgrade.",
+    );
+    expect(decoded).toContain("Could you upgrade Acme Robotics to the Pro plan?");
+  });
+
   it("asks a paid organization to buy credits instead of upgrading", () => {
     const href = buildUpgradeRequestMail({
       recipients: [OWNER],

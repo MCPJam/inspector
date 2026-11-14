@@ -1478,6 +1478,24 @@ async function runJourneyFanOut(
                 durationMs: Date.now() - attemptStartedAt,
                 modelSource: modelId,
               });
+              // The organization's own limit (the native harness trial): no
+              // other target escapes it, so the run stops as it does when the
+              // same refusal reaches a turn.
+              if (isAccountLimit(undefined, provisioned.code)) {
+                spendCapTripped = true;
+                spendCapMessage = failure.errorMessage;
+                if (runHasSponsored) creditStop.abort();
+                else runStop.abort();
+                logEvent("run.spend_cap_short_circuit", {
+                  stopReason: "organization_usage_limit",
+                  scopedToCredits: runHasSponsored,
+                  runId,
+                  hostId,
+                  targetId,
+                  sessionIdx,
+                });
+                if (!runHasSponsored) return;
+              }
               continue;
             }
           }
