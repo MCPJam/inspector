@@ -137,6 +137,7 @@ export type {
 } from "./directory-reviewer-attempt-types.js";
 // The nine directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
 
 export {
   computeRunTargets,

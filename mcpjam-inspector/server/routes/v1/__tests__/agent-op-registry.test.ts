@@ -180,6 +180,8 @@ describe("agent op registry", () => {
         // the agent as its author.
         "create_directory_submission",
         "update_directory_submission",
+        // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
+        "cancel_reviewer_attempt",
         "ensure_adhoc_environment",
         "name_environment",
         createEvalSuiteOperation.name,
@@ -2033,6 +2035,17 @@ describe("tier derives from operation.risk", () => {
         "platform-paid, so risk is none and would derive direct, but the run " +
         "dials the submission's server and persists a project row.",
     },
+    create_reviewer_attempt: {
+      tier: "gated",
+      reason:
+        "MCPJam runs the sign-in, so risk is none and would derive direct. " +
+        "Gated because it starts a run that signs in to the submission's " +
+        "server with the project's reviewer credentials.",
+    },
+    resume_reviewer_attempt: {
+      tier: "gated",
+      reason: "The same as create_reviewer_attempt: it starts the next run that signs in.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2308,6 +2321,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
   "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
   "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+  "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
