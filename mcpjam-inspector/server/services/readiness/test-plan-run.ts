@@ -5,7 +5,9 @@
  * Naming the plan revision at the start was the consent for exactly the
  * calls it holds, so nothing is called unless the plan still fits what the
  * server lists: the SDK checks it against a fresh listing, in the session
- * the calls then use. A plan with any issue is reported with its issues.
+ * the calls then use. A plan with any issue is reported with its issues. A
+ * run that opted into model observations also has the broker draft the
+ * arguments the plan's cases lack, and reports the drafts unsent.
  *
  * Every way this can fail short of a lost lease becomes a report that says
  * why, so the readiness grade beside it is kept.
@@ -38,6 +40,11 @@ import {
   asRecord,
   isStopSignal,
 } from "./runner.js";
+import {
+  draftMissingArguments,
+  type TestArgumentDrafting,
+  type TestArgumentRequester,
+} from "./test-argument-drafts.js";
 import { executeDirectoryTestPlan } from "./test-plan-executor.js";
 
 /** Kept free at the end of a run to finalize it, and before that to clean up. */
@@ -77,6 +84,8 @@ export interface DirectoryToolTestReport {
   tools: DirectoryToolTestResult[];
   /** The cleanup calls for the fixtures the sweep created. */
   cleanup: DirectoryTestCallRecord[];
+  /** Arguments drafted for cases that have none, for a person to review; never sent. */
+  drafting?: TestArgumentDrafting;
 }
 
 export interface RunDirectoryTestPlanOptions {
@@ -89,23 +98,27 @@ export interface RunDirectoryTestPlanOptions {
   signal: AbortSignal;
   /** When the run must have finished. */
   deadlineAt: number;
+  /** Absent, the run drafts no arguments and cannot spend on them. */
+  requestDrafts?: TestArgumentRequester;
   now?: () => number;
 }
 
 /**
  * The run's tool tests, redacted for storage as the grade is, or `undefined`
  * when its start named no test plan. The issues come from the saved plan,
- * and redacting them would blank their `code`.
+ * and redacting them would blank their `code`; the drafting account is
+ * redacted where it is built, all but the arguments it proposes.
  */
 export async function runDirectoryTestPlan(
   options: RunDirectoryTestPlanOptions,
 ): Promise<DirectoryToolTestReport | undefined> {
   const report = await testPlanReport(options);
   if (!report) return undefined;
-  const { issues, ...rest } = report;
+  const { issues, drafting, ...rest } = report;
   return {
     ...redactConformanceReportForSharing(rest),
     ...(issues ? { issues } : {}),
+    ...(drafting ? { drafting } : {}),
   };
 }
 
@@ -147,10 +160,26 @@ async function testPlanReport(
   const tools = listing.entries;
   const issues = checkPlan(plan, tools);
   if (!issues) return notRun(malformed(planRevision), planRevision);
+  // Before the sweep, and reported only. A case without arguments is an
+  // issue that keeps the plan from running, so no sweep follows a pass with
+  // anything to draft, and the pass may take the run's time up to finalizing.
+  const drafting = await draftMissingArguments({
+    plan,
+    tools,
+    request: options.requestDrafts,
+    signal: options.signal,
+    endBy: options.deadlineAt - FINALIZE_MS,
+  });
+  const drafted = drafting ? { drafting } : {};
   if (issues.length > 0) {
     const stopped = { by: "setup" as const, detail: MISMATCH };
     const results = summarize(plan, tools, ledger.calls, stopped);
-    return { ...notRun(MISMATCH, planRevision), issues, ...results };
+    return {
+      ...notRun(MISMATCH, planRevision),
+      issues,
+      ...results,
+      ...drafted,
+    };
   }
 
   const endpoint = redactSharedServerUrl(options.target);
@@ -188,6 +217,7 @@ async function testPlanReport(
     ...results,
     ambiguous: [...results.ambiguous, ...ambiguousCleanup],
     cleanup,
+    ...drafted,
   };
 }
 

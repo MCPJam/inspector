@@ -66,6 +66,7 @@ import {
   type DirectoryReadinessResult,
   type ReadinessPublisher,
 } from "./runner.js";
+import { requestTestArgumentDrafts } from "./test-argument-drafts.js";
 import { runDirectoryTestPlan } from "./test-plan-run.js";
 import {
   ReadinessPackageUnreadableError,
@@ -468,6 +469,10 @@ export async function executeHostedReadinessRun(
           mcpHeaders: options.mcpHeaders,
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
+          // The same opt-in: drafting sends the tools' text to a model.
+          requestDrafts: options.includeLlmObservations
+            ? (request) => requestTestArgumentDrafts(lease, request)
+            : undefined,
         })
       : undefined;
 
