@@ -23,7 +23,12 @@ vi.mock("@/lib/apis/directory-readiness-api", async () => {
 });
 vi.mock("@/lib/apis/mode-client", () => ({ isHostedMode: () => true }));
 
+import { PlatformApiError } from "@mcpjam/sdk/platform";
 import { useDirectoryReadinessRun } from "../use-directory-readiness-run";
+
+function refusal(status: number, message: string) {
+  return new PlatformApiError(message, "FORBIDDEN", { status });
+}
 
 const SERVER = {
   name: "Sample server",
@@ -95,8 +100,12 @@ describe("useDirectoryReadinessRun with a re-queued run", () => {
   it("keeps polling when the resume is refused", async () => {
     // Somebody else's run: the backend refuses, and the run's own status is
     // what the page goes on showing.
-    api.resume.mockRejectedValue(new Error("No readiness run you can resume"));
+    api.resume.mockRejectedValue(
+      refusal(403, "No readiness run you can resume was found."),
+    );
     api.getRun
+      // Still marked resumable on the next read: a refusal is not asked again.
+      .mockResolvedValueOnce(runRow("pending", 2, true))
       .mockResolvedValueOnce(runRow("pending", 2, true))
       .mockResolvedValueOnce(runRow("failed", 2));
     const { result } = watchRun();
@@ -104,9 +113,49 @@ describe("useDirectoryReadinessRun with a re-queued run", () => {
     await settle();
     expect(result.current.state.status).toBe("running");
     await settle(2_500);
+    await settle(2_500);
     expect(api.resume).toHaveBeenCalledTimes(1);
     expect(result.current.state.status).toBe("done");
     expect(result.current.state.error).toBeUndefined();
+  });
+
+  it("tries a resume that failed for a transient reason again, at most three times", async () => {
+    api.resume.mockRejectedValue(
+      refusal(502, "Failed to reach authorization service."),
+    );
+    api.getRun.mockResolvedValue(runRow("pending", 2, true));
+    watchRun();
+
+    await settle();
+    for (let poll = 0; poll < 5; poll += 1) await settle(2_500);
+    expect(api.resume).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops trying once a retried resume goes through", async () => {
+    api.resume
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValue({ runId: "run_1", status: "running" });
+    api.getRun.mockResolvedValue(runRow("pending", 2, true));
+    watchRun();
+
+    await settle();
+    for (let poll = 0; poll < 3; poll += 1) await settle(2_500);
+    expect(api.resume).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends one resume while another poll reads the run", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    api.resume.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    api.getRun.mockResolvedValue(runRow("pending", 2, true));
+    watchRun();
+    await settle();
+
+    // The tab comes back while the first resume is still out.
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await settle();
+    expect(api.resume).toHaveBeenCalledTimes(1);
+    finish({ runId: "run_1", status: "running" });
+    await settle();
   });
 
   it("never resumes a run that is not waiting", async () => {

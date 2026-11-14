@@ -162,6 +162,42 @@ export async function claimReadinessRun(
   }
 }
 
+/** What a heartbeat learned: the backend's answer, or that none came. */
+export type ReadinessLeaseAnswer = "owned" | "lost" | "unanswered";
+
+/**
+ * Renew the lease, and report only what the backend confirmed. For a caller
+ * about to start work on the lease: an unanswered heartbeat is not ownership.
+ */
+export async function confirmReadinessLease(
+  lease: ReadinessLease,
+): Promise<ReadinessLeaseAnswer> {
+  try {
+    const { response, release } = await postInternal(
+      `${READINESS_PATH}/heartbeat`,
+      lease,
+      HEARTBEAT_TIMEOUT_MS,
+    );
+    try {
+      if (!response.ok) {
+        // The body is never read on this path, and an unread body holds its
+        // keep-alive connection until GC. Cancelling hands it back now.
+        await response.body?.cancel().catch(() => undefined);
+        return "unanswered";
+      }
+      const body = (await response.json().catch(() => null)) as {
+        alive?: unknown;
+      } | null;
+      if (body?.alive === true) return "owned";
+      return body?.alive === false ? "lost" : "unanswered";
+    } finally {
+      release();
+    }
+  } catch {
+    return "unanswered";
+  }
+}
+
 /**
  * Tell the backend this node is still alive, and learn whether it still owns
  * the run.
@@ -177,29 +213,7 @@ export async function claimReadinessRun(
 export async function heartbeatReadinessRun(
   lease: ReadinessLease,
 ): Promise<{ alive: boolean }> {
-  try {
-    const { response, release } = await postInternal(
-      `${READINESS_PATH}/heartbeat`,
-      lease,
-      HEARTBEAT_TIMEOUT_MS,
-    );
-    try {
-      if (!response.ok) {
-        // The body is never read on this path, and an unread body holds its
-        // keep-alive connection until GC. Cancelling hands it back now.
-        await response.body?.cancel().catch(() => undefined);
-        return { alive: true };
-      }
-      const body = (await response.json().catch(() => null)) as {
-        alive?: unknown;
-      } | null;
-      return { alive: body?.alive !== false };
-    } finally {
-      release();
-    }
-  } catch {
-    return { alive: true };
-  }
+  return { alive: (await confirmReadinessLease(lease)) !== "lost" };
 }
 
 /**

@@ -4,12 +4,13 @@
  * operation does and returns the receipt.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   PlatformApiClient,
   isOperationAvailable,
   resumeReadinessRunOperation,
+  type PlatformReadinessRun,
 } from "../../src/platform/index.js";
 
 const PROJECT = {
@@ -92,5 +93,13 @@ describe("resume_readiness_run", () => {
         "directory-readiness": true,
       })
     ).toBe(true);
+  });
+});
+
+describe("PlatformReadinessRun.resumable", () => {
+  it("is optional: a deployment older than the field omits it", () => {
+    expectTypeOf<PlatformReadinessRun["resumable"]>().toEqualTypeOf<
+      boolean | undefined
+    >();
   });
 });

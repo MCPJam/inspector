@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   startHosted: vi.fn(),
   getRun: vi.fn(),
   getReport: vi.fn(),
+  cancel: vi.fn(),
 }));
 
 vi.mock("@/lib/apis/directory-readiness-api", async () => {
@@ -24,6 +25,7 @@ vi.mock("@/lib/apis/directory-readiness-api", async () => {
     startHostedReadiness: api.startHosted,
     getHostedReadinessRun: api.getRun,
     getHostedReadinessReport: api.getReport,
+    cancelHostedReadinessRun: api.cancel,
   };
 });
 // A local build: without `start`, the hook would grade locally.
@@ -78,6 +80,26 @@ describe("useDirectoryReadinessRun with a start of its own", () => {
     expect(result.current.state.status).toBe("done");
     expect(result.current.state.run?.status).toBe("completed");
     expect(api.getReport).not.toHaveBeenCalled();
+  });
+
+  it("cancels a run it started through the hosted route, as it ran it", async () => {
+    const start = vi.fn().mockResolvedValue({ runId: "run_1" });
+    api.getRun.mockResolvedValue(runRow("run_1", "running"));
+    api.cancel.mockResolvedValue(undefined);
+    const { result } = renderHook(() =>
+      useDirectoryReadinessRun({ publisher: "claude", server: SERVER, start }),
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    await settle();
+
+    await act(async () => {
+      await result.current.cancel();
+    });
+    expect(api.cancel).toHaveBeenCalledWith("run_1");
+    // The run row stays on screen until its poll reports the real end.
+    expect(result.current.state.run?.id).toBe("run_1");
   });
 
   it("follows a run it did not start, once", async () => {

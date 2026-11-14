@@ -3,7 +3,8 @@
    scope the role tokens take the portal's values, so components keep using
    role tokens. Dark values are sampled from captures of the portal; light
    values are an approximation, since no capture is light. MCPJam's own
-   additions use the status tokens, which keep MCPJam's values here. */
+   additions use the status tokens, which keep MCPJam's values here, so the
+   portal's error red is its own token, which only the portal's fields use. */
 .portal-claude {
   --background: #faf9f5;
   --foreground: #1f1e1d;
@@ -21,7 +22,7 @@
   --primary-foreground: #faf9f5;
   --secondary: #e6e4d9;
   --secondary-foreground: #1f1e1d;
-  --destructive: #b3373a;
+  --portal-destructive: #b3373a;
   --ring: #5b8bd6;
   --radius: 0.625rem;
 }
@@ -43,6 +44,6 @@
   --primary-foreground: #1a1a19;
   --secondary: #3a3a38;
   --secondary-foreground: #ecebe6;
-  --destructive: #e5787b;
+  --portal-destructive: #e5787b;
   --ring: #5b8bd6;
 }

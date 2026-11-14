@@ -6023,8 +6023,9 @@ export interface PlatformReadinessRun {
   /**
    * The run stopped on the server and waits for the person who started it:
    * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   * Absent from deployments older than the field: read it as `false`.
    */
-  resumable: boolean;
+  resumable?: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;

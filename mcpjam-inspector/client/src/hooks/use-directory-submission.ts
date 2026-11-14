@@ -31,9 +31,13 @@ export type AnswerValues = Record<string, DirectoryAnswerValue>;
 interface Draft {
   flow: DirectoryFlow | null;
   view: SubmissionView | null;
-  /** Edits not saved yet, and the revision they were made on. */
+  /** Edits not saved yet. */
   pending: AnswerValues;
-  base: number | null;
+  /**
+   * The revision each pending edit was made on. Edits made while a save is
+   * out keep theirs: that save's revision covers only the fields it sent.
+   */
+  bases: Record<string, number>;
   /** This tab's values for fields changed elsewhere, held for the person. */
   conflict: AnswerValues | null;
   saving: boolean;
@@ -45,7 +49,7 @@ const EMPTY: Draft = {
   flow: null,
   view: null,
   pending: {},
-  base: null,
+  bases: {},
   conflict: null,
   saving: false,
   savedAt: null,
@@ -54,6 +58,10 @@ const EMPTY: Draft = {
 const SAVE_DELAY_MS = 800;
 /** The submission changes rarely; a run polls on its own ladder. */
 const REFRESH_MS = 15_000;
+/** Saves one `saveNow` may make: one per revision its edits were made on. */
+const MAX_SAVES = 10;
+
+type SaveOutcome = "saved" | "conflict" | "failed" | "idle";
 
 const messageOf = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -61,40 +69,69 @@ const isEmpty = (values: AnswerValues) => Object.keys(values).length === 0;
 const keep = (values: AnswerValues, test: (key: string) => boolean) =>
   Object.fromEntries(Object.entries(values).filter(([key]) => test(key)));
 
-export function createDraftStore(render: () => void) {
-  let draft = EMPTY;
-  let scope: SubmissionScope | null = null;
+/** One save carries one revision: the edits made on the oldest one. */
+function nextBatch(draft: Draft) {
+  const revisions = Object.keys(draft.pending)
+    .map((key) => draft.bases[key])
+    .filter((revision): revision is number => revision !== undefined);
+  if (revisions.length === 0) return null;
+  const expectedRevision = Math.min(...revisions);
+  const answers = keep(
+    draft.pending,
+    (key) => draft.bases[key] === expectedRevision,
+  );
+  return { expectedRevision, answers };
+}
+
+/** The bases of `pending`, with the fields `sent` checked moved to `revision`. */
+function rebase(
+  draft: Draft,
+  pending: AnswerValues,
+  sent: AnswerValues,
+  revision: number,
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.keys(pending).map((key) => [
+      key,
+      key in sent ? revision : draft.bases[key]!,
+    ]),
+  );
+}
+
+/** One submission's draft. It outlives the page's interest until it is saved. */
+function createSubmissionDraft(
+  scope: SubmissionScope | null,
+  initial: Draft,
+  render: () => void,
+) {
+  let draft = initial;
+  let live = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let inflight: Promise<void> | null = null;
+  let inflight: Promise<SaveOutcome> | null = null;
 
   const set = (patch: Partial<Draft>) => {
     draft = { ...draft, ...patch };
-    render();
+    if (live) render();
   };
-  const isOpen = (id: string) => scope?.submissionId === id;
 
-  /** A reply for another submission, or older than the one shown, is dropped. */
+  /** A reply older than the one shown is dropped. */
   function adopt(view: SubmissionView) {
-    if (!isOpen(view.id) || view.revision < (draft.view?.revision ?? 0)) return;
+    if (view.revision < (draft.view?.revision ?? 0)) return;
     set({ view });
   }
 
   async function load() {
-    const target = scope;
-    if (!target) return;
+    if (!scope || !live) return;
     try {
-      const view = await getDirectorySubmission(target);
+      const view = await getDirectorySubmission(scope);
       if (draft.flow?.id !== view.flowId) {
-        const flow = await getDirectoryFlow(view.flowId);
-        if (isOpen(view.id)) set({ flow });
+        set({ flow: await getDirectoryFlow(view.flowId) });
       }
       adopt(view);
     } catch (error) {
       // A failed refresh leaves the last answers on screen; only a first
       // load has nothing else to show.
-      if (isOpen(target.submissionId) && !draft.view) {
-        set({ error: messageOf(error) });
-      }
+      if (!draft.view) set({ error: messageOf(error) });
     }
   }
 
@@ -103,39 +140,31 @@ export function createDraftStore(render: () => void) {
     timer = setTimeout(() => void save(), SAVE_DELAY_MS);
   }
 
-  function save(): Promise<void> {
-    const { pending: sent, base: expectedRevision } = draft;
-    const target = scope;
+  function save(): Promise<SaveOutcome> {
     if (inflight) return inflight;
-    if (!target || expectedRevision === null || isEmpty(sent)) {
-      return Promise.resolve();
-    }
+    const batch = nextBatch(draft);
+    if (!scope || !batch) return Promise.resolve("idle");
+    const sent = batch.answers;
     set({ saving: true });
-    inflight = updateDirectorySubmission(target, {
-      expectedRevision,
-      answers: sent,
-    })
+    inflight = updateDirectorySubmission(scope, batch)
       .then(
-        (saved) => {
-          if (!isOpen(saved.id)) return;
+        (saved): SaveOutcome => {
           // Edits made while this save was out stay, on top of its result.
           const pending = keep(
             draft.pending,
             (key) => draft.pending[key] !== sent[key],
           );
-          const base = isEmpty(pending) ? null : saved.revision;
           set({
             saving: false,
             error: null,
             savedAt: Date.now(),
             pending,
-            base,
+            bases: rebase(draft, pending, sent, saved.revision),
           });
           adopt(saved);
+          return "saved";
         },
-        (error: unknown) => {
-          if (isOpen(target.submissionId)) refused(error, sent);
-        },
+        (error: unknown) => refused(error, sent),
       )
       .finally(() => {
         inflight = null;
@@ -146,67 +175,138 @@ export function createDraftStore(render: () => void) {
     return inflight;
   }
 
-  function refused(error: unknown, sent: AnswerValues) {
+  function refused(error: unknown, sent: AnswerValues): SaveOutcome {
     const conflict = directorySubmissionConflict(error);
-    if (!conflict) return set({ saving: false, error: messageOf(error) });
+    if (!conflict) {
+      set({ saving: false, error: messageOf(error) });
+      return "failed";
+    }
     // A field this save touched changed elsewhere: show the saved value and
-    // hold this tab's until the person chooses. The other edits go again on
-    // top of the current revision.
+    // hold this tab's until the person chooses. The other fields it sent go
+    // again on the current revision; fields it did not send were not checked.
     const clash = (key: string) =>
       key in sent && conflict.conflictingKeys.includes(key);
     const held = keep(draft.pending, clash);
+    const pending = keep(draft.pending, (key) => !clash(key));
     set({
       saving: false,
       error: null,
-      pending: keep(draft.pending, (key) => !clash(key)),
-      base: conflict.currentRevision,
+      pending,
+      bases: rebase(draft, pending, sent, conflict.currentRevision),
       conflict: isEmpty(held) ? draft.conflict : { ...draft.conflict, ...held },
     });
     if (conflict.current) adopt(conflict.current);
     else void load();
+    return "conflict";
+  }
+
+  /** Save until nothing waits. True when every edit is saved. */
+  async function flush(): Promise<boolean> {
+    clearTimeout(timer);
+    for (let saves = 0; saves < MAX_SAVES; saves += 1) {
+      const outcome = await save();
+      if (outcome === "failed") return false;
+      if (outcome === "idle") break;
+    }
+    clearTimeout(timer);
+    return isEmpty(draft.pending) && draft.conflict === null;
+  }
+
+  /** Edits on the revision on screen, unless the field already waits on one. */
+  function edit(values: AnswerValues, conflict: AnswerValues | null) {
+    const revision = draft.view?.revision;
+    const bases = { ...draft.bases };
+    for (const key of Object.keys(values)) {
+      if (bases[key] === undefined && revision !== undefined) {
+        bases[key] = revision;
+      }
+    }
+    set({ pending: { ...draft.pending, ...values }, bases, conflict });
+    queue();
   }
 
   return {
+    scope,
     draft: () => draft,
     load,
-    /** Saves what waits for the submission open now, then opens another. */
+    flush,
+    /** Another submission is open: stop rendering, keep saving. */
+    detach() {
+      live = false;
+    },
+    /** Open again, with whatever it still holds. */
+    attach() {
+      live = true;
+    },
+    setAnswer(key: string, value: DirectoryAnswerValue) {
+      const conflict = draft.conflict && keep(draft.conflict, (k) => k !== key);
+      edit({ [key]: value }, conflict && !isEmpty(conflict) ? conflict : null);
+    },
+    reapply: () => edit(draft.conflict ?? {}, null),
+    keepSaved: () => set({ conflict: null }),
+  };
+}
+
+type SubmissionDraft = ReturnType<typeof createSubmissionDraft>;
+const keyOf = (scope: SubmissionScope) =>
+  `${scope.projectId}/${scope.submissionId}`;
+
+export function createDraftStore(render: () => void) {
+  let current = createSubmissionDraft(null, EMPTY, render);
+  /**
+   * Drafts left behind until their edits are saved. A save that fails or
+   * conflicts keeps its draft here, so reopening the submission shows the
+   * unsaved edits and the notice again.
+   */
+  const left = new Map<string, SubmissionDraft>();
+  return {
+    draft: () => current.draft(),
+    /** The open submission; a new one each time another opens. */
+    scope: () => current.scope,
+    load: () => current.load(),
+    /**
+     * Opens another submission. The one open now keeps its draft until the
+     * edits waiting on it, including any made during a save, are saved.
+     */
     open(projectId: string, submissionId: string | null) {
+      const { scope } = current;
       if (
         scope?.submissionId === submissionId &&
         scope?.projectId === projectId
       ) {
         return;
       }
-      clearTimeout(timer);
-      void save();
-      scope = submissionId ? { projectId, submissionId } : null;
-      draft = { ...EMPTY, flow: draft.flow };
+      const outgoing = current;
+      outgoing.detach();
+      if (outgoing.scope) {
+        const key = keyOf(outgoing.scope);
+        left.set(key, outgoing);
+        void outgoing.flush().then((saved) => {
+          if (saved && left.get(key) === outgoing) left.delete(key);
+        });
+      }
+      const next = submissionId ? { projectId, submissionId } : null;
+      const resumed = next ? left.get(keyOf(next)) : undefined;
+      if (next && resumed) {
+        left.delete(keyOf(next));
+        resumed.attach();
+      }
+      current =
+        resumed ??
+        createSubmissionDraft(
+          next,
+          { ...EMPTY, flow: outgoing.draft().flow },
+          render,
+        );
       render();
-      void load();
+      void current.load();
     },
-    setAnswer(key: string, value: DirectoryAnswerValue) {
-      const conflict = draft.conflict && keep(draft.conflict, (k) => k !== key);
-      set({
-        pending: { ...draft.pending, [key]: value },
-        base: draft.base ?? draft.view?.revision ?? null,
-        conflict: conflict && !isEmpty(conflict) ? conflict : null,
-      });
-      queue();
-    },
-    async saveNow() {
-      clearTimeout(timer);
-      await inflight;
-      await save();
-    },
-    reapply() {
-      set({
-        pending: { ...draft.pending, ...draft.conflict },
-        base: draft.base ?? draft.view?.revision ?? null,
-        conflict: null,
-      });
-      queue();
-    },
-    keepSaved: () => set({ conflict: null }),
+    setAnswer: (key: string, value: DirectoryAnswerValue) =>
+      current.setAnswer(key, value),
+    /** Saves every waiting edit. False when one failed or conflicted. */
+    saveNow: () => current.flush(),
+    reapply: () => current.reapply(),
+    keepSaved: () => current.keepSaved(),
   };
 }
 
@@ -282,9 +382,11 @@ export function useDirectorySubmission({
     [flow, answers],
   );
   const startRun = useCallback(async () => {
-    // A run grades the answers stored when it starts.
-    await store.saveNow();
-    await run();
+    // A run grades the answers stored when it starts, so it starts only
+    // once every edit is saved, and only for the submission still open.
+    const scope = store.scope();
+    if (!(await store.saveNow())) return;
+    if (store.scope() === scope) await run();
   }, [store, run]);
 
   return {

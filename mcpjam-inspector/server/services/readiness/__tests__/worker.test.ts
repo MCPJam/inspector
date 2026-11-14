@@ -54,6 +54,10 @@ const { executeHostedReadinessRun, summarizeReadinessResult } = await import(
   "../worker.js"
 );
 
+const { logger } = await import("../../../utils/logger.js");
+const loggerError = vi.spyOn(logger, "error");
+const loggerWarn = vi.spyOn(logger, "warn");
+
 const LEASE = { runId: "run_1", jobId: "job_1" };
 const TARGET = "https://connector.example.com/mcp";
 
@@ -542,6 +546,15 @@ describe("a run that grades a directory submission", () => {
         }),
       /chatgpt-plugin/,
     ],
+    [
+      "answers saved against another version of the form",
+      () =>
+        getReadinessRunSubmission.mockResolvedValue({
+          ...FROZEN,
+          flowVersion: "2026-01-01",
+        }),
+      /version 2026-01-01 of the claude-connector form/,
+    ],
   ])("fails, before dialling anything, on %s", async (_label, arrange, reason) => {
     arrange();
     const fetchFn = vi.fn(wireFetch());
@@ -554,6 +567,12 @@ describe("a run that grades a directory submission", () => {
     expect(lease).toEqual(LEASE);
     expect(terminalReason).toBe("submission_unreadable");
     expect(String(message)).toMatch(reason);
+    // The submission's state, not MCPJam's fault: a warning, never a capture.
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(loggerWarn).toHaveBeenCalledWith(
+      "[readiness] hosted run could not read its submission",
+      expect.objectContaining({ terminalReason: "submission_unreadable" }),
+    );
   });
 
   it("writes nothing when the lease is lost while reading the answers", async () => {

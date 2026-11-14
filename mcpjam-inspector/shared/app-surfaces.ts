@@ -665,7 +665,10 @@ export const APP_SURFACES = [
       reason:
         "Agents edit and run submissions through the directory submission operations, not the page.",
     },
-    showInAtlas: true,
+    // Flag-gated: the atlas is static and cannot read
+    // `mcpjam-directory-readiness`, so advertising `/readiness` would send the
+    // agent to a page that redirects for everyone the flag excludes.
+    showInAtlas: false,
   },
   {
     id: "oauth-flow",

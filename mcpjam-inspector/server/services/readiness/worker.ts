@@ -195,9 +195,17 @@ async function readSubmissionAnswers(
   options: ExecuteHostedReadinessOptions,
 ): Promise<ReadinessRunSubmission["answers"]> {
   const submission = await getReadinessRunSubmission(options.lease);
-  if (getDirectoryFlow(submission.flowId)?.directory !== options.publisher) {
+  const flow = getDirectoryFlow(submission.flowId);
+  if (flow?.directory !== options.publisher) {
     throw new ReadinessSubmissionUnreadableError(
       `This run's answers follow the ${submission.flowId} form, which this server cannot grade as a ${options.publisher} run. Start the run again after MCPJam updates.`,
+    );
+  }
+  // Answers saved against another version of the form may name fields this
+  // build reads differently, so they are refused rather than graded.
+  if (submission.flowVersion !== flow.version) {
+    throw new ReadinessSubmissionUnreadableError(
+      `This run's answers follow version ${submission.flowVersion} of the ${submission.flowId} form, and this server grades version ${flow.version}. Start the run again after MCPJam updates.`,
     );
   }
   return submission.answers;
@@ -382,10 +390,19 @@ export async function executeHostedReadinessRun(
       error instanceof ReadinessSubmissionUnreadableError
         ? "submission_unreadable"
         : "runner_error";
-    logger.error("[readiness] hosted run failed", error, {
-      runId: lease.runId,
-      terminalReason,
-    });
+    if (terminalReason === "submission_unreadable") {
+      // The submission's state, not a fault in MCPJam: recorded, not captured.
+      logger.warn("[readiness] hosted run could not read its submission", {
+        runId: lease.runId,
+        terminalReason,
+        error: message,
+      });
+    } else {
+      logger.error("[readiness] hosted run failed", error, {
+        runId: lease.runId,
+        terminalReason,
+      });
+    }
     await failReadinessRun(lease, terminalReason, message.slice(0, 2000)).catch(
       () => undefined,
     );

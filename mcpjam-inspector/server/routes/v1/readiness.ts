@@ -499,8 +499,8 @@ readiness.post(
       ...(typeof run.submissionId === "string"
         ? { submissionId: run.submissionId }
         : {}),
-      authorize: (runProjectId, serverId) =>
-        authorizeServer(c, convexAuthToken, runProjectId, serverId),
+      authorize: (runProjectId, serverId, signal) =>
+        authorizeServer(c, convexAuthToken, runProjectId, serverId, { signal }),
       analyticsActor: readinessAnalyticsActor(c, projectId),
       translateError: translateResumeRefusal,
     });

@@ -106,6 +106,22 @@ describe("hosted credential requests identify the hosted Inspector", () => {
     });
   });
 
+  it("single authorize ends its request with the caller's signal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ code: "FORBIDDEN", message: "Refused" }),
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock);
+    const c = { get: () => undefined, var: {} } as unknown as Context;
+    const { signal } = new AbortController();
+
+    await expect(
+      authorizeServer(c, "user-jwt", "project-1", "server-1", { signal }),
+    ).rejects.toThrow("Refused");
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).signal).toBe(signal);
+  });
+
   it("an API key caller's calls send it beside the acting-as headers", () => {
     expect(
       buildConvexAuthHeaders(

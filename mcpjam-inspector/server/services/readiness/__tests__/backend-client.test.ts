@@ -22,6 +22,7 @@ import {
   ReadinessLeaseLostError,
   ReadinessSubmissionUnreadableError,
   claimReadinessRun,
+  confirmReadinessLease,
   failReadinessRun,
   finalizeReadinessRun,
   getReadinessRunSubmission,
@@ -85,6 +86,32 @@ describe("heartbeatReadinessRun", () => {
     );
     expect(init.headers["x-inspector-service-token"]).toBe("service-token");
     expect(JSON.parse(init.body)).toEqual(LEASE);
+  });
+});
+
+describe("confirmReadinessLease", () => {
+  it.each([
+    ["owned", { ok: true, alive: true }],
+    ["lost", { ok: true, alive: false }],
+  ])("reports %s when the backend answers", async (answer, body) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(body)),
+    );
+    expect(await confirmReadinessLease(LEASE)).toBe(answer);
+  });
+
+  it.each([
+    ["a transport failure", () => Promise.reject(new Error("ECONNRESET"))],
+    ["a 500", async () => new Response("boom", { status: 500 })],
+    [
+      "an unreadable body",
+      async () => new Response("not json", { status: 200 }),
+    ],
+  ])("never reads %s as ownership", async (_label, responder) => {
+    // A caller about to start work on the lease must not start it on a guess.
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    expect(await confirmReadinessLease(LEASE)).toBe("unanswered");
   });
 });
 

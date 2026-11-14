@@ -8,7 +8,7 @@
  * readiness codes, never 1 for a run that graded nothing.
  */
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { afterEach, mock, test } from "node:test";
 import { Command } from "commander";
 import { registerReadinessCommands } from "../src/commands/readiness.js";
 import { CliError } from "../src/lib/output.js";
@@ -65,6 +65,9 @@ const FLOW = {
 
 const BASE = "/api/v1/projects/project-1/directory-submissions";
 
+/** The projects the API lists. Automatic selection picks the newest. */
+let projects: unknown[] = [PROJECT];
+
 type Reply = { status?: number; body: unknown };
 type Captured = { key: string; query: Record<string, string>; body: unknown };
 
@@ -74,7 +77,7 @@ function stubFetch(routes: Record<string, Reply[]>): Captured[] {
   globalThis.fetch = (async (target: unknown, init?: RequestInit) => {
     const url = new URL(String(target));
     const key = `${init?.method ?? "GET"} ${url.pathname}`;
-    if (key.endsWith("/projects")) return Response.json({ items: [PROJECT] });
+    if (key.endsWith("/projects")) return Response.json({ items: projects });
     if (key.endsWith("/servers")) return Response.json({ items: [SERVER] });
     const reply = routes[key]?.shift();
     if (!reply) throw new Error(`unexpected ${key}`);
@@ -100,6 +103,8 @@ function buildProgram(): Command {
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
+  projects = [PROJECT];
+  delete process.env.MCPJAM_PROJECT;
   // `run --wait` reports its verdict through the process exit code.
   process.exitCode = 0;
 });
@@ -367,6 +372,43 @@ test("run --wait goes on waiting when the resume is refused", async () => {
   assert.equal(process.exitCode, 3);
 });
 
+test("run --wait tries a transiently failed resume again, at most three times", async () => {
+  const unavailable = {
+    status: 502,
+    body: { code: "SERVER_UNREACHABLE", message: "Failed to reach authorization service." },
+  };
+  const requests = stubFetch({
+    [`POST ${BASE}/sub-1/runs`]: [{ status: 202, body: RECEIPT }],
+    [`GET ${RUN_PATH}`]: [
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: REQUEUED },
+      { body: runRow("failed", null) },
+    ],
+    [`POST ${RUN_PATH}/resume`]: [unavailable, unavailable, unavailable],
+  });
+  // The wait sleeps between polls: let each sleep pass at once.
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let done = false;
+    const waiting = run(["submission", "run", "sub-1", "--wait"]).finally(() => {
+      done = true;
+    });
+    while (!done) {
+      await new Promise((resolve) => setImmediate(resolve));
+      mock.timers.tick(5_000);
+    }
+    const waited = await waiting;
+    assert.match(waited.stderr, /could not be resumed yet, so the resume will be tried again/);
+  } finally {
+    mock.timers.reset();
+  }
+  const resumes = requests.filter((r) => r.key === `POST ${RUN_PATH}/resume`);
+  assert.equal(resumes.length, 3);
+  assert.equal(process.exitCode, 3);
+});
+
 test("run --wait exits 3 when the run could not be started", async () => {
   stubFetch({
     [`POST ${BASE}/sub-1/runs`]: [
@@ -401,4 +443,52 @@ test("results reads one run's results by step", async () => {
   const results = await run(["submission", "results", "sub-1", "--run", "run-1", "--json"]);
   assert.deepEqual(requests[0]!.query, { runId: "run-1" });
   assert.equal(results.printed.submissionId, "sub-1");
+});
+
+test("every project-scoped verb takes MCPJAM_PROJECT when --project is omitted", async () => {
+  // Older than project-1, so automatic selection alone would never reach it.
+  const other = { ...PROJECT, id: "project-2", name: "Linked", updatedAt: 1 };
+  projects = [PROJECT, other];
+  process.env.MCPJAM_PROJECT = "project-2";
+  const base = "/api/v1/projects/project-2/directory-submissions";
+  const view = { ...VIEW, projectId: other.id };
+  const requests = stubFetch({
+    [`POST ${base}`]: [{ status: 201, body: view }],
+    [`GET ${base}`]: [{ body: { items: [] } }],
+    [`GET ${base}/sub-1`]: [{ body: view }, { body: view }],
+    [`PATCH ${base}/sub-1`]: [{ body: { ...view, revision: 5 } }],
+    [`DELETE ${base}/sub-1`]: [{ body: { id: "sub-1", deleted: true } }],
+    [`GET ${base}/sub-1/results`]: [
+      {
+        body: {
+          run: null,
+          steps: [],
+          counts: { toFix: 0, blockers: 0, likelyFlags: 0, notChecked: 0, passed: 0 },
+        },
+      },
+    ],
+    [`POST ${base}/sub-1/runs`]: [{ status: 202, body: { ...RECEIPT, projectId: other.id } }],
+  });
+
+  await run(["submission", "create", "--flow", "claude-connector", "--server", "markets"]);
+  await run(["submission", "list"]);
+  await run(["submission", "get", "sub-1"]);
+  await run(["submission", "set", "sub-1", "--title", "Second draft"]);
+  await run(["submission", "results", "sub-1"]);
+  await run(["submission", "run", "sub-1"]);
+  await run(["submission", "delete", "sub-1"]);
+
+  assert.deepEqual(
+    requests.map((request) => request.key),
+    [
+      `POST ${base}`,
+      `GET ${base}`,
+      `GET ${base}/sub-1`,
+      `GET ${base}/sub-1`,
+      `PATCH ${base}/sub-1`,
+      `GET ${base}/sub-1/results`,
+      `POST ${base}/sub-1/runs`,
+      `DELETE ${base}/sub-1`,
+    ]
+  );
 });
