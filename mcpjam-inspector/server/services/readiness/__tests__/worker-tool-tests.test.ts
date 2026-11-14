@@ -182,8 +182,23 @@ interface Backend {
   /** Finalize and fail bodies. */
   writes: Array<{
     outcome?: string;
-    report?: { toolTests?: DirectoryToolTestReport };
+    report?: {
+      toolTests?: DirectoryToolTestReport;
+      findings?: Array<{
+        id: string;
+        status: string;
+        notEvaluatedReason?: string;
+      }>;
+    };
   }>;
+}
+
+/** The reviewer checks of the one report the run finalized. */
+function reviewerChecks(backend: Backend) {
+  const findings = backend.writes[0]?.report?.findings ?? [];
+  return ["both.reviewer.identity", "both.reviewer.fixtures"].map((id) =>
+    findings.find((finding) => finding.id === id),
+  );
 }
 
 /** MCPJam's backend for a submission run whose start named the plan. */
@@ -422,13 +437,14 @@ describe("a submission that says its server needs no sign-in", () => {
   ];
 
   it.each([
-    ["without a reviewer account", undefined],
-    ["with a reviewer account too", AS_REVIEWER],
+    ["without a reviewer account", undefined, ["proj_demo"]],
+    // Its lookup misses a fixture, which no case is blocked for.
+    ["with a reviewer account too", AS_REVIEWER, ["proj_other"]],
   ])(
     "tests every tool with no credential, %s, and records no account",
-    async (_label, reviewer) => {
+    async (_label, reviewer, projects) => {
       const backend = stubBackend("claude", NONE);
-      const server = connector(["proj_demo"]);
+      const server = connector(projects);
       await run(server.fetchFn, reviewer);
 
       const report = toolTests(backend);
@@ -463,8 +479,16 @@ describe("a submission that says its server needs no sign-in", () => {
       ]);
       expect(backend.recorded.length).toBeGreaterThan(0);
       expect(backend.recorded.every((call) => !("account" in call))).toBe(true);
-      // Nothing asks for a sign-in the server does not have.
-      expect(JSON.stringify(report)).not.toMatch(/rehears/i);
+      // The reviewer checks do not apply, and nothing asks for a sign-in the
+      // server does not have.
+      for (const check of reviewerChecks(backend)) {
+        expect(check).toMatchObject({
+          status: "not-applicable",
+          notEvaluatedReason:
+            "The submission says the server needs no sign-in, so there is no reviewer account to check.",
+        });
+      }
+      expect(JSON.stringify(backend.writes)).not.toMatch(/rehears/i);
     },
   );
 });
@@ -497,6 +521,13 @@ describe("a submission that says its server needs a sign-in", () => {
       });
       expect(server.calls()).toEqual([]);
       expect(backend.recorded).toEqual([]);
+      // The reviewer checks still say to rehearse the sign-in.
+      for (const check of reviewerChecks(backend)) {
+        expect(check).toMatchObject({
+          status: "not-evaluated",
+          notEvaluatedReason: `blocked: ${NO_ACCOUNT}`,
+        });
+      }
     },
   );
 });

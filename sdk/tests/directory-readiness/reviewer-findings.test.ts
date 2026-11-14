@@ -153,6 +153,79 @@ describe("the reviewer-only rule", () => {
     expect(gated.undetermined).toContain("both.reviewer.identity");
   });
 
+  it("does not apply to a submission that says its server needs no sign-in", () => {
+    const answer = (value: string) => [
+      { key: "authentication.requirement", value, origin: "set" as const },
+    ];
+    for (const reviewerPath of [NO_ACCOUNT, VERIFIED]) {
+      const result = claude({
+        reviewerPath,
+        submissionAnswers: answer("none"),
+      });
+      for (const id of REVIEWER_CHECKS) {
+        expect(finding(result, id).status, id).toBe("not-applicable");
+      }
+      for (const id of ["both.reviewer.identity", "both.reviewer.fixtures"]) {
+        expect(finding(result, id).notEvaluatedReason, id).toBe(
+          "The submission says the server needs no sign-in, so there is no reviewer account to check."
+        );
+      }
+      expect(JSON.stringify(result.findings)).not.toMatch(/rehearse/i);
+    }
+    // Any other answer still holds the checks to the reviewer account.
+    for (const value of ["always", "when-asked"]) {
+      const result = claude({
+        reviewerPath: NO_ACCOUNT,
+        submissionAnswers: answer(value),
+      });
+      expect(finding(result, "both.reviewer.identity")).toMatchObject({
+        status: "not-evaluated",
+        notEvaluatedReason: `blocked: ${MISSING}`,
+      });
+    }
+  });
+
+  it("counts a check that does not apply as neither a blocker nor not checked", () => {
+    const answer = (value: string) => [
+      { key: "authentication.requirement", value, origin: "set" as const },
+    ];
+    const testLaunch = (value: string, only?: (id: string) => boolean) => {
+      const { findings } = claude({
+        reviewerPath: NO_ACCOUNT,
+        submissionAnswers: answer(value),
+      });
+      const step = placeDirectoryResults({
+        flow: CLAUDE_CONNECTOR_FLOW,
+        answers: answer(value),
+        findings: findings.filter((finding) => only?.(finding.id) ?? true),
+      }).find((entry) => entry.step === "testLaunch");
+      if (!step) throw new Error("no testLaunch step");
+      return step;
+    };
+    const reviewer = (id: string) => id.startsWith("both.reviewer.");
+    const statuses = (value: string) =>
+      testLaunch(value)
+        .findings.filter((entry) => reviewer(entry.finding.id))
+        .map((entry) => entry.evidenceStatus);
+    expect(statuses("none")).toEqual(["established", "established"]);
+    // With a sign-in and no reviewer account, the same two are not checked.
+    expect(statuses("always")).toEqual(["blocked", "blocked"]);
+    // They count in no bucket: the step's counts are the same without them.
+    expect(testLaunch("none").counts).toEqual(
+      testLaunch("none", (id) => !reviewer(id)).counts
+    );
+    const { findings } = claude({
+      reviewerPath: NO_ACCOUNT,
+      submissionAnswers: answer("none"),
+    });
+    // A gate that names one is settled, not left undetermined.
+    const gated = directoryVerdict(findings, {
+      path: "hosted",
+      checkGate: { failOn: ["both.reviewer.identity"] },
+    });
+    expect(gated.undetermined).not.toContain("both.reviewer.identity");
+  });
+
   it("lets a server outage stay the reason to fix first", () => {
     const result = claude({
       reviewerPath: NO_ACCOUNT,

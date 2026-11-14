@@ -76,6 +76,7 @@ import {
   MUSE_READINESS_STAGES,
   MUSE_STAGE_LANES,
   OPENAI_SUBMISSION_MODE_SHAPES,
+  directoryDeclaresNoSignIn,
   getDirectoryFlow,
   isMuseReadinessResult,
   redactConformanceReportForSharing,
@@ -250,17 +251,6 @@ const NO_REVIEWER_ACCOUNT: ReadinessReviewerAccount = {
 };
 
 const NO_SIGN_IN = { noSignIn: true } as const;
-
-/**
- * Whether the submission says its server needs no sign-in. Only Claude's form
- * asks; ChatGPT's leaves authentication to the package's `mcp.json`.
- */
-function declaresNoSignIn(answers: ReadinessRunSubmission["answers"] = []) {
-  return answers.some(
-    ({ key, value }) =>
-      key === "authentication.requirement" && value === "none",
-  );
-}
 
 /**
  * Whether the run's declared shape includes an uploaded package. A hosted
@@ -478,11 +468,11 @@ export async function executeHostedReadinessRun(
           target: options.target,
           fetchFn: options.fetchFn,
           // As the reviewer checks: the reviewer account, never `mcpHeaders`.
-          // With no sign-in, as a directory's reviewer: with no credential.
-          reviewer: declaresNoSignIn(submission?.answers)
-            ? NO_SIGN_IN
-            : reviewer,
-          fixtures: reviewerPath?.fixtures,
+          // With no sign-in, as a directory's reviewer: with no credential,
+          // and with no reviewer account's fixtures either.
+          ...(directoryDeclaresNoSignIn(submission?.answers ?? [])
+            ? { reviewer: NO_SIGN_IN }
+            : { reviewer, fixtures: reviewerPath?.fixtures }),
           signal: controller.signal,
           deadlineAt: startedAtMs + RUN_DEADLINE_MS,
           // The same opt-in: drafting sends the tools' text to a model.
