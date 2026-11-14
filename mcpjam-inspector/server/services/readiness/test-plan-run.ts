@@ -13,7 +13,9 @@
  * other credential: the saved server's is the requester's, often a staff
  * member's (RP2). A run without a reviewer account lists and calls nothing
  * and says why. A case that uses a fixture the reviewer path looked up and
- * did not find is not sent, and is reported blocked, naming it (RP5).
+ * did not find is not sent, and is reported blocked, naming it (RP5). A
+ * server the submission says needs no sign-in is tested as a directory's
+ * reviewer reaches it: with no credential at all, recording no account.
  *
  * Every way this can fail short of a lost lease becomes a report that says
  * why, so the readiness grade beside it is kept.
@@ -73,6 +75,8 @@ const unlisted = (error?: string) =>
   `The server's tool list could not be read in full${error ? ` (${error})` : ""}, so no tool was called. Check that the server is reachable, then start a new run.`;
 const MISMATCH =
   "The test plan does not match the tools the server lists now, so no tool was called. Fix the issues listed, save the plan, then start a new run.";
+const signInNeeded = (status: number) =>
+  `The server refused a connection with no credential (HTTP ${status}), but the submission says it needs no sign-in, so no tool was called. Correct the authentication answer, or let the server accept calls without sign-in, then start a new run.`;
 
 /** What a run's report says about its tool tests. */
 export interface DirectoryToolTestReport {
@@ -102,8 +106,11 @@ export interface RunDirectoryTestPlanOptions {
   target: string;
   /** The DNS-pinned transport. */
   fetchFn: typeof fetch;
-  /** The only credential the plan's calls use, or why the run has none. */
-  reviewer: ReadinessReviewerAccount;
+  /**
+   * The only credential the plan's calls use, or why the run has none. With
+   * `noSignIn`, the submission says the server needs no sign-in: no credential.
+   */
+  reviewer: ReadinessReviewerAccount | { noSignIn: true };
   /** The reviewer path's fixture lookup, when it ran. */
   fixtures?: DirectoryReviewerFixtureEvidence;
   signal: AbortSignal;
@@ -151,6 +158,7 @@ async function testPlanReport(
   if (planRevision === undefined) return undefined;
   // The reviewer-only rule: with no reviewer account, nothing is even listed.
   if ("missing" in reviewer) return notRun(reviewer.missing, planRevision);
+  const signedIn = "noSignIn" in reviewer ? undefined : reviewer;
   const saved = await stopOr(readRunTestPlan(lease), lease);
   if (saved === null) return notRun(unreadable(planRevision), planRevision);
   if (!saved) return notRun(notSaved(planRevision), planRevision);
@@ -160,7 +168,7 @@ async function testPlanReport(
   const dial: DirectoryDialOptions = {
     enteredUrl: options.target,
     fetchFn: options.fetchFn,
-    mcpHeaders: reviewer.mcpHeaders,
+    mcpHeaders: signedIn?.mcpHeaders,
     signal: options.signal,
   };
   const session = await dialMcpServer(dial);
@@ -168,13 +176,17 @@ async function testPlanReport(
   const listing = session.tools;
   if (!session.initialize.ok || !listing?.complete) {
     const error = session.initialize.error ?? listing?.error;
-    return notRun(unlisted(error), planRevision);
+    // Refused with no credential: the answers and the server disagree.
+    const status = session.initialize.status ?? 0;
+    const refused = !signedIn && (status === 401 || status === 403);
+    const reason = refused ? signInNeeded(status) : unlisted(error);
+    return notRun(reason, planRevision);
   }
   const tools = listing.entries;
   const issues = checkPlan(plan, tools);
   if (!issues) return notRun(malformed(planRevision), planRevision);
   const asReviewer = {
-    account: reviewer.accountId,
+    account: signedIn?.accountId ?? null,
     missingFixtures: missingInPlan(plan, options.fixtures),
   };
   // Before the sweep, and reported only. A case without arguments is an
@@ -311,7 +323,7 @@ function summarize(
   tools: readonly DirectoryTestPlanTool[],
   calls: readonly DirectoryTestCallRecord[],
   stopped: SummarizeDirectoryToolTestsInput["stopped"],
-  reviewer: { account: string; missingFixtures: string[] },
+  reviewer: { account: string | null; missingFixtures: string[] },
 ): { tools: DirectoryToolTestResult[]; ambiguous: string[] } {
   const results = summarizeDirectoryToolTests({
     plan,

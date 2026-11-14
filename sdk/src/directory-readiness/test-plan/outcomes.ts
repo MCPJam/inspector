@@ -129,8 +129,13 @@ export interface SummarizeDirectoryToolTestsInput {
   tools?: readonly DirectoryTestPlanTool[];
   /** Ledger records; a later record for a case replaces an earlier one. */
   calls: readonly DirectoryTestCallRecord[];
-  /** The reviewer account tests run as now: a result from another is stale. */
-  account?: string;
+  /**
+   * The reviewer account tests run as now, or `null` when they run with no
+   * account because the server needs no sign-in. A result made as another
+   * account, or with an account when there is none now and the reverse, is
+   * stale. Leave it out to compare no accounts.
+   */
+  account?: string | null;
   /** Existing fixtures the lookup did not find. */
   missingFixtures?: readonly string[];
   /** Why the sweep stopped before every case ran. */
@@ -181,7 +186,7 @@ type Verdict = Pick<DirectoryTestCaseResult, "status" | "reason">;
 function ranVerdict(
   testCase: DirectoryTestCase,
   record: DirectoryTestCallRecord,
-  account: string | undefined,
+  account: string | null | undefined,
   /** `digest` is absent when the tools now are not known. */
   now: { digest: string | undefined; effect: DirectoryToolEffect }
 ): Verdict {
@@ -192,12 +197,16 @@ function ranVerdict(
   ) {
     return { status: "ambiguous", reason: caseWords("ambiguous") };
   }
-  if (
-    account !== undefined &&
-    record.account !== undefined &&
-    record.account !== account
-  ) {
-    return { status: "stale", reason: caseWords("staleAccount") };
+  // A record without an account was made with none.
+  const ranAs = record.account ?? null;
+  if (account !== undefined && ranAs !== account) {
+    const words =
+      ranAs === null
+        ? "staleNoAccount"
+        : account === null
+          ? "staleSignedIn"
+          : "staleAccount";
+    return { status: "stale", reason: caseWords(words) };
   }
   if (now.digest !== undefined && record.inputDigest !== now.digest) {
     return { status: "stale", reason: caseWords("staleInputs") };

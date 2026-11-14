@@ -66,8 +66,8 @@ export interface ExecuteTestPlanInput {
   cleanupBy: number;
   /** The server URL each call records. */
   endpoint?: string;
-  /** The reviewer account each call records. */
-  account?: string;
+  /** The reviewer account each call records; none with no sign-in. */
+  account?: string | null;
   /** Fixtures not in the reviewer's account: no case that uses one is sent. */
   missingFixtures?: readonly string[];
   now?: () => number;

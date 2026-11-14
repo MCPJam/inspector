@@ -187,7 +187,11 @@ interface Backend {
 }
 
 /** MCPJam's backend for a submission run whose start named the plan. */
-function stubBackend(engine: Engine = "claude"): Backend {
+function stubBackend(
+  engine: Engine = "claude",
+  /** Answers beyond the reviewer section. */
+  more: Array<{ key: string; value: unknown; origin: string }> = [],
+): Backend {
   const backend: Backend = { recorded: [], planRead: false, writes: [] };
   vi.stubGlobal(
     "fetch",
@@ -205,7 +209,7 @@ function stubBackend(engine: Engine = "claude"): Backend {
           submissionRevision: 4,
           flowId: ENGINES[engine].flowId,
           flowVersion: "1",
-          answers: answers(engine),
+          answers: [...answers(engine), ...more],
         });
       }
       if (path.endsWith("/runs/test-plan")) {
@@ -408,6 +412,91 @@ describe("a fixture the reviewer path did not find", () => {
           phase: "succeeded",
         }),
       ]);
+    },
+  );
+});
+
+describe("a submission that says its server needs no sign-in", () => {
+  const NONE = [
+    { key: "authentication.requirement", value: "none", origin: "set" },
+  ];
+
+  it.each([
+    ["without a reviewer account", undefined],
+    ["with a reviewer account too", AS_REVIEWER],
+  ])(
+    "tests every tool with no credential, %s, and records no account",
+    async (_label, reviewer) => {
+      const backend = stubBackend("claude", NONE);
+      const server = connector(["proj_demo"]);
+      await run(server.fetchFn, reviewer);
+
+      const report = toolTests(backend);
+      expect(report).toMatchObject({ planRevision: 3, status: "completed" });
+      // The plan's calls carry no credential, the requester's least of all.
+      // Only the reviewer checks use a reviewer account, as before (P4).
+      const credentialed = server
+        .calls()
+        .filter((call) => call.authorization !== null)
+        .map((call) => [call.tool, call.authorization]);
+      expect(credentialed).toEqual(
+        reviewer
+          ? [
+              ["whoami", REVIEWER],
+              ["list_projects", REVIEWER],
+            ]
+          : [],
+      );
+      const sweep = server
+        .calls()
+        .filter((call) => call.authorization === null)
+        .map((call) => call.tool);
+      expect(sweep).toEqual([
+        "whoami",
+        "list_projects",
+        "get_project",
+        "get_project",
+        "create_project",
+        "rename_project",
+        "delete_project",
+        "delete_project",
+      ]);
+      expect(backend.recorded.length).toBeGreaterThan(0);
+      expect(backend.recorded.every((call) => !("account" in call))).toBe(true);
+      // Nothing asks for a sign-in the server does not have.
+      expect(JSON.stringify(report)).not.toMatch(/rehears/i);
+    },
+  );
+});
+
+describe("a submission that says its server needs a sign-in", () => {
+  it.each([
+    ["Claude, always", "claude", "always"],
+    ["Claude, when the server asks", "claude", "when-asked"],
+    ["ChatGPT, whose form has no such answer", "openai", undefined],
+  ] as const)(
+    "still tests no tool without a reviewer account: %s",
+    async (_label, engine, requirement) => {
+      const more = requirement
+        ? [
+            {
+              key: "authentication.requirement",
+              value: requirement,
+              origin: "set",
+            },
+          ]
+        : [];
+      const backend = stubBackend(engine, more);
+      const server = connector(["proj_demo"]);
+      await run(server.fetchFn, { missing: NO_ACCOUNT }, engine);
+
+      expect(toolTests(backend)).toMatchObject({
+        status: "not-run",
+        reason: NO_ACCOUNT,
+        tools: [],
+      });
+      expect(server.calls()).toEqual([]);
+      expect(backend.recorded).toEqual([]);
     },
   );
 });
