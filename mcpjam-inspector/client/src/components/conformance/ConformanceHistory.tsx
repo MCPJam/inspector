@@ -25,6 +25,10 @@ import {
 } from "./conformance-ui";
 import { CatalogList } from "./ConformanceCheckRows";
 import { SuiteReportCases } from "./ConformanceSavedChecks";
+import {
+  ConformanceSourceVersion,
+  SuiteList,
+} from "./conformance-source-version";
 import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
 import {
   useSavedRunReports,
@@ -518,7 +522,7 @@ export function ConformanceRunDetailPage({
 
         <ConformanceAdvice groups={advice} />
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
+        <SuiteList version={detail.protocolVersion}>
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
@@ -531,7 +535,7 @@ export function ConformanceRunDetailPage({
               }
             />
           ))}
-        </div>
+        </SuiteList>
       </div>
     </div>
   );
@@ -747,19 +751,21 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         )}
       />
       {suiteKinds.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-popover">
-          {suiteKinds.map((kind) => {
-            const row = sharedSuiteRow(kind, reports[kind]!);
-            return (
-              <SavedSuiteRow
-                key={kind}
-                report={row.report}
-                cases={row.cases}
-                runSettled
-              />
-            );
-          })}
-        </div>
+        <ConformanceSourceVersion version={run.protocolVersion}>
+          <div className="overflow-hidden rounded-lg border border-border bg-popover">
+            {suiteKinds.map((kind) => {
+              const row = sharedSuiteRow(kind, reports[kind]!);
+              return (
+                <SavedSuiteRow
+                  key={kind}
+                  report={row.report}
+                  cases={row.cases}
+                  runSettled
+                />
+              );
+            })}
+          </div>
+        </ConformanceSourceVersion>
       ) : null}
       <p className="text-xs text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun

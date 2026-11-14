@@ -6,10 +6,11 @@
  * the wrong one for two independent reasons. Its issue codes and limits are a
  * PERSISTED backend contract — the Convex import path stores them — so bending
  * them toward OpenAI's rules would change data that is already written down.
- * And it is spec-strict in ways OpenAI is not: it rejects `.codex-plugin/`
- * outright, which is the location OpenAI documents as canonical. So this reader
- * borrows the parser's PRIMITIVES (the file source, path normalisation, the
- * frontmatter splitter, the hashers) and none of its policy.
+ * And it stops at the first fatal problem, where a grade wants every one. So
+ * this reader borrows the parser's PRIMITIVES (the file source, path
+ * normalisation, the frontmatter splitter, the hashers) and one rule: where
+ * the plugin is. The root and manifest come from its `plugin-root.ts`, so a
+ * package cannot import and then grade as having no manifest.
  *
  * WHY RAW ENTRY NAMES COME FIRST. This is the subtle one. The portal rejects a
  * backslash separator, an empty or `.` path segment, outer whitespace, and any
@@ -33,6 +34,10 @@ import {
   caseFoldPath,
   normalizeBundlePath,
 } from "../../plugin-bundle/paths.js";
+import {
+  findPluginRoot,
+  pathInPluginRoot,
+} from "../../plugin-bundle/plugin-root.js";
 import { parseYamlLite, splitFrontmatter } from "../../plugin-bundle/skill.js";
 import type {
   PluginFileEntry,
@@ -44,7 +49,6 @@ import {
   OPENAI_ARCHIVE_LIMITS,
   OPENAI_FIELD_LIMITS,
   OPENAI_IMAGE_CONSTRAINTS,
-  OPENAI_MANIFEST_LOCATIONS,
   OPENAI_SKILL_METADATA_PATH,
 } from "../profile.js";
 import {
@@ -59,6 +63,7 @@ import {
   type OpenAIAgentMetadataIssue,
   type OpenAIAgentMetadataParse,
 } from "./openai-agent-metadata.js";
+import { readPluginManifest } from "./plugin-manifest.js";
 
 /**
  * Facts about the ARCHIVE that no file source can report.
@@ -119,8 +124,13 @@ export interface OpenAIPackageManifest {
   name?: string;
   version?: string;
   description?: string;
-  /** Server names declared by the manifest or `.mcp.json`. */
+  /** Server names declared by the manifest or its MCP configuration file. */
   mcpServerNames: string[];
+  /**
+   * The MCP configuration file the layout declares servers in (`mcp.json` for
+   * Agent Plugins, else `.mcp.json`), when it parses as a JSON object.
+   */
+  mcpConfig?: { path: string; document: Record<string, unknown> };
 }
 
 export interface OpenAIPackageSkill {
@@ -178,6 +188,11 @@ export interface OpenAIPackageEntryStats {
 }
 
 export interface OpenAIPluginPackageEvidence {
+  /**
+   * The archive's top-level directory the plugin sits in, when it is not at the
+   * archive root. Every other path here is relative to the plugin root.
+   */
+  rootDirectory?: string;
   manifest?: OpenAIPackageManifest;
   /** The plugin-level `agents/openai.yaml`, when present. */
   agentMetadata?: OpenAIAgentMetadataParse;
@@ -331,23 +346,6 @@ async function readBytesSafely(
 
 const decoder = new TextDecoder("utf-8", { fatal: false });
 
-function readStringField(
-  container: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = container?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-/** Server names from a `.mcp.json`-shaped document, in either spelling. */
-function readServerNames(document: unknown): string[] {
-  if (typeof document !== "object" || document === null) return [];
-  const container = document as Record<string, unknown>;
-  const map = container.mcpServers ?? container.servers;
-  if (typeof map !== "object" || map === null || Array.isArray(map)) return [];
-  return Object.keys(map as Record<string, unknown>);
-}
-
 export async function readOpenAIPluginPackage(
   source: PluginFileSource,
   options: ReadOpenAIPluginPackageOptions = {},
@@ -417,7 +415,7 @@ export async function readOpenAIPluginPackage(
   }
 
   // ------------------------------------------------- normalise, collect files
-  const files = new Map<string, { sourcePath: string; size: number }>();
+  const archiveFiles = new Map<string, { sourcePath: string; size: number }>();
   const folded = new Map<string, string>();
   let directoryCount = 0;
   let totalUncompressedBytes = 0;
@@ -443,7 +441,7 @@ export async function readOpenAIPluginPackage(
     }
 
     const path = normalized.path;
-    if (files.has(path)) {
+    if (archiveFiles.has(path)) {
       issues.push(
         openaiPortalIssue("archive-duplicate-path", { subject: path }),
       );
@@ -464,7 +462,7 @@ export async function readOpenAIPluginPackage(
       continue;
     }
     folded.set(key, path);
-    files.set(path, { sourcePath: entry.path, size: entry.size });
+    archiveFiles.set(path, { sourcePath: entry.path, size: entry.size });
     totalUncompressedBytes += entry.size;
   }
 
@@ -477,6 +475,24 @@ export async function readOpenAIPluginPackage(
     );
   }
 
+  // ---------------------------------------------------------- the plugin root
+  //
+  // The import parser's answer, not a second copy of it. A refused root is
+  // still graded where it can be: one folder with files beside it has a plugin
+  // in it, and its problems are worth reporting with the refusal.
+  const root = findPluginRoot(
+    new Set(archiveFiles.keys()),
+    "openai-compatible",
+  );
+  for (const refusal of root.refusals) {
+    issues.push(openaiPortalIssue(refusal.code, { subject: refusal.path }));
+  }
+  const files = new Map<string, { sourcePath: string; size: number }>();
+  for (const [path, entry] of archiveFiles) {
+    const inRoot = pathInPluginRoot(root.directory, path);
+    if (inRoot !== undefined) files.set(inRoot, entry);
+  }
+
   const read = (path: string) =>
     readBytesSafely(
       source,
@@ -485,133 +501,9 @@ export async function readOpenAIPluginPackage(
     );
 
   // ------------------------------------------------------------ the manifest
-  const manifestCandidates = [
-    OPENAI_MANIFEST_LOCATIONS.canonical,
-    ...OPENAI_MANIFEST_LOCATIONS.accepted,
-  ];
-  const manifestPath = manifestCandidates.find((candidate) =>
-    files.has(candidate),
-  );
-
-  let manifest: OpenAIPackageManifest | undefined;
-  if (!manifestPath) {
-    issues.push(openaiPortalIssue("manifest-missing"));
-  } else {
-    const canonical = manifestPath === OPENAI_MANIFEST_LOCATIONS.canonical;
-    const location: OpenAIManifestLocation = {
-      path: manifestPath,
-      canonical,
-      normalizedFrom: canonical ? undefined : manifestPath,
-    };
-
-    const { bytes, error } = await read(manifestPath);
-    if (!bytes) {
-      issues.push(
-        openaiPortalIssue("manifest-invalid-json", {
-          subject: manifestPath,
-          observed: error,
-        }),
-      );
-      manifest = { location, mcpServerNames: [] };
-    } else {
-      let parsed: Record<string, unknown> | undefined;
-      try {
-        const value: unknown = JSON.parse(decoder.decode(bytes));
-        if (
-          typeof value === "object" &&
-          value !== null &&
-          !Array.isArray(value)
-        ) {
-          parsed = value as Record<string, unknown>;
-        } else {
-          issues.push(
-            openaiPortalIssue("manifest-invalid-json", {
-              subject: manifestPath,
-              observed: "the document is not a JSON object",
-            }),
-          );
-        }
-      } catch (parseError) {
-        issues.push(
-          openaiPortalIssue("manifest-invalid-json", {
-            subject: manifestPath,
-            observed:
-              parseError instanceof Error
-                ? parseError.message
-                : String(parseError),
-          }),
-        );
-      }
-
-      const name = readStringField(parsed, "name");
-      const version = readStringField(parsed, "version");
-
-      if (parsed && name === undefined) {
-        issues.push(
-          openaiPortalIssue("manifest-name-missing", { subject: manifestPath }),
-        );
-      } else if (
-        name !== undefined &&
-        name.length > OPENAI_FIELD_LIMITS.nameMaxLength
-      ) {
-        issues.push(
-          openaiPortalIssue("manifest-name-too-long", {
-            subject: manifestPath,
-            observed: name.length,
-            expected: OPENAI_FIELD_LIMITS.nameMaxLength,
-          }),
-        );
-      }
-
-      // Semver, deliberately without a dependency: the portal wants a version
-      // it can order, and `1.0` is the mistake this catches.
-      if (
-        version !== undefined &&
-        !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
-          version,
-        )
-      ) {
-        issues.push(
-          openaiPortalIssue("manifest-version-invalid", {
-            subject: manifestPath,
-            observed: version,
-          }),
-        );
-      }
-
-      const serverNames = new Set(readServerNames(parsed));
-      if (files.has(".mcp.json")) {
-        const mcpConfig = await read(".mcp.json");
-        if (mcpConfig.bytes) {
-          try {
-            for (const serverName of readServerNames(
-              JSON.parse(decoder.decode(mcpConfig.bytes)),
-            )) {
-              serverNames.add(serverName);
-            }
-          } catch {
-            // A malformed `.mcp.json` is not a manifest problem; it surfaces as
-            // an unreadable server list rather than a JSON error against the
-            // manifest's own path.
-            gaps.push({
-              subject: ".mcp.json",
-              reason:
-                "the MCP configuration is not valid JSON, so its servers could not be listed",
-            });
-          }
-        }
-      }
-
-      manifest = {
-        location,
-        raw: parsed,
-        name,
-        version,
-        description: readStringField(parsed, "description"),
-        mcpServerNames: [...serverNames].sort(),
-      };
-    }
-  }
+  const manifest = root.manifest
+    ? await readPluginManifest(root.manifest, { files, read, issues, gaps })
+    : undefined;
 
   // ------------------------------------------------- the plugin-level metadata
   let agentMetadata: OpenAIAgentMetadataParse | undefined;
@@ -947,6 +839,7 @@ export async function readOpenAIPluginPackage(
   surfaces.sort((a, b) => (a.path < b.path ? -1 : 1));
 
   return {
+    ...(root.directory ? { rootDirectory: root.directory } : {}),
     manifest,
     agentMetadata,
     skills,
@@ -954,7 +847,7 @@ export async function readOpenAIPluginPackage(
     surfaces,
     entryStats: {
       entryCount: listed.length,
-      fileCount: files.size,
+      fileCount: archiveFiles.size,
       directoryCount,
       totalUncompressedBytes,
       compressedBytes: archive.compressedBytes,

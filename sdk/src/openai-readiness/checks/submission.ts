@@ -101,7 +101,7 @@ const TEST_CASE_QUALITY: OpenAICheckDefinition = {
   title: "The failure cases actually degrade gracefully",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Predictable behaviour"),
+  source: openaiPolicySource("plugin-guidelines", "§Predictable behaviour"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -161,7 +161,7 @@ const ATTESTATION_TRUTH: OpenAICheckDefinition = {
   title: "The attestations are true",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Trust"),
+  source: openaiPolicySource("plugin-guidelines", "§Trust"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -208,7 +208,7 @@ const PRIVACY_DISCLOSURE: OpenAICheckDefinition = {
   title: "Declared data types are consistent with the privacy policy",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Privacy"),
+  source: openaiPolicySource("plugin-guidelines", "§Privacy"),
   provenance: "declared",
   intrusiveness: "passive",
 };

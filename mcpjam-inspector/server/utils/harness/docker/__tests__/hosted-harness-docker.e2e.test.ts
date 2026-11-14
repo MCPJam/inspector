@@ -75,9 +75,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: mocks.revoke,
   // The lease would be installed into E2B's egress transform; here the box
   // reaches the mock upstream directly, so the "proxy" IS the upstream.
@@ -95,6 +92,11 @@ vi.mock("../../harness-model-broker.js", () => ({
       delivery: "e2b-network-transform",
     };
   }),
+}));
+vi.mock("../../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../../harness-session-state.js", async (importOriginal) => ({

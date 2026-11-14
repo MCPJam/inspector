@@ -1,6 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
-import { ServerAccountClient } from "./server-account-client.js";
+import { DirectorySubmissionClient } from "./directory-submission-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -714,7 +714,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient extends ServerAccountClient {
+export class PlatformApiClient extends DirectorySubmissionClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -3309,6 +3309,25 @@ export class PlatformApiClient extends ServerAccountClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
       {},
       options
     );

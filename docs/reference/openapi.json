@@ -12492,6 +12492,55 @@
         }
       }
     },
+    "/projects/{projectId}/readiness-runs/{runId}/resume": {
+      "post": {
+        "operationId": "resumeReadinessRun",
+        "tags": ["Directory readiness"],
+        "summary": "Resume a stopped readiness run",
+        "description": "Runs again a run that stopped on the server before it finished, which the run detail reports as `resumable: true`. The server is graded with the caller's credentials, so only the person who started the run can resume it. The run keeps the inputs it started with, and the request has no body. Poll the run detail as after a start. When the saved server is gone, no longer authorizes the caller, or now has a different URL, the run fails with that reason.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The run was resumed and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body was not empty."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The run is already running, finished, or no longer waiting to be resumed, or its saved server changed since it started."
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/readiness-runs/{runId}/report": {
       "get": {
         "operationId": "getReadinessReport",
@@ -32598,6 +32647,7 @@
           "authMode",
           "capabilities",
           "attemptCount",
+          "resumable",
           "terminalReason",
           "errorMessage",
           "policySnapshotDate",
@@ -32670,6 +32720,10 @@
           },
           "attemptCount": {
             "type": "integer"
+          },
+          "resumable": {
+            "type": "boolean",
+            "description": "The run stopped on the server before it finished and waits for the person who started it to resume it with their credentials."
           },
           "terminalReason": {
             "type": "string",

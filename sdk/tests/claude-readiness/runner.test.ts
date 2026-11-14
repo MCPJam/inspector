@@ -296,7 +296,7 @@ describe("coverage and context", () => {
   });
 
   it("carries the policy snapshot date the corpus was pinned at", () => {
-    expect(gradeClaudeReadiness(input()).policySnapshotDate).toBe("2026-08-19");
+    expect(gradeClaudeReadiness(input()).policySnapshotDate).toBe("2026-11-13");
   });
 });
 

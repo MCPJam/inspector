@@ -125,6 +125,7 @@ export const routePaths = {
   /** Revocable read-only share of a conformance run. The token IS the credential. */
   conformanceShared: "/conformance/shared",
   compatibility: "/compatibility",
+  readiness: "/readiness",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
