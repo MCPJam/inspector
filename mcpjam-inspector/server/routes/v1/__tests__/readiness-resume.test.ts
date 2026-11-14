@@ -22,7 +22,7 @@ const {
   authorizeServerMock,
   executeHostedReadinessRunMock,
   failReadinessRunMock,
-  heartbeatReadinessRunMock,
+  confirmReadinessLeaseMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   convexQueryMock: vi.fn(),
@@ -30,7 +30,7 @@ const {
   authorizeServerMock: vi.fn(),
   executeHostedReadinessRunMock: vi.fn(),
   failReadinessRunMock: vi.fn(),
-  heartbeatReadinessRunMock: vi.fn(),
+  confirmReadinessLeaseMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -53,7 +53,7 @@ vi.mock("../../../services/readiness/backend-client.js", async () => ({
     "../../../services/readiness/backend-client.js",
   )),
   failReadinessRun: failReadinessRunMock,
-  heartbeatReadinessRun: heartbeatReadinessRunMock,
+  confirmReadinessLease: confirmReadinessLeaseMock,
 }));
 vi.mock("../../web/auth.js", async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
@@ -159,7 +159,7 @@ describe("v1 readiness resume", () => {
     authorizeServerMock.mockResolvedValue(AUTHORIZED);
     executeHostedReadinessRunMock.mockResolvedValue(undefined);
     failReadinessRunMock.mockResolvedValue({ applied: true });
-    heartbeatReadinessRunMock.mockResolvedValue({ alive: true });
+    confirmReadinessLeaseMock.mockResolvedValue("owned");
   });
 
   afterEach(() => {
@@ -314,17 +314,33 @@ describe("v1 readiness resume", () => {
     expect(((await res.json()) as { message: string }).message).toMatch(
       /took too long/,
     );
+    // The request it gave up on is ended, not left running.
+    const options = authorizeServerMock.mock.calls[0]![4] as {
+      signal: AbortSignal;
+    };
+    expect(options.signal.aborted).toBe(true);
     expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
     expect(failReadinessRunMock).not.toHaveBeenCalled();
   });
 
   it("runs nothing when the lease moved while authorize ran", async () => {
-    heartbeatReadinessRunMock.mockResolvedValue({ alive: false });
+    confirmReadinessLeaseMock.mockResolvedValue("lost");
     const res = await request("POST", RESUME);
     expect(res.status).toBe(409);
-    expect(heartbeatReadinessRunMock).toHaveBeenCalledWith(RESUMED_LEASE);
+    expect(confirmReadinessLeaseMock).toHaveBeenCalledWith(RESUMED_LEASE);
     expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
     // Whoever moved the lease decided the run, so nothing is written.
+    expect(failReadinessRunMock).not.toHaveBeenCalled();
+  });
+
+  it("runs nothing, and leaves the run to recovery, when the lease check gets no answer", async () => {
+    confirmReadinessLeaseMock.mockResolvedValue("unanswered");
+    const res = await request("POST", RESUME);
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { message: string }).message).toMatch(
+      /could not be checked/,
+    );
+    expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
     expect(failReadinessRunMock).not.toHaveBeenCalled();
   });
 

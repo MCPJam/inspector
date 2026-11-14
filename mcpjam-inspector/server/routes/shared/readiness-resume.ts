@@ -26,8 +26,8 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
+  confirmReadinessLease,
   failReadinessRun,
-  heartbeatReadinessRun,
   type ReadinessLease,
 } from "../../services/readiness/backend-client.js";
 import {
@@ -70,6 +70,8 @@ const LEASE_MOVED =
   "This run was cancelled or picked up elsewhere while its server was being checked, so it was not resumed here. Check the run's status.";
 const AUTHORIZE_TIMED_OUT =
   "Checking access to this run's server took too long, so it was not resumed. It can be resumed again in about 10 minutes.";
+const LEASE_UNCONFIRMED =
+  "This run's status could not be checked, so it was not resumed. It can be resumed again in about 10 minutes.";
 
 /**
  * How long authorize may take. Far inside the backend's ten-minute lease, so
@@ -89,16 +91,22 @@ function isAccessRefusal(error: unknown): boolean {
   );
 }
 
-function authorizeWithin<T>(pending: Promise<T>, ms: number): Promise<T> {
+/** Gives up after `ms`, and aborts the authorize request it gave up on. */
+function authorizeWithin<T>(
+  authorize: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(new WebRouteError(504, ErrorCode.TIMEOUT, AUTHORIZE_TIMED_OUT)),
-      ms,
-    );
+    timer = setTimeout(() => {
+      reject(new WebRouteError(504, ErrorCode.TIMEOUT, AUTHORIZE_TIMED_OUT));
+      controller.abort();
+    }, ms);
   });
-  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([authorize(controller.signal), timeout]).finally(() =>
+    clearTimeout(timer),
+  );
 }
 
 export interface ResumeHostedReadinessRunInput {
@@ -110,6 +118,7 @@ export interface ResumeHostedReadinessRunInput {
   authorize: (
     projectId: string,
     serverId: string,
+    signal: AbortSignal,
   ) => Promise<AuthorizedReadinessServer>;
   analyticsActor?: ServerAnalyticsActor;
   /** Maps a Convex refusal onto the surface's own error vocabulary. */
@@ -155,7 +164,7 @@ async function authorizeResumedServer(
   let authorized: AuthorizedReadinessServer;
   try {
     authorized = await authorizeWithin(
-      input.authorize(resumed.projectId, serverId),
+      (signal) => input.authorize(resumed.projectId, serverId, signal),
       AUTHORIZE_TIMEOUT_MS,
     );
   } catch (error) {
@@ -170,9 +179,22 @@ async function authorizeResumedServer(
     throw error;
   }
   // Whoever moved the lease while authorize ran (a cancel, recovery) owns
-  // the run now. The heartbeat both checks and renews the lease.
-  if (!(await heartbeatReadinessRun(lease)).alive) {
+  // the run now. The heartbeat both checks and renews the lease. With no
+  // answer the worker does not start: it would run on a lease it skips
+  // claiming, and recovery re-queues the run when the lease lapses.
+  const answer = await confirmReadinessLease(lease);
+  if (answer === "lost") {
     throw new WebRouteError(409, ErrorCode.CONFLICT, LEASE_MOVED);
+  }
+  if (answer === "unanswered") {
+    logger.warn("[readiness] lease unconfirmed; the run waits for recovery", {
+      runId: lease.runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      LEASE_UNCONFIRMED,
+    );
   }
   // The credential belongs to the server as saved now, so it must not go to
   // the address the run recorded if the two differ; grading the new address
