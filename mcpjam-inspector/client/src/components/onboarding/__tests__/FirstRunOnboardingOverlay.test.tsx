@@ -426,7 +426,7 @@ describe("FirstRunOnboardingOverlay", () => {
       screen.getByRole("heading", { name: "Connecting to My server" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Reach the server")).toBeInTheDocument();
-    expect(screen.getByText("Complete the MCP handshake")).toBeInTheDocument();
+    expect(screen.getByText("Set up the connection")).toBeInTheDocument();
     expect(screen.getByText("Load tools")).toBeInTheDocument();
     expect(screen.getByText("Reach the server").closest("li")).toHaveAttribute(
       "aria-current",

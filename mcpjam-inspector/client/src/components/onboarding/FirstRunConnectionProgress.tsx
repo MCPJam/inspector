@@ -7,7 +7,7 @@ import { cn } from "@mcpjam/design-system/cn";
 
 export const CONNECTION_PROGRESS_STEPS = [
   "Reach the server",
-  "Complete the MCP handshake",
+  "Set up the connection",
   "Load tools",
 ] as const;
 
@@ -83,7 +83,7 @@ export function ConnectionProgress({
 const AUTHORIZATION_STEPS = [
   { label: "Reached the server", state: "done" },
   { label: "Sign in", state: "current" },
-  { label: "Handshake", state: "pending" },
+  { label: "Set up the connection", state: "pending" },
   { label: "Load tools", state: "pending" },
 ] as const;
 
