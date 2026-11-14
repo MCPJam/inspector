@@ -180,7 +180,13 @@ export const DRAFTING: PlatformDirectoryTestArgumentDrafting = {
       rationale: "A number where the schema asks for text.",
     },
   ],
-  undecided: [{ caseId: "delete_note#valid", reason: "needs_fixture" }],
+  undecided: [
+    {
+      caseId: "delete_note#valid",
+      reason: "needs_fixture",
+      detail: "The note to delete comes from another case.",
+    },
+  ],
   dropped: { schema: 1, credential: 0 },
   unsent: 2,
 };

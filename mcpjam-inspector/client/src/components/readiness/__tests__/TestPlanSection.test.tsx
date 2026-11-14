@@ -215,8 +215,11 @@ describe("TestPlanSection", () => {
     ).toBeVisible();
     expect(
       screen.getByText(
-        "delete_note#valid: It needs a fixture the plan does not name.",
+        "delete_note#valid: It needs a fixture the plan does not name. Enter its arguments in the plan below.",
       ),
+    ).toBeVisible();
+    expect(
+      screen.getByText("The note to delete comes from another case."),
     ).toBeVisible();
     expect(
       screen.getByText(/^MCPJam dropped 1 draft that did not match/),

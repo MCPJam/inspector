@@ -16,15 +16,24 @@ const UNDECIDED: Record<
   PlatformDirectoryTestArgumentUndecided["reason"],
   string
 > = {
-  needs_secret: "It needs a secret, which MCPJam never sends to a model.",
-  needs_fixture: "It needs a fixture the plan does not name.",
-  unclear: "The tool's schema does not say enough to draft them.",
-  schema_mismatch: "The draft did not match the tool's schema.",
-  credential: "The draft held what looked like a credential.",
-  schema_invalid: "The model's answer could not be read.",
-  provider_error: "The model did not answer.",
-  provider_timeout: "The model took too long to answer.",
-  ai_unavailable: "MCPJam's model was not available.",
+  needs_secret:
+    "It needs a secret, which MCPJam never sends to a model. Enter its arguments in the plan below, or exclude the tool as needing a person.",
+  needs_fixture:
+    "It needs a fixture the plan does not name. Enter its arguments in the plan below.",
+  unclear:
+    "The tool's schema does not say enough to draft its arguments. Enter them in the plan below.",
+  schema_mismatch:
+    "Its draft did not match the tool's schema, so MCPJam dropped it. Enter its arguments in the plan below.",
+  credential:
+    "Its draft matched a credential pattern, so MCPJam dropped it. Enter its arguments in the plan below.",
+  schema_invalid:
+    "The model's answer could not be read. Enter its arguments in the plan below.",
+  provider_error:
+    "The model did not answer. Enter its arguments in the plan below.",
+  provider_timeout:
+    "The model took too long to answer. Enter its arguments in the plan below.",
+  ai_unavailable:
+    "MCPJam's model was not available. Enter its arguments in the plan below.",
 };
 const HINT = "text-xs text-muted-foreground";
 const same = (a: unknown, b: unknown) =>
@@ -89,7 +98,7 @@ export function ArgumentDrafts({
     schema > 0 &&
       `${many(schema, "draft", "drafts")} that did not match the tool's schema`,
     credential > 0 &&
-      `${many(credential, "draft", "drafts")} that held what looked like a credential`,
+      `${many(credential, "draft", "drafts")} that matched a credential pattern`,
   ].filter(Boolean);
   const revision = session.results?.testPlanRevision;
   return (
@@ -101,7 +110,7 @@ export function ArgumentDrafts({
       {drafting.status !== "completed" ? (
         <p className="text-sm">
           {drafting.detail ??
-            "MCPJam drafted no arguments in this run. Start another run to try again."}
+            "MCPJam drafted no arguments in this run. Enter the arguments in the plan below."}
         </p>
       ) : null}
       <ul className="space-y-2">
@@ -112,12 +121,13 @@ export function ArgumentDrafts({
       {undecided.length > 0 ? (
         <div className="space-y-1 text-sm">
           <p>
-            {`MCPJam did not draft ${many(undecided.length, "case", "cases")}. Enter their arguments in the plan, or start another run to try again.`}
+            {`MCPJam did not draft ${many(undecided.length, "case", "cases")}. Enter their arguments in the plan below.`}
           </p>
           <ul className={HINT}>
             {undecided.map(({ caseId, reason, detail }) => (
               <li key={caseId}>
-                {`${caseId}: ${UNDECIDED[reason] ?? reason}${detail ? ` ${detail}` : ""}`}
+                {`${caseId}: ${UNDECIDED[reason] ?? reason}`}
+                {detail ? <span className="block">{detail}</span> : null}
               </li>
             ))}
           </ul>
@@ -130,7 +140,7 @@ export function ArgumentDrafts({
       ) : null}
       {unsent > 0 ? (
         <p className="text-sm">
-          {`${many(unsent, "case without arguments was", "cases without arguments were")} not sent for drafting in this run. Enter their arguments, or start another run to draft them.`}
+          {`${many(unsent, "case without arguments was", "cases without arguments were")} not sent for drafting in this run. Enter their arguments in the plan below.`}
         </p>
       ) : null}
     </div>
